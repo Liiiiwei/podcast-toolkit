@@ -4,6 +4,7 @@ defaults.yaml 路徑相對於 toolkit_root；
 episode.yaml 內路徑欄位相對於 episode 資料夾。
 """
 from pathlib import Path
+from typing import Optional
 import yaml
 
 
@@ -55,8 +56,8 @@ def merge(defaults: dict, episode: dict) -> dict:
     return cfg
 
 
-def expand_placeholders(s: str, name: str) -> str:
-    """展開路徑欄位的 {name}"""
+def expand_placeholders(s: Optional[str], name: str) -> Optional[str]:
+    """展開路徑欄位的 {name}；s 為 None 時透傳 None"""
     if s is None:
         return None
     return s.replace("{name}", name)
