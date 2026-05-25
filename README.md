@@ -20,7 +20,7 @@ podcast --help
 # 1. 在 ~/Downloads/ 建集資料夾（命名：YYYYMMDD 集名）
 mkdir "$HOME/Downloads/20260601 新集名"
 
-# 2. 跑 init 建子目錄 + symlink + 範本
+# 2. 跑 init 建子目錄 + symlink + 範本（會在 02_片頭片尾/ 建 4 個 symlink：intro.mp4 / intro_music.m4a / outro.mp3 / subscribe_card.png 指回 toolkit/assets/）
 podcast init "$HOME/Downloads/20260601 新集名"
 
 # 3. 把錄音放進 01_母帶/、whisper 字幕放進 03_成品/新集名_final.srt
@@ -28,7 +28,7 @@ podcast init "$HOME/Downloads/20260601 新集名"
 # 4. 跑 resegment 重新斷句
 podcast resegment "$HOME/Downloads/20260601 新集名"
 
-# 5. 人工檢查 04_工作檔/_resegment_review.txt，必要時改 episode.yaml 的 force_break/force_join 重跑
+# 5. 人工檢查 04_工作檔/_resegment_review.txt，必要時改 episode.yaml 的 force_break/force_join 重跑（重跑要加 --force 蓋掉舊 v2.srt）
 
 # 6. 跑 assemble 合成
 podcast assemble "$HOME/Downloads/20260601 新集名"
@@ -59,7 +59,7 @@ podcast assemble "$HOME/Downloads/20260601 新集名"
 - `podcast assemble <path> [--dry-run] [--force]` — 合成 YT 完整版
 - `podcast relink <path>` — 修復斷掉的 symlink
 
-Exit codes：0 成功、1 輸出已存在、2 設定錯誤、3 檔案缺失、4 ffmpeg 失敗。
+Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 
 ## 回歸測試
 
