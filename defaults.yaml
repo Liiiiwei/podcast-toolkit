@@ -1,0 +1,45 @@
+resegment:
+  maxlen: 17
+  hardlen: 23
+  gapmax: 0.6
+  qend_chars: "嗎呢"
+  dangle_endings: ["因為", "所以", "但是", "可是", "然後", "而且",
+                   "或是", "還是", "而是", "就是", "就"]
+  reaction_words: ["對", "對啊", "對對", "對對對", "嗯", "嗯嗯嗯",
+                   "哈哈哈", "哈哈", "哇", "喔", "哦", "蛤", "對啦",
+                   "好", "是吧", "是喔"]
+  use_filler_filter: false
+  whisper_guard:
+    char_loop_min_repeats: 4
+
+common_fixes: []
+
+subtitle_style:
+  font_name: "Hiragino Sans GB"
+  font_size: 24
+  bold: 1
+  primary_colour: "&H00FFFFFF"
+  outline_colour: "&H00000000"
+  border_style: 1
+  outline: 2
+  shadow: 1
+  margin_v: 48
+
+assets:
+  intro: "assets/intro.mp4"
+  intro_duration: 7.040375
+  intro_fade_out: 0.5
+  outro_audio: "assets/outro.mp3"
+  outro_image: "assets/subscribe_card.png"
+  outro_duration: 20.453333
+
+encode:
+  video_codec: "libx264"
+  crf: 18
+  preset: "medium"
+  pix_fmt: "yuv420p"
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+  audio_sample_rate: 48000
+  resolution: "1920x1080"
+  framerate: "30000/1001"

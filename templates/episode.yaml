@@ -1,0 +1,10 @@
+date: YYYYMMDD
+name: 集名
+
+main_video: "03_成品/{name}_final.mp4"
+main_srt: "03_成品/{name}_final.srt"
+
+fixes: []
+card_fixes: []
+force_break: []
+force_join: []
