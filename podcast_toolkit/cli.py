@@ -29,22 +29,22 @@ def build_parser():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pi = sub.add_parser("init", help="腳手架：建立子資料夾 + episode.yaml + symlink")
-    pi.add_argument("path", help="集資料夾路徑")
+    pi.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pi.set_defaults(func=cmd_init)
 
     pr = sub.add_parser("resegment", help="字幕重新斷句 + 錯字修正")
-    pr.add_argument("path", help="集資料夾路徑")
+    pr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pr.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pr.set_defaults(func=cmd_resegment)
 
     pa = sub.add_parser("assemble", help="合成片頭+正片+片尾 → YT 完整版")
-    pa.add_argument("path", help="集資料夾路徑")
+    pa.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pa.add_argument("--dry-run", action="store_true", help="只印 ffmpeg 指令不執行")
     pa.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pa.set_defaults(func=cmd_assemble)
 
     prl = sub.add_parser("relink", help="修復斷掉的 symlink")
-    prl.add_argument("path", help="集資料夾路徑")
+    prl.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     prl.set_defaults(func=cmd_relink)
 
     return p
