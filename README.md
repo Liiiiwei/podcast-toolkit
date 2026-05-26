@@ -6,7 +6,7 @@
 
 ```bash
 cd ~/Projects
-git clone <repo-url> podcast-toolkit
+git clone https://github.com/Liiiiwei/podcast-toolkit.git
 cd podcast-toolkit
 ./install.sh
 podcast --help
