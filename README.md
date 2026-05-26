@@ -2,17 +2,26 @@
 
 剪輯 podcast「我愛上班」的 CLI 工具。
 
-## 安裝
+## 安裝（macOS）
 
 ```bash
 cd ~/Projects
 git clone <repo-url> podcast-toolkit
 cd podcast-toolkit
-pip3 install pyyaml
-brew install ffmpeg   # 已裝過跳過
-ln -s "$(pwd)/bin/podcast" /usr/local/bin/podcast
+./install.sh
 podcast --help
 ```
+
+`install.sh` 自動檢查 Python 3.9+、Homebrew、裝 ffmpeg、裝 pyyaml、建 `podcast` symlink。
+
+選裝：本機 whisper 轉錄字幕（模型約 3GB）
+
+```bash
+pip3 install --user openai-whisper
+# 跑：python3 -m whisper <audio.mp4> --model large-v3 --language zh --output_format srt
+```
+
+其他系統請手動跟著上面四步走（pip3 install pyyaml、brew/apt install ffmpeg、`ln -s "$(pwd)/bin/podcast" /usr/local/bin/podcast`）。
 
 ## 工作流
 
