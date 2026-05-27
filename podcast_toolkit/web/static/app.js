@@ -156,3 +156,85 @@ $("#seek").addEventListener("input", (e) => {
 });
 
 load();
+
+// === Crop 框互動 ===
+(function setupCrop() {
+  const wrap = $(".video-wrap");
+  const frame = $("#crop-frame");
+
+  function clamp(v, lo, hi) {
+    return Math.min(Math.max(v, lo), hi);
+  }
+
+  function ensureCrop() {
+    if (!state.crop) {
+      state.crop = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
+      renderCropInfo();
+    }
+  }
+
+  function startDrag(e, mode, edge) {
+    e.preventDefault();
+    e.stopPropagation();
+    ensureCrop();
+    const rect = wrap.getBoundingClientRect();
+    const startX = e.clientX,
+      startY = e.clientY;
+    const c0 = { ...state.crop };
+
+    function onMove(ev) {
+      const dx = (ev.clientX - startX) / rect.width;
+      const dy = (ev.clientY - startY) / rect.height;
+      let { x, y, width, height } = c0;
+
+      if (mode === "move") {
+        x = clamp(c0.x + dx, 0, 1 - c0.width);
+        y = clamp(c0.y + dy, 0, 1 - c0.height);
+      } else {
+        if (edge.includes("l")) {
+          const nx = clamp(c0.x + dx, 0, c0.x + c0.width - 0.05);
+          width = c0.x + c0.width - nx;
+          x = nx;
+        }
+        if (edge.includes("r")) {
+          width = clamp(c0.width + dx, 0.05, 1 - c0.x);
+        }
+        if (edge.includes("t")) {
+          const ny = clamp(c0.y + dy, 0, c0.y + c0.height - 0.05);
+          height = c0.y + c0.height - ny;
+          y = ny;
+        }
+        if (edge.includes("b")) {
+          height = clamp(c0.height + dy, 0.05, 1 - c0.y);
+        }
+      }
+      state.crop = { x, y, width, height };
+      renderCropInfo();
+    }
+
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  frame.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("handle")) return;
+    startDrag(e, "move", null);
+  });
+  document.querySelectorAll(".handle").forEach((h) => {
+    h.addEventListener("mousedown", (e) =>
+      startDrag(e, "resize", h.dataset.edge),
+    );
+  });
+
+  $("#crop-reset").addEventListener("click", () => {
+    state.crop = null;
+    renderCropInfo();
+  });
+
+  // 影片若整張未設過 crop，第一次點影片區自動建一個預設框
+  wrap.addEventListener("dblclick", () => ensureCrop());
+})();
