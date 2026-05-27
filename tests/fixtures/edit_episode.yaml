@@ -1,0 +1,7 @@
+# 這是 regression 用的最小 fixture，只給 assemble --dry-run 檢查 ffmpeg 指令含 crop + select
+crop:
+  x: 0.05
+  y: 0.05
+  width: 0.9
+  height: 0.9
+deletions: [1]
