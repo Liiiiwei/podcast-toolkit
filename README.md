@@ -39,6 +39,9 @@ podcast resegment "$HOME/Downloads/20260601 新集名"
 
 # 5. 人工檢查 04_工作檔/_resegment_review.txt，必要時改 episode.yaml 的 force_break/force_join 重跑（重跑要加 --force 蓋掉舊 v2.srt）
 
+# 5.5 (可選) 視覺化編輯：裁切畫框 / 刪段 / 改字
+podcast edit "$HOME/Downloads/20260601 新集名"
+
 # 6. 跑 assemble 合成
 podcast assemble "$HOME/Downloads/20260601 新集名"
 ```
@@ -67,6 +70,7 @@ podcast assemble "$HOME/Downloads/20260601 新集名"
 - `podcast resegment <path> [--force]` — 字幕重新斷句
 - `podcast assemble <path> [--dry-run] [--force]` — 合成 YT 完整版
 - `podcast relink <path>` — 修復斷掉的 symlink
+- `podcast edit <path>` — 開瀏覽器視覺化編輯：裁切 / 刪段 / 改字
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 
@@ -77,6 +81,16 @@ bash tests/regression.sh
 ```
 
 用「過嗨乳牛」這集 diff 確保 toolkit 改動不會破壞既有行為。
+
+## podcast edit 手動驗收
+
+1. `podcast edit <path>` → 瀏覽器自動開、影片可播
+2. 雙擊影片區出現裁切框 → 拖角縮放、拖中心移動
+3. 點字幕卡時間欄 → 影片跳到對應時間
+4. inline 改錯字 → 失焦後文字變橘色底線
+5. ✕ 刪卡 → 卡片變灰、再點 ↺ 還原
+6. 「完成並儲存」→ 頁面變「✅ 已儲存」、CLI exit 0、`episode.yaml` 與 `_v2.srt` 真的有改
+7. `podcast assemble` → 輸出 mp4 解析度、時長、字幕都套用編輯結果
 
 ## Roadmap（未做）
 
