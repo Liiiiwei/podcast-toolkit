@@ -52,6 +52,8 @@ def merge(defaults: dict, episode: dict) -> dict:
         "main_srt": episode.get("main_srt"),
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),
+        "crop": episode.get("crop"),
+        "deletions": list(episode.get("deletions") or []),
     }
     return cfg
 
