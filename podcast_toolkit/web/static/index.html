@@ -1,5 +1,49 @@
-<html>
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>podcast edit</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
   <body>
-    placeholder
+    <header class="topbar">
+      <div>
+        <div class="title" id="title">載入中…</div>
+        <div class="status" id="status"></div>
+      </div>
+      <div class="actions">
+        <button id="cancel-btn">取消</button>
+        <button id="save-btn" class="primary" disabled>完成並儲存</button>
+      </div>
+    </header>
+
+    <main class="body">
+      <section class="video-pane">
+        <div class="video-wrap">
+          <video id="video" src="/api/video" preload="metadata"></video>
+          <div class="crop-frame" id="crop-frame">
+            <div class="handle tl" data-edge="tl"></div>
+            <div class="handle tr" data-edge="tr"></div>
+            <div class="handle bl" data-edge="bl"></div>
+            <div class="handle br" data-edge="br"></div>
+          </div>
+        </div>
+        <div class="controls">
+          <button id="play-btn">▶</button>
+          <span id="time">00:00 / 00:00</span>
+          <input type="range" id="seek" min="0" max="100" value="0" />
+        </div>
+        <div class="crop-info">
+          <span id="crop-text">裁切框：未設定</span>
+          <button id="crop-reset">↺ 重設為整張</button>
+        </div>
+      </section>
+
+      <section class="cards-pane">
+        <div id="cards-list"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js" type="module"></script>
   </body>
 </html>
