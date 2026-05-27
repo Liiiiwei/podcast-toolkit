@@ -24,6 +24,11 @@ def cmd_relink(args):
     return relink.run(Path(args.path))
 
 
+def cmd_edit(args):
+    from podcast_toolkit import edit
+    return edit.run(Path(args.path))
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="podcast", description="Podcast 剪輯 toolkit")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -42,6 +47,10 @@ def build_parser():
     pa.add_argument("--dry-run", action="store_true", help="只印 ffmpeg 指令不執行")
     pa.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pa.set_defaults(func=cmd_assemble)
+
+    pe = sub.add_parser("edit", help="在瀏覽器編輯：裁切 / 刪段 / 改字")
+    pe.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pe.set_defaults(func=cmd_edit)
 
     prl = sub.add_parser("relink", help="修復斷掉的 symlink")
     prl.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
