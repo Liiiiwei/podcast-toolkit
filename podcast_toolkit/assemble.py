@@ -35,7 +35,38 @@ def build_style_string(style: dict) -> str:
     return ",".join(parts)
 
 
-def build_filter_complex(cfg: dict, main_dur: float, srt_rel: str) -> str:
+def build_deletion_intervals(v2_srt_path: Path, deletions: list[int]) -> list[tuple[float, float]]:
+    """讀 _v2.srt → 對應 deletion idx 的時間區間（秒）。"""
+    from podcast_toolkit import srt_io
+    if not deletions:
+        return []
+    cards = srt_io.parse(v2_srt_path.read_text(encoding="utf-8"))
+    by_idx = {c["idx"]: c for c in cards}
+    intervals = []
+    for idx in deletions:
+        c = by_idx.get(int(idx))
+        if c is None:
+            continue
+        intervals.append((c["start"], c["end"]))
+    intervals.sort()
+    return intervals
+
+
+def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
+    """把要刪除的字幕段拿掉，寫到 dst（idx 仍維持原樣，ffmpeg 不在意）。"""
+    from podcast_toolkit import srt_io
+    cards = srt_io.parse(src.read_text(encoding="utf-8"))
+    deletion_set = {int(i) for i in deletions or []}
+    kept = [c for c in cards if c["idx"] not in deletion_set]
+    dst.write_text(srt_io.serialize(kept), encoding="utf-8")
+
+
+def build_filter_complex(
+    cfg: dict,
+    main_dur: float,
+    srt_rel: str,
+    deletion_intervals: list[tuple[float, float]] | None = None,
+) -> str:
     """組裝 ffmpeg filter_complex 字串（含 crop / deletions 支援）。"""
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
@@ -54,11 +85,18 @@ def build_filter_complex(cfg: dict, main_dur: float, srt_rel: str) -> str:
         cy = int(int(res_h) * crop["y"])
         crop_part = f"crop={cw}:{ch}:{cx}:{cy},"
 
+    # 刪除區間：select / aselect filter（跳過 deletion 時間段）
+    select_v, select_a = "", ""
+    if deletion_intervals:
+        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in deletion_intervals)
+        select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
+        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+
     return (
         f"[0:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
         f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v0];"
         f"[1:v]subtitles={srt_rel}:force_style='{style_str}',"
-        f"scale={res_w}:{res_h},{crop_part}setsar=1,"
+        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
         f"fps={enc['framerate']},format={enc['pix_fmt']},"
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v1];"
         f"[2:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
@@ -66,7 +104,7 @@ def build_filter_complex(cfg: dict, main_dur: float, srt_rel: str) -> str:
         f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
         f"[1:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
         f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
@@ -128,7 +166,21 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
     srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
-    fc = build_filter_complex(cfg, main_dur=main_dur, srt_rel=srt_rel)
+    # 處理 deletions：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
+    deletions = list(cfg.get("deletions") or [])
+    deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
+
+    if deletions:
+        clean_srt = ep.subdir("work") / "_v2_assembled.srt"
+        filter_deletion_srt(srt, clean_srt, deletions)
+        srt = clean_srt
+        srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
+        # main_dur 用於 fade-out 計時，刪段後有效時長要扣掉刪除區間總長
+        deleted_total = sum(b - a for a, b in deletion_intervals)
+        main_dur = main_dur - deleted_total
+
+    fc = build_filter_complex(cfg, main_dur=main_dur, srt_rel=srt_rel,
+                              deletion_intervals=deletion_intervals)
 
     out_rel = str(out.relative_to(cwd))
 

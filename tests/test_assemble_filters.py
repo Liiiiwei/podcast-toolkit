@@ -37,3 +37,39 @@ def test_filter_complex_with_crop_adds_crop_filter():
     fc = assemble.build_filter_complex(cfg, main_dur=100.0, srt_rel="x.srt")
     # 1920 * 0.8 = 1536, 1080 * 0.9 = 972, x=192, y=54
     assert "crop=1536:972:192:54" in fc
+
+
+def test_filter_complex_with_deletions_adds_select():
+    cfg = {**BASE_CFG, "deletions": [3]}
+    intervals = [(12.0, 14.0)]
+    fc = assemble.build_filter_complex(
+        cfg, main_dur=100.0, srt_rel="x.srt", deletion_intervals=intervals
+    )
+    assert "select='not(between(t" in fc
+    assert "between(t,12.000,14.000)" in fc.replace(" ", "")
+    assert "aselect=" in fc
+
+
+def test_build_deletion_intervals_returns_card_time_ranges(tmp_episode_dir):
+    from podcast_toolkit import assemble as asm
+    intervals = asm.build_deletion_intervals(
+        v2_srt_path=tmp_episode_dir / "03_成品" / "測試集_final_v2.srt",
+        deletions=[3],
+    )
+    assert intervals == [(12.0, 14.0)]
+
+
+def test_filter_deletion_srt_writes_clean_srt(tmp_path):
+    from podcast_toolkit import assemble as asm
+    src = tmp_path / "in.srt"
+    src.write_text(
+        "1\n00:00:00,000 --> 00:00:04,000\nA\n\n"
+        "2\n00:00:04,000 --> 00:00:08,000\nB\n\n"
+        "3\n00:00:08,000 --> 00:00:12,000\nC\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out.srt"
+    asm.filter_deletion_srt(src, out, deletions=[2])
+    text = out.read_text(encoding="utf-8")
+    assert "B" not in text
+    assert "A" in text and "C" in text
