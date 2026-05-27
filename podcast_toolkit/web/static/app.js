@@ -238,3 +238,48 @@ load();
   // 影片若整張未設過 crop，第一次點影片區自動建一個預設框
   wrap.addEventListener("dblclick", () => ensureCrop());
 })();
+
+// === 儲存 / 取消 ===
+$("#save-btn").addEventListener("click", async () => {
+  $("#save-btn").disabled = true;
+  $("#save-btn").textContent = "儲存中…";
+  const payload = {
+    crop: state.crop,
+    deletions: [...state.deletions].sort((a, b) => a - b),
+    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
+      idx,
+      text,
+    })),
+  };
+  try {
+    const r = await fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    document.body.innerHTML =
+      "<div style='padding:40px;text-align:center;font-size:16px'>" +
+      "✅ 已儲存，可以關閉這個分頁。" +
+      "</div>";
+  } catch (e) {
+    alert(`儲存失敗：${e.message}`);
+    $("#save-btn").disabled = false;
+    $("#save-btn").textContent = "完成並儲存";
+  }
+});
+
+$("#cancel-btn").addEventListener("click", async () => {
+  const dirty =
+    state.deletions.size > 0 ||
+    state.textOverrides.size > 0 ||
+    state.crop != null;
+  if (dirty && !confirm("未儲存的修改會丟失，確定取消？")) return;
+  try {
+    await fetch("/api/shutdown", { method: "POST" });
+  } catch (_) {}
+  document.body.innerHTML =
+    "<div style='padding:40px;text-align:center;font-size:16px'>" +
+    "已取消，可以關閉這個分頁。" +
+    "</div>";
+});
