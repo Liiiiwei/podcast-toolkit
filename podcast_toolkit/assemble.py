@@ -35,6 +35,44 @@ def build_style_string(style: dict) -> str:
     return ",".join(parts)
 
 
+def build_filter_complex(cfg: dict, main_dur: float, srt_rel: str) -> str:
+    """組裝 ffmpeg filter_complex 字串（含 crop / deletions 支援）。"""
+    enc = cfg["encode"]
+    res_w, res_h = enc["resolution"].split("x")
+    intro_dur = cfg["assets"]["intro_duration"]
+    intro_fade_out = cfg["assets"]["intro_fade_out"]
+    style_str = build_style_string(cfg["subtitle_style"])
+
+    # main video 前處理 chain：選擇性加 crop
+    crop = cfg.get("crop")
+    crop_part = ""
+    if crop:
+        # crop 比例 → px：依最終 resolution 換算（影片 scale 後一致）
+        cw = int(int(res_w) * crop["width"])
+        ch = int(int(res_h) * crop["height"])
+        cx = int(int(res_w) * crop["x"])
+        cy = int(int(res_h) * crop["y"])
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},"
+
+    return (
+        f"[0:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
+        f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v0];"
+        f"[1:v]subtitles={srt_rel}:force_style='{style_str}',"
+        f"scale={res_w}:{res_h},{crop_part}setsar=1,"
+        f"fps={enc['framerate']},format={enc['pix_fmt']},"
+        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v1];"
+        f"[2:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
+        f"format={enc['pix_fmt']},fade=t=in:st=0:d=0.5[v2];"
+        f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
+        f"[1:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"afade=t=in:st=0:d=0.5[a2];"
+        f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
+    )
+
+
 def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     if not shutil.which("ffmpeg"):
         print("✗ 找不到 ffmpeg，請 brew install ffmpeg", file=sys.stderr)
@@ -81,10 +119,7 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     intro_fade_out = cfg["assets"]["intro_fade_out"]
     outro_dur = cfg["assets"]["outro_duration"]
 
-    style_str = build_style_string(cfg["subtitle_style"])
     enc = cfg["encode"]
-    # 解析 resolution
-    res_w, res_h = enc["resolution"].split("x")
 
     # filter_complex：與 assemble.sh 等效
     # 注意：ffmpeg subtitles filter 路徑要相對 cwd，所以 subprocess cwd 設為 03_成品/
@@ -93,22 +128,7 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
     srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
-    fc = (
-        f"[0:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
-        f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v0];"
-        f"[1:v]subtitles={srt_rel}:force_style='{style_str}',scale={res_w}:{res_h},setsar=1,"
-        f"fps={enc['framerate']},format={enc['pix_fmt']},"
-        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v1];"
-        f"[2:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
-        f"format={enc['pix_fmt']},fade=t=in:st=0:d=0.5[v2];"
-        f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
-        f"[1:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
-        f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"afade=t=in:st=0:d=0.5[a2];"
-        f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
-    )
+    fc = build_filter_complex(cfg, main_dur=main_dur, srt_rel=srt_rel)
 
     out_rel = str(out.relative_to(cwd))
 
