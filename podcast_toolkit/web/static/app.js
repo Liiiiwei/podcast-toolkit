@@ -814,3 +814,50 @@ $("#cancel-btn").addEventListener("click", async () => {
     "已取消，可以關閉這個分頁。" +
     "</div>";
 });
+
+// === 換集 ===
+async function switchEpisode() {
+  const input = $("#ep-switch-input");
+  const btn = $("#ep-switch-btn");
+  const newPath = input.value.trim();
+  if (!newPath) {
+    input.focus();
+    return;
+  }
+  const dirty = state.deletions.size > 0 || state.textOverrides.size > 0;
+  if (dirty && !confirm("有未儲存的修改，換集後會丟失，繼續？")) return;
+
+  btn.disabled = true;
+  btn.textContent = "載入中…";
+  try {
+    const r = await fetch("/api/episode/switch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: newPath }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    // 重設前端狀態
+    state.previewPath = null;
+    state.cropRatio = null;
+    // 影片加 cache-bust 避免瀏覽器繼續用舊集的快取
+    const video = $("#video");
+    video.src = `/api/video?_=${Date.now()}`;
+    video.load();
+    // 重新拉所有狀態（episode/dict/files/config）
+    await load();
+    input.value = "";
+  } catch (e) {
+    alert(`換集失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "開啟";
+  }
+}
+
+$("#ep-switch-btn").addEventListener("click", switchEpisode);
+$("#ep-switch-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") switchEpisode();
+});

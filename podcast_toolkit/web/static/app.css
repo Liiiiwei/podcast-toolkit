@@ -28,6 +28,41 @@ body {
   color: #888;
   margin-top: 2px;
 }
+.ep-switch {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex: 1;
+  max-width: 520px;
+  margin: 0 16px;
+}
+.ep-switch input {
+  flex: 1;
+  background: #0a0a0a;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 12px;
+}
+.ep-switch button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid #555;
+  background: #2a2a2a;
+  color: #ddd;
+  cursor: pointer;
+  font-size: 12px;
+}
+.ep-switch button:hover {
+  border-color: #ff6b35;
+  color: #ff6b35;
+}
+.ep-switch button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .actions button {
   margin-left: 8px;
   padding: 6px 14px;

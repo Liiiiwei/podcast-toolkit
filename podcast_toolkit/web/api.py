@@ -1,6 +1,7 @@
 """FastAPI app 工廠：給 edit.py 起 server 用。"""
 from __future__ import annotations
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Callable
@@ -96,6 +97,8 @@ def _list_episode_files(root: Path) -> list[dict]:
 def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     """建立 FastAPI app。shutdown 是儲存後/取消時呼叫的 callback。"""
     app = FastAPI(title="podcast-edit")
+    # 用 dict 包住，讓 /api/episode/switch 能 hot-swap
+    holder = {"ep": ep}
 
     @app.get("/")
     def index():
@@ -105,10 +108,35 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/api/episode")
     def get_episode():
-        return JSONResponse(episode_io.load_state(ep))
+        return JSONResponse(episode_io.load_state(holder["ep"]))
+
+    @app.post("/api/episode/switch")
+    def switch_episode(payload: dict):
+        raw = (payload.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        new_dir = Path(os.path.expanduser(raw)).resolve()
+        if not new_dir.is_dir():
+            raise HTTPException(status_code=400, detail=f"資料夾不存在：{new_dir}")
+        if not (new_dir / "episode.yaml").is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"不是 episode 資料夾（缺 episode.yaml）：{new_dir}",
+            )
+        try:
+            new_ep = Episode(new_dir)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}")
+        holder["ep"] = new_ep
+        return JSONResponse({
+            "ok": True,
+            "name": new_ep.name,
+            "dir": str(new_ep.dir),
+        })
 
     @app.get("/api/video")
     def get_video(request: Request, path: str | None = None):
+        ep = holder["ep"]
         # path 為空 → main_video；否則必須在 ep.dir 內且可預覽
         if not path:
             target = ep.main_video()
@@ -126,7 +154,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.post("/api/save")
     def save(payload: dict):
-        episode_io.save_state(ep, payload)
+        episode_io.save_state(holder["ep"], payload)
         # 延遲呼叫 shutdown,讓 response 先送出
         threading.Timer(0.3, shutdown).start()
         return {"ok": True}
@@ -142,8 +170,10 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/api/files")
     def get_files():
+        ep = holder["ep"]
         return JSONResponse({
             "root": ep.name,
+            "dir": str(ep.dir),
             "files": _list_episode_files(ep.dir),
         })
 
@@ -169,6 +199,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.post("/api/transcribe")
     def post_transcribe(payload: dict):
+        ep = holder["ep"]
         rel = (payload.get("path") or "").strip()
         if not rel:
             raise HTTPException(status_code=400, detail="缺少 path")
