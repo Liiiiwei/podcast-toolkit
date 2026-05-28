@@ -6,6 +6,8 @@ const state = {
   cards: [],
   textOverrides: new Map(), // idx -> text
   typoDict: [], // [{wrong, right, note}]
+  files: [], // [{path, size, transcribable}]
+  hasApiKey: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -124,27 +126,50 @@ function renderCards() {
   }
 }
 
-async function load() {
-  const [epRes, dictRes] = await Promise.all([
-    fetch("/api/episode"),
-    fetch("/api/typo-dict"),
-  ]);
-  if (!epRes.ok) {
-    alert("載入 episode 失敗");
-    return;
-  }
-  const data = await epRes.json();
+async function loadEpisodeState() {
+  // 只重抓 episode + cards，重新轉字幕後會用到
+  const r = await fetch("/api/episode");
+  if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
+  const data = await r.json();
   state.name = data.name;
-  // 預設顯示裁切框：未設過時帶一個 90% 的初始框，讓使用者直接看到可拖動的範圍
   state.crop = data.crop ?? { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
+  state.textOverrides = new Map();
+}
+
+async function loadFiles() {
+  try {
+    const r = await fetch("/api/files");
+    if (!r.ok) return;
+    const data = await r.json();
+    state.files = data.files || [];
+  } catch (_) {}
+}
+
+async function loadConfig() {
+  try {
+    const r = await fetch("/api/config");
+    if (!r.ok) return;
+    const data = await r.json();
+    state.hasApiKey = !!data.has_xai_api_key;
+  } catch (_) {}
+}
+
+async function load() {
+  const [, dictRes, ,] = await Promise.all([
+    loadEpisodeState(),
+    fetch("/api/typo-dict"),
+    loadFiles(),
+    loadConfig(),
+  ]);
   state.typoDict = dictRes.ok ? await dictRes.json() : [];
   renderTopbar();
   renderCropInfo();
   renderCards();
   renderCaption();
   renderTypo();
+  renderFiles();
 }
 
 // === 錯字表 ===
@@ -470,6 +495,206 @@ $("#save-btn").addEventListener("click", async () => {
     alert(`儲存失敗：${e.message}`);
     $("#save-btn").disabled = false;
     $("#save-btn").textContent = "完成並儲存";
+  }
+});
+
+// === 專案檔案 panel + 轉字幕 ===
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function renderFiles() {
+  const list = $("#files-list");
+  const summary = $("#files-summary");
+  list.innerHTML = "";
+  const total = state.files.length;
+  const audio = state.files.filter((f) => f.transcribable).length;
+  summary.textContent = `${total} 個檔案 · ${audio} 個可轉字幕`;
+
+  if (total === 0) {
+    const empty = document.createElement("div");
+    empty.className = "typo-empty";
+    empty.textContent = "資料夾是空的";
+    list.appendChild(empty);
+    return;
+  }
+
+  for (const f of state.files) {
+    const item = document.createElement("div");
+    item.className = "file-item";
+
+    const path = document.createElement("div");
+    path.className = "file-path";
+    path.title = f.path;
+    path.textContent = f.path;
+
+    const size = document.createElement("div");
+    size.className = "file-size";
+    size.textContent = fmtSize(f.size);
+
+    let action;
+    if (f.transcribable) {
+      action = document.createElement("button");
+      action.className = "file-stt";
+      action.textContent = "🎙 轉字幕";
+      action.title = state.hasApiKey
+        ? "用 Grok STT 轉字幕並覆蓋 _v2.srt"
+        : "請先設定 xAI API key（⚙）";
+      action.addEventListener("click", () => requestTranscribe(f));
+    } else {
+      action = document.createElement("span");
+      action.className = "file-stt-placeholder";
+      action.textContent = "—";
+    }
+
+    item.append(path, size, action);
+    list.appendChild(item);
+  }
+}
+
+// 簡易 modal 控制
+function showModal(id) {
+  $(`#${id}`).classList.remove("hidden");
+}
+function hideModal(id) {
+  $(`#${id}`).classList.add("hidden");
+}
+
+// === 轉字幕流程 ===
+function requestTranscribe(file) {
+  if (!state.hasApiKey) {
+    $("#transcribe-title").textContent = "尚未設定 API key";
+    $("#transcribe-msg").innerHTML =
+      "請先到右上角 ⚙ 設定 xAI API key，才能用 Grok STT 轉字幕。";
+    const go = $("#transcribe-go");
+    go.textContent = "去設定";
+    go.disabled = false;
+    go.onclick = () => {
+      hideModal("transcribe-modal");
+      openSettings();
+    };
+    $("#transcribe-cancel").onclick = () => hideModal("transcribe-modal");
+    showModal("transcribe-modal");
+    return;
+  }
+
+  $("#transcribe-title").textContent = "轉字幕確認";
+  $("#transcribe-msg").innerHTML =
+    `來源檔：<code>${file.path}</code><br>` +
+    `大小：${fmtSize(file.size)}<br><br>` +
+    `用 Grok STT（x.ai）轉字幕並覆寫 <code>_v2.srt</code>。<br>` +
+    `預估時間：約音檔長度的 1 倍（3 分鐘片約 60–180 秒）。`;
+  const go = $("#transcribe-go");
+  go.textContent = "開始";
+  go.disabled = false;
+  go.onclick = () => runTranscribe(file);
+  $("#transcribe-cancel").onclick = () => hideModal("transcribe-modal");
+  showModal("transcribe-modal");
+}
+
+async function runTranscribe(file) {
+  $("#transcribe-title").textContent = "轉字幕中…";
+  $("#transcribe-msg").innerHTML =
+    `處理中：<code>${file.path}</code><br>` +
+    `會做：ffmpeg 壓縮 → 上傳 x.ai → 簡轉繁 → 寫 SRT<br>` +
+    `<br><em>請保留這個分頁，不要關閉。</em>`;
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  go.disabled = true;
+  cancel.disabled = true;
+
+  try {
+    const r = await fetch("/api/transcribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: file.path }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+
+    $("#transcribe-title").textContent = "✅ 完成";
+    $("#transcribe-msg").innerHTML =
+      `已寫入：<code>${data.out_srt}</code><br>` + `正在重新載入編輯區…`;
+
+    // 重抓 episode state 並重 render 字幕卡
+    await loadEpisodeState();
+    renderTopbar();
+    renderCards();
+    renderCaption();
+    renderTypo();
+
+    cancel.disabled = false;
+    cancel.textContent = "關閉";
+    cancel.onclick = () => {
+      hideModal("transcribe-modal");
+      cancel.textContent = "取消";
+    };
+  } catch (e) {
+    $("#transcribe-title").textContent = "❌ 失敗";
+    $("#transcribe-msg").innerHTML =
+      `<div style="color:#ff6b35">${e.message}</div>`;
+    cancel.disabled = false;
+    cancel.textContent = "關閉";
+    cancel.onclick = () => {
+      hideModal("transcribe-modal");
+      cancel.textContent = "取消";
+    };
+  }
+}
+
+// === 設定 modal ===
+function openSettings() {
+  const input = $("#settings-xai-key");
+  input.value = "";
+  input.type = "password";
+  $("#settings-status").textContent = state.hasApiKey
+    ? "已存在 API key（重新輸入會覆蓋；留空則維持原樣）"
+    : "尚未設定";
+  showModal("settings-modal");
+}
+
+$("#settings-btn").addEventListener("click", openSettings);
+
+$("#settings-cancel").addEventListener("click", () =>
+  hideModal("settings-modal"),
+);
+
+$("#settings-show").addEventListener("click", () => {
+  const input = $("#settings-xai-key");
+  input.type = input.type === "password" ? "text" : "password";
+});
+
+$("#settings-save").addEventListener("click", async () => {
+  const input = $("#settings-xai-key");
+  const key = input.value.trim();
+  // 留空時不送 xai_api_key，保持原本設定
+  const payload = key ? { xai_api_key: key } : {};
+  const btn = $("#settings-save");
+  btn.disabled = true;
+  btn.textContent = "儲存中…";
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    state.hasApiKey = !!data.has_xai_api_key;
+    hideModal("settings-modal");
+    renderFiles();
+  } catch (e) {
+    alert(`儲存失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "儲存";
   }
 });
 

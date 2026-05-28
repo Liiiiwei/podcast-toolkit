@@ -48,13 +48,13 @@ if ! pip3 install --user pyyaml >/dev/null 2>&1; then
 fi
 echo "  ✓ pyyaml"
 
-echo "→ 安裝 Python 套件 fastapi / uvicorn / pytest"
-PY_PKGS="fastapi uvicorn[standard] pytest"
+echo "→ 安裝 Python 套件 fastapi / uvicorn / pytest / requests / opencc"
+PY_PKGS="fastapi uvicorn[standard] pytest requests opencc-python-reimplemented"
 if ! pip3 install --user $PY_PKGS >/dev/null 2>&1; then
     echo "  ⚠ pip3 install 一般模式失敗，改用 --break-system-packages 重試"
     pip3 install --user --break-system-packages $PY_PKGS
 fi
-echo "  ✓ fastapi / uvicorn / pytest"
+echo "  ✓ fastapi / uvicorn / pytest / requests / opencc"
 
 echo "→ 選擇 podcast CLI symlink 位置"
 TARGETS=("/opt/homebrew/bin" "/usr/local/bin" "$HOME/.local/bin" "$HOME/bin")

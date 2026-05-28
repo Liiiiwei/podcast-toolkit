@@ -270,11 +270,164 @@ body {
   padding: 4px 6px;
 }
 
+/* 專案檔案 panel */
+.files-pane {
+  margin-top: 10px;
+  background: #0a0a0a;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 28vh;
+  overflow-y: auto;
+}
+.files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.file-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 6px;
+  background: #161616;
+  border-radius: 3px;
+}
+.file-path {
+  color: #ddd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  font-size: 11px;
+}
+.file-size {
+  color: #888;
+  font-size: 11px;
+  min-width: 56px;
+  text-align: right;
+}
+.file-stt {
+  background: transparent;
+  color: #ff6b35;
+  border: 1px solid #ff6b35;
+  border-radius: 3px;
+  font-size: 11px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.file-stt:disabled {
+  color: #555;
+  border-color: #333;
+  cursor: not-allowed;
+}
+.file-stt-placeholder {
+  font-size: 11px;
+  color: #555;
+  min-width: 24px;
+  text-align: center;
+}
+
 .cards-pane {
   overflow-y: auto;
   background: #0a0a0a;
   border-radius: 4px;
   padding: 8px;
+}
+
+/* Modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal-backdrop.hidden {
+  display: none;
+}
+.modal {
+  background: #1f1f1f;
+  border: 1px solid #333;
+  border-radius: 6px;
+  min-width: 380px;
+  max-width: 520px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.modal-head {
+  font-weight: 600;
+  font-size: 14px;
+}
+.modal-body {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal-label {
+  font-size: 12px;
+  color: #aaa;
+}
+.modal-row {
+  display: flex;
+  gap: 6px;
+}
+.modal-row input {
+  flex: 1;
+  background: #0a0a0a;
+  color: #ddd;
+  border: 1px solid #333;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 12px;
+}
+.modal-row button {
+  background: #2a2a2a;
+  color: #ddd;
+  border: 1px solid #555;
+  border-radius: 3px;
+  padding: 0 10px;
+  cursor: pointer;
+}
+.modal-hint {
+  font-size: 11px;
+  color: #888;
+}
+.modal-hint a {
+  color: #ff6b35;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-actions button {
+  background: #2a2a2a;
+  color: #ddd;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.modal-actions .primary {
+  background: #ff6b35;
+  border-color: #ff6b35;
+  color: white;
+  font-weight: 600;
+}
+.modal-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .card {
   display: grid;

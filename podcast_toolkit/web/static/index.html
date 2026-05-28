@@ -12,6 +12,7 @@
         <div class="status" id="status"></div>
       </div>
       <div class="actions">
+        <button id="settings-btn" title="設定">⚙</button>
         <button id="cancel-btn">取消</button>
         <button id="save-btn" class="primary" disabled>完成並儲存</button>
       </div>
@@ -39,6 +40,14 @@
           <button id="crop-reset">↺ 重設為整張</button>
         </div>
 
+        <div class="files-pane">
+          <div class="typo-head">
+            <span>專案檔案</span>
+            <span class="typo-sub" id="files-summary">載入中…</span>
+          </div>
+          <div id="files-list" class="files-list"></div>
+        </div>
+
         <div class="typo-pane">
           <div class="typo-section">
             <div class="typo-head">
@@ -61,6 +70,50 @@
         <div id="cards-list"></div>
       </section>
     </main>
+
+    <!-- 設定 modal -->
+    <div class="modal-backdrop hidden" id="settings-modal">
+      <div class="modal">
+        <div class="modal-head">設定</div>
+        <div class="modal-body">
+          <label class="modal-label">xAI API key</label>
+          <div class="modal-row">
+            <input
+              type="password"
+              id="settings-xai-key"
+              placeholder="xai-..."
+              autocomplete="off"
+            />
+            <button id="settings-show" type="button" title="顯示/隱藏">
+              👁
+            </button>
+          </div>
+          <div class="modal-hint" id="settings-status">尚未設定</div>
+          <div class="modal-hint">
+            從 <a href="https://console.x.ai" target="_blank">console.x.ai</a>
+            取得，存於 ~/.podcast-toolkit/config.json
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="settings-cancel">取消</button>
+          <button id="settings-save" class="primary">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 轉字幕進度 modal -->
+    <div class="modal-backdrop hidden" id="transcribe-modal">
+      <div class="modal">
+        <div class="modal-head" id="transcribe-title">準備轉字幕</div>
+        <div class="modal-body">
+          <div id="transcribe-msg">…</div>
+        </div>
+        <div class="modal-actions" id="transcribe-actions">
+          <button id="transcribe-cancel">取消</button>
+          <button id="transcribe-go" class="primary">開始</button>
+        </div>
+      </div>
+    </div>
 
     <script src="/static/app.js" type="module"></script>
   </body>
