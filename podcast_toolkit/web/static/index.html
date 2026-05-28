@@ -23,7 +23,12 @@
         <div class="video-wrap">
           <video id="video" src="/api/video" preload="metadata"></video>
           <div id="caption-overlay"></div>
-          <div class="crop-frame" id="crop-frame"></div>
+          <div class="crop-frame" id="crop-frame">
+            <div class="handle tl" data-edge="tl"></div>
+            <div class="handle tr" data-edge="tr"></div>
+            <div class="handle bl" data-edge="bl"></div>
+            <div class="handle br" data-edge="br"></div>
+          </div>
         </div>
         <div class="controls">
           <button id="play-btn">▶</button>

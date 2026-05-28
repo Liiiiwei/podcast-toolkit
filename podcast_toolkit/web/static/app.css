@@ -108,6 +108,33 @@ body {
 .crop-frame.hidden {
   display: none;
 }
+.handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border: 1px solid #ff6b35;
+}
+.handle.tl {
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize;
+}
+.handle.tr {
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize;
+}
+.handle.bl {
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize;
+}
+.handle.br {
+  bottom: -6px;
+  right: -6px;
+  cursor: nwse-resize;
+}
 .crop-ratios {
   display: flex;
   gap: 6px;

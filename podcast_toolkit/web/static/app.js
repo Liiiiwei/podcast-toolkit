@@ -436,9 +436,10 @@ load();
     });
   }
 
-  // 整框拖移（位置可變，大小不變）
+  // 拖移整框（位置變，大小不變）
   frame.addEventListener("mousedown", (e) => {
     if (!state.crop) return;
+    if (e.target.classList.contains("handle")) return; // handle 自己處理
     e.preventDefault();
     const rect = wrap.getBoundingClientRect();
     const startX = e.clientX;
@@ -461,6 +462,66 @@ load();
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  });
+
+  // 四角縮放（鎖比例：固定 cropW/cropH 比，opposite corner 當錨點）
+  function startResize(e, edge) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state.crop || !state.cropRatio) return;
+    const rect = wrap.getBoundingClientRect();
+    const c0 = { ...state.crop };
+    // wOverH = cropW / cropH（標準化）；resize 過程不變
+    const wOverH = c0.width / c0.height;
+
+    // 錨點 = 對角的標準化座標
+    const anchorX = edge.includes("l") ? c0.x + c0.width : c0.x;
+    const anchorY = edge.includes("t") ? c0.y + c0.height : c0.y;
+    const signX = edge.includes("l") ? -1 : 1; // 拖動方向：r=向右增寬, l=向左增寬
+    const signY = edge.includes("t") ? -1 : 1;
+
+    function onMove(ev) {
+      const mx = (ev.clientX - rect.left) / rect.width;
+      const my = (ev.clientY - rect.top) / rect.height;
+      // 拖動點距離錨點的標準化長度（每個軸都取正值）
+      let dw = Math.max(0.05, signX * (mx - anchorX));
+      let dh = Math.max(0.05, signY * (my - anchorY));
+      // 鎖比例：取兩軸中能容納的較大者，另一軸隨之
+      let width, height;
+      if (dw / dh > wOverH) {
+        // 寬太大 → 以高為主
+        height = dh;
+        width = height * wOverH;
+      } else {
+        width = dw;
+        height = width / wOverH;
+      }
+      // clamp 在 [0,1] 內，超出就回推
+      const maxW = signX > 0 ? 1 - anchorX : anchorX;
+      const maxH = signY > 0 ? 1 - anchorY : anchorY;
+      if (width > maxW) {
+        width = maxW;
+        height = width / wOverH;
+      }
+      if (height > maxH) {
+        height = maxH;
+        width = height * wOverH;
+      }
+      const x = signX > 0 ? anchorX : anchorX - width;
+      const y = signY > 0 ? anchorY : anchorY - height;
+      state.crop = { x, y, width, height };
+      renderCropInfo();
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
+
+  document.querySelectorAll(".handle").forEach((h) => {
+    h.addEventListener("mousedown", (e) => startResize(e, h.dataset.edge));
   });
 
   document.querySelectorAll(".ratio-btn").forEach((btn) => {
