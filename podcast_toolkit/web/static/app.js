@@ -71,6 +71,17 @@ function renderCaption() {
   overlay.textContent = state.textOverrides.get(c.idx) ?? c.text;
 }
 
+function renderCardSkeletons(n = 8) {
+  const list = $("#cards-list");
+  list.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const sk = document.createElement("div");
+    sk.className = "card-skeleton";
+    sk.innerHTML = "<span></span><span></span><span></span>";
+    list.appendChild(sk);
+  }
+}
+
 function renderCards() {
   const list = $("#cards-list");
   list.innerHTML = "";
@@ -829,6 +840,7 @@ async function switchEpisode() {
 
   btn.disabled = true;
   btn.textContent = "載入中…";
+  renderCardSkeletons();
   try {
     const r = await fetch("/api/episode/switch", {
       method: "POST",

@@ -8,14 +8,14 @@
   <body>
     <header class="topbar">
       <div>
-        <div class="title" id="title">載入中…</div>
+        <h1 class="title" id="title">載入中…</h1>
         <div class="status" id="status"></div>
       </div>
       <div class="ep-switch">
         <input
           id="ep-switch-input"
           type="text"
-          placeholder="切換到集資料夾路徑（絕對或 ~ 開頭）..."
+          placeholder="集資料夾路徑（絕對或 ~/...）"
           autocomplete="off"
           spellcheck="false"
         />
@@ -56,26 +56,26 @@
         </div>
 
         <div class="files-pane">
-          <div class="typo-head">
+          <h2 class="typo-head">
             <span>專案檔案</span>
             <span class="typo-sub" id="files-summary">載入中…</span>
-          </div>
+          </h2>
           <div id="files-list" class="files-list"></div>
         </div>
 
         <div class="typo-pane">
           <div class="typo-section">
-            <div class="typo-head">
+            <h2 class="typo-head">
               <span>全域字典</span>
               <span class="typo-sub" id="typo-dict-summary">載入中…</span>
-            </div>
+            </h2>
             <div id="typo-dict-list" class="typo-list"></div>
           </div>
           <div class="typo-section">
-            <div class="typo-head">
+            <h2 class="typo-head">
               <span>本集修改</span>
               <span class="typo-sub" id="typo-overrides-summary">0 處</span>
-            </div>
+            </h2>
             <div id="typo-overrides-list" class="typo-list"></div>
           </div>
         </div>
