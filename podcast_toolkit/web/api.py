@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import subprocess
 import threading
 from pathlib import Path
 from typing import Callable
@@ -109,6 +110,33 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/episode")
     def get_episode():
         return JSONResponse(episode_io.load_state(holder["ep"]))
+
+    @app.post("/api/episode/pick")
+    def pick_episode():
+        ep = holder["ep"]
+        default_dir = str(ep.dir.parent)
+        script = (
+            f'POSIX path of (choose folder with prompt "選擇集資料夾" '
+            f'default location POSIX file "{default_dir}")'
+        )
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=500, detail="找不到 osascript（需 macOS）")
+        except subprocess.TimeoutExpired:
+            return JSONResponse({"path": None, "cancelled": True})
+        if result.returncode != 0:
+            # 使用者取消或其他失敗
+            return JSONResponse({"path": None, "cancelled": True})
+        picked = result.stdout.strip().rstrip("/")
+        if not picked:
+            return JSONResponse({"path": None, "cancelled": True})
+        return JSONResponse({"path": picked, "cancelled": False})
 
     @app.post("/api/episode/switch")
     def switch_episode(payload: dict):

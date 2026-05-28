@@ -38,9 +38,15 @@ function renderTopbar() {
 
 function renderCropInfo() {
   const c = state.crop;
+  const overlay = $("#caption-overlay");
   if (!c) {
     $("#crop-text").textContent = "裁切框：未設定（整張畫面）";
     $("#crop-frame").classList.add("hidden");
+    // 字幕回到整個影片區（清除 inline style 讓 CSS 預設生效）
+    overlay.style.left = "";
+    overlay.style.right = "";
+    overlay.style.bottom = "";
+    overlay.style.fontSize = "";
     return;
   }
   const ratio = state.cropRatio ? `${state.cropRatio}` : "自訂";
@@ -52,6 +58,16 @@ function renderCropInfo() {
   frame.style.top = `${c.y * 100}%`;
   frame.style.width = `${c.width * 100}%`;
   frame.style.height = `${c.height * 100}%`;
+
+  // 字幕鎖在裁切框內：左右各內縮 6% 裁切寬度、距框底 8% 裁切高度
+  const padX = 0.06;
+  const padBottom = 0.08;
+  overlay.style.left = `${((c.x + c.width * padX) * 100).toFixed(2)}%`;
+  overlay.style.right = `${((1 - c.x - c.width + c.width * padX) * 100).toFixed(2)}%`;
+  overlay.style.bottom = `${((1 - c.y - c.height + c.height * padBottom) * 100).toFixed(2)}%`;
+  // 字體依裁切寬度比例縮放，最小 11px 保持可讀
+  const fontMax = Math.max(14, 22 * c.width);
+  overlay.style.fontSize = `clamp(11px, ${(2.2 * c.width).toFixed(2)}vw, ${fontMax.toFixed(1)}px)`;
 }
 
 function activeCardAt(t) {
@@ -827,17 +843,54 @@ $("#cancel-btn").addEventListener("click", async () => {
 });
 
 // === 換集 ===
-async function switchEpisode() {
-  const input = $("#ep-switch-input");
+function showSwitchError(msg) {
+  const err = $("#ep-switch-error");
+  err.textContent = msg;
+  err.hidden = false;
+}
+
+function clearSwitchError() {
+  const err = $("#ep-switch-error");
+  err.textContent = "";
+  err.hidden = true;
+}
+
+async function pickEpisodeFolder() {
   const btn = $("#ep-switch-btn");
-  const newPath = input.value.trim();
-  if (!newPath) {
-    input.focus();
-    return;
-  }
   const dirty = state.deletions.size > 0 || state.textOverrides.size > 0;
   if (dirty && !confirm("有未儲存的修改，換集後會丟失，繼續？")) return;
 
+  clearSwitchError();
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "選擇中…";
+  let picked = null;
+  try {
+    const r = await fetch("/api/episode/pick", { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    if (data.cancelled || !data.path) {
+      // 使用者取消，靜默結束
+      return;
+    }
+    picked = data.path;
+  } catch (e) {
+    showSwitchError(`開啟資料夾失敗：${e.message}`);
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+
+  await switchEpisode(picked);
+}
+
+async function switchEpisode(newPath) {
+  const btn = $("#ep-switch-btn");
+  const origLabel = btn.textContent;
   btn.disabled = true;
   btn.textContent = "載入中…";
   renderCardSkeletons();
@@ -860,16 +913,12 @@ async function switchEpisode() {
     video.load();
     // 重新拉所有狀態（episode/dict/files/config）
     await load();
-    input.value = "";
   } catch (e) {
-    alert(`換集失敗：${e.message}`);
+    showSwitchError(`換集失敗：${e.message}`);
   } finally {
     btn.disabled = false;
-    btn.textContent = "開啟";
+    btn.textContent = origLabel;
   }
 }
 
-$("#ep-switch-btn").addEventListener("click", switchEpisode);
-$("#ep-switch-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") switchEpisode();
-});
+$("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);

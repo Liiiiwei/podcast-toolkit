@@ -51,21 +51,17 @@ h2 {
 }
 .ep-switch {
   display: flex;
-  gap: 6px;
-  align-items: center;
-  flex: 1;
-  max-width: 520px;
+  flex-direction: column;
+  gap: 4px;
   margin: 0 16px;
+  align-items: flex-start;
 }
-.ep-switch input {
-  flex: 1;
-  background: #0a0a0a;
-  color: #ddd;
-  border: 1px solid #333;
-  border-radius: 3px;
-  padding: 6px 8px;
-  font-family: monospace;
-  font-size: 12px;
+.ep-switch-error {
+  font-size: 11px;
+  color: #ff5a5a;
+  padding: 0 4px;
+  line-height: 1.4;
+  max-width: 480px;
 }
 .ep-switch button {
   padding: 6px 12px;
