@@ -23,6 +23,8 @@ TRANSCRIBABLE_EXTS = {
     ".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg", ".opus",
     ".mp4", ".mov", ".mkv", ".webm",
 }
+# 可在瀏覽器直接預覽的影片副檔名
+PREVIEWABLE_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
 # 列檔時忽略的目錄/檔名片段
 SKIP_DIRS = {".DS_Store", "__pycache__", ".git"}
 
@@ -86,6 +88,7 @@ def _list_episode_files(root: Path) -> list[dict]:
             "path": rel,
             "size": size,
             "transcribable": p.suffix.lower() in TRANSCRIBABLE_EXTS,
+            "previewable": p.suffix.lower() in PREVIEWABLE_EXTS,
         })
     return files
 
@@ -105,8 +108,21 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
         return JSONResponse(episode_io.load_state(ep))
 
     @app.get("/api/video")
-    def get_video(request: Request):
-        return video.range_response(ep.main_video(), request.headers.get("range"))
+    def get_video(request: Request, path: str | None = None):
+        # path 為空 → main_video；否則必須在 ep.dir 內且可預覽
+        if not path:
+            target = ep.main_video()
+        else:
+            target = (ep.dir / path).resolve()
+            try:
+                target.relative_to(ep.dir)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="路徑必須在集資料夾內")
+            if not target.is_file():
+                raise HTTPException(status_code=404, detail=f"找不到檔案：{path}")
+            if target.suffix.lower() not in PREVIEWABLE_EXTS:
+                raise HTTPException(status_code=400, detail="不支援預覽的副檔名")
+        return video.range_response(target, request.headers.get("range"))
 
     @app.post("/api/save")
     def save(payload: dict):

@@ -7,7 +7,8 @@ const state = {
   cards: [],
   textOverrides: new Map(), // idx -> text
   typoDict: [], // [{wrong, right, note}]
-  files: [], // [{path, size, transcribable}]
+  files: [], // [{path, size, transcribable, previewable}]
+  previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
 };
 
@@ -584,7 +585,8 @@ function renderFiles() {
   list.innerHTML = "";
   const total = state.files.length;
   const audio = state.files.filter((f) => f.transcribable).length;
-  summary.textContent = `${total} 個檔案 · ${audio} 個可轉字幕`;
+  const previewLabel = state.previewPath ? state.previewPath : "主影片";
+  summary.textContent = `${total} 個檔案 · ${audio} 個可轉字幕 · 預覽中：${previewLabel}`;
 
   if (total === 0) {
     const empty = document.createElement("div");
@@ -597,6 +599,8 @@ function renderFiles() {
   for (const f of state.files) {
     const item = document.createElement("div");
     item.className = "file-item";
+    const isActive = state.previewPath === f.path;
+    if (isActive) item.classList.add("previewing");
 
     const path = document.createElement("div");
     path.className = "file-path";
@@ -606,6 +610,19 @@ function renderFiles() {
     const size = document.createElement("div");
     size.className = "file-size";
     size.textContent = fmtSize(f.size);
+
+    let preview;
+    if (f.previewable) {
+      preview = document.createElement("button");
+      preview.className = "file-preview" + (isActive ? " active" : "");
+      preview.textContent = isActive ? "📺 預覽中" : "📺 預覽";
+      preview.title = "切換為此檔案預覽";
+      preview.addEventListener("click", () => switchPreview(f.path));
+    } else {
+      preview = document.createElement("span");
+      preview.className = "file-preview-placeholder";
+      preview.textContent = "—";
+    }
 
     let action;
     if (f.transcribable) {
@@ -622,9 +639,23 @@ function renderFiles() {
       action.textContent = "—";
     }
 
-    item.append(path, size, action);
+    item.append(path, size, preview, action);
     list.appendChild(item);
   }
+}
+
+function switchPreview(relPath) {
+  const video = $("#video");
+  // 同一個檔案再按一次 → 切回主影片
+  if (state.previewPath === relPath) {
+    state.previewPath = null;
+    video.src = "/api/video";
+  } else {
+    state.previewPath = relPath;
+    video.src = `/api/video?path=${encodeURIComponent(relPath)}`;
+  }
+  video.load();
+  renderFiles();
 }
 
 // 簡易 modal 控制
