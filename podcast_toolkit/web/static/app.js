@@ -2,6 +2,7 @@
 const state = {
   name: "",
   crop: null,
+  cropRatio: null, // "4:5" | "9:16" | "16:9" | null
   deletions: new Set(),
   cards: [],
   textOverrides: new Map(), // idx -> text
@@ -41,9 +42,9 @@ function renderCropInfo() {
     $("#crop-frame").classList.add("hidden");
     return;
   }
+  const ratio = state.cropRatio ? `${state.cropRatio}` : "自訂";
   $("#crop-text").textContent =
-    `裁切框：x=${(c.x * 100).toFixed(0)}% y=${(c.y * 100).toFixed(0)}% ` +
-    `w=${(c.width * 100).toFixed(0)}% h=${(c.height * 100).toFixed(0)}%`;
+    `裁切框：${ratio} · x=${(c.x * 100).toFixed(0)}% y=${(c.y * 100).toFixed(0)}%`;
   const frame = $("#crop-frame");
   frame.classList.remove("hidden");
   frame.style.left = `${c.x * 100}%`;
@@ -386,86 +387,95 @@ $("#seek").addEventListener("input", (e) => {
 
 load();
 
-// === Crop 框互動 ===
+// === Crop 框：固定比例 4:5 / 9:16 / 16:9，只能拖移不能 free resize ===
 (function setupCrop() {
   const wrap = $(".video-wrap");
   const frame = $("#crop-frame");
+
+  // 後端 crop 以 1920x1080（16:9）為基準算 px，預覽 .video-wrap 也是 16:9
+  // 目標比例 t（寬/高）→ 標準化 cropW/cropH = t × 9/16
+  const SOURCE_RATIO = 16 / 9;
 
   function clamp(v, lo, hi) {
     return Math.min(Math.max(v, lo), hi);
   }
 
-  function ensureCrop() {
-    if (!state.crop) {
-      state.crop = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
-      renderCropInfo();
+  function cropForRatio(ratioStr) {
+    const [rw, rh] = ratioStr.split(":").map(Number);
+    const target = rw / rh;
+    const wOverH = target / SOURCE_RATIO; // cropW / cropH（標準化）
+    let width, height;
+    if (wOverH <= 1) {
+      height = 1.0;
+      width = wOverH;
+    } else {
+      width = 1.0;
+      height = 1.0 / wOverH;
     }
+    return {
+      x: (1 - width) / 2,
+      y: (1 - height) / 2,
+      width,
+      height,
+    };
   }
 
-  function startDrag(e, mode, edge) {
+  function applyRatio(ratioStr) {
+    state.crop = cropForRatio(ratioStr);
+    state.cropRatio = ratioStr;
+    renderCropInfo();
+    updateRatioButtons();
+  }
+
+  function updateRatioButtons() {
+    document.querySelectorAll(".ratio-btn").forEach((btn) => {
+      btn.classList.toggle(
+        "active",
+        state.cropRatio === btn.dataset.ratio && state.crop != null,
+      );
+    });
+  }
+
+  // 整框拖移（位置可變，大小不變）
+  frame.addEventListener("mousedown", (e) => {
+    if (!state.crop) return;
     e.preventDefault();
-    e.stopPropagation();
-    ensureCrop();
     const rect = wrap.getBoundingClientRect();
-    const startX = e.clientX,
-      startY = e.clientY;
+    const startX = e.clientX;
+    const startY = e.clientY;
     const c0 = { ...state.crop };
 
     function onMove(ev) {
       const dx = (ev.clientX - startX) / rect.width;
       const dy = (ev.clientY - startY) / rect.height;
-      let { x, y, width, height } = c0;
-
-      if (mode === "move") {
-        x = clamp(c0.x + dx, 0, 1 - c0.width);
-        y = clamp(c0.y + dy, 0, 1 - c0.height);
-      } else {
-        if (edge.includes("l")) {
-          const nx = clamp(c0.x + dx, 0, c0.x + c0.width - 0.05);
-          width = c0.x + c0.width - nx;
-          x = nx;
-        }
-        if (edge.includes("r")) {
-          width = clamp(c0.width + dx, 0.05, 1 - c0.x);
-        }
-        if (edge.includes("t")) {
-          const ny = clamp(c0.y + dy, 0, c0.y + c0.height - 0.05);
-          height = c0.y + c0.height - ny;
-          y = ny;
-        }
-        if (edge.includes("b")) {
-          height = clamp(c0.height + dy, 0.05, 1 - c0.y);
-        }
-      }
-      state.crop = { x, y, width, height };
+      state.crop = {
+        ...c0,
+        x: clamp(c0.x + dx, 0, 1 - c0.width),
+        y: clamp(c0.y + dy, 0, 1 - c0.height),
+      };
       renderCropInfo();
     }
-
     function onUp() {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
     }
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
-  }
-
-  frame.addEventListener("mousedown", (e) => {
-    if (e.target.classList.contains("handle")) return;
-    startDrag(e, "move", null);
   });
-  document.querySelectorAll(".handle").forEach((h) => {
-    h.addEventListener("mousedown", (e) =>
-      startDrag(e, "resize", h.dataset.edge),
-    );
+
+  document.querySelectorAll(".ratio-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyRatio(btn.dataset.ratio));
   });
 
   $("#crop-reset").addEventListener("click", () => {
     state.crop = null;
+    state.cropRatio = null;
     renderCropInfo();
+    updateRatioButtons();
   });
 
-  // 影片若整張未設過 crop，第一次點影片區自動建一個預設框
-  wrap.addEventListener("dblclick", () => ensureCrop());
+  // 載入後同步 active 狀態（如果 episode.yaml 已有 crop，預設不亮，使用者要重新選比例）
+  updateRatioButtons();
 })();
 
 // === 儲存 / 取消 ===
