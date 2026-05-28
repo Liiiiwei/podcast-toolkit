@@ -59,12 +59,17 @@ body {
 .video-pane {
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
 }
 .video-wrap {
   position: relative;
   background: #000;
   aspect-ratio: 16 / 9;
   width: 100%;
+  /* 限制影片高度，避免在寬螢幕把下方檔案 / 字典面板擠出 viewport */
+  max-height: 50vh;
+  align-self: center;
   /* 限制裁切框 box-shadow 遮罩只到影片區內，不溢出蓋全頁 */
   overflow: hidden;
 }
