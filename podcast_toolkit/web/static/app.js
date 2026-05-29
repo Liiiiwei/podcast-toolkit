@@ -496,7 +496,7 @@ load();
   function startResize(e, edge) {
     e.preventDefault();
     e.stopPropagation();
-    if (!state.crop || !state.cropRatio) return;
+    if (!state.crop) return;
     const rect = wrap.getBoundingClientRect();
     const c0 = { ...state.crop };
     // wOverH = cropW / cropH（標準化）；resize 過程不變

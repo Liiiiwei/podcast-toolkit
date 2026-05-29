@@ -121,7 +121,11 @@ h2 {
   width: 100%;
   /* 限制影片高度，避免在寬螢幕把下方檔案 / 字典面板擠出 viewport */
   max-height: 50vh;
+  /* 高度被 max-height 卡住時，寬度同步縮以維持 16:9，不然 aspect-ratio 會失效 */
+  max-width: calc(50vh * 16 / 9);
   align-self: center;
+  /* 不被下方面板擠壓，否則 aspect-ratio 會被 flex shrink 覆蓋 */
+  flex-shrink: 0;
   /* 限制裁切框 box-shadow 遮罩只到影片區內，不溢出蓋全頁 */
   overflow: hidden;
 }
@@ -129,6 +133,7 @@ h2 {
   width: 100%;
   height: 100%;
   display: block;
+  object-fit: contain;
 }
 #caption-overlay {
   position: absolute;
