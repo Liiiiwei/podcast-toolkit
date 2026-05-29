@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from podcast_toolkit import init as ep_init
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import episode_io, transcribe, video
 
@@ -137,6 +138,56 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
         if not picked:
             return JSONResponse({"path": None, "cancelled": True})
         return JSONResponse({"path": picked, "cancelled": False})
+
+    @app.post("/api/episode/preview")
+    def preview_episode(payload: dict):
+        """預覽資料夾內容（給沒 episode.yaml 的資料夾用）。"""
+        raw = (payload.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        target = Path(os.path.expanduser(raw)).resolve()
+        if not target.is_dir():
+            raise HTTPException(status_code=400, detail=f"資料夾不存在：{target}")
+        entries: list[dict] = []
+        try:
+            for child in sorted(target.iterdir()):
+                if child.name in SKIP_DIRS or child.name.startswith("."):
+                    continue
+                entries.append({
+                    "name": child.name,
+                    "is_dir": child.is_dir(),
+                })
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"沒有權限讀取：{target}")
+        date, name = ep_init.parse_folder_name(target)
+        return JSONResponse({
+            "path": str(target),
+            "folder_name": target.name,
+            "has_episode_yaml": (target / "episode.yaml").is_file(),
+            "matches_convention": bool(date),
+            "parsed_date": date or "",
+            "parsed_name": name or "",
+            "subdirs_to_create": ep_init.SUBDIRS,
+            "asset_symlinks": list(ep_init.ASSET_SYMLINKS.keys()),
+            "entries": entries,
+        })
+
+    @app.post("/api/episode/init")
+    def init_episode(payload: dict):
+        """對指定資料夾跑 podcast init（建子目錄 / symlink / template）。"""
+        raw = (payload.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        target = Path(os.path.expanduser(raw)).resolve()
+        if not target.is_dir():
+            raise HTTPException(status_code=400, detail=f"資料夾不存在：{target}")
+        try:
+            code = ep_init.run(target)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"init 失敗：{e}")
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"init 回傳非 0：{code}")
+        return JSONResponse({"ok": True, "path": str(target)})
 
     @app.post("/api/episode/switch")
     def switch_episode(payload: dict):

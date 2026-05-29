@@ -885,7 +885,122 @@ async function pickEpisodeFolder() {
     btn.textContent = origLabel;
   }
 
-  await switchEpisode(picked);
+  // 先 preview，沒有 episode.yaml 就跳 init modal
+  let preview = null;
+  try {
+    const r = await fetch("/api/episode/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: picked }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    preview = await r.json();
+  } catch (e) {
+    showSwitchError(`預覽資料夾失敗：${e.message}`);
+    return;
+  }
+
+  if (preview.has_episode_yaml) {
+    await switchEpisode(picked);
+    return;
+  }
+  openInitModal(preview);
+}
+
+function openInitModal(preview) {
+  $("#init-folder-path").textContent = preview.path;
+  if (!preview.matches_convention) {
+    $("#init-warn-block").hidden = false;
+    $("#init-warn").textContent =
+      `資料夾名「${preview.folder_name}」不符合 'YYYYMMDD 集名' 慣例，` +
+      `episode.yaml 的 date / name 會留空、之後要手動填。`;
+  } else {
+    $("#init-warn-block").hidden = true;
+  }
+  const cur = $("#init-current-list");
+  cur.innerHTML = "";
+  if (preview.entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty";
+    empty.textContent = "（空資料夾）";
+    cur.appendChild(empty);
+  } else {
+    for (const e of preview.entries) {
+      const row = document.createElement("div");
+      row.className = `row ${e.is_dir ? "dir" : ""}`;
+      row.textContent = e.is_dir ? `📁 ${e.name}/` : `📄 ${e.name}`;
+      cur.appendChild(row);
+    }
+  }
+  const create = $("#init-create-list");
+  create.innerHTML = "";
+  for (const d of preview.subdirs_to_create) {
+    const row = document.createElement("div");
+    row.className = "row dir new";
+    row.textContent = `📁 ${d}/`;
+    create.appendChild(row);
+  }
+  for (const l of preview.asset_symlinks) {
+    const row = document.createElement("div");
+    row.className = "row new";
+    row.textContent = `🔗 02_片頭片尾/${l}`;
+    create.appendChild(row);
+  }
+  const yamlRow = document.createElement("div");
+  yamlRow.className = "row new";
+  yamlRow.textContent = "📄 episode.yaml";
+  create.appendChild(yamlRow);
+  const todoRow = document.createElement("div");
+  todoRow.className = "row new";
+  todoRow.textContent = "📄 TODO.md";
+  create.appendChild(todoRow);
+
+  const modal = $("#init-modal");
+  modal.classList.remove("hidden");
+  modal.dataset.path = preview.path;
+}
+
+function closeInitModal() {
+  const modal = $("#init-modal");
+  modal.classList.add("hidden");
+  modal.dataset.path = "";
+}
+
+async function runInitAndSwitch() {
+  const modal = $("#init-modal");
+  const path = modal.dataset.path;
+  if (!path) return;
+  const goBtn = $("#init-go");
+  const cancelBtn = $("#init-cancel");
+  const orig = goBtn.textContent;
+  goBtn.disabled = true;
+  cancelBtn.disabled = true;
+  goBtn.textContent = "建立中…";
+  try {
+    const r = await fetch("/api/episode/init", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    showSwitchError(`建立失敗：${e.message}`);
+    goBtn.disabled = false;
+    cancelBtn.disabled = false;
+    goBtn.textContent = orig;
+    return;
+  }
+  closeInitModal();
+  goBtn.disabled = false;
+  cancelBtn.disabled = false;
+  goBtn.textContent = orig;
+  await switchEpisode(path);
 }
 
 async function switchEpisode(newPath) {
@@ -922,3 +1037,5 @@ async function switchEpisode(newPath) {
 }
 
 $("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
+$("#init-cancel").addEventListener("click", closeInitModal);
+$("#init-go").addEventListener("click", runInitAndSwitch);

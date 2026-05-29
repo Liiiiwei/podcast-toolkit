@@ -578,6 +578,65 @@ h2 {
   opacity: 0.4;
   cursor: not-allowed;
 }
+.init-block {
+  margin-bottom: 12px;
+}
+.init-label {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.init-value {
+  color: #ddd;
+  word-break: break-all;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.init-warn {
+  background: #3a2a14;
+  border: 1px solid #6a4a20;
+  color: #f0c060;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.init-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.init-col {
+  min-width: 0;
+}
+.init-list {
+  background: #181818;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 6px 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: #ccc;
+}
+.init-list .empty {
+  color: #666;
+  font-style: italic;
+}
+.init-list .row {
+  padding: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.init-list .row.dir {
+  color: #8cb4ff;
+}
+.init-list .row.new {
+  color: #6ec07a;
+}
 .card {
   display: grid;
   grid-template-columns: 60px 1fr 24px;

@@ -110,6 +110,36 @@
       </div>
     </div>
 
+    <!-- 建立集架構 modal -->
+    <div class="modal-backdrop hidden" id="init-modal">
+      <div class="modal">
+        <div class="modal-head">這個資料夾還沒有 episode.yaml</div>
+        <div class="modal-body">
+          <div class="init-block">
+            <div class="init-label">資料夾</div>
+            <div class="init-value" id="init-folder-path"></div>
+          </div>
+          <div class="init-block" id="init-warn-block" hidden>
+            <div class="init-warn" id="init-warn"></div>
+          </div>
+          <div class="init-cols">
+            <div class="init-col">
+              <div class="init-label">現有內容</div>
+              <div class="init-list" id="init-current-list"></div>
+            </div>
+            <div class="init-col">
+              <div class="init-label">將會建立</div>
+              <div class="init-list" id="init-create-list"></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="init-cancel">取消</button>
+          <button id="init-go" class="primary">建立並切集</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 轉字幕進度 modal -->
     <div class="modal-backdrop hidden" id="transcribe-modal">
       <div class="modal">
