@@ -1,4 +1,4 @@
-"""Grok STT 轉字幕 pipeline：ffmpeg 壓縮 → x.ai STT → OpenCC s2twp → 寫 SRT。
+"""Grok STT 轉字幕 pipeline：ffmpeg 壓縮 → x.ai STT → OpenCC s2tw → 寫 SRT。
 
 呼叫方：web/api.py 的 POST /api/transcribe。
 單一同步函式：失敗丟 TranscribeError，成功回寫到的 SRT 路徑。
@@ -54,7 +54,7 @@ def run_grok_pipeline(
     # 2. POST 到 x.ai
     data = _post_to_grok(api_key, compressed)
 
-    # 3. 簡 → 繁（s2twp 含台灣慣用詞替換）
+    # 3. 簡 → 繁（s2tw：台灣字形，但不做詞彙替換）
     words = data.get("words") or []
     if not words:
         raise TranscribeError("Grok 回傳沒有 words，無法產生字幕")
@@ -87,21 +87,22 @@ def _ffmpeg_compress(src: Path, dst: Path) -> None:
 
 def _post_to_grok(api_key: str, audio: Path) -> dict:
     """POST 到 x.ai STT。注意：file 欄位要排在最後。"""
-    # 用 list-of-tuples 確保 file 是最後一個
-    files = [
-        ("format", (None, "true")),
-        ("language", (None, "zh")),
-        ("file", (audio.name, audio.open("rb"), "audio/mpeg")),
-    ]
-    try:
-        resp = requests.post(
-            GROK_STT_URL,
-            headers={"Authorization": f"Bearer {api_key}"},
-            files=files,
-            timeout=600,
-        )
-    except requests.RequestException as e:
-        raise TranscribeError(f"連線 x.ai 失敗：{e}") from e
+    # 用 with 包住 file handle；連線失敗時也保證關閉
+    with audio.open("rb") as fh:
+        files = [
+            ("format", (None, "true")),
+            ("language", (None, "zh")),
+            ("file", (audio.name, fh, "audio/mpeg")),
+        ]
+        try:
+            resp = requests.post(
+                GROK_STT_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files=files,
+                timeout=600,
+            )
+        except requests.RequestException as e:
+            raise TranscribeError(f"連線 x.ai 失敗：{e}") from e
 
     if resp.status_code != 200:
         body = resp.text[:300]
@@ -114,19 +115,19 @@ def _post_to_grok(api_key: str, audio: Path) -> dict:
 
 
 def _convert_word(w: dict) -> dict:
-    """套 OpenCC s2twp（簡 → 繁 + 台灣慣用詞）。"""
+    """套 OpenCC s2tw（簡 → 繁，台灣字形；不做詞彙替換以保留原意）。"""
     text = w.get("text") or ""
     return {
         "start": float(w.get("start", 0.0)),
         "end": float(w.get("end", 0.0)),
-        "text": _s2twp(text),
+        "text": _s2tw(text),
     }
 
 
 _OPENCC = None  # 延遲載入，第一次呼叫才實例化
 
 
-def _s2twp(text: str) -> str:
+def _s2tw(text: str) -> str:
     global _OPENCC
     if _OPENCC is None:
         try:
@@ -135,7 +136,7 @@ def _s2twp(text: str) -> str:
             raise TranscribeError(
                 "缺少 opencc-python-reimplemented；請跑 `pip3 install --user opencc-python-reimplemented`"
             ) from e
-        _OPENCC = OpenCC("s2twp")
+        _OPENCC = OpenCC("s2tw")
     return _OPENCC.convert(text)
 
 

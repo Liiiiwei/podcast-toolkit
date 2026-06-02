@@ -413,7 +413,11 @@ $("#seek").addEventListener("input", (e) => {
   if (v.duration) v.currentTime = (e.target.value / 100) * v.duration;
 });
 
-load();
+load().catch((err) => {
+  $("#title").textContent = "載入失敗";
+  $("#status").textContent = `載入失敗：${err?.message || err}`;
+  console.error(err);
+});
 
 // === Crop 框：固定比例 4:5 / 9:16 / 16:9，只能拖移不能 free resize ===
 (function setupCrop() {

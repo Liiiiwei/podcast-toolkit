@@ -52,9 +52,13 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
-    # _v2.srt 覆寫
+    # _v2.srt 覆寫前先留一份滾動備份，避免誤存後找不回原稿
     v2 = ep.output_v2_srt()
-    cards = srt_io.parse(v2.read_text(encoding="utf-8"))
+    original = v2.read_text(encoding="utf-8")
+    backup = v2.with_suffix(v2.suffix + ".bak")
+    backup.write_text(original, encoding="utf-8")
+
+    cards = srt_io.parse(original)
     overrides = {
         int(c["idx"]): c["text"]
         for c in (payload.get("cards") or [])
