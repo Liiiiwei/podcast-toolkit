@@ -61,21 +61,21 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
     dst.write_text(srt_io.serialize(kept), encoding="utf-8")
 
 
-def build_filter_complex(
+def build_filter_complex_yt(
     cfg: dict,
     main_dur: float,
     srt_rel: str,
     deletion_intervals: list[tuple[float, float]] | None = None,
 ) -> str:
-    """組裝 ffmpeg filter_complex 字串（含 crop / deletions 支援）。"""
+    """YT 16:9：原本的三段 concat（intro + main + outro card），讀 crop_yt。"""
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
     intro_dur = cfg["assets"]["intro_duration"]
     intro_fade_out = cfg["assets"]["intro_fade_out"]
     style_str = build_style_string(cfg["subtitle_style"])
 
-    # main video 前處理 chain：選擇性加 crop
-    crop = cfg.get("crop")
+    # main video 前處理 chain：選擇性加 crop_yt
+    crop = cfg.get("crop_yt")
     crop_part = ""
     if crop:
         # crop 比例 → px：依最終 resolution 換算（影片 scale 後一致）
@@ -111,6 +111,47 @@ def build_filter_complex(
     )
 
 
+def build_filter_complex_reels(
+    cfg: dict,
+    main_dur: float,
+    srt_rel: str,
+    deletion_intervals: list[tuple[float, float]] | None = None,
+) -> str:
+    """Reels 9:16：只有主影片，1080x1920，用 crop_reels。"""
+    enc = cfg["encode"]
+    res_w, res_h = 1080, 1920
+    style_str = build_style_string(cfg["subtitle_style"])
+
+    crop = cfg.get("crop_reels")
+    crop_part = ""
+    if crop:
+        cw = int(res_w * crop["width"])
+        ch = int(res_h * crop["height"])
+        cx = int(res_w * crop["x"])
+        cy = int(res_h * crop["y"])
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},"
+
+    select_v, select_a = "", ""
+    if deletion_intervals:
+        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in deletion_intervals)
+        select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
+        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+
+    return (
+        f"[0:v]subtitles={srt_rel}:force_style='{style_str}',"
+        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
+        f"fps={enc['framerate']},format={enc['pix_fmt']},"
+        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v];"
+        f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+    )
+
+
+# 保留舊名做相容呼叫（既有呼叫端預設走 YT 分支）
+def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
+    return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
+
+
 class AssembleError(RuntimeError):
     """assemble 任一階段失敗都丟這個；exit_code 給 CLI 對應退出碼。"""
 
@@ -119,12 +160,23 @@ class AssembleError(RuntimeError):
         self.exit_code = exit_code
 
 
-def prepare_assembly(episode_dir: Path, force: bool = False) -> dict:
+def prepare_assembly(
+    episode_dir: Path,
+    output_kind: str = "yt",
+    force: bool = False,
+) -> dict:
     """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
 
-    web 端和 CLI 共用同一條 pipeline；web 多包一層 -progress pipe:1 讀進度。
-    回傳 dict：cmd / cwd / out / main_dur / total_dur。
+    output_kind = 'yt' 或 'reels'：
+      - yt：1920x1080，含 intro + outro card，用 crop_yt
+      - reels：1080x1920，只含主影片，用 crop_reels
+
+    tmp_out 寫在 04_工作檔/.{out.name}.tmp，呼叫端跑完 ffmpeg 後負責 rename 到 03_成品/。
+    回傳 dict：cmd / cwd / out / tmp_out / main_dur / total_dur / output_kind。
     """
+    if output_kind not in ("yt", "reels"):
+        raise AssembleError(f"未知 output_kind={output_kind}")
+
     if not shutil.which("ffmpeg"):
         raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
     if not shutil.which("ffprobe"):
@@ -144,31 +196,32 @@ def prepare_assembly(episode_dir: Path, force: bool = False) -> dict:
         if not srt.exists():
             raise AssembleError("找不到字幕（_v2 或原 srt）", exit_code=3)
 
-    intro = ep.asset_path("intro")
-    outro_audio = ep.asset_path("outro_audio")
-    outro_image = ep.asset_path("outro_image")
+    # 輸出路徑分支
+    if output_kind == "yt":
+        out = ep.output_yt_video()
+    else:
+        out = ep.output_reels_video()
 
-    for p, label in [(intro, "intro"), (outro_audio, "outro_audio"), (outro_image, "outro_image")]:
-        if not p.exists():
-            raise AssembleError(
-                f"共用資產缺失：{label} = {p}（跑 podcast relink {episode_dir} 試試）",
-                exit_code=3,
-            )
-
-    out = ep.output_yt_video()
     if out.exists() and not force:
         raise AssembleError(f"輸出已存在：{out}（加 --force 覆寫）", exit_code=1)
 
+    # YT 才需要 intro / outro 共用資產
+    if output_kind == "yt":
+        intro = ep.asset_path("intro")
+        outro_audio = ep.asset_path("outro_audio")
+        outro_image = ep.asset_path("outro_image")
+        for p, label in [(intro, "intro"), (outro_audio, "outro_audio"), (outro_image, "outro_image")]:
+            if not p.exists():
+                raise AssembleError(
+                    f"共用資產缺失：{label} = {p}（跑 podcast relink {episode_dir} 試試）",
+                    exit_code=3,
+                )
+
     # 量正片時長
     main_dur = ffprobe_duration(main_video)
-    intro_dur = cfg["assets"]["intro_duration"]
-    outro_dur = cfg["assets"]["outro_duration"]
-
     enc = cfg["encode"]
 
-    # filter_complex：與 assemble.sh 等效
-    # 注意：ffmpeg subtitles filter 路徑要相對 cwd，所以 subprocess cwd 設為 03_成品/
-    # srt 也要傳檔名（相對路徑），不是絕對路徑
+    # filter_complex：subtitles filter 路徑要相對 cwd，subprocess cwd 設為 03_成品/
     cwd = ep.subdir("output")
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
     srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
@@ -178,7 +231,7 @@ def prepare_assembly(episode_dir: Path, force: bool = False) -> dict:
     deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
 
     if deletions:
-        clean_srt = ep.subdir("work") / "_v2_assembled.srt"
+        clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
         filter_deletion_srt(srt, clean_srt, deletions)
         srt = clean_srt
         srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
@@ -186,41 +239,63 @@ def prepare_assembly(episode_dir: Path, force: bool = False) -> dict:
         deleted_total = sum(b - a for a, b in deletion_intervals)
         main_dur = main_dur - deleted_total
 
-    fc = build_filter_complex(cfg, main_dur=main_dur, srt_rel=srt_rel,
-                              deletion_intervals=deletion_intervals)
+    # tmp_out 寫在 work/，成功後由呼叫端 rename 到 out
+    tmp_out = ep.subdir("work") / f".{out.name}.tmp"
+    tmp_out_rel = str(tmp_out.relative_to(cwd)) if tmp_out.is_relative_to(cwd) else str(tmp_out)
 
-    out_rel = str(out.relative_to(cwd))
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", str(intro),
-        "-i", main_rel,
-        "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
-        "-i", str(outro_audio),
-        "-filter_complex", fc,
-        "-map", "[v]", "-map", "[a]",
-        "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
-        "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
-        "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
-        "-ar", str(enc["audio_sample_rate"]),
-        "-movflags", "+faststart",
-        out_rel,
-    ]
-
-    total_dur = intro_dur + main_dur + outro_dur
+    if output_kind == "yt":
+        intro_dur = cfg["assets"]["intro_duration"]
+        outro_dur = cfg["assets"]["outro_duration"]
+        fc = build_filter_complex_yt(cfg, main_dur=main_dur, srt_rel=srt_rel,
+                                     deletion_intervals=deletion_intervals)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(intro),
+            "-i", main_rel,
+            "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
+            "-i", str(outro_audio),
+            "-filter_complex", fc,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+            "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+            "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+            "-ar", str(enc["audio_sample_rate"]),
+            "-movflags", "+faststart",
+            tmp_out_rel,
+        ]
+        total_dur = intro_dur + main_dur + outro_dur
+    else:
+        fc = build_filter_complex_reels(cfg, main_dur=main_dur, srt_rel=srt_rel,
+                                        deletion_intervals=deletion_intervals)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", main_rel,
+            "-filter_complex", fc,
+            "-map", "[v]", "-map", "[a]",
+            "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+            "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+            "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+            "-ar", str(enc["audio_sample_rate"]),
+            "-movflags", "+faststart",
+            tmp_out_rel,
+        ]
+        total_dur = main_dur
 
     return {
         "cmd": cmd,
         "cwd": cwd,
         "out": out,
+        "tmp_out": tmp_out,
         "main_dur": main_dur,
         "total_dur": total_dur,
+        "output_kind": output_kind,
     }
 
 
-def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
+def run(episode_dir: Path, dry_run: bool = False, force: bool = False,
+        output_kind: str = "yt") -> int:
     try:
-        plan = prepare_assembly(episode_dir, force=force)
+        plan = prepare_assembly(episode_dir, output_kind=output_kind, force=force)
     except AssembleError as e:
         print(f"✗ {e}", file=sys.stderr)
         return e.exit_code
@@ -228,6 +303,7 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     cmd = plan["cmd"]
     cwd = plan["cwd"]
     out = plan["out"]
+    tmp_out = plan["tmp_out"]
 
     if dry_run:
         print(f"# cwd: {cwd}")
@@ -241,6 +317,10 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
     except subprocess.CalledProcessError as e:
         print(f"✗ ffmpeg 失敗：exit {e.returncode}", file=sys.stderr)
         return 4
+
+    # 成功才把 tmp_out rename 到 out
+    if tmp_out.exists():
+        tmp_out.replace(out)
 
     print(f"✅ 完成：{out}")
     return 0

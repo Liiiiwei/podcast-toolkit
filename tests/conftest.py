@@ -55,3 +55,21 @@ def tmp_episode_dir(tmp_path: Path) -> Path:
     (ep / "03_成品" / "測試集_final_v2.srt").write_text(SAMPLE_SRT, encoding="utf-8")
 
     return ep
+
+
+@pytest.fixture
+def tmp_episode_full(tmp_episode_dir: Path, monkeypatch) -> Path:
+    """在 tmp_episode_dir 之上補齊 prepare_assembly 需要的檔案：
+    - 01_母帶/{name}.mp4 stub（空檔，由 monkeypatch ffprobe_duration 蓋掉量測）
+    - assemble.ffprobe_duration 回傳固定 100.0 秒
+    - shutil.which 對 ffmpeg / ffprobe 都回傳 True（避免本機沒裝測試直接掛掉）
+    """
+    # 母帶 stub
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+
+    from podcast_toolkit import assemble as _asm
+
+    monkeypatch.setattr(_asm, "ffprobe_duration", lambda _p: 100.0)
+    monkeypatch.setattr(_asm.shutil, "which", lambda _name: "/usr/bin/" + _name)
+
+    return tmp_episode_dir

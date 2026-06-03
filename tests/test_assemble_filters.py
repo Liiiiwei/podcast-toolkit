@@ -1,7 +1,9 @@
 """assemble.py 的 filter_complex 字串組裝測試。"""
 import pytest
+import yaml
 
 from podcast_toolkit import assemble
+from podcast_toolkit.assemble import prepare_assembly
 
 
 BASE_CFG = {
@@ -21,28 +23,29 @@ BASE_CFG = {
         "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
         "border_style": 1, "outline": 2, "shadow": 0, "margin_v": 60,
     },
-    "crop": None,
+    "crop_yt": None,
+    "crop_reels": None,
     "deletions": [],
 }
 
 
-def test_filter_complex_no_crop_no_deletions(monkeypatch):
-    fc = assemble.build_filter_complex(BASE_CFG, main_dur=100.0, srt_rel="x.srt")
+def test_filter_complex_yt_no_crop_no_deletions(monkeypatch):
+    fc = assemble.build_filter_complex_yt(BASE_CFG, main_dur=100.0, srt_rel="x.srt")
     assert "crop=" not in fc
     assert "select=" not in fc
 
 
-def test_filter_complex_with_crop_adds_crop_filter():
-    cfg = {**BASE_CFG, "crop": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
-    fc = assemble.build_filter_complex(cfg, main_dur=100.0, srt_rel="x.srt")
+def test_filter_complex_yt_with_crop_adds_crop_filter():
+    cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
+    fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
     # 1920 * 0.8 = 1536, 1080 * 0.9 = 972, x=192, y=54
     assert "crop=1536:972:192:54" in fc
 
 
-def test_filter_complex_with_deletions_adds_select():
+def test_filter_complex_yt_with_deletions_adds_select():
     cfg = {**BASE_CFG, "deletions": [3]}
     intervals = [(12.0, 14.0)]
-    fc = assemble.build_filter_complex(
+    fc = assemble.build_filter_complex_yt(
         cfg, main_dur=100.0, srt_rel="x.srt", deletion_intervals=intervals
     )
     assert "select='not(between(t" in fc
@@ -73,3 +76,47 @@ def test_filter_deletion_srt_writes_clean_srt(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "B" not in text
     assert "A" in text and "C" in text
+
+
+# --- prepare_assembly：YT / Reels 分支 ---
+
+def test_prepare_assembly_yt_uses_yt_output(tmp_episode_full):
+    """output_kind='yt' 時輸出檔是 _YT完整版.mp4。"""
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    assert plan["out"].name.endswith("_YT完整版.mp4")
+    # cmd 包含 intro 和 outro
+    assert any("intro" in str(a) for a in plan["cmd"])
+
+
+def test_prepare_assembly_reels_skips_intro_outro(tmp_episode_full):
+    """output_kind='reels' 時 ffmpeg cmd 不含 intro / outro 輸入。"""
+    plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
+    assert plan["out"].name.endswith("_Reels.mp4")
+    # Reels cmd 只有 1 個 -i（main video），不含 intro/outro
+    i_count = sum(1 for a in plan["cmd"] if a == "-i")
+    assert i_count == 1
+    # filter_complex 應該沒有 concat
+    fc_idx = plan["cmd"].index("-filter_complex")
+    assert "concat" not in plan["cmd"][fc_idx + 1]
+
+
+def test_prepare_assembly_reels_uses_crop_reels(tmp_episode_full):
+    """Reels 分支讀 cfg['crop_reels'] 而非 crop_yt。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["crop_yt"] = {"x": 0.1, "y": 0.0, "width": 0.8, "height": 1.0}
+    data["crop_reels"] = {"x": 0.3, "y": 0.0, "width": 0.4, "height": 1.0}
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # Reels 解析度 1080x1920，crop_reels width=0.4 → 432px
+    assert "crop=432:1920:324:0" in fc
+
+
+def test_prepare_assembly_reels_resolution_1080x1920(tmp_episode_full):
+    plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    assert "scale=1080:1920" in fc
