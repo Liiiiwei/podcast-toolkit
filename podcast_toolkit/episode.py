@@ -42,6 +42,10 @@ class Episode:
     def output_v2_srt(self) -> Path:
         return self.subdir("output") / f"{self.name}_final_v2.srt"
 
+    def output_v2_cameras_json(self) -> Path:
+        """雙鏡頭 sidecar：字幕卡 idx → "a"|"b" 對應表。"""
+        return self.subdir("output") / f"{self.name}_final_v2.cameras.json"
+
     def output_yt_video(self) -> Path:
         return self.subdir("output") / f"{self.name}_YT完整版.mp4"
 
