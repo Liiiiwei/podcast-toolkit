@@ -72,3 +72,42 @@ def test_post_shutdown_calls_callback(client, tmp_episode_dir):
     import time
     time.sleep(0.5)
     assert called["n"] == 1
+
+
+def test_pump_progress_renames_tmp_to_out_on_success(monkeypatch, tmp_path):
+    """ffmpeg 結束碼 0 且 tmp_out 存在 → rename 到 out。"""
+    from podcast_toolkit.web import assemble_job
+
+    tmp_out = tmp_path / ".final.mp4.tmp"
+    tmp_out.write_bytes(b"fake video bytes")
+    out = tmp_path / "final.mp4"
+
+    class FakeProc:
+        stdout = iter(["progress=end\n"])
+        stderr = type("S", (), {"read": lambda self: ""})()
+        def wait(self): return 0
+
+    assemble_job._pump_progress(FakeProc(), total_dur=10.0,
+                                 out_path=out, tmp_out=tmp_out)
+    assert out.exists()
+    assert not tmp_out.exists()
+
+
+def test_pump_progress_does_not_overwrite_on_failure(tmp_path):
+    """ffmpeg 失敗 → tmp_out 砍掉、out 保持原狀。"""
+    from podcast_toolkit.web import assemble_job
+
+    out = tmp_path / "final.mp4"
+    out.write_bytes(b"existing good output")
+    tmp_out = tmp_path / ".final.mp4.tmp"
+    tmp_out.write_bytes(b"half-baked output")
+
+    class FakeProc:
+        stdout = iter([])
+        stderr = type("S", (), {"read": lambda self: "ffmpeg crashed"})()
+        def wait(self): return 1
+
+    assemble_job._pump_progress(FakeProc(), total_dur=10.0,
+                                 out_path=out, tmp_out=tmp_out)
+    assert out.read_bytes() == b"existing good output"
+    assert not tmp_out.exists()  # tmp 要被清掉
