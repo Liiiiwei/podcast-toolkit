@@ -17,6 +17,10 @@ const state = {
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   headTrimSec: 0, // 影片開頭要砍掉幾秒
   tailTrimSec: 0, // 影片結尾要砍掉幾秒
+  // 雙鏡頭：cameras = {a, b?}（僅雙機集才有 b），用來判斷 UI 是否要顯示 A/B toggle
+  cameras: {},
+  // 字幕卡 idx -> "a" | "b"，只記 explicit 標過的；其他卡靠 carry-forward 推算
+  camerasMapping: new Map(),
 };
 
 function getActiveCrop() {
@@ -150,6 +154,18 @@ function activeCardAt(t) {
   return null;
 }
 
+// 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
+// 注意：carry-forward 是依 state.cards 的順序，不是 idx 大小（idx 不一定連續）
+function computeEffectiveCamera(idx) {
+  const pos = state.cards.findIndex((c) => c.idx === idx);
+  if (pos < 0) return "a";
+  for (let i = pos; i >= 0; i--) {
+    const v = state.camerasMapping.get(state.cards[i].idx);
+    if (v === "a" || v === "b") return v;
+  }
+  return "a";
+}
+
 function renderCaption() {
   const c = activeCardAt($("#video").currentTime);
   const overlay = $("#caption-overlay");
@@ -185,12 +201,19 @@ function renderCards() {
     list.appendChild(empty);
     return;
   }
+  const hasCamB = !!state.cameras && !!state.cameras.b;
   for (const c of state.cards) {
     const div = document.createElement("div");
     div.className = "card";
     div.dataset.idx = c.idx;
     if (state.deletions.has(c.idx)) div.classList.add("deleted");
     if (c.suspicious_pause) div.classList.add("suspicious");
+    // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
+    if (hasCamB) {
+      const eff = computeEffectiveCamera(c.idx);
+      div.classList.add(eff === "b" ? "cam-b" : "cam-a");
+      div.classList.add("card-has-cam");
+    }
 
     const susBox = document.createElement("input");
     susBox.type = "checkbox";
@@ -253,7 +276,48 @@ function renderCards() {
       renderTypo();
     });
 
-    div.append(susBox, time, text, del);
+    // 雙機集才有 A/B 膠囊；已刪除卡淡化但保留位置避免格線跳
+    let camPill = null;
+    if (hasCamB) {
+      const eff = computeEffectiveCamera(c.idx);
+      camPill = document.createElement("div");
+      camPill.className = "card-cam";
+      if (state.deletions.has(c.idx)) camPill.classList.add("muted");
+
+      const aBtn = document.createElement("button");
+      aBtn.type = "button";
+      aBtn.className = "cam-btn cam-a-btn" + (eff === "a" ? " active" : "");
+      aBtn.textContent = "A";
+      aBtn.title = state.camerasMapping.get(c.idx)
+        ? "目前鏡頭（已 explicit 標記）"
+        : "目前鏡頭（沿用前一張）";
+      aBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.camerasMapping.set(c.idx, "a");
+        renderCards();
+      });
+
+      const bBtn = document.createElement("button");
+      bBtn.type = "button";
+      bBtn.className = "cam-btn cam-b-btn" + (eff === "b" ? " active" : "");
+      bBtn.textContent = "B";
+      bBtn.title = state.camerasMapping.get(c.idx)
+        ? "切到 B 鏡頭（已 explicit 標記）"
+        : "切到 B 鏡頭";
+      bBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.camerasMapping.set(c.idx, "b");
+        renderCards();
+      });
+
+      camPill.append(aBtn, bBtn);
+    }
+
+    if (camPill) {
+      div.append(susBox, time, text, camPill, del);
+    } else {
+      div.append(susBox, time, text, del);
+    }
     list.appendChild(div);
   }
   renderSusToolbar();
@@ -302,6 +366,13 @@ async function loadEpisodeState() {
   state.needsTranscribe = !!data.needs_transcribe;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
   state.tailTrimSec = Number(data.tail_trim_sec) || 0;
+  // 雙鏡頭 mapping：API 回傳 key 是字串（JSON 不支援 int key），這裡轉回 Number
+  state.cameras = data.cameras || {};
+  state.camerasMapping = new Map(
+    Object.entries(data.cameras_mapping || {})
+      .map(([k, v]) => [Number(k), v])
+      .filter(([_, v]) => v === "a" || v === "b"),
+  );
 }
 
 function setupSusToolbar() {
@@ -814,6 +885,8 @@ $("#save-btn").addEventListener("click", async () => {
       idx,
       text,
     })),
+    // 只送 explicit 標記，carry-forward 推算結果不送；後端會 int(key) 還原
+    cameras_mapping: Object.fromEntries(state.camerasMapping),
   };
   try {
     const r = await fetch("/api/save", {

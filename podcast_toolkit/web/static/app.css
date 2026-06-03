@@ -959,6 +959,61 @@ h2 {
   margin: 12px 0 6px;
 }
 
+/* === 雙鏡頭 A/B toggle（僅雙機集顯示）=== */
+/* 雙機集才會帶 card-has-cam，多開一欄放 A/B 膠囊；單機集格線維持原本 4 欄 */
+.card.card-has-cam {
+  grid-template-columns: 18px 60px 1fr auto 24px;
+}
+/* A 鏡頭：用低調的深藍左邊框，讓整集還是維持暗色基調 */
+.card.cam-a {
+  border-left: 3px solid #2a3a5a;
+}
+/* B 鏡頭：用品牌橘左邊框，掃一眼就看出哪段切到 B */
+.card.cam-b {
+  border-left: 3px solid #ff8a4c;
+}
+/* deleted 卡優先級最高：灰色左邊框蓋過鏡頭色 */
+.card.deleted.cam-a,
+.card.deleted.cam-b {
+  border-left-color: #555;
+}
+.card-cam {
+  display: inline-flex;
+  gap: 0;
+  align-self: center;
+  border: 1px solid #333;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #161616;
+}
+.card-cam.muted {
+  opacity: 0.4;
+}
+.cam-btn {
+  background: transparent;
+  color: #777;
+  border: none;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+  min-width: 22px;
+  line-height: 1.4;
+}
+.cam-btn:hover {
+  color: #ddd;
+  background: rgba(255, 138, 76, 0.08);
+}
+.cam-a-btn.active {
+  background: #2a3a5a;
+  color: #fff;
+}
+.cam-b-btn.active {
+  background: #ff8a4c;
+  color: #fff;
+}
+
 /* === 響應式：≤900 改單欄；≤640 topbar 改成兩列 === */
 @media (max-width: 900px) {
   body {
