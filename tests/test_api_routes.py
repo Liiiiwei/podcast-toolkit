@@ -313,7 +313,10 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
             )
         out_srt.write_text("\n".join(lines), encoding="utf-8")
         return out_srt
-    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: fake_pipeline(**kw),
+    )
 
     ep = Episode(tmp_episode_dir)
     app = api_mod.build_app(ep, shutdown=lambda: None)

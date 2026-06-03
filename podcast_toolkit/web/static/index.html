@@ -152,6 +152,28 @@
       <div class="modal">
         <div class="modal-head">設定</div>
         <div class="modal-body">
+          <label class="modal-label">STT 供應商</label>
+          <div class="modal-row">
+            <label style="margin-right: 12px">
+              <input
+                type="radio"
+                name="settings-provider"
+                value="xai"
+                id="settings-provider-xai"
+              />
+              xAI（Grok）
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="settings-provider"
+                value="gemini"
+                id="settings-provider-gemini"
+              />
+              Google Gemini
+            </label>
+          </div>
+
           <label class="modal-label">xAI API key</label>
           <div class="modal-row">
             <input
@@ -164,9 +186,32 @@
               👁
             </button>
           </div>
-          <div class="modal-hint" id="settings-status">尚未設定</div>
+          <div class="modal-hint" id="settings-xai-status">尚未設定</div>
           <div class="modal-hint">
             從 <a href="https://console.x.ai" target="_blank">console.x.ai</a>
+            取得
+          </div>
+
+          <label class="modal-label" style="margin-top: 12px"
+            >Gemini API key</label
+          >
+          <div class="modal-row">
+            <input
+              type="password"
+              id="settings-gemini-key"
+              placeholder="AIza..."
+              autocomplete="off"
+            />
+            <button id="settings-show-gemini" type="button" title="顯示/隱藏">
+              👁
+            </button>
+          </div>
+          <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
+          <div class="modal-hint">
+            從
+            <a href="https://aistudio.google.com/apikey" target="_blank"
+              >aistudio.google.com/apikey</a
+            >
             取得，存於 ~/.podcast-toolkit/config.json
           </div>
         </div>
@@ -325,7 +370,7 @@
               </div>
               <div class="phase-pill" data-phase="upload">
                 <span class="phase-icon">☁️</span>
-                <span class="phase-label">Grok STT</span>
+                <span class="phase-label">STT</span>
               </div>
               <div class="phase-pill" data-phase="resegment">
                 <span class="phase-icon">✂️</span>

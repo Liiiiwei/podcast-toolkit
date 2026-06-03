@@ -377,9 +377,13 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/config")
     def get_config():
         cfg = _load_config()
-        # 隱藏實際 key，前端只要知道有沒有設定
+        provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
+        if provider not in transcribe.PROVIDERS:
+            provider = "xai"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
+            "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
+            "provider": provider,
         })
 
     @app.post("/api/config")
@@ -391,8 +395,28 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
                 cfg["xai_api_key"] = key
             else:
                 cfg.pop("xai_api_key", None)
+        if "gemini_api_key" in payload:
+            key = (payload.get("gemini_api_key") or "").strip()
+            if key:
+                cfg["gemini_api_key"] = key
+            else:
+                cfg.pop("gemini_api_key", None)
+        if "provider" in payload:
+            provider = (payload.get("provider") or "").strip()
+            if provider not in transcribe.PROVIDERS:
+                raise HTTPException(
+                    status_code=400, detail=f"未知的 STT 供應商：{provider}"
+                )
+            tcfg = cfg.get("transcribe") or {}
+            tcfg["provider"] = provider
+            cfg["transcribe"] = tcfg
         _save_config(cfg)
-        return JSONResponse({"has_xai_api_key": bool(cfg.get("xai_api_key"))})
+        out_provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
+        return JSONResponse({
+            "has_xai_api_key": bool(cfg.get("xai_api_key")),
+            "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
+            "provider": out_provider,
+        })
 
     @app.post("/api/transcribe")
     def post_transcribe(payload: dict):
@@ -415,12 +439,24 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
             raise HTTPException(status_code=400, detail="不支援的副檔名")
 
         cfg = _load_config()
-        api_key = cfg.get("xai_api_key")
+        provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
+        if provider not in transcribe.PROVIDERS:
+            raise HTTPException(
+                status_code=400, detail=f"未知的 STT 供應商：{provider}"
+            )
+        key_map = {"xai": "xai_api_key", "gemini": "gemini_api_key"}
+        label_map = {"xai": "xAI", "gemini": "Gemini"}
+        api_key = cfg.get(key_map[provider])
         if not api_key:
-            raise HTTPException(status_code=400, detail="尚未設定 xAI API key")
+            raise HTTPException(
+                status_code=400,
+                detail=f"尚未設定 {label_map[provider]} API key",
+            )
 
         try:
-            info = transcribe_job.start_job(ep, src_rel=rel, api_key=api_key)
+            info = transcribe_job.start_job(
+                ep, src_rel=rel, provider=provider, api_key=api_key
+            )
         except RuntimeError as e:
             # 已有 job 在跑
             raise HTTPException(status_code=409, detail=str(e))

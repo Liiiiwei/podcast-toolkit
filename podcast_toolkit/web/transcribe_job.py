@@ -52,8 +52,10 @@ def _set(**kwargs) -> None:
         _STATE.update(kwargs)
 
 
-def start_job(ep: Episode, *, src_rel: str, api_key: str) -> dict[str, Any]:
-    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。"""
+def start_job(
+    ep: Episode, *, src_rel: str, provider: str, api_key: str
+) -> dict[str, Any]:
+    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "gemini"。"""
     with _LOCK:
         if _STATE["state"] == "running":
             raise RuntimeError("已有轉字幕正在進行中")
@@ -73,19 +75,20 @@ def start_job(ep: Episode, *, src_rel: str, api_key: str) -> dict[str, Any]:
     )
 
     worker = threading.Thread(
-        target=_run, args=(ep, src, api_key), daemon=True
+        target=_run, args=(ep, src, provider, api_key), daemon=True
     )
     worker.start()
     return {"src_path": src_rel}
 
 
-def _run(ep: Episode, src: Path, api_key: str) -> None:
+def _run(ep: Episode, src: Path, provider: str, api_key: str) -> None:
     """背景 worker：跑 pipeline → resegment → done / error。"""
     def progress(phase: str, percent: float) -> None:
         _set(phase=phase, percent=float(percent))
 
     try:
-        _transcribe.run_grok_pipeline(
+        _transcribe.run_pipeline(
+            provider=provider,
             api_key=api_key,
             src_audio=src,
             out_srt=ep.main_srt(),

@@ -1,13 +1,14 @@
-"""Grok STT 轉字幕 pipeline：ffmpeg 壓縮 → x.ai STT → OpenCC s2tw → 寫 SRT。
+"""STT 轉字幕 pipeline：ffmpeg 壓縮 → xAI / Gemini STT → OpenCC s2tw → 寫 SRT。
 
-呼叫方：web/api.py 的 POST /api/transcribe。
+呼叫方：web/api.py 的 POST /api/transcribe → transcribe_job.start_job → run_pipeline。
 單一同步函式：失敗丟 TranscribeError，成功回寫到的 SRT 路徑。
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
-import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -16,6 +17,8 @@ from podcast_toolkit import srt_io
 
 
 GROK_STT_URL = "https://api.x.ai/v1/stt"
+# Gemini：用 google-genai SDK（Files API + generateContent）
+GEMINI_MODEL = "gemini-2.5-flash"
 # 上傳前壓縮成 16kHz mp3，足夠 STT 用，能大幅縮短上傳時間
 COMPRESS_SAMPLE_RATE = "16000"
 COMPRESS_BITRATE = "64k"
@@ -76,6 +79,108 @@ def run_grok_pipeline(
 
     # 暫存檔可以保留方便除錯，需要時改成刪除
     return out_srt
+
+
+def run_gemini_pipeline(
+    *,
+    api_key: str,
+    src_audio: Path,
+    out_srt: Path,
+    work_dir: Path,
+    progress=None,
+) -> Path:
+    """Gemini STT pipeline：壓縮 → Files API 上傳 → generateContent → s2tw → 寫 SRT。"""
+    if not shutil.which("ffmpeg"):
+        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+    except ImportError as e:
+        raise TranscribeError(
+            "缺少 google-genai；請跑 `pip3 install --user google-genai`"
+        ) from e
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out_srt.parent.mkdir(parents=True, exist_ok=True)
+
+    if progress:
+        progress("compress", 0.0)
+    compressed = work_dir / f"_gemini_stt_{src_audio.stem}.mp3"
+    _ffmpeg_compress(src_audio, compressed)
+    if progress:
+        progress("compress", 100.0)
+
+    if progress:
+        progress("upload", 0.0)
+    try:
+        client = genai.Client(api_key=api_key)
+        uploaded = client.files.upload(file=str(compressed))
+        # Files API 上傳後可能需要等狀態變 ACTIVE
+        for _ in range(60):
+            state = getattr(uploaded.state, "name", str(uploaded.state))
+            if state == "ACTIVE":
+                break
+            if state == "FAILED":
+                raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
+            time.sleep(1)
+            uploaded = client.files.get(name=uploaded.name)
+        prompt = (
+            "請把這段中文音訊轉成逐句字幕，輸出純 JSON 陣列，每筆 "
+            "{\"start\": 秒, \"end\": 秒, \"text\": 字串}。"
+            "不要包含 markdown 反引號。"
+        )
+        resp = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[uploaded, prompt],
+            config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+        )
+        text = (resp.text or "").strip()
+        try:
+            words = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise TranscribeError(f"Gemini 回應不是 JSON：{text[:200]}") from e
+    except TranscribeError:
+        raise
+    except Exception as e:
+        raise TranscribeError(f"Gemini STT 失敗：{e}") from e
+    if progress:
+        progress("upload", 100.0)
+
+    if not words:
+        raise TranscribeError("Gemini 沒回傳任何字幕")
+    words = [_convert_word(w) for w in words]
+    cards = _words_to_cards(words)
+    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    return out_srt
+
+
+# 供應商分流表：UI 切換靠這個（順序也是 UI 顯示順序）
+PROVIDERS: dict[str, callable] = {
+    "xai": run_grok_pipeline,
+    "gemini": run_gemini_pipeline,
+}
+
+
+def run_pipeline(
+    *,
+    provider: str,
+    api_key: str,
+    src_audio: Path,
+    out_srt: Path,
+    work_dir: Path,
+    progress=None,
+) -> Path:
+    """根據 provider 分流到對應 pipeline。未知 provider 丟 TranscribeError。"""
+    fn = PROVIDERS.get(provider)
+    if fn is None:
+        raise TranscribeError(f"未知的 STT 供應商：{provider}")
+    return fn(
+        api_key=api_key,
+        src_audio=src_audio,
+        out_srt=out_srt,
+        work_dir=work_dir,
+        progress=progress,
+    )
 
 
 def _ffmpeg_compress(src: Path, dst: Path) -> None:

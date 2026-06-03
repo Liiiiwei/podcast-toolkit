@@ -14,6 +14,8 @@ const state = {
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
+  hasGeminiKey: false,
+  sttProvider: "xai", // "xai" | "gemini"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   headTrimSec: 0, // 影片開頭要砍掉幾秒
   tailTrimSec: 0, // 影片結尾要砍掉幾秒
@@ -426,6 +428,8 @@ async function loadConfig() {
     if (!r.ok) return;
     const data = await r.json();
     state.hasApiKey = !!data.has_xai_api_key;
+    state.hasGeminiKey = !!data.has_gemini_api_key;
+    state.sttProvider = data.provider || "xai";
   } catch (_) {}
 }
 
@@ -1065,9 +1069,13 @@ function renderFileItem(f) {
     action = document.createElement("button");
     action.className = "file-stt";
     action.textContent = "🎙 轉字幕";
-    action.title = state.hasApiKey
-      ? "用 Grok STT 轉字幕並覆蓋 _v2.srt"
-      : "請先設定 xAI API key（⚙）";
+    const providerLabel =
+      state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
+    const hasSelectedKey =
+      state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
+    action.title = hasSelectedKey
+      ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
+      : `請先到 ⚙ 設定 ${providerLabel} API key`;
     action.addEventListener("click", () => requestTranscribe(f));
   } else {
     action = document.createElement("span");
@@ -1285,10 +1293,13 @@ function hideModal(id) {
 
 // === 轉字幕流程 ===
 function requestTranscribe(file) {
-  if (!state.hasApiKey) {
+  const providerLabel = state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
+  const hasSelectedKey =
+    state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
+  if (!hasSelectedKey) {
     $("#transcribe-title").textContent = "尚未設定 API key";
     $("#transcribe-msg").innerHTML =
-      "請先到右上角 ⚙ 設定 xAI API key，才能用 Grok STT 轉字幕。";
+      `請先到右上角 ⚙ 設定 ${providerLabel} API key，才能轉字幕。`;
     const go = $("#transcribe-go");
     go.textContent = "去設定";
     go.disabled = false;
@@ -1305,7 +1316,7 @@ function requestTranscribe(file) {
   $("#transcribe-msg").innerHTML =
     `來源檔：<code>${file.path}</code><br>` +
     `大小：${fmtSize(file.size)}<br><br>` +
-    `用 Grok STT（x.ai）轉字幕並覆寫 <code>_v2.srt</code>。<br>` +
+    `用 ${providerLabel} STT 轉字幕並覆寫 <code>_v2.srt</code>。<br>` +
     `預估時間：約音檔長度的 1 倍（3 分鐘片約 60–180 秒）。`;
   const go = $("#transcribe-go");
   go.textContent = "開始";
@@ -1319,7 +1330,7 @@ function requestTranscribe(file) {
 const TRANSCRIBE_PHASES = ["compress", "upload", "resegment"];
 const TRANSCRIBE_PHASE_LABELS = {
   compress: "壓縮音檔",
-  upload: "上傳並等待 Grok STT",
+  upload: "上傳並等待 STT",
   resegment: "重新切句",
 };
 let _transcribePollTimer = null;
@@ -1643,12 +1654,21 @@ function setupAssembleButtons() {
 
 // === 設定 modal ===
 function openSettings() {
-  const input = $("#settings-xai-key");
-  input.value = "";
-  input.type = "password";
-  $("#settings-status").textContent = state.hasApiKey
-    ? "已存在 API key（重新輸入會覆蓋；留空則維持原樣）"
+  $("#settings-xai-key").value = "";
+  $("#settings-xai-key").type = "password";
+  $("#settings-gemini-key").value = "";
+  $("#settings-gemini-key").type = "password";
+  $("#settings-xai-status").textContent = state.hasApiKey
+    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
+  $("#settings-gemini-status").textContent = state.hasGeminiKey
+    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
+    : "尚未設定";
+  const provider = state.sttProvider || "xai";
+  const radio = document.querySelector(
+    `input[name="settings-provider"][value="${provider}"]`,
+  );
+  if (radio) radio.checked = true;
   showModal("settings-modal");
 }
 
@@ -1663,11 +1683,20 @@ $("#settings-show").addEventListener("click", () => {
   input.type = input.type === "password" ? "text" : "password";
 });
 
+$("#settings-show-gemini").addEventListener("click", () => {
+  const input = $("#settings-gemini-key");
+  input.type = input.type === "password" ? "text" : "password";
+});
+
 $("#settings-save").addEventListener("click", async () => {
-  const input = $("#settings-xai-key");
-  const key = input.value.trim();
-  // 留空時不送 xai_api_key，保持原本設定
-  const payload = key ? { xai_api_key: key } : {};
+  const xaiKey = $("#settings-xai-key").value.trim();
+  const geminiKey = $("#settings-gemini-key").value.trim();
+  const provider =
+    document.querySelector('input[name="settings-provider"]:checked')?.value ||
+    "xai";
+  const payload = { provider };
+  if (xaiKey) payload.xai_api_key = xaiKey;
+  if (geminiKey) payload.gemini_api_key = geminiKey;
   const btn = $("#settings-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
@@ -1677,9 +1706,14 @@ $("#settings-save").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    if (!r.ok) {
+      const body = await r.text();
+      throw new Error(`HTTP ${r.status}：${body}`);
+    }
     const data = await r.json();
     state.hasApiKey = !!data.has_xai_api_key;
+    state.hasGeminiKey = !!data.has_gemini_api_key;
+    state.sttProvider = data.provider || "xai";
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {

@@ -65,7 +65,10 @@ def test_start_job_sets_running_then_done(monkeypatch, tmp_episode_dir):
             progress("upload", 100.0)
         return out_srt
 
-    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", fake_pipeline)
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: fake_pipeline(**kw),
+    )
 
     # fake resegment：直接寫 _v2.srt
     from podcast_toolkit import resegment
@@ -78,7 +81,9 @@ def test_start_job_sets_running_then_done(monkeypatch, tmp_episode_dir):
     monkeypatch.setattr(resegment, "run", fake_resegment)
 
     ep = Episode(tmp_episode_dir)
-    transcribe_job.start_job(ep, src_rel="01_母帶/測試集.mp4", api_key="fake")
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+    )
 
     done = _wait_until_state("done")
     assert done["phase"] == "resegment"
@@ -103,20 +108,27 @@ def test_start_job_rejects_when_already_running(monkeypatch, tmp_episode_dir):
         out_srt.write_text("", encoding="utf-8")
         return out_srt
 
-    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", slow_pipeline)
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: slow_pipeline(**kw),
+    )
     monkeypatch.setattr(resegment, "run", lambda *_a, **_k: 0)
 
     src = tmp_episode_dir / "01_母帶" / "測試集.mp4"
     src.write_bytes(b"FAKE")
 
     ep = Episode(tmp_episode_dir)
-    transcribe_job.start_job(ep, src_rel="01_母帶/測試集.mp4", api_key="fake")
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+    )
 
     # 等狀態變成 running 再嘗試第二次
     _wait_until_state("running")
 
     with pytest.raises(RuntimeError):
-        transcribe_job.start_job(ep, src_rel="01_母帶/測試集.mp4", api_key="fake")
+        transcribe_job.start_job(
+            ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+        )
 
     # 放閘讓 worker 收工，避免 test 留下 thread
     gate.set()
@@ -130,13 +142,18 @@ def test_pipeline_error_sets_error_state(monkeypatch, tmp_episode_dir):
     def boom(*, api_key, src_audio, out_srt, work_dir, progress=None):
         raise transcribe_mod.TranscribeError("Grok 回 401")
 
-    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", boom)
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: boom(**kw),
+    )
 
     src = tmp_episode_dir / "01_母帶" / "測試集.mp4"
     src.write_bytes(b"FAKE")
 
     ep = Episode(tmp_episode_dir)
-    transcribe_job.start_job(ep, src_rel="01_母帶/測試集.mp4", api_key="fake")
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+    )
 
     status = _wait_until_state("error")
     assert "Grok 回 401" in (status["error"] or "")
@@ -170,14 +187,19 @@ def test_progress_callback_advances_phase(monkeypatch, tmp_episode_dir):
         out_srt.write_text("", encoding="utf-8")
         return out_srt
 
-    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", staged_pipeline)
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: staged_pipeline(**kw),
+    )
     monkeypatch.setattr(resegment, "run", lambda *_a, **_k: 0)
 
     src = tmp_episode_dir / "01_母帶" / "測試集.mp4"
     src.write_bytes(b"FAKE")
 
     ep = Episode(tmp_episode_dir)
-    transcribe_job.start_job(ep, src_rel="01_母帶/測試集.mp4", api_key="fake")
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+    )
 
     assert in_compress.wait(timeout=2.0)
     assert transcribe_job.get_status()["phase"] == "compress"
