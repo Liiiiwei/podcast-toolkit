@@ -45,6 +45,9 @@ class Episode:
     def output_yt_video(self) -> Path:
         return self.subdir("output") / f"{self.name}_YT完整版.mp4"
 
+    def output_reels_video(self) -> Path:
+        return self.subdir("output") / f"{self.name}_Reels.mp4"
+
     def review_file(self) -> Path:
         return self.subdir("work") / "_resegment_review.txt"
 

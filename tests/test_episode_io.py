@@ -77,3 +77,10 @@ def test_save_state_removes_crop_when_none(tmp_episode_dir):
     episode_io.save_state(ep, payload={"crop": None, "deletions": [], "cards": []})
     new_yaml = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert "crop" not in new_yaml or new_yaml["crop"] is None
+
+
+def test_episode_output_reels_video(tmp_episode_dir):
+    ep = Episode(tmp_episode_dir)
+    out = ep.output_reels_video()
+    assert out.name.endswith("_Reels.mp4")
+    assert out.parent.name == "03_成品"

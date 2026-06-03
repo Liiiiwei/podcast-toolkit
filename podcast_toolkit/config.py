@@ -36,6 +36,8 @@ def merge(defaults: dict, episode: dict) -> dict:
     - dict：逐 key 合併
     - list-of-pairs（fixes / card_fixes）：common + episode 串接，依序套用
     - 其他 list：episode 覆寫 defaults
+    - crop_yt / crop_reels：YT 16:9 與 Reels 9:16 兩種裁切設定；
+      舊 episode.yaml 只有 crop 時自動視為 crop_yt（一次性遷移）。
     """
     cfg = {
         "resegment": {**defaults["resegment"], **(episode.get("resegment") or {})},
@@ -52,9 +54,13 @@ def merge(defaults: dict, episode: dict) -> dict:
         "main_srt": episode.get("main_srt"),
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),
-        "crop": episode.get("crop"),
+        "crop_yt": episode.get("crop_yt"),
+        "crop_reels": episode.get("crop_reels"),
         "deletions": list(episode.get("deletions") or []),
     }
+    # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
+    if cfg["crop_yt"] is None and episode.get("crop") is not None:
+        cfg["crop_yt"] = episode["crop"]
     return cfg
 
 
