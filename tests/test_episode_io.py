@@ -15,6 +15,22 @@ def test_load_state_returns_name_and_cards(tmp_episode_dir):
     assert len(state["cards"]) == 4
     assert state["cards"][0]["idx"] == 1
     assert state["cards"][0]["text"] == "大家好歡迎來到我愛上班"
+    assert state["needs_transcribe"] is False
+
+
+def test_load_state_returns_needs_transcribe_when_v2_missing(tmp_episode_dir):
+    """新集還沒跑過 resegment（缺 _v2.srt）時，load_state 不應 raise，
+    而是回 needs_transcribe=True + cards=[]，讓前端引導使用者去轉字幕。"""
+    # 刪掉 _v2.srt 模擬新集情境
+    (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").unlink()
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["name"] == "測試集"
+    assert state["needs_transcribe"] is True
+    assert state["cards"] == []
+    # crop / deletions 仍正常從 yaml 讀
+    assert state["crop_yt"] is None
+    assert state["deletions"] == []
 
 
 def test_load_state_includes_crop_and_deletions_from_yaml(tmp_episode_dir):

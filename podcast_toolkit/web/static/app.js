@@ -13,6 +13,7 @@ const state = {
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
+  needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
 };
 
 function getActiveCrop() {
@@ -53,6 +54,11 @@ function fmtTime(sec) {
 
 function renderTopbar() {
   $("#title").textContent = state.name;
+  if (state.needsTranscribe) {
+    $("#status").textContent = "尚未轉字幕（從左側檔案列點 🎙 開始）";
+    $("#save-btn").disabled = true;
+    return;
+  }
   const total = state.cards.length;
   const deleted = state.deletions.size;
   const dirty = state.textOverrides.size;
@@ -127,6 +133,17 @@ function renderCardSkeletons(n = 8) {
 function renderCards() {
   const list = $("#cards-list");
   list.innerHTML = "";
+  if (state.needsTranscribe) {
+    const empty = document.createElement("div");
+    empty.className = "typo-empty";
+    empty.style.padding = "24px 12px";
+    empty.style.lineHeight = "1.6";
+    empty.innerHTML =
+      '<div style="font-size:14px;margin-bottom:8px">這一集還沒轉字幕</div>' +
+      '<div style="color:#888;font-size:12px">到左側「檔案」面板找一軌主檔（通常是 Mic / Stereo Mix），點 🎙 開始轉字幕。轉完會自動回到這裡。</div>';
+    list.appendChild(empty);
+    return;
+  }
   for (const c of state.cards) {
     const div = document.createElement("div");
     div.className = "card";
@@ -192,6 +209,7 @@ async function loadEpisodeState() {
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
+  state.needsTranscribe = !!data.needs_transcribe;
 }
 
 async function loadFiles() {

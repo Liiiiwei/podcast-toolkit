@@ -10,17 +10,21 @@ from podcast_toolkit.episode import Episode
 
 
 def load_state(ep: Episode) -> dict[str, Any]:
-    """讀 episode.yaml + _v2.srt → 給前端的初始狀態。"""
+    """讀 episode.yaml + _v2.srt → 給前端的初始狀態。
+
+    新集還沒跑過 transcribe/resegment 時，回 needs_transcribe=True + cards=[]，
+    讓前端引導使用者去轉字幕，而不是 500。
+    """
     v2 = ep.output_v2_srt()
-    if not v2.exists():
-        raise FileNotFoundError(f"找不到 _v2.srt：{v2}（請先跑 podcast resegment）")
-    cards = srt_io.parse(v2.read_text(encoding="utf-8"))
+    needs_transcribe = not v2.exists()
+    cards = [] if needs_transcribe else srt_io.parse(v2.read_text(encoding="utf-8"))
     return {
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
         "crop_reels": ep.cfg.get("crop_reels"),
         "deletions": list(ep.cfg.get("deletions") or []),
         "cards": cards,
+        "needs_transcribe": needs_transcribe,
     }
 
 
