@@ -38,7 +38,16 @@ def merge(defaults: dict, episode: dict) -> dict:
     - 其他 list：episode 覆寫 defaults
     - crop_yt / crop_reels：YT 16:9 與 Reels 9:16 兩種裁切設定；
       舊 episode.yaml 只有 crop 時自動視為 crop_yt（一次性遷移）。
+    - cameras：雙機資料 {a, b}；舊 episode.yaml 只有 main_video 時
+      自動視為 cameras.a（單機模式）。
+    - audio：獨立 stereo-mix 音檔 + 對齊參考（不設則沿用鏡頭原音）。
     """
+    # cameras：episode["cameras"] 優先；否則 fallback main_video → cameras.a
+    cameras = episode.get("cameras")
+    if cameras is None:
+        main_video = episode.get("main_video")
+        cameras = {"a": main_video} if main_video else {}
+
     cfg = {
         "resegment": {**defaults["resegment"], **(episode.get("resegment") or {})},
         "suspicious_pause": {
@@ -56,6 +65,9 @@ def merge(defaults: dict, episode: dict) -> dict:
         "name": episode.get("name"),
         "main_video": episode.get("main_video"),
         "main_srt": episode.get("main_srt"),
+        "cameras": dict(cameras),
+        "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
+        "audio": episode.get("audio"),
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),
         "crop_yt": episode.get("crop_yt"),
