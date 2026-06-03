@@ -17,7 +17,7 @@ def load_state(ep: Episode) -> dict[str, Any]:
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     return {
         "name": ep.name,
-        "crop": ep.cfg.get("crop"),
+        "crop": ep.cfg.get("crop_yt"),
         "deletions": list(ep.cfg.get("deletions") or []),
         "cards": cards,
     }
