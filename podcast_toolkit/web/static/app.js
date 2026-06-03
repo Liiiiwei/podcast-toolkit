@@ -1,8 +1,11 @@
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 const state = {
   name: "",
-  crop: null,
-  cropRatio: null, // "4:5" | "9:16" | "16:9" | null
+  activeVersion: "yt", // "yt" | "reels"
+  cropYt: null,
+  cropReels: null,
+  cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
+  cropRatioReels: null,
   deletions: new Set(),
   cards: [],
   textOverrides: new Map(), // idx -> text
@@ -11,6 +14,29 @@ const state = {
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
 };
+
+function getActiveCrop() {
+  return state.activeVersion === "yt" ? state.cropYt : state.cropReels;
+}
+function setActiveCrop(crop) {
+  if (state.activeVersion === "yt") {
+    state.cropYt = crop;
+  } else {
+    state.cropReels = crop;
+  }
+}
+function getActiveCropRatio() {
+  return state.activeVersion === "yt"
+    ? state.cropRatioYt
+    : state.cropRatioReels;
+}
+function setActiveCropRatio(ratio) {
+  if (state.activeVersion === "yt") {
+    state.cropRatioYt = ratio;
+  } else {
+    state.cropRatioReels = ratio;
+  }
+}
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -37,7 +63,7 @@ function renderTopbar() {
 }
 
 function renderCropInfo() {
-  const c = state.crop;
+  const c = getActiveCrop();
   const overlay = $("#caption-overlay");
   if (!c) {
     $("#crop-text").textContent = "裁切框：未設定（整張畫面）";
@@ -49,7 +75,7 @@ function renderCropInfo() {
     overlay.style.fontSize = "";
     return;
   }
-  const ratio = state.cropRatio ? `${state.cropRatio}` : "自訂";
+  const ratio = getActiveCropRatio() ? `${getActiveCropRatio()}` : "自訂";
   $("#crop-text").textContent =
     `裁切框：${ratio} · x=${(c.x * 100).toFixed(0)}% y=${(c.y * 100).toFixed(0)}%`;
   const frame = $("#crop-frame");
@@ -161,7 +187,8 @@ async function loadEpisodeState() {
   if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
   const data = await r.json();
   state.name = data.name;
-  state.crop = data.crop ?? { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
+  state.cropYt = data.crop_yt || null;
+  state.cropReels = data.crop_reels || null;
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
@@ -453,8 +480,8 @@ load().catch((err) => {
   }
 
   function applyRatio(ratioStr) {
-    state.crop = cropForRatio(ratioStr);
-    state.cropRatio = ratioStr;
+    setActiveCrop(cropForRatio(ratioStr));
+    setActiveCropRatio(ratioStr);
     renderCropInfo();
     updateRatioButtons();
   }
@@ -463,29 +490,29 @@ load().catch((err) => {
     document.querySelectorAll(".ratio-btn").forEach((btn) => {
       btn.classList.toggle(
         "active",
-        state.cropRatio === btn.dataset.ratio && state.crop != null,
+        getActiveCropRatio() === btn.dataset.ratio && getActiveCrop() != null,
       );
     });
   }
 
   // 拖移整框（位置變，大小不變）
   frame.addEventListener("mousedown", (e) => {
-    if (!state.crop) return;
+    if (!getActiveCrop()) return;
     if (e.target.classList.contains("handle")) return; // handle 自己處理
     e.preventDefault();
     const rect = wrap.getBoundingClientRect();
     const startX = e.clientX;
     const startY = e.clientY;
-    const c0 = { ...state.crop };
+    const c0 = { ...getActiveCrop() };
 
     function onMove(ev) {
       const dx = (ev.clientX - startX) / rect.width;
       const dy = (ev.clientY - startY) / rect.height;
-      state.crop = {
+      setActiveCrop({
         ...c0,
         x: clamp(c0.x + dx, 0, 1 - c0.width),
         y: clamp(c0.y + dy, 0, 1 - c0.height),
-      };
+      });
       renderCropInfo();
     }
     function onUp() {
@@ -500,9 +527,9 @@ load().catch((err) => {
   function startResize(e, edge) {
     e.preventDefault();
     e.stopPropagation();
-    if (!state.crop) return;
+    if (!getActiveCrop()) return;
     const rect = wrap.getBoundingClientRect();
-    const c0 = { ...state.crop };
+    const c0 = { ...getActiveCrop() };
     // wOverH = cropW / cropH（標準化）；resize 過程不變
     const wOverH = c0.width / c0.height;
 
@@ -541,7 +568,7 @@ load().catch((err) => {
       }
       const x = signX > 0 ? anchorX : anchorX - width;
       const y = signY > 0 ? anchorY : anchorY - height;
-      state.crop = { x, y, width, height };
+      setActiveCrop({ x, y, width, height });
       renderCropInfo();
     }
     function onUp() {
@@ -561,8 +588,8 @@ load().catch((err) => {
   });
 
   $("#crop-reset").addEventListener("click", () => {
-    state.crop = null;
-    state.cropRatio = null;
+    setActiveCrop(null);
+    setActiveCropRatio(null);
     renderCropInfo();
     updateRatioButtons();
   });
@@ -571,12 +598,34 @@ load().catch((err) => {
   updateRatioButtons();
 })();
 
+function setupVersionTabs() {
+  document.querySelectorAll(".version-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const v = btn.dataset.version;
+      if (v === state.activeVersion) return;
+      state.activeVersion = v;
+      document.querySelectorAll(".version-tab").forEach((b) => {
+        b.classList.toggle("active", b.dataset.version === v);
+      });
+      renderCropInfo();
+      // 同步 ratio 按鈕到 active 版本的狀態
+      document.querySelectorAll(".ratio-btn").forEach((b) => {
+        b.classList.toggle(
+          "active",
+          getActiveCropRatio() === b.dataset.ratio && getActiveCrop() != null,
+        );
+      });
+    });
+  });
+}
+
 // === 儲存 / 取消 ===
 $("#save-btn").addEventListener("click", async () => {
   $("#save-btn").disabled = true;
   $("#save-btn").textContent = "儲存中…";
   const payload = {
-    crop: state.crop,
+    crop_yt: state.cropYt,
+    crop_reels: state.cropReels,
     deletions: [...state.deletions].sort((a, b) => a - b),
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
       idx,
@@ -896,7 +945,8 @@ $("#assemble-btn").addEventListener("click", () => {
   const dirty =
     state.deletions.size > 0 ||
     state.textOverrides.size > 0 ||
-    state.crop != null;
+    state.cropYt != null ||
+    state.cropReels != null;
   if (dirty) {
     if (
       !confirm(
@@ -962,7 +1012,8 @@ $("#cancel-btn").addEventListener("click", async () => {
   const dirty =
     state.deletions.size > 0 ||
     state.textOverrides.size > 0 ||
-    state.crop != null;
+    state.cropYt != null ||
+    state.cropReels != null;
   if (dirty && !confirm("未儲存的修改會丟失，確定取消？")) return;
   try {
     await fetch("/api/shutdown", { method: "POST" });
@@ -1152,7 +1203,8 @@ async function switchEpisode(newPath) {
     }
     // 重設前端狀態
     state.previewPath = null;
-    state.cropRatio = null;
+    state.cropRatioYt = null;
+    state.cropRatioReels = null;
     // 影片加 cache-bust 避免瀏覽器繼續用舊集的快取
     const video = $("#video");
     video.src = `/api/video?_=${Date.now()}`;
@@ -1170,3 +1222,5 @@ async function switchEpisode(newPath) {
 $("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
 $("#init-cancel").addEventListener("click", closeInitModal);
 $("#init-go").addEventListener("click", runInitAndSwitch);
+
+setupVersionTabs();
