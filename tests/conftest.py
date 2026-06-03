@@ -30,7 +30,7 @@ def tmp_episode_dir(tmp_path: Path) -> Path:
     """建一個最小 episode 資料夾結構，回傳路徑。"""
     ep = tmp_path / "20260601 測試集"
     ep.mkdir()
-    for sub in ("01_母帶", "02_片頭片尾", "03_成品", "04_工作檔"):
+    for sub in ("01_母帶", "03_成品", "04_工作檔"):
         (ep / sub).mkdir()
 
     (ep / "episode.yaml").write_text(

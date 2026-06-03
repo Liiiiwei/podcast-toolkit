@@ -29,7 +29,7 @@ pip3 install --user openai-whisper
 # 1. 在 ~/Downloads/ 建集資料夾（命名：YYYYMMDD 集名）
 mkdir "$HOME/Downloads/20260601 新集名"
 
-# 2. 跑 init 建子目錄 + symlink + 範本（會在 02_片頭片尾/ 建 4 個 symlink：intro.mp4 / intro_music.m4a / outro.mp3 / subscribe_card.png 指回 toolkit/assets/）
+# 2. 跑 init 建子目錄 + 範本（片頭片尾共用 toolkit/assets/ 內的 intro / outro / subscribe_card，不在每集資料夾內複製）
 podcast init "$HOME/Downloads/20260601 新集名"
 
 # 3. 把錄音放進 01_母帶/
@@ -75,7 +75,6 @@ podcast assemble "$HOME/Downloads/20260601 新集名"
 - `podcast init <path>` — 腳手架
 - `podcast resegment <path> [--force]` — 字幕重新斷句
 - `podcast assemble <path> [--dry-run] [--force]` — 合成 YT 完整版（Reels 走 web 端 modal 勾選）
-- `podcast relink <path>` — 修復斷掉的 symlink
 - `podcast edit <path>` — 開瀏覽器視覺化編輯：裁切 / 刪段 / 改字
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。

@@ -120,8 +120,6 @@ def _list_episode_files(root: Path) -> list[dict]:
             kind = "subtitle"
         elif first == "01_母帶":
             kind = "master"
-        elif first == "02_片頭片尾":
-            kind = "intro_outro"
         elif first == "04_工作檔":
             kind = "work"
 
@@ -209,7 +207,6 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
             "parsed_date": date or "",
             "parsed_name": name or "",
             "subdirs_to_create": ep_init.SUBDIRS,
-            "asset_symlinks": list(ep_init.ASSET_SYMLINKS.keys()),
             "entries": entries,
         })
 

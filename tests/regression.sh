@@ -17,7 +17,7 @@ diff "$EP/03_成品/過嗨乳牛_final_v2.srt" "$FIXTURE_DIR/expected_v2.srt"
 
 echo "→ 驗 assemble --dry-run 對 crop/deletions 的支援（不真跑 ffmpeg）"
 TMP_EP=$(mktemp -d)
-mkdir -p "$TMP_EP/01_母帶" "$TMP_EP/02_片頭片尾" "$TMP_EP/03_成品" "$TMP_EP/04_工作檔"
+mkdir -p "$TMP_EP/01_母帶" "$TMP_EP/03_成品" "$TMP_EP/04_工作檔"
 # 複製主檔
 cp "$EP/01_母帶/過嗨乳牛.mp4" "$TMP_EP/01_母帶/regression.mp4" 2>/dev/null || \
     ln -s "$EP/01_母帶/過嗨乳牛.mp4" "$TMP_EP/01_母帶/regression.mp4"

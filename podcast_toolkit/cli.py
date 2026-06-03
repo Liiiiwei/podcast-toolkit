@@ -19,11 +19,6 @@ def cmd_assemble(args):
     return assemble.run(Path(args.path), dry_run=args.dry_run, force=args.force)
 
 
-def cmd_relink(args):
-    from podcast_toolkit import relink
-    return relink.run(Path(args.path))
-
-
 def cmd_edit(args):
     from podcast_toolkit import edit
     return edit.run(Path(args.path))
@@ -33,7 +28,7 @@ def build_parser():
     p = argparse.ArgumentParser(prog="podcast", description="Podcast 剪輯 toolkit")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    pi = sub.add_parser("init", help="腳手架：建立子資料夾 + episode.yaml + symlink")
+    pi = sub.add_parser("init", help="腳手架：建立子資料夾 + episode.yaml")
     pi.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pi.set_defaults(func=cmd_init)
 
@@ -51,10 +46,6 @@ def build_parser():
     pe = sub.add_parser("edit", help="在瀏覽器編輯：裁切 / 刪段 / 改字")
     pe.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pe.set_defaults(func=cmd_edit)
-
-    prl = sub.add_parser("relink", help="修復斷掉的 symlink")
-    prl.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
-    prl.set_defaults(func=cmd_relink)
 
     return p
 

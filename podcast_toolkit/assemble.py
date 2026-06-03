@@ -412,7 +412,7 @@ def prepare_assembly(
         for p, label in [(intro, "intro"), (outro_audio, "outro_audio"), (outro_image, "outro_image")]:
             if not p.exists():
                 raise AssembleError(
-                    f"共用資產缺失：{label} = {p}（跑 podcast relink {episode_dir} 試試）",
+                    f"共用資產缺失：{label} = {p}（請確認 toolkit/assets/ 內有對應檔案）",
                     exit_code=3,
                 )
 

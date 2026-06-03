@@ -6,7 +6,6 @@ from podcast_toolkit import config
 class Episode:
     SUBDIRS = {
         "master": "01_母帶",
-        "intro_outro": "02_片頭片尾",
         "output": "03_成品",
         "work": "04_工作檔",
     }

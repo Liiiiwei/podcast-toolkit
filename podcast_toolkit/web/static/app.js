@@ -938,7 +938,6 @@ const FILE_SECTIONS = [
   { kind: "main_video", label: "主影片", icon: "🎬" },
   { kind: "subtitle", label: "字幕", icon: "💬" },
   { kind: "composite", label: "合成輸出", icon: "📦" },
-  { kind: "intro_outro", label: "片頭片尾", icon: "🎵" },
   { kind: "master", label: "母帶", icon: "🎙️" },
   { kind: "work", label: "工作檔", icon: "🛠️" },
   { kind: "other", label: "其他", icon: "📄" },
@@ -1638,12 +1637,6 @@ function openInitModal(preview) {
     const row = document.createElement("div");
     row.className = "row dir new";
     row.textContent = `📁 ${d}/`;
-    create.appendChild(row);
-  }
-  for (const l of preview.asset_symlinks) {
-    const row = document.createElement("div");
-    row.className = "row new";
-    row.textContent = `🔗 02_片頭片尾/${l}`;
     create.appendChild(row);
   }
   const yamlRow = document.createElement("div");
