@@ -122,8 +122,6 @@ def _list_episode_files(root: Path) -> list[dict]:
             kind = "intro_outro"
         elif first == "04_工作檔":
             kind = "work"
-        elif first == "03_成品":
-            kind = "composite"
 
         files.append({
             "path": rel,
