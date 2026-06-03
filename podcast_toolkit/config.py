@@ -41,6 +41,10 @@ def merge(defaults: dict, episode: dict) -> dict:
     """
     cfg = {
         "resegment": {**defaults["resegment"], **(episode.get("resegment") or {})},
+        "suspicious_pause": {
+            **defaults.get("suspicious_pause", {}),
+            **(episode.get("suspicious_pause") or {}),
+        },
         "subtitle_style": {**defaults["subtitle_style"], **(episode.get("subtitle_style") or {})},
         "assets": dict(defaults["assets"]),
         "encode": dict(defaults["encode"]),
@@ -57,6 +61,8 @@ def merge(defaults: dict, episode: dict) -> dict:
         "crop_yt": episode.get("crop_yt"),
         "crop_reels": episode.get("crop_reels"),
         "deletions": list(episode.get("deletions") or []),
+        "head_trim_sec": float(episode.get("head_trim_sec") or 0),
+        "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
     }
     # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
     if cfg["crop_yt"] is None and episode.get("crop") is not None:

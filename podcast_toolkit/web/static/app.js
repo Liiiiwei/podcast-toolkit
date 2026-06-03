@@ -7,6 +7,7 @@ const state = {
   cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
   cropRatioReels: null,
   deletions: new Set(),
+  susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   cards: [],
   textOverrides: new Map(), // idx -> text
   typoDict: [], // [{wrong, right, note}]
@@ -14,6 +15,8 @@ const state = {
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
+  headTrimSec: 0, // 影片開頭要砍掉幾秒
+  tailTrimSec: 0, // 影片結尾要砍掉幾秒
 };
 
 function getActiveCrop() {
@@ -62,10 +65,48 @@ function renderTopbar() {
   const total = state.cards.length;
   const deleted = state.deletions.size;
   const dirty = state.textOverrides.size;
-  $("#status").textContent =
-    `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
+  const head = state.headTrimSec || 0;
+  const tail = state.tailTrimSec || 0;
+  let line = `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
+  if (head > 0 || tail > 0) {
+    line += ` · 頭 ${head.toFixed(1)}s / 尾 ${tail.toFixed(1)}s`;
+  }
+  $("#status").textContent = line;
   const allDeleted = total > 0 && deleted === total;
   $("#save-btn").disabled = allDeleted;
+}
+
+function renderTrimControls() {
+  const head = state.headTrimSec || 0;
+  const tail = state.tailTrimSec || 0;
+  $("#trim-head-val").textContent = `${head.toFixed(1)}s`;
+  $("#trim-tail-val").textContent = `${tail.toFixed(1)}s`;
+  $("#trim-head-btn").classList.toggle("active", head > 0);
+  $("#trim-tail-btn").classList.toggle("active", tail > 0);
+
+  const dur = $("#video").duration || 0;
+  const headBand = $("#trim-band-head");
+  const tailBand = $("#trim-band-tail");
+  if (dur > 0 && head > 0) {
+    headBand.style.width = `${Math.min(100, (head / dur) * 100).toFixed(2)}%`;
+    headBand.style.display = "block";
+  } else {
+    headBand.style.display = "none";
+  }
+  if (dur > 0 && tail > 0) {
+    tailBand.style.width = `${Math.min(100, (tail / dur) * 100).toFixed(2)}%`;
+    tailBand.style.display = "block";
+  } else {
+    tailBand.style.display = "none";
+  }
+
+  const hint = $("#trim-hint");
+  if (head > 0 || tail > 0) {
+    const remain = Math.max(0, dur - head - tail);
+    hint.textContent = `保留 ${remain.toFixed(1)}s / 總長 ${dur.toFixed(1)}s`;
+  } else {
+    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾";
+  }
 }
 
 function renderCropInfo() {
@@ -149,6 +190,25 @@ function renderCards() {
     div.className = "card";
     div.dataset.idx = c.idx;
     if (state.deletions.has(c.idx)) div.classList.add("deleted");
+    if (c.suspicious_pause) div.classList.add("suspicious");
+
+    const susBox = document.createElement("input");
+    susBox.type = "checkbox";
+    susBox.className = "card-sus-check";
+    if (!c.suspicious_pause) susBox.classList.add("hidden");
+    susBox.checked = state.susChecked.has(c.idx);
+    susBox.title = c.suspicious_pause
+      ? `可疑原因：${(c.suspicious_reasons || []).join(", ")}`
+      : "";
+    susBox.addEventListener("click", (e) => e.stopPropagation());
+    susBox.addEventListener("change", () => {
+      if (susBox.checked) {
+        state.susChecked.add(c.idx);
+      } else {
+        state.susChecked.delete(c.idx);
+      }
+      renderSusToolbar();
+    });
 
     const time = document.createElement("div");
     time.className = "card-time";
@@ -193,9 +253,38 @@ function renderCards() {
       renderTypo();
     });
 
-    div.append(time, text, del);
+    div.append(susBox, time, text, del);
     list.appendChild(div);
   }
+  renderSusToolbar();
+}
+
+// 紅卡 toolbar：總可疑數 / 已勾數 / 全選 / 刪除已勾
+function renderSusToolbar() {
+  const bar = $("#sus-toolbar");
+  // 還沒刪除的可疑卡才算數
+  const susCards = state.cards.filter(
+    (c) => c.suspicious_pause && !state.deletions.has(c.idx),
+  );
+  if (susCards.length === 0) {
+    bar.classList.add("hidden");
+    return;
+  }
+  bar.classList.remove("hidden");
+  $("#sus-count").textContent = susCards.length;
+
+  // susChecked 內可能有已被刪除或不再可疑的 idx，清掉
+  const validIds = new Set(susCards.map((c) => c.idx));
+  for (const idx of [...state.susChecked]) {
+    if (!validIds.has(idx)) state.susChecked.delete(idx);
+  }
+  const checkedCount = state.susChecked.size;
+  $("#sus-checked-count").textContent = `已勾 ${checkedCount}`;
+  $("#sus-delete-checked").disabled = checkedCount === 0;
+
+  // 全選按鈕：全勾就顯示「☐ 取消全選」反之顯示「☐ 全選紅卡」
+  const allChecked = susCards.length > 0 && checkedCount === susCards.length;
+  $("#sus-select-all").textContent = allChecked ? "☑ 取消全選" : "☐ 全選紅卡";
 }
 
 async function loadEpisodeState() {
@@ -209,7 +298,38 @@ async function loadEpisodeState() {
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
+  state.susChecked = new Set();
   state.needsTranscribe = !!data.needs_transcribe;
+  state.headTrimSec = Number(data.head_trim_sec) || 0;
+  state.tailTrimSec = Number(data.tail_trim_sec) || 0;
+}
+
+function setupSusToolbar() {
+  $("#sus-select-all").addEventListener("click", () => {
+    const susCards = state.cards.filter(
+      (c) => c.suspicious_pause && !state.deletions.has(c.idx),
+    );
+    const allChecked =
+      susCards.length > 0 && state.susChecked.size === susCards.length;
+    if (allChecked) {
+      state.susChecked.clear();
+    } else {
+      state.susChecked = new Set(susCards.map((c) => c.idx));
+    }
+    renderCards();
+    renderTopbar();
+    renderCaption();
+  });
+
+  $("#sus-delete-checked").addEventListener("click", () => {
+    if (state.susChecked.size === 0) return;
+    for (const idx of state.susChecked) state.deletions.add(idx);
+    state.susChecked.clear();
+    renderCards();
+    renderTopbar();
+    renderCaption();
+    renderTypo();
+  });
 }
 
 async function loadFiles() {
@@ -240,6 +360,7 @@ async function load() {
   state.typoDict = dictRes.ok ? await dictRes.json() : [];
   renderTopbar();
   renderCropInfo();
+  renderTrimControls();
   renderCards();
   renderCaption();
   renderTypo();
@@ -458,6 +579,48 @@ $("#seek").addEventListener("input", (e) => {
   if (v.duration) v.currentTime = (e.target.value / 100) * v.duration;
 });
 
+// 影片載入完才能算頭尾 trim 在 seek 上的百分比，所以這裡也要重畫
+$("#video").addEventListener("loadedmetadata", () => {
+  renderTrimControls();
+});
+
+// 頭尾 trim 按鈕：用目前播放位置設值，再次按同位置 → 視為清除
+$("#trim-head-btn").addEventListener("click", () => {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  if (!dur) return;
+  const t = Math.max(
+    0,
+    Math.min(v.currentTime, dur - (state.tailTrimSec || 0)),
+  );
+  const next = Math.round(t * 10) / 10;
+  // 在同一位置再按一次 → 取消
+  state.headTrimSec = Math.abs(next - state.headTrimSec) < 0.05 ? 0 : next;
+  renderTrimControls();
+  renderTopbar();
+});
+
+$("#trim-tail-btn").addEventListener("click", () => {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  if (!dur) return;
+  const tailFromEnd = Math.max(
+    0,
+    Math.min(dur - v.currentTime, dur - (state.headTrimSec || 0)),
+  );
+  const next = Math.round(tailFromEnd * 10) / 10;
+  state.tailTrimSec = Math.abs(next - state.tailTrimSec) < 0.05 ? 0 : next;
+  renderTrimControls();
+  renderTopbar();
+});
+
+$("#trim-reset").addEventListener("click", () => {
+  state.headTrimSec = 0;
+  state.tailTrimSec = 0;
+  renderTrimControls();
+  renderTopbar();
+});
+
 load().catch((err) => {
   $("#title").textContent = "載入失敗";
   $("#status").textContent = `載入失敗：${err?.message || err}`;
@@ -645,6 +808,8 @@ $("#save-btn").addEventListener("click", async () => {
     crop_yt: state.cropYt,
     crop_reels: state.cropReels,
     deletions: [...state.deletions].sort((a, b) => a - b),
+    head_trim_sec: state.headTrimSec,
+    tail_trim_sec: state.tailTrimSec,
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
       idx,
       text,
@@ -657,10 +822,21 @@ $("#save-btn").addEventListener("click", async () => {
       body: JSON.stringify(payload),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    document.body.innerHTML =
-      "<div style='padding:40px;text-align:center;font-size:16px'>" +
-      "✅ 已儲存，可以關閉這個分頁。" +
-      "</div>";
+    $("#save-btn").textContent = "✅ 已儲存";
+    // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
+    const ytBtn = $("#assemble-yt-btn");
+    const reelsBtn = $("#assemble-reels-btn");
+    ytBtn.classList.add("pulse");
+    reelsBtn.classList.add("pulse");
+    ytBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
+    setTimeout(() => {
+      ytBtn.classList.remove("pulse");
+      reelsBtn.classList.remove("pulse");
+    }, 6000);
+    setTimeout(() => {
+      $("#save-btn").textContent = "完成並儲存";
+      $("#save-btn").disabled = false;
+    }, 2000);
   } catch (e) {
     alert(`儲存失敗：${e.message}`);
     $("#save-btn").disabled = false;
@@ -934,9 +1110,10 @@ async function runTranscribe(file) {
 }
 
 // === 合成流程 ===
-// 流程：點 #assemble-btn → 開 modal 顯示版本選擇區 → 使用者勾 targets + 確認
-//      → POST /api/assemble {targets, force} → 切換到進度區 + 開始 polling
+// 流程：點 🎬 合成 YT 或 📱 合成 Reels → 直接以該 target 啟動
+//      → POST /api/assemble {targets, force} → modal 直接進入進度模式 + 開始 polling
 //      → done/error 各自渲染收尾畫面
+// 400「輸出已存在」會 confirm 後自動以 force=true 重打
 let _assemblePollTimer = null;
 
 function fmtEta(s) {
@@ -954,49 +1131,25 @@ function stopAssemblePoll() {
   }
 }
 
-// 把 modal 重設成「選擇版本」初始畫面：選擇區可見、進度區隱藏、按鈕回到預設
+// 把 modal 重設成「進度模式」初始畫面：欄位歸零、按鈕回到預設
 function resetAssembleModal() {
-  // 切回選擇區
-  $("#assemble-select").classList.remove("hidden");
-  $("#assemble-progress").classList.add("hidden");
-  // 進度區欄位歸零
   $("#assemble-fill").style.width = "0%";
   $("#assemble-percent").textContent = "0%";
   $("#assemble-eta").textContent = "—";
   $("#assemble-current-label").textContent = "準備中…";
   $("#assemble-eta-label").textContent = "—";
   $("#assemble-msg").textContent = "…";
-  // 按鈕狀態
-  const confirmBtn = $("#assemble-confirm");
-  confirmBtn.hidden = false;
-  confirmBtn.disabled = false;
-  confirmBtn.textContent = "開始合成";
   const reveal = $("#assemble-reveal");
   reveal.hidden = true;
   reveal.onclick = null;
   const cancel = $("#assemble-cancel");
   cancel.disabled = false;
   cancel.textContent = "取消";
-  // cancel.onclick 在 setupAssembleButton 內統一綁定，這裡不重綁
+  // cancel.onclick 在 setupAssembleButtons 內統一綁定
 }
 
-// 收集 targets + force 後，POST /api/assemble 並切換 UI 進入進度模式
-async function onAssembleConfirm({ force = null } = {}) {
-  const wantYt = $("#assemble-yt").checked;
-  const wantReels = $("#assemble-reels").checked;
-  const targets = [];
-  if (wantYt) targets.push("yt");
-  if (wantReels) targets.push("reels");
-  if (targets.length === 0) {
-    alert("至少要勾一個版本（YT 或 Reels）");
-    return;
-  }
-  const useForce = force == null ? $("#assemble-force").checked : force;
-
-  // UI 切換到進度模式
-  $("#assemble-select").classList.add("hidden");
-  $("#assemble-progress").classList.remove("hidden");
-  $("#assemble-confirm").hidden = true;
+// 由「合成 YT」/「合成 Reels」按鈕呼叫，targets 是單一字串陣列
+async function startAssemble(targets, { force = false } = {}) {
   $("#assemble-title").textContent = "合成中…";
   $("#assemble-msg").textContent =
     "ffmpeg 正在合成片頭 + 正片（含字幕與裁切）+ 片尾，請保留分頁。";
@@ -1005,19 +1158,15 @@ async function onAssembleConfirm({ force = null } = {}) {
     const r = await fetch("/api/assemble", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targets, force: useForce }),
+      body: JSON.stringify({ targets, force }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       const msg = body.detail || `HTTP ${r.status}`;
       // 400「輸出已存在」→ 提供覆寫選項，使用者同意就以 force=true 重打
-      if (r.status === 400 && /輸出已存在|--force/.test(msg) && !useForce) {
+      if (r.status === 400 && /輸出已存在|--force/.test(msg) && !force) {
         if (confirm(`${msg}\n\n要覆寫並重新合成嗎？`)) {
-          // 重設 UI 回到準備狀態，再用 force=true 重打
-          $("#assemble-select").classList.add("hidden");
-          $("#assemble-progress").classList.remove("hidden");
-          $("#assemble-confirm").hidden = true;
-          return onAssembleConfirm({ force: true });
+          return startAssemble(targets, { force: true });
         }
         hideModal("assemble-modal");
         return;
@@ -1108,8 +1257,8 @@ async function pollAssemble() {
 }
 
 // 集中綁定 assemble 相關 listener，啟動時呼叫一次
-function setupAssembleButton() {
-  $("#assemble-btn").addEventListener("click", () => {
+function setupAssembleButtons() {
+  const launch = (targets, title) => {
     const dirty =
       state.deletions.size > 0 ||
       state.textOverrides.size > 0 ||
@@ -1125,16 +1274,22 @@ function setupAssembleButton() {
       }
     }
     resetAssembleModal();
-    $("#assemble-title").textContent = "選擇要合成的版本";
+    $("#assemble-title").textContent = title;
     showModal("assemble-modal");
+    startAssemble(targets);
+  };
+
+  $("#assemble-yt-btn").addEventListener("click", () => {
+    launch(["yt"], "合成 YT 16:9 完整版");
+  });
+  $("#assemble-reels-btn").addEventListener("click", () => {
+    launch(["reels"], "合成 Reels 9:16 短版");
   });
 
   $("#assemble-cancel").addEventListener("click", () => {
     stopAssemblePoll();
     hideModal("assemble-modal");
   });
-
-  $("#assemble-confirm").addEventListener("click", () => onAssembleConfirm());
 }
 
 // === 設定 modal ===
@@ -1402,4 +1557,5 @@ $("#init-cancel").addEventListener("click", closeInitModal);
 $("#init-go").addEventListener("click", runInitAndSwitch);
 
 setupVersionTabs();
-setupAssembleButton();
+setupAssembleButtons();
+setupSusToolbar();

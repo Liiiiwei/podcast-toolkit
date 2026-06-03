@@ -9,6 +9,40 @@ from podcast_toolkit import srt_io
 from podcast_toolkit.episode import Episode
 
 
+def _flag_suspicious_pause(
+    cards: list[dict],
+    sus_cfg: dict,
+    reaction_words: list[str],
+) -> list[dict]:
+    """對每張卡判 reaction_only / short_long / big_gap_before 三條規則，
+    命中任一條就標 suspicious_pause=True，並把命中的原因塞進 suspicious_reasons。
+    回傳同一份 cards（in-place 加欄位，再回傳，方便鏈式呼叫）。
+    """
+    max_chars = int(sus_cfg.get("short_long_max_chars", 3))
+    min_dur = float(sus_cfg.get("short_long_min_dur_sec", 2.0))
+    big_gap = float(sus_cfg.get("big_gap_min_sec", 1.5))
+    reactions = {w.strip() for w in (reaction_words or [])}
+
+    for i, c in enumerate(cards):
+        text = (c.get("text") or "").replace("\n", "").strip()
+        dur = float(c.get("end", 0)) - float(c.get("start", 0))
+        gap_before = (
+            float(c["start"]) - float(cards[i - 1]["end"]) if i > 0 else 0.0
+        )
+
+        reasons: list[str] = []
+        if text and text in reactions:
+            reasons.append("reaction_only")
+        if len(text) < max_chars and dur > min_dur:
+            reasons.append("short_long")
+        if gap_before > big_gap:
+            reasons.append("big_gap_before")
+
+        c["suspicious_pause"] = bool(reasons)
+        c["suspicious_reasons"] = reasons
+    return cards
+
+
 def load_state(ep: Episode) -> dict[str, Any]:
     """讀 episode.yaml + _v2.srt → 給前端的初始狀態。
 
@@ -18,11 +52,19 @@ def load_state(ep: Episode) -> dict[str, Any]:
     v2 = ep.output_v2_srt()
     needs_transcribe = not v2.exists()
     cards = [] if needs_transcribe else srt_io.parse(v2.read_text(encoding="utf-8"))
+    if cards:
+        _flag_suspicious_pause(
+            cards,
+            ep.cfg.get("suspicious_pause") or {},
+            ep.cfg.get("resegment", {}).get("reaction_words") or [],
+        )
     return {
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
         "crop_reels": ep.cfg.get("crop_reels"),
         "deletions": list(ep.cfg.get("deletions") or []),
+        "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
+        "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
     }
@@ -54,6 +96,14 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         data["deletions"] = [int(i) for i in deletions]
     else:
         data.pop("deletions", None)
+
+    # head / tail trim：> 0 才寫，否則清掉避免噪音
+    for key in ("head_trim_sec", "tail_trim_sec"):
+        val = float(payload.get(key) or 0)
+        if val > 0:
+            data[key] = val
+        else:
+            data.pop(key, None)
 
     yaml_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),

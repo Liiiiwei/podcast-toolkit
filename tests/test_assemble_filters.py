@@ -140,6 +140,61 @@ def test_prepare_assembly_reels_resolution_1080x1920(tmp_episode_full):
     assert "scale=1080:1920" in fc
 
 
+def test_prepare_assembly_yt_head_trim_appends_deletion_at_start(tmp_episode_full):
+    """T21: cfg['head_trim_sec'] > 0 時，ffmpeg filter 要把 [0, head_trim] 當刪除區間。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["head_trim_sec"] = 1.5
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1].replace(" ", "")
+    assert "between(t,0.000,1.500)" in fc
+
+
+def test_prepare_assembly_yt_tail_trim_appends_deletion_at_end(tmp_episode_full):
+    """T21: cfg['tail_trim_sec'] > 0 時，filter 要把 [total - tail, total] 當刪除區間。
+    tmp_episode_full 的 ffprobe_duration mock 回 100.0，所以 tail=2 → 區間 (98, 100)。
+    """
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["tail_trim_sec"] = 2.0
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1].replace(" ", "")
+    assert "between(t,98.000,100.000)" in fc
+
+
+def test_prepare_assembly_yt_trim_reduces_main_dur_for_fade_out(tmp_episode_full):
+    """T21: head + tail trim 應該扣 main_dur，否則 fade-out 時間點算錯。
+    head=1.5 + tail=2 → main_dur 由 100 變成 96.5。
+    """
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["head_trim_sec"] = 1.5
+    data["tail_trim_sec"] = 2.0
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    assert plan["main_dur"] == pytest.approx(96.5)
+
+
+def test_prepare_assembly_reels_head_trim_also_applies(tmp_episode_full):
+    """T21: Reels 分支也要套頭尾 trim。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["head_trim_sec"] = 0.8
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1].replace(" ", "")
+    assert "between(t,0.000,0.800)" in fc
+
+
 def test_prepare_assembly_reels_crop_rescales_back_to_1080x1920(tmp_episode_full):
     """Reels crop 後必須 scale 回 1080×1920，否則輸出會變 432×1920 之類的怪尺寸。"""
     ep_yaml = tmp_episode_full / "episode.yaml"

@@ -42,9 +42,9 @@ def test_get_video_with_range_returns_206(client):
     assert "bytes 0-10/" in r.headers["content-range"]
 
 
-def test_post_save_writes_files_and_signals_shutdown(client, tmp_episode_dir):
+def test_post_save_writes_files_and_keeps_server_alive(client, tmp_episode_dir):
+    """/api/save 只儲存,不關 server (使用者按完還要接著按合成)。"""
     called = {"n": 0}
-    # 重建 client 但讓 shutdown 計次
     from podcast_toolkit.web.api import build_app
     ep = Episode(tmp_episode_dir)
     app = build_app(ep, shutdown=lambda: called.__setitem__("n", called["n"] + 1))
@@ -60,7 +60,7 @@ def test_post_save_writes_files_and_signals_shutdown(client, tmp_episode_dir):
     assert data["deletions"] == [3]
     import time
     time.sleep(0.5)
-    assert called["n"] == 1
+    assert called["n"] == 0, "save 不應該觸發 shutdown(只有 /api/shutdown 才關 server)"
 
 
 def test_post_shutdown_calls_callback(client, tmp_episode_dir):
@@ -195,6 +195,70 @@ def test_list_episode_files_classifies_by_kind(tmp_episode_full):
     assert by_path["02_片頭片尾/intro.mp4"]["kind"] == "intro_outro"
     # 工作檔
     assert by_path["04_工作檔/switch_list.json"]["kind"] == "work"
+
+
+def test_flag_suspicious_pause_marks_three_rules():
+    """三條規則各自要能命中對應的卡。"""
+    from podcast_toolkit.web.episode_io import _flag_suspicious_pause
+
+    cards = [
+        # 0: 正常句子，長度 8、時長 4.2、沒前一張 → 不可疑
+        {"idx": 1, "start": 0.0,  "end": 4.2,  "text": "大家好歡迎來到我愛上班"},
+        # 1: reaction_only：text 是 "對"
+        {"idx": 2, "start": 4.2,  "end": 5.0,  "text": "對"},
+        # 2: short_long：1 個字，持續 3 秒（>2.0）
+        {"idx": 3, "start": 5.0,  "end": 8.0,  "text": "啊"},
+        # 3: big_gap_before：距上一張 2 秒（>1.5）
+        {"idx": 4, "start": 10.0, "end": 12.0, "text": "我們繼續講剛剛的話題"},
+        # 4: 完全正常
+        {"idx": 5, "start": 12.0, "end": 16.0, "text": "這集會講到產品設計"},
+    ]
+    sus_cfg = {
+        "short_long_max_chars": 3,
+        "short_long_min_dur_sec": 2.0,
+        "big_gap_min_sec": 1.5,
+    }
+    reactions = ["對", "嗯", "哈哈哈"]
+
+    _flag_suspicious_pause(cards, sus_cfg, reactions)
+
+    assert cards[0]["suspicious_pause"] is False
+    assert cards[1]["suspicious_pause"] is True
+    assert "reaction_only" in cards[1]["suspicious_reasons"]
+    assert cards[2]["suspicious_pause"] is True
+    assert "short_long" in cards[2]["suspicious_reasons"]
+    assert cards[3]["suspicious_pause"] is True
+    assert "big_gap_before" in cards[3]["suspicious_reasons"]
+    assert cards[4]["suspicious_pause"] is False
+
+
+def test_get_episode_returns_suspicious_pause_per_card(tmp_episode_dir):
+    """整合測試：/api/episode 回的每張卡都要帶 suspicious_pause 欄位。"""
+    from podcast_toolkit.web.api import build_app
+    # 覆寫 _v2.srt 塞進一張 reaction_only 卡
+    srt = (
+        "1\n00:00:00,000 --> 00:00:04,000\n大家好歡迎收聽\n\n"
+        "2\n00:00:04,000 --> 00:00:05,000\n對\n\n"
+        "3\n00:00:05,000 --> 00:00:10,000\n繼續講下一段\n"
+    )
+    (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").write_text(
+        srt, encoding="utf-8"
+    )
+    ep = Episode(tmp_episode_dir)
+    app = build_app(ep, shutdown=lambda: None)
+    c = TestClient(app)
+
+    r = c.get("/api/episode")
+    assert r.status_code == 200
+    cards = r.json()["cards"]
+    assert len(cards) == 3
+    # 每張卡都要有欄位
+    for card in cards:
+        assert "suspicious_pause" in card
+        assert "suspicious_reasons" in card
+    # 卡 #2 文字是 "對"（reaction_only）→ 應該被標紅
+    assert cards[1]["suspicious_pause"] is True
+    assert "reaction_only" in cards[1]["suspicious_reasons"]
 
 
 def test_start_job_rejects_when_running(tmp_episode_full):

@@ -228,16 +228,27 @@ def prepare_assembly(
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
     srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
-    # 處理 deletions：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
+    # 處理 deletions + 頭尾 trim：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
     deletions = list(cfg.get("deletions") or [])
+    head_trim = float(cfg.get("head_trim_sec") or 0)
+    tail_trim = float(cfg.get("tail_trim_sec") or 0)
+
     deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
+    if head_trim > 0:
+        deletion_intervals.append((0.0, head_trim))
+    if tail_trim > 0:
+        deletion_intervals.append((main_dur - tail_trim, main_dur))
+    deletion_intervals = sorted(deletion_intervals)
 
     if deletions:
+        # 燒字幕：去掉刪除段，避免 select 後字幕時間錯位閃爍
         clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
         filter_deletion_srt(srt, clean_srt, deletions)
         srt = clean_srt
         srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
-        # main_dur 用於 fade-out 計時，刪段後有效時長要扣掉刪除區間總長
+
+    if deletion_intervals:
+        # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
         deleted_total = sum(b - a for a, b in deletion_intervals)
         main_dur = main_dur - deleted_total
 

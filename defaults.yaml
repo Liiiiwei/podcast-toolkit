@@ -12,6 +12,13 @@ resegment:
   whisper_guard:
     char_loop_min_repeats: 4
 
+# 編輯介面標紅「可疑空拍卡」的門檻。三條 OR，命中任一條就標紅。
+# reaction_words 沿用 resegment.reaction_words。
+suspicious_pause:
+  short_long_max_chars: 3      # 文字 < N 字
+  short_long_min_dur_sec: 2.0  # 但持續 > N 秒 → 短句拖很久
+  big_gap_min_sec: 1.5         # 距離前一張卡 > N 秒 → 前面有大靜默
+
 common_fixes: []
 
 subtitle_style:

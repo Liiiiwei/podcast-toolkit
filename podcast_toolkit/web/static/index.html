@@ -17,7 +17,15 @@
       </div>
       <div class="actions">
         <button id="settings-btn" title="設定">⚙</button>
-        <button id="assemble-btn">🎬 開始合成</button>
+        <button id="assemble-yt-btn" title="合成 YT 16:9 完整版（含片頭片尾）">
+          🎬 合成 YT
+        </button>
+        <button
+          id="assemble-reels-btn"
+          title="合成 Reels 9:16 短版（無片頭片尾）"
+        >
+          📱 合成 Reels
+        </button>
         <button id="cancel-btn">取消</button>
         <button id="save-btn" class="primary" disabled>完成並儲存</button>
       </div>
@@ -46,7 +54,31 @@
         <div class="controls">
           <button id="play-btn">▶</button>
           <span id="time">00:00 / 00:00</span>
-          <input type="range" id="seek" min="0" max="100" value="0" />
+          <div class="seek-wrap">
+            <input type="range" id="seek" min="0" max="100" value="0" />
+            <div class="trim-band head" id="trim-band-head"></div>
+            <div class="trim-band tail" id="trim-band-tail"></div>
+          </div>
+        </div>
+        <div class="trim-controls">
+          <button
+            id="trim-head-btn"
+            type="button"
+            title="把目前播放位置設成新片頭"
+          >
+            ✂ 設頭 <span id="trim-head-val">0.0s</span>
+          </button>
+          <button
+            id="trim-tail-btn"
+            type="button"
+            title="把目前播放位置設成新片尾"
+          >
+            ✂ 設尾 <span id="trim-tail-val">0.0s</span>
+          </button>
+          <button id="trim-reset" type="button" title="清除頭尾裁切">
+            ↺ 重設
+          </button>
+          <span id="trim-hint" class="trim-hint"></span>
         </div>
         <div class="crop-info">
           <span id="crop-text">裁切框：未設定</span>
@@ -85,6 +117,16 @@
       </section>
 
       <section class="cards-pane">
+        <div class="sus-toolbar hidden" id="sus-toolbar">
+          <span class="sus-count" id="sus-count">0</span>
+          <span style="color: #aaa">張可疑空拍卡</span>
+          <button id="sus-select-all" type="button">☐ 全選紅卡</button>
+          <button id="sus-delete-checked" type="button" disabled>
+            🗑 刪除已勾
+          </button>
+          <span class="spacer"></span>
+          <span id="sus-checked-count" style="color: #aaa">已勾 0</span>
+        </div>
         <div id="cards-list"></div>
       </section>
     </main>
@@ -154,22 +196,7 @@
       <div class="modal">
         <div class="modal-head" id="assemble-title">準備合成</div>
         <div class="modal-body">
-          <div id="assemble-select">
-            <p class="modal-hint">選擇要合成的版本：</p>
-            <label class="checkbox-row">
-              <input type="checkbox" id="assemble-yt" checked />
-              <span>YT 16:9 完整版（含片頭片尾）</span>
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="assemble-reels" />
-              <span>Reels 9:16 短版（無片頭片尾）</span>
-            </label>
-            <label class="checkbox-row">
-              <input type="checkbox" id="assemble-force" />
-              <span>覆寫既有檔案（--force）</span>
-            </label>
-          </div>
-          <div id="assemble-progress" class="hidden">
+          <div id="assemble-progress">
             <div class="progress-line">
               <span id="assemble-current-label">準備中…</span>
               <span id="assemble-eta-label">—</span>
@@ -186,7 +213,6 @@
         </div>
         <div class="modal-actions" id="assemble-actions">
           <button id="assemble-cancel">取消</button>
-          <button id="assemble-confirm" class="primary">開始合成</button>
           <button id="assemble-reveal" class="primary" hidden>
             📁 在 Finder 開啟
           </button>

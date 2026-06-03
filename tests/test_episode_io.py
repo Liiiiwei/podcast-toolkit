@@ -114,6 +114,68 @@ def test_episode_io_load_returns_crop_yt_and_reels(tmp_episode_with_crops):
     assert "crop" not in state  # 舊欄位不再透出
 
 
+def test_load_state_returns_head_tail_trim_from_yaml(tmp_episode_dir):
+    """T21: episode.yaml 有 head_trim_sec / tail_trim_sec 時，load_state 要透出來。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "head_trim_sec: 1.5\ntail_trim_sec: 2.0\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["head_trim_sec"] == 1.5
+    assert state["tail_trim_sec"] == 2.0
+
+
+def test_load_state_defaults_head_tail_trim_to_zero(tmp_episode_dir):
+    """T21: 沒設過時 head_trim_sec / tail_trim_sec 預設 0。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["head_trim_sec"] == 0.0
+    assert state["tail_trim_sec"] == 0.0
+
+
+def test_save_state_writes_head_tail_trim(tmp_episode_dir):
+    """T21: save_state 把 head_trim_sec / tail_trim_sec 寫進 yaml。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None,
+            "crop_reels": None,
+            "deletions": [],
+            "cards": [],
+            "head_trim_sec": 1.5,
+            "tail_trim_sec": 2.0,
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["head_trim_sec"] == 1.5
+    assert data["tail_trim_sec"] == 2.0
+
+
+def test_save_state_removes_head_tail_trim_when_zero(tmp_episode_dir):
+    """T21: trim = 0 時把 key 從 yaml 移除，避免噪音。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "head_trim_sec: 1.5\ntail_trim_sec: 2.0\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "head_trim_sec": 0, "tail_trim_sec": 0,
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "head_trim_sec" not in data
+    assert "tail_trim_sec" not in data
+
+
 def test_episode_io_save_writes_both_crops(tmp_episode_dir):
     from podcast_toolkit.web import episode_io
     from podcast_toolkit.episode import Episode
