@@ -1450,6 +1450,33 @@ function openCamModal() {
 $("#cam-btn").addEventListener("click", openCamModal);
 $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
 
+// T23b: 自動對齊（音訊互相關）。前端只負責叫 endpoint + 把結果填回 input；
+// 寫 yaml 仍走「儲存」按鈕，避免 race + 跟現有設計一致。
+$("#cam-auto-align").addEventListener("click", async () => {
+  const camBPath = $("#cam-b-select").value || "";
+  if (!camBPath) {
+    alert("請先選 cam B 來源");
+    return;
+  }
+  const btn = $("#cam-auto-align");
+  btn.disabled = true;
+  btn.textContent = "計算中…";
+  try {
+    const r = await fetch("/api/auto-align", { method: "POST" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));
+      throw new Error(err.detail || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
+  } catch (e) {
+    alert(`自動對齊失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🎯 自動對齊";
+  }
+});
+
 $("#cam-save").addEventListener("click", async () => {
   const camBPath = $("#cam-b-select").value || "";
   const offsetRaw = $("#cam-sync-offset-b").value;

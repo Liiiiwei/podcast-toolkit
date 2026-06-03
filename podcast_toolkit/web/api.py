@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from podcast_toolkit import audio_align
 from podcast_toolkit import init as ep_init
 from podcast_toolkit import resegment
 from podcast_toolkit.assemble import AssembleError
@@ -415,6 +416,28 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
         except (FileNotFoundError, subprocess.CalledProcessError) as e:
             raise HTTPException(status_code=500, detail=f"無法開啟：{e}")
         return JSONResponse({"ok": True})
+
+    @app.post("/api/auto-align")
+    def auto_align_route():
+        """T23b：用兩台攝影機的前 120 秒做音訊互相關，回傳 cam B 相對 cam A
+        的秒偏移。不寫 yaml — 前端拿到值填到 input，使用者按儲存才走 /api/save。"""
+        ep = holder["ep"]
+        cameras = ep.cfg.get("cameras") or {}
+        cam_a_rel = cameras.get("a") or ep.cfg.get("main_video")
+        cam_b_rel = cameras.get("b")
+        if not cam_a_rel or not cam_b_rel:
+            raise HTTPException(status_code=400, detail="請先在鏡頭 modal 選好 cam B 再對齊")
+        cam_a = ep.resolve_episode_path(cam_a_rel)
+        cam_b = ep.resolve_episode_path(cam_b_rel)
+        if not cam_a.is_file():
+            raise HTTPException(status_code=404, detail=f"找不到 cam A 檔案：{cam_a_rel}")
+        if not cam_b.is_file():
+            raise HTTPException(status_code=404, detail=f"找不到 cam B 檔案：{cam_b_rel}")
+        try:
+            offset_sec = audio_align.auto_align(cam_a, cam_b)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return {"ok": True, "offset_sec": offset_sec}
 
     @app.post("/api/typo-dict")
     def post_typo_dict(payload: dict):

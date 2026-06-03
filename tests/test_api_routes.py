@@ -332,6 +332,13 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     )
 
 
+def test_post_auto_align_400_when_cam_b_missing(client):
+    """T23b: cameras.b 還沒在 yaml 時按自動對齊 → 400，提示使用者先存 cam B。"""
+    r = client.post("/api/auto-align")
+    assert r.status_code == 400
+    assert "cam B" in r.json()["detail"]
+
+
 def test_get_episode_reflects_cameras_b_after_save(tmp_episode_dir):
     """T23a-followup bug 防回歸：/api/save 寫入 cam_b_path 後，
     下一次 GET /api/episode 應拿到新 cameras.b（必須 reload Episode cfg）。
