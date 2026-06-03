@@ -402,3 +402,14 @@ def test_load_state_cam_b_candidates_empty_when_only_cam_a(tmp_episode_dir):
     ep = Episode(tmp_episode_dir)
     state = episode_io.load_state(ep)
     assert state["cam_b_candidates"] == []
+
+
+def test_load_state_cam_b_candidates_handles_uppercase_extension(tmp_episode_dir):
+    """DJI 等相機常出大寫 .MP4；候選掃描要 case-insensitive。"""
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+    (tmp_episode_dir / "01_母帶" / "DJI_001.MP4").write_bytes(b"")
+    (tmp_episode_dir / "01_母帶" / "DJI_002.Mp4").write_bytes(b"")
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert "01_母帶/DJI_001.MP4" in state["cam_b_candidates"]
+    assert "01_母帶/DJI_002.Mp4" in state["cam_b_candidates"]

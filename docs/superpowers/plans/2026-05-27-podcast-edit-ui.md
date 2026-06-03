@@ -2073,3 +2073,155 @@ git commit -m "docs(README): add podcast edit workflow + manual QA checklist"
 | CLI 變更 | Task 13 |
 
 無 placeholder、無 TBD。任務間型別一致（`crop` 為 dict 或 None、`deletions` 為 list[int]、`cards` payload 為 `[{idx, text}, ...]`）。
+
+---
+
+# 上線後追加（Post-launch additions）
+
+原計劃涵蓋 T1~T17。以下任務在主線交付後依使用者回饋追加，原則上不回頭補進前面 Task 編號表，改用「T## 名稱」管理。已完成的不寫細節，只記錄入口點，方便未來 grep 找到實作位置。
+
+## 已完成（commits in `vs/edit-ui`）
+
+| T## | 名稱 | 主要實作位置 |
+|---|---|---|
+| T15 | Reels crop 後 scale 回 1080×1920 | `podcast_toolkit/assemble.py` filter chain |
+| T16 | `_v2.srt` 缺檔時 `/api/episode` 寬容回應 | `episode_io.py::load_state` `needs_transcribe` flag |
+| T17 | web transcribe 產出單字 SRT 後補 resegment | `web/api.py` transcribe endpoint |
+| T18 | 儲存按鈕不關 server + 儲存成功 highlight 合成按鈕 | `web/static/app.js` save handler |
+| T20 | 標紅可疑空拍卡 + checkbox 批次刪 | `episode_io.py::_flag_suspicious_pause` + 前端 sus-toolbar |
+| T21 | 影片時間軸頭尾 trim handle | `head_trim_sec` / `tail_trim_sec` in yaml + frontend trim-band |
+| T22 | 把開始合成拆成「合成 YT」「合成 Reels」兩個按鈕 | `web/static/index.html` topbar + `assemble-yt-btn` / `assemble-reels-btn` |
+| T23 | 雙鏡頭切換討論：episode.yaml schema + UI | spec：`docs/superpowers/specs/2026-05-27-podcast-edit-ui-design.md` 末段 |
+| T23a | 雙鏡頭基礎：schema + sidecar + 字幕卡 A/B toggle + ffmpeg 合成 | `cameras_io.py` + `assemble.py` multicam dispatch + `_v2.cameras.json` sidecar |
+
+## T23a-followup：雙鏡頭設定 UI（消除手改 yaml）
+
+**動機：** T23a 上線後使用者明確要求「不希望使用者手改 `episode.yaml`」。`cameras.b` 與 `camera_sync_offset.b` 必須有 UI 入口寫入。
+
+**架構：**
+- 前端：topbar 加「🎥 鏡頭」按鈕 → 開 modal → 從 `01_母帶/*.mp4` 下拉選 cam B + 數字輸入 offset → 儲存。
+- 後端：擴充現有 `episode_io.py::load_state` / `save_state`，新增 `cam_b_candidates` 欄位（前端下拉用）；payload 新增 `cam_b_path` / `camera_sync_offset_b` 兩 key（用 key-presence 區分「沒動 UI」vs「明確清空」）。
+- 無新檔案、無新 endpoint。沿用 `/api/episode` (GET) + `/api/save` (POST)。
+
+**File Structure：**
+- Modify: `podcast_toolkit/web/episode_io.py` — `_list_cam_b_candidates()` helper + `load_state` 多回 `cameras` / `camera_sync_offset` / `cam_b_candidates`；`save_state` 處理 `cam_b_path` / `camera_sync_offset_b`
+- Modify: `podcast_toolkit/web/static/index.html` — `cam-btn` topbar 按鈕 + `cam-modal` markup（select + number input）
+- Modify: `podcast_toolkit/web/static/app.js` — `state.camBCandidates` / `state.camSyncOffsetB` + `openCamModal()` + 儲存 handler
+- Test: `tests/test_episode_io.py` — 候選掃描 + payload round-trip
+
+### 進度快照（要 grep 找到接續點）
+
+**已完成：**
+
+- [x] **Backend：** `_list_cam_b_candidates()` 掃 `01_母帶/*.mp4`（排除 cam A）→ 寫進 `load_state` 回傳的 `cam_b_candidates`
+- [x] **Backend：** `save_state` 用 `"cam_b_path" in payload` / `"camera_sync_offset_b" in payload` 判 key-presence；空字串 / 0 → 整段移除對應 yaml 欄位
+- [x] **Bug fix：** `_list_cam_b_candidates` 原本用 `glob("*.mp4")` 在 macOS APFS 上漏掉大寫 `.MP4`（DJI / iPhone 預設大寫）。改用 `iterdir()` + `entry.suffix.lower() != ".mp4"` 過濾。
+- [x] **Test：** `test_load_state_cam_b_candidates_handles_uppercase_extension` — RED→GREEN，確認大小寫副檔名都列出。
+- [x] **Frontend：** `index.html` 加 `cam-btn` topbar 按鈕 + `cam-modal` markup（`cam-b-select` 下拉 + `cam-sync-offset-b` number input）
+- [x] **Frontend：** `app.js` 加 `state.camBCandidates` / `state.camSyncOffsetB` 同步、`openCamModal()` 函式、modal 儲存按鈕 POST `/api/save` 後 refetch state
+- [x] **Tests：** 全測試 118/118 GREEN
+
+**未驗證：**
+
+- [ ] **Browser dogfood：** 起 dev server 走完整 modal flow（開 modal → 選 cam B → 設 offset → 儲存 → 確認 `episode.yaml` 真的寫入 `cameras.b` + `camera_sync_offset.b` → 字幕卡出現 A/B toggle）
+- [ ] **Commit：** 目前 4 個檔案 uncommitted
+
+### 接續步驟（新 session pickup）
+
+- [ ] **Step 1：起 dev server 在測試 episode**
+
+```bash
+cd "/Users/vincentsia/Desktop/vibe-coding playground/podcast-toolkit"
+BROWSER=false PORT=58901 python bin/podcast edit "/tmp/podcast-test-camB/20260604 雙鏡測試"
+# fixture 已存在：cam A 1 檔 + cam B 候選 2 檔（含大寫 .MP4）+ 2 張字幕卡
+```
+
+如果 fixture 被清掉，重建：
+
+```bash
+mkdir -p "/tmp/podcast-test-camB/20260604 雙鏡測試/01_母帶"
+mkdir -p "/tmp/podcast-test-camB/20260604 雙鏡測試/03_成品"
+# cam A
+touch "/tmp/podcast-test-camB/20260604 雙鏡測試/01_母帶/雙鏡測試.mp4"
+# cam B 候選（大小寫各一）
+touch "/tmp/podcast-test-camB/20260604 雙鏡測試/01_母帶/B-roll.mp4"
+touch "/tmp/podcast-test-camB/20260604 雙鏡測試/01_母帶/DJI_001.MP4"
+# 最小 episode.yaml
+cat > "/tmp/podcast-test-camB/20260604 雙鏡測試/episode.yaml" <<'EOF'
+name: 雙鏡測試
+main_video: 01_母帶/{name}.mp4
+EOF
+# 最小 _v2.srt 兩張卡
+cat > "/tmp/podcast-test-camB/20260604 雙鏡測試/03_成品/雙鏡測試_final_v2.srt" <<'EOF'
+1
+00:00:00,000 --> 00:00:03,000
+測試卡片一
+
+2
+00:00:03,000 --> 00:00:06,000
+測試卡片二
+EOF
+```
+
+- [ ] **Step 2：用 `/browse` skill 走 UI flow**
+
+1. navigate `http://127.0.0.1:58901/`
+2. 確認 topbar 看得到「🎥 鏡頭」按鈕
+3. click `#cam-btn` → 確認 modal 顯示，`#cam-b-select` 下拉同時列出 `01_母帶/B-roll.mp4` 與 `01_母帶/DJI_001.MP4`
+4. 選 `B-roll.mp4`、`#cam-sync-offset-b` 填 1.5 → click `#cam-save`
+5. modal 關閉、page refetch
+6. 截圖 / network log 留證
+
+- [ ] **Step 3：驗 yaml 寫入**
+
+```bash
+cat "/tmp/podcast-test-camB/20260604 雙鏡測試/episode.yaml"
+# 預期看到：
+# cameras:
+#   a: 01_母帶/雙鏡測試.mp4
+#   b: 01_母帶/B-roll.mp4
+# camera_sync_offset:
+#   b: 1.5
+```
+
+- [ ] **Step 4：驗 A/B toggle 出現**
+
+回到瀏覽器，確認字幕卡列右側出現 A/B 切換按鈕（multicam mode 啟用條件 = `state.cameras.b` 存在）。
+
+- [ ] **Step 5：驗清空語意**
+
+再開 modal、把 `#cam-b-select` 選回「無」、`#cam-sync-offset-b` 清空 → 儲存。預期：`episode.yaml` 移除 `cameras.b` 與 `camera_sync_offset` 整段，留 `cameras.a`。
+
+- [ ] **Step 6：切兩個 commit（不 push，等使用者）**
+
+```bash
+cd "/Users/vincentsia/Desktop/vibe-coding playground/podcast-toolkit"
+
+# Commit 1：後端 bug fix
+git add podcast_toolkit/web/episode_io.py tests/test_episode_io.py
+git commit -m "fix(t23a-followup): cam B 候選掃描支援大寫 .MP4 (DJI / iPhone)"
+
+# Commit 2：前端 UI
+git add podcast_toolkit/web/static/app.js podcast_toolkit/web/static/index.html
+git commit -m "feat(t23a-followup): cam B 設定 modal（消除手改 yaml）"
+
+git status  # 確認 clean
+git log --oneline -5
+```
+
+- [ ] **Step 7：問使用者要不要 push**
+
+CLAUDE.md 要求：push 前必問。準備好 commit 摘要 → 問「兩個 commit 要 push 到 origin/vs/edit-ui 嗎？」
+
+## 待辦（尚未動工）
+
+| T## | 名稱 | 備註 |
+|---|---|---|
+| T14 | 預覽按鈕點了沒影片：診斷 + 修 | long-stale，使用者可能已不在意；接續前先確認 |
+| T19 | Gemini API 取代 xAI Grok：轉錄 + 斷句 + 錯字一次到位 | 新依賴 + key 管理；要先跟使用者對齊 |
+| T23b | 自動對齊 L1：音訊互相關計算 offset | 算完直接寫進 `camera_sync_offset.b` |
+| T23c | 手動標記 L2：三檔聲音事件標記 | T23b 不準時的 fallback |
+
+接續任一項前都要先跟使用者確認範圍（Scope Discipline）。
+
+

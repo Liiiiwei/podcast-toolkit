@@ -21,6 +21,9 @@ const state = {
   cameras: {},
   // 字幕卡 idx -> "a" | "b"，只記 explicit 標過的；其他卡靠 carry-forward 推算
   camerasMapping: new Map(),
+  // T23a-followup：cam B UI 用，避免使用者手改 yaml
+  camBCandidates: [], // 後端掃 01_母帶/*.mp4 排除 cam A
+  camSyncOffsetB: 0, // 秒；cam B 相對 cam A 的對齊偏移
 };
 
 function getActiveCrop() {
@@ -373,6 +376,11 @@ async function loadEpisodeState() {
       .map(([k, v]) => [Number(k), v])
       .filter(([_, v]) => v === "a" || v === "b"),
   );
+  // T23a-followup：cam B 候選 + 同步 offset（給 modal 用）
+  state.camBCandidates = Array.isArray(data.cam_b_candidates)
+    ? data.cam_b_candidates
+    : [];
+  state.camSyncOffsetB = Number((data.camera_sync_offset || {}).b || 0);
 }
 
 function setupSusToolbar() {
@@ -1406,6 +1414,80 @@ $("#settings-save").addEventListener("click", async () => {
     state.hasApiKey = !!data.has_xai_api_key;
     hideModal("settings-modal");
     renderFiles();
+  } catch (e) {
+    alert(`儲存失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "儲存";
+  }
+});
+
+// === 雙鏡頭 cam B 設定 modal（T23a-followup：消除手改 yaml） ===
+function openCamModal() {
+  const sel = $("#cam-b-select");
+  sel.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "（無，單鏡頭）";
+  sel.appendChild(none);
+  const currentB = (state.cameras && state.cameras.b) || "";
+  // 把目前 b（若不在候選清單）也加進來，避免被自動 reset
+  const opts = new Set(state.camBCandidates || []);
+  if (currentB) opts.add(currentB);
+  for (const path of [...opts].sort()) {
+    const o = document.createElement("option");
+    o.value = path;
+    o.textContent = path;
+    if (path === currentB) o.selected = true;
+    sel.appendChild(o);
+  }
+  $("#cam-sync-offset-b").value = state.camSyncOffsetB
+    ? String(state.camSyncOffsetB)
+    : "";
+  showModal("cam-modal");
+}
+
+$("#cam-btn").addEventListener("click", openCamModal);
+$("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
+
+$("#cam-save").addEventListener("click", async () => {
+  const camBPath = $("#cam-b-select").value || "";
+  const offsetRaw = $("#cam-sync-offset-b").value;
+  const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
+  if (!Number.isFinite(offset)) {
+    alert("同步偏移要是數字");
+    return;
+  }
+  const btn = $("#cam-save");
+  btn.disabled = true;
+  btn.textContent = "儲存中…";
+  // 只送 cam B 相關欄位 + 必填的 deletions/cards（保留現有編輯）
+  const payload = {
+    crop_yt: state.cropYt,
+    crop_reels: state.cropReels,
+    deletions: [...state.deletions].sort((a, b) => a - b),
+    head_trim_sec: state.headTrimSec,
+    tail_trim_sec: state.tailTrimSec,
+    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
+      idx,
+      text,
+    })),
+    cameras_mapping: Object.fromEntries(state.camerasMapping),
+    cam_b_path: camBPath,
+    camera_sync_offset_b: offset,
+  };
+  try {
+    const r = await fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
+    await loadEpisodeState();
+    renderTopbar();
+    renderCards();
+    hideModal("cam-modal");
   } catch (e) {
     alert(`儲存失敗：${e.message}`);
   } finally {

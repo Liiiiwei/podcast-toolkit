@@ -17,6 +17,7 @@
       </div>
       <div class="actions">
         <button id="settings-btn" title="設定">⚙</button>
+        <button id="cam-btn" title="雙鏡頭設定">🎥 鏡頭</button>
         <button id="assemble-yt-btn" title="合成 YT 16:9 完整版（含片頭片尾）">
           🎬 合成 YT
         </button>
@@ -216,6 +217,40 @@
           <button id="assemble-reveal" class="primary" hidden>
             📁 在 Finder 開啟
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 雙鏡頭 cam B 設定 modal -->
+    <div class="modal-backdrop hidden" id="cam-modal">
+      <div class="modal">
+        <div class="modal-head">雙鏡頭設定</div>
+        <div class="modal-body">
+          <label class="modal-label">Cam B 影片（從 01_母帶/ 挑）</label>
+          <div class="modal-row">
+            <select id="cam-b-select"></select>
+          </div>
+          <div class="modal-hint" id="cam-b-hint">
+            選「無」可移除 cam B；雙機集才會顯示字幕卡 A/B 切換。
+          </div>
+          <label class="modal-label" style="margin-top: 12px"
+            >Cam B 同步偏移（秒）</label
+          >
+          <div class="modal-row">
+            <input
+              type="number"
+              id="cam-sync-offset-b"
+              step="0.01"
+              placeholder="0.0"
+            />
+          </div>
+          <div class="modal-hint">
+            cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。後續 T23b 會自動算。
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button id="cam-cancel">取消</button>
+          <button id="cam-save" class="primary">儲存</button>
         </div>
       </div>
     </div>

@@ -54,10 +54,13 @@ def _list_cam_b_candidates(ep: Episode) -> list[str]:
     if not mother_dir.is_dir():
         return []
     out: list[str] = []
-    for mp4 in sorted(mother_dir.glob("*.mp4")):
-        if cam_a_resolved and mp4 == cam_a_resolved:
+    for entry in sorted(mother_dir.iterdir()):
+        # DJI / iPhone 等相機常出大寫 .MP4，用 suffix.lower() 比對
+        if not entry.is_file() or entry.suffix.lower() != ".mp4":
             continue
-        out.append(str(mp4.relative_to(ep.dir)))
+        if cam_a_resolved and entry == cam_a_resolved:
+            continue
+        out.append(str(entry.relative_to(ep.dir)))
     return out
 
 
