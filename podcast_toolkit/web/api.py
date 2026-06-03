@@ -318,9 +318,12 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/assemble")
     def post_assemble(payload: dict):
         ep = holder["ep"]
+        targets = payload.get("targets") or []
+        if not targets or not isinstance(targets, list):
+            raise HTTPException(status_code=400, detail="缺少 targets（list，例如 ['yt', 'reels']）")
         force = bool(payload.get("force"))
         try:
-            info = assemble_job.start_job(ep, force=force)
+            info = assemble_job.start_job(ep, targets=targets, force=force)
         except AssembleError as e:
             # 資產缺失 / 輸出存在 / 找不到 ffmpeg
             # 注意：AssembleError 繼承 RuntimeError，必須先攔
@@ -328,10 +331,12 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
         except RuntimeError as e:
             # 已有 job 在跑
             raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         return JSONResponse({
             "ok": True,
-            "out_path": info["out_path"],
-            "total_dur": info["total_dur"],
+            "targets": info["targets"],
+            "out_paths": info["out_paths"],
         })
 
     @app.get("/api/assemble/status")

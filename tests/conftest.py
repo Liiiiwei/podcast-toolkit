@@ -58,6 +58,19 @@ def tmp_episode_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_episode_with_crops(tmp_episode_dir: Path) -> Path:
+    """在 tmp_episode_dir 之上補 crop_yt + crop_reels 到 yaml。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "crop_yt:\n  x: 0.1\n  y: 0.0\n  width: 0.8\n  height: 1.0\n"
+        + "crop_reels:\n  x: 0.3\n  y: 0.0\n  width: 0.4\n  height: 1.0\n",
+        encoding="utf-8",
+    )
+    return tmp_episode_dir
+
+
+@pytest.fixture
 def tmp_episode_full(tmp_episode_dir: Path, monkeypatch) -> Path:
     """在 tmp_episode_dir 之上補齊 prepare_assembly 需要的檔案：
     - 01_母帶/{name}.mp4 stub（空檔，由 monkeypatch ffprobe_duration 蓋掉量測）

@@ -32,7 +32,8 @@ def test_get_episode_returns_state(client):
     body = r.json()
     assert body["name"] == "測試集"
     assert isinstance(body["cards"], list)
-    assert body["crop"] is None
+    assert body["crop_yt"] is None
+    assert body["crop_reels"] is None
 
 
 def test_get_video_with_range_returns_206(client):
@@ -140,6 +141,26 @@ def test_start_job_with_two_targets_queues_both(monkeypatch, tmp_episode_full):
     assert state["current"] == "yt"
     assert state["index"] == 0
     assert state["total"] == 2
+
+
+def test_assemble_endpoint_requires_targets(client):
+    r = client.post("/api/assemble", json={"force": True})
+    assert r.status_code == 400
+    assert "targets" in r.json()["detail"]
+
+
+def test_assemble_endpoint_with_yt_reels(client, monkeypatch):
+    from podcast_toolkit.web import assemble_job
+    monkeypatch.setattr(assemble_job, "start_job",
+                        lambda ep, targets, force: {
+                            "targets": targets,
+                            "out_paths": [f"/fake/{t}.mp4" for t in targets],
+                        })
+    r = client.post("/api/assemble",
+                    json={"targets": ["yt", "reels"], "force": True})
+    assert r.status_code == 200
+    assert r.json()["targets"] == ["yt", "reels"]
+    assert len(r.json()["out_paths"]) == 2
 
 
 def test_start_job_rejects_when_running(tmp_episode_full):

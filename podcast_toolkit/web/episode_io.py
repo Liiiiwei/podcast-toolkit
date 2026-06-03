@@ -17,28 +17,32 @@ def load_state(ep: Episode) -> dict[str, Any]:
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     return {
         "name": ep.name,
-        "crop": ep.cfg.get("crop_yt"),
+        "crop_yt": ep.cfg.get("crop_yt"),
+        "crop_reels": ep.cfg.get("crop_reels"),
         "deletions": list(ep.cfg.get("deletions") or []),
         "cards": cards,
     }
 
 
 def save_state(ep: Episode, payload: dict[str, Any]) -> None:
-    """把前端 payload 寫回：episode.yaml 的 crop / deletions、覆寫 _v2.srt。"""
+    """把前端 payload 寫回：episode.yaml 的 crop_yt / crop_reels / deletions、覆寫 _v2.srt。"""
     yaml_path = ep.dir / "episode.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
 
-    # crop
-    crop = payload.get("crop")
-    if crop:
-        data["crop"] = {
-            "x": float(crop["x"]),
-            "y": float(crop["y"]),
-            "width": float(crop["width"]),
-            "height": float(crop["height"]),
-        }
-    else:
-        data.pop("crop", None)
+    # 清掉舊欄位（一次性遷移）
+    data.pop("crop", None)
+
+    for key in ("crop_yt", "crop_reels"):
+        crop = payload.get(key)
+        if crop:
+            data[key] = {
+                "x": float(crop["x"]),
+                "y": float(crop["y"]),
+                "width": float(crop["width"]),
+                "height": float(crop["height"]),
+            }
+        else:
+            data.pop(key, None)
 
     # deletions
     deletions = list(payload.get("deletions") or [])
