@@ -43,6 +43,24 @@ def _flag_suspicious_pause(
     return cards
 
 
+def _list_cam_b_candidates(ep: Episode) -> list[str]:
+    """掃 01_母帶/*.mp4 當 cam B 候選；排除 cam A 那一檔。"""
+    cam_a_rel = (ep.cfg.get("cameras") or {}).get("a") or ep.cfg.get("main_video") or ""
+    try:
+        cam_a_resolved = ep.resolve_episode_path(cam_a_rel) if cam_a_rel else None
+    except Exception:
+        cam_a_resolved = None
+    mother_dir = ep.dir / "01_母帶"
+    if not mother_dir.is_dir():
+        return []
+    out: list[str] = []
+    for mp4 in sorted(mother_dir.glob("*.mp4")):
+        if cam_a_resolved and mp4 == cam_a_resolved:
+            continue
+        out.append(str(mp4.relative_to(ep.dir)))
+    return out
+
+
 def load_state(ep: Episode) -> dict[str, Any]:
     """讀 episode.yaml + _v2.srt → 給前端的初始狀態。
 
@@ -73,6 +91,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "audio": ep.cfg.get("audio"),
         # 字幕卡 → 鏡頭對應表（只含 explicit 標過的；前端用 carry-forward 補其他卡）
         "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
+        # T23a-followup：cam B 候選清單（前端下拉用，避免使用者手改 yaml）
+        "cam_b_candidates": _list_cam_b_candidates(ep),
     }
 
 
@@ -110,6 +130,30 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data[key] = val
         else:
             data.pop(key, None)
+
+    # T23a-followup：cam B 路徑（前端 UI 寫入；用 key-presence 區分「沒動 UI」vs「明確清空」）
+    if "cam_b_path" in payload:
+        cam_b_path = (payload.get("cam_b_path") or "").strip()
+        cameras = dict(data.get("cameras") or {})
+        if cam_b_path:
+            cam_a_path = cameras.get("a") or data.get("main_video") or ep.cfg.get("cameras", {}).get("a")
+            cameras["a"] = cam_a_path
+            cameras["b"] = cam_b_path
+            data["cameras"] = cameras
+        else:
+            cameras.pop("b", None)
+            if cameras:
+                data["cameras"] = cameras
+            else:
+                data.pop("cameras", None)
+
+    # T23a-followup：cam B sync offset；0 / 空值 → 整段移除
+    if "camera_sync_offset_b" in payload:
+        sync_b = float(payload.get("camera_sync_offset_b") or 0)
+        if sync_b:
+            data["camera_sync_offset"] = {"b": sync_b}
+        else:
+            data.pop("camera_sync_offset", None)
 
     yaml_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),

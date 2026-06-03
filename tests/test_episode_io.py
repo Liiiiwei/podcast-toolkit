@@ -285,3 +285,120 @@ def test_save_state_filters_invalid_camera_values(tmp_episode_dir):
     import json
     data = json.loads(sidecar.read_text(encoding="utf-8"))
     assert data == {"1": "a", "3": "b"}
+
+
+# --- T23a-followup：cam B 設定 UI（消除手改 yaml）---
+
+
+def test_save_state_writes_cam_b_to_yaml(tmp_episode_dir):
+    """payload 帶 cam_b_path → cameras.b 寫入 yaml；cameras.a 從原本 main_video 帶上來。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "cam_b_path": "01_母帶/{name}_camB.mp4",
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["cameras"]["a"] == "01_母帶/{name}.mp4"
+    assert data["cameras"]["b"] == "01_母帶/{name}_camB.mp4"
+
+
+def test_save_state_clears_cam_b_when_empty_string(tmp_episode_dir):
+    """cam_b_path 是空字串 → 從 yaml 拿掉 cameras.b（明確清空）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "cameras:\n  a: 01_母帶/{name}.mp4\n  b: 01_母帶/{name}_camB.mp4\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "cam_b_path": "",
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    cameras = data.get("cameras") or {}
+    assert "b" not in cameras
+
+
+def test_save_state_writes_camera_sync_offset_b(tmp_episode_dir):
+    """payload 帶 camera_sync_offset_b > 0 → camera_sync_offset.b 寫入。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "cam_b_path": "01_母帶/{name}_camB.mp4",
+            "camera_sync_offset_b": 1.25,
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["camera_sync_offset"]["b"] == 1.25
+
+
+def test_save_state_removes_camera_sync_offset_when_zero(tmp_episode_dir):
+    """offset = 0 → camera_sync_offset 整個拿掉。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "camera_sync_offset:\n  b: 1.25\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "camera_sync_offset_b": 0,
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "camera_sync_offset" not in data
+
+
+def test_save_state_no_cam_b_key_in_payload_preserves_yaml(tmp_episode_dir):
+    """payload 沒帶 cam_b_path key → 不動原本 yaml 的 cameras（向後相容）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "cameras:\n  a: 01_母帶/{name}.mp4\n  b: 01_母帶/{name}_camB.mp4\n"
+        + "camera_sync_offset:\n  b: 1.25\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert data["cameras"]["b"] == "01_母帶/{name}_camB.mp4"
+    assert data["camera_sync_offset"]["b"] == 1.25
+
+
+def test_load_state_lists_cam_b_candidates(tmp_episode_dir):
+    """01_母帶/ 下其他 mp4 列為 cam B 候選（排除 cam A）。"""
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+    (tmp_episode_dir / "01_母帶" / "測試集_camB.mp4").write_bytes(b"")
+    (tmp_episode_dir / "01_母帶" / "B-roll.mp4").write_bytes(b"")
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    # cam A 不能在裡面
+    assert "01_母帶/測試集.mp4" not in state["cam_b_candidates"]
+    # 其他兩個要
+    assert "01_母帶/測試集_camB.mp4" in state["cam_b_candidates"]
+    assert "01_母帶/B-roll.mp4" in state["cam_b_candidates"]
+
+
+def test_load_state_cam_b_candidates_empty_when_only_cam_a(tmp_episode_dir):
+    """只有 cam A 那一個檔 → 候選清單為空。"""
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cam_b_candidates"] == []
