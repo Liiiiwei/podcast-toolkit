@@ -13,6 +13,7 @@
       </div>
       <div class="ep-switch">
         <button id="ep-switch-btn" type="button">📁 開啟集資料夾</button>
+        <button id="ep-new-btn" type="button">📅 新建集</button>
         <div class="ep-switch-error" id="ep-switch-error" hidden></div>
       </div>
       <div class="actions">
@@ -202,6 +203,44 @@
         <div class="modal-actions">
           <button id="init-cancel">取消</button>
           <button id="init-go" class="primary">建立並切集</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- A3 新建集 modal -->
+    <div class="modal-backdrop hidden" id="new-ep-modal">
+      <div class="modal">
+        <div class="modal-head">新建一集</div>
+        <div class="modal-body">
+          <div class="modal-hint" id="new-ep-parent-hint">
+            將建在目前集的父資料夾下
+          </div>
+          <label class="modal-label">日期（YYYYMMDD）</label>
+          <div class="modal-row">
+            <input
+              type="text"
+              id="new-ep-date"
+              inputmode="numeric"
+              maxlength="8"
+              placeholder="20260604"
+              autocomplete="off"
+            />
+          </div>
+          <label class="modal-label">集名</label>
+          <div class="modal-row">
+            <input
+              type="text"
+              id="new-ep-name"
+              placeholder="例：第 12 集 訪談"
+              autocomplete="off"
+            />
+          </div>
+          <div class="modal-hint" id="new-ep-preview">→</div>
+          <div class="modal-hint error" id="new-ep-error" hidden></div>
+        </div>
+        <div class="modal-actions">
+          <button id="new-ep-cancel">取消</button>
+          <button id="new-ep-go" class="primary">建立並切集</button>
         </div>
       </div>
     </div>

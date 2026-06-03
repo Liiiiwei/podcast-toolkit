@@ -480,3 +480,67 @@ def test_post_detect_silence_returns_400_when_no_main_video(client, tmp_episode_
     r = client.post("/api/detect-silence")
     assert r.status_code == 400
     assert "main_video" in r.json()["detail"] or "找不到" in r.json()["detail"]
+
+
+# --- A3：/api/episode/new 新集 wizard --------------------------------------
+
+
+def test_post_episode_new_creates_folder_and_switches(client, tmp_episode_dir):
+    """傳 date + name → 在當前集的父資料夾下建 'YYYYMMDD 集名' 並 switch holder。"""
+    parent = tmp_episode_dir.parent
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "20260610", "name": "新一集"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    new_path = Path(body["path"])
+    assert new_path == parent / "20260610 新一集"
+    assert new_path.is_dir()
+    # init 後該有 episode.yaml 跟三個子資料夾
+    assert (new_path / "episode.yaml").is_file()
+    for sub in ("01_母帶", "03_成品", "04_工作檔"):
+        assert (new_path / sub).is_dir()
+    # 後續 GET /api/episode 應反映已切到新集
+    r2 = client.get("/api/episode")
+    assert r2.status_code == 200
+    assert r2.json()["name"] == "新一集"
+
+
+def test_post_episode_new_rejects_existing_target(client, tmp_episode_dir):
+    """目標資料夾已存在 → 409。"""
+    parent = tmp_episode_dir.parent
+    (parent / "20260610 重複集").mkdir()
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "20260610", "name": "重複集"},
+    )
+    assert r.status_code == 409
+    assert "已存在" in r.json()["detail"]
+
+
+def test_post_episode_new_rejects_missing_date(client):
+    r = client.post("/api/episode/new", json={"name": "缺日期"})
+    assert r.status_code == 400
+
+
+def test_post_episode_new_rejects_missing_name(client):
+    r = client.post("/api/episode/new", json={"date": "20260610"})
+    assert r.status_code == 400
+
+
+def test_post_episode_new_rejects_bad_date_format(client):
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "2026-06-10", "name": "格式錯"},
+    )
+    assert r.status_code == 400
+    assert "YYYYMMDD" in r.json()["detail"] or "日期" in r.json()["detail"]
+
+
+def test_post_episode_new_rejects_name_with_path_sep(client):
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "20260610", "name": "壞/名字"},
+    )
+    assert r.status_code == 400

@@ -233,6 +233,50 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"init 回傳非 0：{code}")
         return JSONResponse({"ok": True, "path": str(target)})
 
+    @app.post("/api/episode/new")
+    def new_episode(payload: dict):
+        """在當前集的父資料夾下建 '{date} {name}' 新集 + init + switch。"""
+        date = (payload.get("date") or "").strip()
+        name = (payload.get("name") or "").strip()
+        if not date:
+            raise HTTPException(status_code=400, detail="缺少 date")
+        if not name:
+            raise HTTPException(status_code=400, detail="缺少 name")
+        if not (len(date) == 8 and date.isdigit()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"日期格式錯（要 YYYYMMDD）：{date}",
+            )
+        if "/" in name or "\\" in name or name in (".", ".."):
+            raise HTTPException(
+                status_code=400,
+                detail=f"集名不可包含路徑分隔字元：{name}",
+            )
+        parent = holder["ep"].dir.parent
+        target = (parent / f"{date} {name}").resolve()
+        if target.exists():
+            raise HTTPException(
+                status_code=409,
+                detail=f"已存在同名資料夾：{target.name}",
+            )
+        target.mkdir(parents=True)
+        try:
+            code = ep_init.run(target)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"init 失敗：{e}")
+        if code != 0:
+            raise HTTPException(status_code=500, detail=f"init 回傳非 0：{code}")
+        try:
+            new_ep = Episode(target)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"無法載入新集：{e}")
+        holder["ep"] = new_ep
+        return JSONResponse({
+            "ok": True,
+            "path": str(target),
+            "name": new_ep.name,
+        })
+
     @app.post("/api/episode/switch")
     def switch_episode(payload: dict):
         raw = (payload.get("path") or "").strip()

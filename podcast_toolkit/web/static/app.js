@@ -2000,6 +2000,115 @@ $("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
 $("#init-cancel").addEventListener("click", closeInitModal);
 $("#init-go").addEventListener("click", runInitAndSwitch);
 
+// === A3：新建集 wizard ===
+function todayYmd() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}${m}${day}`;
+}
+
+function updateNewEpPreview() {
+  const date = $("#new-ep-date").value.trim();
+  const name = $("#new-ep-name").value.trim();
+  const preview = $("#new-ep-preview");
+  const err = $("#new-ep-error");
+  err.hidden = true;
+  err.textContent = "";
+  if (!date && !name) {
+    preview.textContent = "→ 例：20260604 第 12 集";
+    return;
+  }
+  preview.textContent = `→ ${date || "YYYYMMDD"} ${name || "集名"}`;
+}
+
+function openNewEpModal() {
+  const dirty = state.deletions.size > 0 || state.textOverrides.size > 0;
+  if (dirty && !confirm("有未儲存的修改，新建集後會丟失，繼續？")) return;
+  $("#new-ep-date").value = todayYmd();
+  $("#new-ep-name").value = "";
+  $("#new-ep-error").hidden = true;
+  $("#new-ep-error").textContent = "";
+  updateNewEpPreview();
+  $("#new-ep-modal").classList.remove("hidden");
+  $("#new-ep-name").focus();
+}
+
+function closeNewEpModal() {
+  $("#new-ep-modal").classList.add("hidden");
+}
+
+async function submitNewEpisode() {
+  const date = $("#new-ep-date").value.trim();
+  const name = $("#new-ep-name").value.trim();
+  const err = $("#new-ep-error");
+  const goBtn = $("#new-ep-go");
+  const cancelBtn = $("#new-ep-cancel");
+
+  err.hidden = true;
+  err.textContent = "";
+
+  if (!(date.length === 8 && /^\d{8}$/.test(date))) {
+    err.textContent = "日期要 8 位數字（YYYYMMDD）";
+    err.hidden = false;
+    return;
+  }
+  if (!name) {
+    err.textContent = "請輸入集名";
+    err.hidden = false;
+    return;
+  }
+  if (/[/\\]/.test(name)) {
+    err.textContent = "集名不可包含 / \\";
+    err.hidden = false;
+    return;
+  }
+
+  const origGo = goBtn.textContent;
+  goBtn.disabled = true;
+  cancelBtn.disabled = true;
+  goBtn.textContent = "建立中…";
+  try {
+    const r = await fetch("/api/episode/new", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ date, name }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    closeNewEpModal();
+    // 後端已 switch；前端 reload 所有狀態 + cache-bust 影片
+    state.previewPath = null;
+    state.cropRatioYt = null;
+    state.cropRatioReels = null;
+    const video = $("#video");
+    video.src = `/api/video?_=${Date.now()}`;
+    video.load();
+    await load();
+  } catch (e) {
+    err.textContent = `失敗：${e.message}`;
+    err.hidden = false;
+  } finally {
+    goBtn.disabled = false;
+    cancelBtn.disabled = false;
+    goBtn.textContent = origGo;
+  }
+}
+
+$("#ep-new-btn").addEventListener("click", openNewEpModal);
+$("#new-ep-cancel").addEventListener("click", closeNewEpModal);
+$("#new-ep-go").addEventListener("click", submitNewEpisode);
+$("#new-ep-date").addEventListener("input", updateNewEpPreview);
+$("#new-ep-name").addEventListener("input", updateNewEpPreview);
+$("#new-ep-name").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitNewEpisode();
+});
+$("#new-ep-date").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitNewEpisode();
+});
+
 setupVersionTabs();
 setupAssembleButtons();
 setupSusToolbar();
