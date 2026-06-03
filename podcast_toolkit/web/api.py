@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from podcast_toolkit import init as ep_init
+from podcast_toolkit import resegment
 from podcast_toolkit.assemble import AssembleError
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import assemble_job, episode_io, transcribe, video
@@ -338,19 +339,26 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
         if not api_key:
             raise HTTPException(status_code=400, detail="尚未設定 xAI API key")
 
+        # Grok 回的是字層 words[]，先寫到 main_srt 當原稿
         try:
-            out_srt = transcribe.run_grok_pipeline(
+            raw_srt = transcribe.run_grok_pipeline(
                 api_key=api_key,
                 src_audio=src,
-                out_srt=ep.output_v2_srt(),
+                out_srt=ep.main_srt(),
                 work_dir=ep.subdir("work"),
             )
         except transcribe.TranscribeError as e:
             raise HTTPException(status_code=502, detail=str(e))
 
+        # 用既有 resegment 合成句子層 _v2.srt（沒這步就會一字一段）
+        rc = resegment.run(ep.dir, force=True)
+        if rc != 0:
+            raise HTTPException(status_code=500, detail=f"resegment 失敗 (rc={rc})")
+
         return JSONResponse({
             "ok": True,
-            "out_srt": str(out_srt.relative_to(ep.dir)),
+            "out_srt": str(ep.output_v2_srt().relative_to(ep.dir)),
+            "raw_srt": str(raw_srt.relative_to(ep.dir)),
         })
 
     @app.post("/api/assemble")

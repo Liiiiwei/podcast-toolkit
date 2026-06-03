@@ -208,3 +208,61 @@ def test_start_job_rejects_when_running(tmp_episode_full):
                                    targets=["yt"], force=True)
     finally:
         assemble_job._STATE["state"] = "idle"
+
+
+def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
+    monkeypatch, tmp_episode_dir
+):
+    """Grok STT 回字層 words[]，pipeline 寫到 main_srt 後要跑 resegment
+    把字層合成句子層 _v2.srt。沒做 resegment 的話 _v2.srt 會變一字一段。"""
+    from podcast_toolkit.web import api as api_mod
+    from podcast_toolkit.web import transcribe as transcribe_mod
+    from podcast_toolkit.episode import Episode
+
+    # 主影片 stub（POST 用 path 指向它）
+    main_video = tmp_episode_dir / "01_母帶" / "測試集.mp4"
+    main_video.write_bytes(b"FAKE" * 1000)
+
+    # 不要動到真實 ~/.podcast-toolkit/config.json
+    monkeypatch.setattr(api_mod, "_load_config", lambda: {"xai_api_key": "fake"})
+
+    # 模擬 Grok：一個字一張 card 寫到 out_srt（看起來像現在線上 bug）
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir):
+        out_srt.parent.mkdir(parents=True, exist_ok=True)
+        chars = "大家好歡迎來到我愛上班今天要聊的是過嗨乳牛"
+        lines = []
+        for i, ch in enumerate(chars, 1):
+            start_ms = (i - 1) * 200
+            end_ms = i * 200
+            sh, sm, ss, sms = (start_ms // 3600000, (start_ms // 60000) % 60,
+                               (start_ms // 1000) % 60, start_ms % 1000)
+            eh, em, es, ems = (end_ms // 3600000, (end_ms // 60000) % 60,
+                               (end_ms // 1000) % 60, end_ms % 1000)
+            lines.append(
+                f"{i}\n{sh:02d}:{sm:02d}:{ss:02d},{sms:03d} --> "
+                f"{eh:02d}:{em:02d}:{es:02d},{ems:03d}\n{ch}\n"
+            )
+        out_srt.write_text("\n".join(lines), encoding="utf-8")
+        return out_srt
+    monkeypatch.setattr(transcribe_mod, "run_grok_pipeline", fake_pipeline)
+
+    ep = Episode(tmp_episode_dir)
+    app = api_mod.build_app(ep, shutdown=lambda: None)
+    c = TestClient(app)
+
+    r = c.post("/api/transcribe", json={"path": "01_母帶/測試集.mp4"})
+    assert r.status_code == 200, r.text
+
+    # 字層原稿要落在 main_srt
+    main_srt = tmp_episode_dir / "01_母帶" / "測試集.srt"
+    assert main_srt.exists(), "Grok 原稿沒寫到 main_srt"
+
+    # _v2.srt 要是句子層：每張 card 應該明顯多於 1 字
+    from podcast_toolkit import srt_io
+    v2 = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    cards = srt_io.parse(v2.read_text(encoding="utf-8"))
+    assert len(cards) >= 1
+    avg_len = sum(len(c["text"]) for c in cards) / len(cards)
+    assert avg_len >= 3, (
+        f"_v2.srt 看起來沒跑 resegment：平均每張卡只有 {avg_len:.1f} 字"
+    )
