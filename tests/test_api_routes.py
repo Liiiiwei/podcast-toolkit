@@ -1,4 +1,5 @@
 """FastAPI 五條路由的整合測試。"""
+import threading
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,44 @@ def test_pump_progress_does_not_overwrite_on_failure(tmp_path):
                                  out_path=out, tmp_out=tmp_out)
     assert out.read_bytes() == b"existing good output"
     assert not tmp_out.exists()  # tmp 要被清掉
+
+
+def test_start_job_with_two_targets_queues_both(monkeypatch, tmp_episode_full):
+    """start_job 接 ['yt', 'reels'] → 兩個都進 queue。"""
+    from podcast_toolkit.web import assemble_job
+    from podcast_toolkit.episode import Episode
+
+    class _FakeProc:
+        stdout = iter([])
+        stderr = None
+        def wait(self): return 0
+
+    spawned = []
+    monkeypatch.setattr(assemble_job, "Popen",
+                        lambda *a, **k: spawned.append(a[0]) or _FakeProc())
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+
+    ep = Episode(tmp_episode_full)
+    # 確保 state 是 idle
+    assemble_job._STATE["state"] = "idle"
+
+    info = assemble_job.start_job(ep, targets=["yt", "reels"], force=True)
+
+    state = assemble_job.get_status()
+    assert state["queue"] == ["yt", "reels"]
+    assert state["current"] == "yt"
+    assert state["index"] == 0
+    assert state["total"] == 2
+
+
+def test_start_job_rejects_when_running(tmp_episode_full):
+    from podcast_toolkit.web import assemble_job
+    from podcast_toolkit.episode import Episode
+
+    assemble_job._STATE["state"] = "running"
+    try:
+        with pytest.raises(RuntimeError, match="已有"):
+            assemble_job.start_job(Episode(tmp_episode_full),
+                                   targets=["yt"], force=True)
+    finally:
+        assemble_job._STATE["state"] = "idle"

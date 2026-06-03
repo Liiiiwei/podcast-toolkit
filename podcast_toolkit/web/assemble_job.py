@@ -18,10 +18,15 @@ from podcast_toolkit.episode import Episode
 # 模組級 state，build_app 每次都拿同一個 dict
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {
-    "state": "idle",  # idle | running | done | error
+    "state": "idle",           # idle | running | done | error
+    "queue": [],               # 例如 ["yt", "reels"]
+    "current": None,           # 目前在跑的 target
+    "index": 0,                # 第幾個（0-based）
+    "total": 0,                # queue 長度
     "percent": 0.0,
     "eta_s": None,
-    "out_path": None,
+    "out_path": None,          # 目前這個 target 的輸出
+    "output_files": [],        # 已完成的輸出路徑 list
     "error": None,
     "started_at": None,
 }
@@ -37,9 +42,14 @@ def _reset(**kwargs) -> None:
     with _LOCK:
         _STATE.update({
             "state": "idle",
+            "queue": [],
+            "current": None,
+            "index": 0,
+            "total": 0,
             "percent": 0.0,
             "eta_s": None,
             "out_path": None,
+            "output_files": [],
             "error": None,
             "started_at": None,
         })
@@ -51,32 +61,77 @@ def _set(**kwargs) -> None:
         _STATE.update(kwargs)
 
 
-def start_job(ep: Episode, force: bool = False) -> dict[str, Any]:
+def start_job(ep: Episode, targets: list[str], force: bool = False) -> dict[str, Any]:
+    """開新 job；targets 例如 ['yt', 'reels']。"""
+    if not targets:
+        raise ValueError("targets 不能為空")
+    for t in targets:
+        if t not in ("yt", "reels"):
+            raise ValueError(f"未知 target={t}")
+
     with _LOCK:
         if _STATE["state"] == "running":
             raise RuntimeError("已有合成正在進行中")
 
-    plan = prepare_assembly(ep.dir, output_kind="yt", force=force)
+    # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）
+    plans = []
+    for t in targets:
+        plans.append(prepare_assembly(ep.dir, output_kind=t, force=force))
 
     _reset(
         state="running",
+        queue=list(targets),
+        current=targets[0],
+        index=0,
+        total=len(targets),
         percent=0.0,
         eta_s=None,
-        out_path=str(plan["out"]),
+        out_path=str(plans[0]["out"]),
+        output_files=[],
         started_at=monotonic(),
     )
 
-    cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
-    proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
-                 text=True, bufsize=1)
-
-    t = threading.Thread(
-        target=_pump_progress,
-        args=(proc, plan["total_dur"], plan["out"], plan["tmp_out"]),
+    coordinator = threading.Thread(
+        target=_run_queue,
+        args=(plans,),
         daemon=True,
     )
-    t.start()
-    return {"out_path": str(plan["out"]), "total_dur": plan["total_dur"]}
+    coordinator.start()
+
+    return {
+        "targets": list(targets),
+        "out_paths": [str(p["out"]) for p in plans],
+    }
+
+
+def _run_queue(plans: list[dict]) -> None:
+    """coordinator：依序跑 plans，任一失敗就停止後續。"""
+    for i, plan in enumerate(plans):
+        _set(
+            current=plan["output_kind"],
+            index=i,
+            out_path=str(plan["out"]),
+            percent=0.0,
+            eta_s=None,
+        )
+        cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
+        proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
+                     text=True, bufsize=1)
+        _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
+
+        # _pump_progress 內部會 set state=done 或 error
+        with _LOCK:
+            cur_state = _STATE["state"]
+        if cur_state == "error":
+            return  # 中止後續
+        # 把成功的輸出加進 output_files
+        with _LOCK:
+            _STATE["output_files"].append(str(plan["out"]))
+            if i < len(plans) - 1:
+                # 還有下一個 → 維持 running
+                _STATE["state"] = "running"
+    # 全部跑完
+    _set(state="done", percent=100.0, eta_s=0)
 
 
 def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
