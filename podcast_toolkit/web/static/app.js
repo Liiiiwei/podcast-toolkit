@@ -659,6 +659,93 @@ function fmtSize(bytes) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+const FILE_SECTIONS = [
+  { kind: "main_video", label: "主影片", icon: "🎬" },
+  { kind: "subtitle", label: "字幕", icon: "💬" },
+  { kind: "composite", label: "合成輸出", icon: "📦" },
+  { kind: "intro_outro", label: "片頭片尾", icon: "🎵" },
+  { kind: "master", label: "母帶", icon: "🎙️" },
+  { kind: "work", label: "工作檔", icon: "🛠️" },
+  { kind: "other", label: "其他", icon: "📄" },
+];
+
+const COLLAPSE_KEY = "podcast-edit-collapsed-sections";
+
+function loadCollapsedSections() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]"));
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveCollapsedSections(set) {
+  localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(set)));
+}
+
+function renderFileItem(f) {
+  const item = document.createElement("div");
+  item.className = "file-item";
+  const isActive = state.previewPath === f.path;
+  if (isActive) item.classList.add("previewing");
+
+  const path = document.createElement("div");
+  path.className = "file-path";
+  path.title = f.path;
+  path.textContent = f.path;
+
+  // 字幕角色 badge
+  const badges = document.createElement("span");
+  badges.className = "file-badges";
+  if (f.is_active_srt) {
+    const b = document.createElement("span");
+    b.className = "badge active";
+    b.textContent = "使用中";
+    badges.appendChild(b);
+  }
+  if (f.is_main_srt_backup) {
+    const b = document.createElement("span");
+    b.className = "badge muted";
+    b.textContent = "原始備份";
+    badges.appendChild(b);
+  }
+
+  const size = document.createElement("div");
+  size.className = "file-size";
+  size.textContent = fmtSize(f.size);
+
+  let preview;
+  if (f.previewable) {
+    preview = document.createElement("button");
+    preview.className = "file-preview" + (isActive ? " active" : "");
+    preview.textContent = isActive ? "📺 預覽中" : "📺 預覽";
+    preview.title = "切換為此檔案預覽";
+    preview.addEventListener("click", () => switchPreview(f.path));
+  } else {
+    preview = document.createElement("span");
+    preview.className = "file-preview-placeholder";
+    preview.textContent = "—";
+  }
+
+  let action;
+  if (f.transcribable) {
+    action = document.createElement("button");
+    action.className = "file-stt";
+    action.textContent = "🎙 轉字幕";
+    action.title = state.hasApiKey
+      ? "用 Grok STT 轉字幕並覆蓋 _v2.srt"
+      : "請先設定 xAI API key（⚙）";
+    action.addEventListener("click", () => requestTranscribe(f));
+  } else {
+    action = document.createElement("span");
+    action.className = "file-stt-placeholder";
+    action.textContent = "—";
+  }
+
+  item.append(path, badges, size, preview, action);
+  return item;
+}
+
 function renderFiles() {
   const list = $("#files-list");
   const summary = $("#files-summary");
@@ -676,51 +763,48 @@ function renderFiles() {
     return;
   }
 
+  // 用 kind 分群（沒 kind 的 fallback 到 other）
+  const groups = new Map();
   for (const f of state.files) {
-    const item = document.createElement("div");
-    item.className = "file-item";
-    const isActive = state.previewPath === f.path;
-    if (isActive) item.classList.add("previewing");
+    const k = f.kind || "other";
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(f);
+  }
 
-    const path = document.createElement("div");
-    path.className = "file-path";
-    path.title = f.path;
-    path.textContent = f.path;
+  const collapsed = loadCollapsedSections();
 
-    const size = document.createElement("div");
-    size.className = "file-size";
-    size.textContent = fmtSize(f.size);
+  for (const section of FILE_SECTIONS) {
+    const items = groups.get(section.kind) || [];
+    if (items.length === 0) continue;
 
-    let preview;
-    if (f.previewable) {
-      preview = document.createElement("button");
-      preview.className = "file-preview" + (isActive ? " active" : "");
-      preview.textContent = isActive ? "📺 預覽中" : "📺 預覽";
-      preview.title = "切換為此檔案預覽";
-      preview.addEventListener("click", () => switchPreview(f.path));
-    } else {
-      preview = document.createElement("span");
-      preview.className = "file-preview-placeholder";
-      preview.textContent = "—";
-    }
+    const wrap = document.createElement("section");
+    wrap.className = "file-section";
+    wrap.dataset.kind = section.kind;
 
-    let action;
-    if (f.transcribable) {
-      action = document.createElement("button");
-      action.className = "file-stt";
-      action.textContent = "🎙 轉字幕";
-      action.title = state.hasApiKey
-        ? "用 Grok STT 轉字幕並覆蓋 _v2.srt"
-        : "請先設定 xAI API key（⚙）";
-      action.addEventListener("click", () => requestTranscribe(f));
-    } else {
-      action = document.createElement("span");
-      action.className = "file-stt-placeholder";
-      action.textContent = "—";
-    }
+    const header = document.createElement("header");
+    header.className = "file-section-header";
+    const isCollapsed = collapsed.has(section.kind);
+    header.innerHTML = `
+      <span class="caret">${isCollapsed ? "▶" : "▼"}</span>
+      <span class="section-icon">${section.icon}</span>
+      <span class="section-label">${section.label}</span>
+      <span class="section-count">${items.length}</span>
+    `;
+    header.addEventListener("click", () => {
+      const cur = loadCollapsedSections();
+      if (cur.has(section.kind)) cur.delete(section.kind);
+      else cur.add(section.kind);
+      saveCollapsedSections(cur);
+      renderFiles();
+    });
+    wrap.appendChild(header);
 
-    item.append(path, size, preview, action);
-    list.appendChild(item);
+    const inner = document.createElement("div");
+    inner.className = "file-section-list" + (isCollapsed ? " hidden" : "");
+    for (const f of items) inner.appendChild(renderFileItem(f));
+    wrap.appendChild(inner);
+
+    list.appendChild(wrap);
   }
 }
 

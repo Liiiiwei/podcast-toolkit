@@ -388,7 +388,7 @@ h2 {
 }
 .file-item {
   display: grid;
-  grid-template-columns: 1fr auto auto auto;
+  grid-template-columns: 1fr auto auto auto auto;
   gap: 8px;
   align-items: center;
   padding: 4px 6px;
@@ -450,6 +450,74 @@ h2 {
   color: #555;
   min-width: 24px;
   text-align: center;
+}
+
+.file-section {
+  margin-bottom: 8px;
+  border: 1px solid #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.file-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #1f1f1f;
+  cursor: pointer;
+  user-select: none;
+}
+.file-section-header:hover {
+  background: #262626;
+}
+.caret {
+  font-size: 10px;
+  color: #888;
+  width: 12px;
+  display: inline-block;
+}
+.section-icon {
+  font-size: 14px;
+}
+.section-label {
+  font-weight: 600;
+  flex: 1;
+  font-size: 13px;
+  color: #ddd;
+}
+.section-count {
+  background: #333;
+  color: #aaa;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+.file-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+.file-section-list.hidden {
+  display: none;
+}
+.file-badges {
+  display: flex;
+  gap: 4px;
+}
+.badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.badge.active {
+  background: #ff6b35;
+  color: #fff;
+}
+.badge.muted {
+  background: #333;
+  color: #888;
 }
 
 .cards-pane {
