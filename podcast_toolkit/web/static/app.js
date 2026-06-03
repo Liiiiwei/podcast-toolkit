@@ -618,7 +618,21 @@ function renderTypo() {
 }
 
 // 影片時間軸 → highlight 對應卡 + 自動 scroll + 字幕浮層
+// C3：播放時若 currentTime 進入 tail trim 區 → 自動暫停（拖 seek 越界不阻擋）
+function autoPauseAtTailTrim() {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  const tail = state.tailTrimSec || 0;
+  if (dur <= 0 || tail <= 0 || v.paused) return;
+  const limit = dur - tail;
+  if (v.currentTime >= limit) {
+    v.pause();
+    v.currentTime = Math.max(0, limit);
+  }
+}
+
 $("#video").addEventListener("timeupdate", () => {
+  autoPauseAtTailTrim();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
   $("#time").textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
@@ -648,6 +662,10 @@ playBtn.addEventListener("click", () => {
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
 $("#video").addEventListener("play", () => {
   playBtn.textContent = "⏸";
+  // C3：按 play 時若卡在 head trim 區 → 自動跳到 headTrim 邊界
+  const v = $("#video");
+  const head = state.headTrimSec || 0;
+  if (head > 0 && v.currentTime < head) v.currentTime = head;
 });
 $("#video").addEventListener("pause", () => {
   playBtn.textContent = "▶";
