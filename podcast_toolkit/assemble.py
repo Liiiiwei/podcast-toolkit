@@ -371,9 +371,22 @@ def prepare_assembly(
     ep = Episode(episode_dir)
     cfg = ep.cfg
 
-    main_video = ep.main_video()
-    if not main_video.exists():
-        raise AssembleError(f"找不到正片：{main_video}", exit_code=3)
+    # 雙鏡頭判斷：cameras.b 有設且 cam A/B 檔案都存在 → 走 multicam
+    cam_b_rel = (cfg.get("cameras") or {}).get("b")
+    multicam = bool(cam_b_rel)
+
+    if multicam:
+        cam_a_rel = cfg["cameras"]["a"]
+        main_video = ep.resolve_episode_path(cam_a_rel)
+        cam_b_video = ep.resolve_episode_path(cam_b_rel)
+        if not main_video.exists():
+            raise AssembleError(f"找不到 cam A：{main_video}", exit_code=3)
+        if not cam_b_video.exists():
+            raise AssembleError(f"找不到 cam B：{cam_b_video}", exit_code=3)
+    else:
+        main_video = ep.main_video()
+        if not main_video.exists():
+            raise AssembleError(f"找不到正片：{main_video}", exit_code=3)
 
     # 字幕：用 v2（resegment 輸出）優先，沒有就回退原 srt
     srt = ep.output_v2_srt()
@@ -412,71 +425,141 @@ def prepare_assembly(
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
     srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
-    # 處理 deletions + 頭尾 trim：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
     deletions = list(cfg.get("deletions") or [])
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
-    deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
-    if head_trim > 0:
-        deletion_intervals.append((0.0, head_trim))
-    if tail_trim > 0:
-        deletion_intervals.append((main_dur - tail_trim, main_dur))
-    deletion_intervals = sorted(deletion_intervals)
+    # multicam 分流：segment plan 取代 deletion_intervals，已內建 deletions + 頭尾 trim
+    segments: list[dict] = []
+    sync_offset_b = 0.0
+    if multicam:
+        from podcast_toolkit import cameras_io, srt_io
+        from podcast_toolkit.segment_plan import build_segment_plan
 
-    if deletions:
-        # 燒字幕：去掉刪除段，避免 select 後字幕時間錯位閃爍
-        clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
-        filter_deletion_srt(srt, clean_srt, deletions)
-        srt = clean_srt
-        srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
+        cards = srt_io.parse(srt.read_text(encoding="utf-8"))
+        cameras_mapping = cameras_io.load(ep.output_v2_cameras_json())
+        segments = build_segment_plan(
+            cards=cards,
+            deletions=deletions,
+            cameras_mapping=cameras_mapping,
+            main_dur=main_dur,
+            head_trim_sec=head_trim,
+            tail_trim_sec=tail_trim,
+        )
+        # main_dur = 所有 keep 段加總（segment_plan 已扣 deletion + trim）
+        main_dur = sum(s["end"] - s["start"] for s in segments)
+        sync_offset_b = float((cfg.get("camera_sync_offset") or {}).get("b") or 0.0)
+        # multicam 直接燒原 _v2.srt（trim 自動把被刪段的字幕一起切掉，不需 clean_srt）
+        deletion_intervals = []
+    else:
+        # 處理 deletions + 頭尾 trim：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
+        deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
+        if head_trim > 0:
+            deletion_intervals.append((0.0, head_trim))
+        if tail_trim > 0:
+            deletion_intervals.append((main_dur - tail_trim, main_dur))
+        deletion_intervals = sorted(deletion_intervals)
 
-    if deletion_intervals:
-        # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
-        deleted_total = sum(b - a for a, b in deletion_intervals)
-        main_dur = main_dur - deleted_total
+        if deletions:
+            # 燒字幕：去掉刪除段，避免 select 後字幕時間錯位閃爍
+            clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
+            filter_deletion_srt(srt, clean_srt, deletions)
+            srt = clean_srt
+            srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
+
+        if deletion_intervals:
+            # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
+            deleted_total = sum(b - a for a, b in deletion_intervals)
+            main_dur = main_dur - deleted_total
 
     # tmp_out 寫在 work/，成功後由呼叫端 rename 到 out
     # 保留 .mp4 結尾，否則 ffmpeg 從 .tmp 副檔名無法判斷輸出格式
     tmp_out = ep.subdir("work") / f".{out.stem}.tmp{out.suffix}"
     tmp_out_rel = str(tmp_out.relative_to(cwd)) if tmp_out.is_relative_to(cwd) else str(tmp_out)
 
+    cam_b_rel_str = ""
+    if multicam:
+        cam_b_rel_str = (
+            str(cam_b_video.relative_to(cwd)) if cam_b_video.is_relative_to(cwd) else str(cam_b_video)
+        )
+
     if output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
-        fc = build_filter_complex_yt(cfg, main_dur=main_dur, srt_rel=srt_rel,
-                                     deletion_intervals=deletion_intervals)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", str(intro),
-            "-i", main_rel,
-            "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
-            "-i", str(outro_audio),
-            "-filter_complex", fc,
-            "-map", "[v]", "-map", "[a]",
-            "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
-            "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
-            "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
-            "-ar", str(enc["audio_sample_rate"]),
-            "-movflags", "+faststart",
-            tmp_out_rel,
-        ]
+        if multicam:
+            fc = build_filter_complex_yt_multicam(
+                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                segments=segments, sync_offset_b=sync_offset_b,
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(intro),
+                "-i", main_rel,
+                "-i", cam_b_rel_str,
+                "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
+                "-i", str(outro_audio),
+                "-filter_complex", fc,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+                "-ar", str(enc["audio_sample_rate"]),
+                "-movflags", "+faststart",
+                tmp_out_rel,
+            ]
+        else:
+            fc = build_filter_complex_yt(cfg, main_dur=main_dur, srt_rel=srt_rel,
+                                         deletion_intervals=deletion_intervals)
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(intro),
+                "-i", main_rel,
+                "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
+                "-i", str(outro_audio),
+                "-filter_complex", fc,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+                "-ar", str(enc["audio_sample_rate"]),
+                "-movflags", "+faststart",
+                tmp_out_rel,
+            ]
         total_dur = intro_dur + main_dur + outro_dur
     else:
-        fc = build_filter_complex_reels(cfg, main_dur=main_dur, srt_rel=srt_rel,
-                                        deletion_intervals=deletion_intervals)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", main_rel,
-            "-filter_complex", fc,
-            "-map", "[v]", "-map", "[a]",
-            "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
-            "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
-            "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
-            "-ar", str(enc["audio_sample_rate"]),
-            "-movflags", "+faststart",
-            tmp_out_rel,
-        ]
+        if multicam:
+            fc = build_filter_complex_reels_multicam(
+                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                segments=segments, sync_offset_b=sync_offset_b,
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", main_rel,
+                "-i", cam_b_rel_str,
+                "-filter_complex", fc,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+                "-ar", str(enc["audio_sample_rate"]),
+                "-movflags", "+faststart",
+                tmp_out_rel,
+            ]
+        else:
+            fc = build_filter_complex_reels(cfg, main_dur=main_dur, srt_rel=srt_rel,
+                                            deletion_intervals=deletion_intervals)
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", main_rel,
+                "-filter_complex", fc,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+                "-ar", str(enc["audio_sample_rate"]),
+                "-movflags", "+faststart",
+                tmp_out_rel,
+            ]
         total_dur = main_dur
 
     return {

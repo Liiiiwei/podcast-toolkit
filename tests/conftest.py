@@ -86,3 +86,31 @@ def tmp_episode_full(tmp_episode_dir: Path, monkeypatch) -> Path:
     monkeypatch.setattr(_asm.shutil, "which", lambda _name: "/usr/bin/" + _name)
 
     return tmp_episode_dir
+
+
+@pytest.fixture
+def tmp_episode_full_multicam(tmp_episode_full: Path) -> Path:
+    """在 tmp_episode_full 之上補齊雙鏡頭資產：
+    - 01_母帶/測試集_camB.mp4 stub
+    - episode.yaml 補 cameras + camera_sync_offset
+    - 03_成品/測試集_final_v2.cameras.json sidecar（卡 3 標 b → 其餘 carry-forward a）
+    """
+    (tmp_episode_full / "01_母帶" / "測試集_camB.mp4").write_bytes(b"")
+
+    yaml_path = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["cameras"] = {
+        "a": "01_母帶/{name}.mp4",
+        "b": "01_母帶/{name}_camB.mp4",
+    }
+    data["camera_sync_offset"] = {"b": 1.25}
+    yaml_path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    # sidecar：卡 3 切到 b（_v2.srt 已在 tmp_episode_dir 寫入）
+    sidecar = tmp_episode_full / "03_成品" / "測試集_final_v2.cameras.json"
+    sidecar.write_text('{"3": "b"}', encoding="utf-8")
+
+    return tmp_episode_full

@@ -308,3 +308,83 @@ def test_filter_complex_reels_multicam_audio_from_cam_a():
         BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
     assert fc.count("[m_a_a]atrim") == 2
+
+
+# --- T23a Step 4c: prepare_assembly 雙鏡頭分流 ---
+
+
+def test_prepare_assembly_yt_multicam_adds_cam_b_input(tmp_episode_full_multicam):
+    """cameras.b 存在 → YT cmd 應有 5 個 -i（intro / camA / camB / outro img / outro audio）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    i_count = sum(1 for a in plan["cmd"] if a == "-i")
+    assert i_count == 5, f"YT multicam 應有 5 個 -i，目前 {i_count}"
+
+
+def test_prepare_assembly_yt_multicam_filter_contains_cam_b_labels(tmp_episode_full_multicam):
+    """YT multicam filter_complex 應包含 [m_b_v]（cam B 處理 stream）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    assert "[m_b_v]" in fc
+    assert "[m_a_v]" in fc
+
+
+def test_prepare_assembly_yt_multicam_applies_sync_offset(tmp_episode_full_multicam):
+    """camera_sync_offset.b 應被注入 filter（cam B 的 setpts 位移）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # fixture 給 sync_offset_b=1.25
+    assert "setpts=PTS-1.25/TB" in fc
+
+
+def test_prepare_assembly_yt_multicam_uses_segment_plan(tmp_episode_full_multicam):
+    """sidecar 標卡 3 → b，前兩卡 a → 應切兩段（a 段 [0, 12), b 段 [12, raw_end]）。
+
+    _v2.srt fixture：卡 1 (0-4.2)、卡 2 (4.2-12)、卡 3 (12-14)、卡 4 (14-22)。
+    sidecar 只標 3=b → segments = [(a, 0, 12), (b, 12, 100)]（raw_dur=100，無 trim/del）。
+    """
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # 兩個 trim 段：a 段到 12，b 段從 12 開始
+    assert "trim=0.000:12.000" in fc
+    assert "trim=12.000:100.000" in fc
+
+
+def test_prepare_assembly_reels_multicam_two_inputs(tmp_episode_full_multicam):
+    """Reels multicam → 只有 2 個 -i（camA / camB），無 intro/outro。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="reels", force=True)
+    i_count = sum(1 for a in plan["cmd"] if a == "-i")
+    assert i_count == 2, f"Reels multicam 應有 2 個 -i，目前 {i_count}"
+
+
+def test_prepare_assembly_reels_multicam_filter_uses_b_input_index(tmp_episode_full_multicam):
+    """Reels multicam cam B 是第 2 個輸入（[1:v]）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="reels", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # Reels：camA=[0], camB=[1] → [1:v]setpts=...
+    assert "[1:v]setpts=PTS-1.25/TB" in fc
+
+
+def test_prepare_assembly_single_cam_unchanged_when_no_cam_b(tmp_episode_full):
+    """回歸：cameras.b 不存在 → 走原本單機路徑（無 [m_b_v]、4 個 -i）。
+
+    單機 YT 4 個 -i = intro + main + outro_image(-loop) + outro_audio。
+    """
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    assert "[m_b_v]" not in fc
+    i_count = sum(1 for a in plan["cmd"] if a == "-i")
+    assert i_count == 4, f"單機 YT 應有 4 個 -i，目前 {i_count}"
+
+
+def test_prepare_assembly_yt_multicam_missing_cam_b_file_raises(tmp_episode_full_multicam):
+    """cam B 路徑在 yaml 但檔案不存在 → AssembleError exit_code=3。"""
+    from podcast_toolkit.assemble import AssembleError
+    (tmp_episode_full_multicam / "01_母帶" / "測試集_camB.mp4").unlink()
+    with pytest.raises(AssembleError) as exc:
+        prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert exc.value.exit_code == 3
