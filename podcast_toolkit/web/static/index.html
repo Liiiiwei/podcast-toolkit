@@ -25,6 +25,14 @@
 
     <main class="body">
       <section class="video-pane">
+        <div class="version-tabs" id="version-tabs">
+          <button class="version-tab active" data-version="yt" type="button">
+            YT 16:9 完整版
+          </button>
+          <button class="version-tab" data-version="reels" type="button">
+            Reels 9:16 短版
+          </button>
+        </div>
         <div class="video-wrap">
           <video id="video" src="/api/video" preload="metadata"></video>
           <div id="caption-overlay"></div>
@@ -146,17 +154,39 @@
       <div class="modal">
         <div class="modal-head" id="assemble-title">準備合成</div>
         <div class="modal-body">
-          <div class="progress-bar">
-            <div class="progress-fill" id="assemble-fill"></div>
+          <div id="assemble-select">
+            <p class="modal-hint">選擇要合成的版本：</p>
+            <label class="checkbox-row">
+              <input type="checkbox" id="assemble-yt" checked />
+              <span>YT 16:9 完整版（含片頭片尾）</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="assemble-reels" />
+              <span>Reels 9:16 短版（無片頭片尾）</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="assemble-force" />
+              <span>覆寫既有檔案（--force）</span>
+            </label>
           </div>
-          <div class="progress-meta">
-            <span id="assemble-percent">0%</span>
-            <span id="assemble-eta">—</span>
+          <div id="assemble-progress" class="hidden">
+            <div class="progress-line">
+              <span id="assemble-current-label">準備中…</span>
+              <span id="assemble-eta-label">—</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="assemble-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="assemble-percent">0%</span>
+              <span id="assemble-eta">—</span>
+            </div>
+            <div id="assemble-msg" class="modal-hint">…</div>
           </div>
-          <div id="assemble-msg" class="modal-hint">…</div>
         </div>
         <div class="modal-actions" id="assemble-actions">
-          <button id="assemble-cancel">關閉</button>
+          <button id="assemble-cancel">取消</button>
+          <button id="assemble-confirm" class="primary">開始合成</button>
           <button id="assemble-reveal" class="primary" hidden>
             📁 在 Finder 開啟
           </button>
