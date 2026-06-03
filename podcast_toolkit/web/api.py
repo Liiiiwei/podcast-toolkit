@@ -15,7 +15,14 @@ from podcast_toolkit import audio_align
 from podcast_toolkit import init as ep_init
 from podcast_toolkit.assemble import AssembleError
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.web import assemble_job, episode_io, transcribe, transcribe_job, video
+from podcast_toolkit.web import (
+    assemble_job,
+    episode_io,
+    silencedetect,
+    transcribe,
+    transcribe_job,
+    video,
+)
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -382,6 +389,22 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/transcribe/status")
     def get_transcribe_status():
         return JSONResponse(transcribe_job.get_status())
+
+    @app.post("/api/detect-silence")
+    def post_detect_silence():
+        """智慧建議：跑 ffmpeg silencedetect 看 main_video 開頭靜音長度（秒）。"""
+        ep = holder["ep"]
+        main = ep.main_video()
+        if not main.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"找不到 main_video：{main.relative_to(ep.dir)}",
+            )
+        try:
+            head_sec = silencedetect.detect_head_silence(main)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({"head_silence_sec": head_sec})
 
     @app.post("/api/assemble")
     def post_assemble(payload: dict):

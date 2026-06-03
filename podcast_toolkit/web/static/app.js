@@ -700,6 +700,45 @@ $("#trim-reset").addEventListener("click", () => {
   renderTopbar();
 });
 
+// C5：智慧建議 — POST /api/detect-silence；結果顯示在 hint，按下 hint 套用
+$("#trim-suggest-btn").addEventListener("click", async () => {
+  const btn = $("#trim-suggest-btn");
+  const hint = $("#trim-suggest-hint");
+  btn.disabled = true;
+  hint.textContent = "分析中…";
+  hint.classList.remove("error");
+  try {
+    const r = await fetch("/api/detect-silence", { method: "POST" });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+    const { head_silence_sec } = await r.json();
+    if (head_silence_sec <= 0) {
+      hint.textContent = "開頭沒有可裁切的靜音";
+      return;
+    }
+    const seconds = Math.round(head_silence_sec * 10) / 10;
+    hint.innerHTML = `建議裁 <strong>${seconds.toFixed(1)}s</strong>`;
+    const apply = document.createElement("button");
+    apply.textContent = "套用";
+    apply.type = "button";
+    apply.className = "trim-suggest-apply";
+    apply.addEventListener("click", () => {
+      state.headTrimSec = seconds;
+      renderTrimControls();
+      renderTopbar();
+      hint.textContent = `已套用 ${seconds.toFixed(1)}s`;
+    });
+    hint.append(" ", apply);
+  } catch (e) {
+    hint.textContent = `失敗：${e.message}`;
+    hint.classList.add("error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 load().catch((err) => {
   $("#title").textContent = "載入失敗";
   $("#status").textContent = `載入失敗：${err?.message || err}`;

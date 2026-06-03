@@ -451,3 +451,32 @@ def test_post_upload_rejects_empty_filename(client):
     files = {"file": ("", b"x", "audio/mpeg")}
     r = client.post("/api/upload", files=files)
     assert r.status_code in (400, 422)
+
+
+# ─── C5：智慧 trim 開頭（silencedetect 建議） ─────────────────────────
+
+
+def test_post_detect_silence_returns_head_seconds(client, monkeypatch):
+    """/api/detect-silence 呼叫 silencedetect.detect_head_silence 並回傳秒數。"""
+    from podcast_toolkit.web import silencedetect as _sd
+
+    called = {}
+
+    def fake(path):
+        called["path"] = path
+        return 2.7
+
+    monkeypatch.setattr(_sd, "detect_head_silence", fake)
+    r = client.post("/api/detect-silence")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"head_silence_sec": 2.7}
+    # 確認傳入的是 main_video
+    assert "01_母帶/測試集.mp4" in str(called["path"])
+
+
+def test_post_detect_silence_returns_400_when_no_main_video(client, tmp_episode_dir):
+    """main_video 不存在 → 400。"""
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").unlink()
+    r = client.post("/api/detect-silence")
+    assert r.status_code == 400
+    assert "main_video" in r.json()["detail"] or "找不到" in r.json()["detail"]
