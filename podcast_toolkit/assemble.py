@@ -130,7 +130,8 @@ def build_filter_complex_reels(
         ch = int(res_h * crop["height"])
         cx = int(res_w * crop["x"])
         cy = int(res_h * crop["y"])
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},"
+        # crop 後 scale 回 1080×1920，否則輸出尺寸會被 crop 縮成 432×1920 之類的怪比例
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
 
     select_v, select_a = "", ""
     if deletion_intervals:

@@ -138,3 +138,17 @@ def test_prepare_assembly_reels_resolution_1080x1920(tmp_episode_full):
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
     assert "scale=1080:1920" in fc
+
+
+def test_prepare_assembly_reels_crop_rescales_back_to_1080x1920(tmp_episode_full):
+    """Reels crop 後必須 scale 回 1080×1920，否則輸出會變 432×1920 之類的怪尺寸。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["crop_reels"] = {"x": 0.3, "y": 0.0, "width": 0.4, "height": 1.0}
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # crop=432:1920:324:0 後緊接 scale=1080:1920，標準 IG/TikTok 規格
+    assert "crop=432:1920:324:0,scale=1080:1920" in fc
