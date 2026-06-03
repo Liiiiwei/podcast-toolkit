@@ -274,6 +274,9 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/save")
     def save(payload: dict):
         episode_io.save_state(holder["ep"], payload)
+        # 重新 init Episode 讓 cfg 反映剛寫入的 yaml；否則 GET /api/episode
+        # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
+        holder["ep"] = Episode(holder["ep"].dir)
         return {"ok": True}
 
     @app.post("/api/shutdown")

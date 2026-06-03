@@ -330,3 +330,36 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     assert avg_len >= 3, (
         f"_v2.srt 看起來沒跑 resegment：平均每張卡只有 {avg_len:.1f} 字"
     )
+
+
+def test_get_episode_reflects_cameras_b_after_save(tmp_episode_dir):
+    """T23a-followup bug 防回歸：/api/save 寫入 cam_b_path 後，
+    下一次 GET /api/episode 應拿到新 cameras.b（必須 reload Episode cfg）。
+    沒 reload 的話 A/B toggle 不會出現。
+    """
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+    (tmp_episode_dir / "01_母帶" / "B-roll.mp4").write_bytes(b"")
+
+    ep = Episode(tmp_episode_dir)
+    app = build_app(ep, shutdown=lambda: None)
+    c = TestClient(app)
+
+    # 初始 cameras 只有 a
+    initial = c.get("/api/episode").json()
+    assert "b" not in (initial.get("cameras") or {})
+
+    # POST cam B + offset
+    r = c.post(
+        "/api/save",
+        json={
+            "cam_b_path": "01_母帶/B-roll.mp4",
+            "camera_sync_offset_b": 1.5,
+            "cards": [],
+        },
+    )
+    assert r.status_code == 200
+
+    # GET 應反映新值
+    state = c.get("/api/episode").json()
+    assert state["cameras"].get("b") == "01_母帶/B-roll.mp4"
+    assert state["camera_sync_offset"].get("b") == 1.5
