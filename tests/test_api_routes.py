@@ -163,6 +163,40 @@ def test_assemble_endpoint_with_yt_reels(client, monkeypatch):
     assert len(r.json()["out_paths"]) == 2
 
 
+def test_list_episode_files_classifies_by_kind(tmp_episode_full):
+    """_list_episode_files 對每個檔案標 kind + 字幕角色。"""
+    from podcast_toolkit.web.api import _list_episode_files
+
+    # 補出測試需要的檔案（fixture 沒有的）
+    NAME = "測試集"
+    (tmp_episode_full / "01_母帶" / f"{NAME}.srt").write_text("", encoding="utf-8")
+    (tmp_episode_full / "02_片頭片尾" / "intro.mp4").write_bytes(b"")
+    (tmp_episode_full / "03_成品" / f"{NAME}_YT完整版.mp4").write_bytes(b"")
+    (tmp_episode_full / "03_成品" / f"{NAME}_Reels.mp4").write_bytes(b"")
+    (tmp_episode_full / "04_工作檔" / "switch_list.json").write_text("[]", encoding="utf-8")
+
+    files = _list_episode_files(tmp_episode_full)
+    by_path = {f["path"]: f for f in files}
+
+    # 主影片在 01_母帶/{name}.mp4
+    assert by_path[f"01_母帶/{NAME}.mp4"]["kind"] == "main_video"
+    # 主字幕（原始 _v1）也在 01_母帶
+    raw = by_path[f"01_母帶/{NAME}.srt"]
+    assert raw["kind"] == "subtitle"
+    assert raw["is_main_srt_backup"] is True
+    # _v2 在 03_成品
+    v2 = by_path[f"03_成品/{NAME}_final_v2.srt"]
+    assert v2["kind"] == "subtitle"
+    assert v2["is_active_srt"] is True
+    # 合成輸出
+    assert by_path[f"03_成品/{NAME}_YT完整版.mp4"]["kind"] == "composite"
+    assert by_path[f"03_成品/{NAME}_Reels.mp4"]["kind"] == "composite"
+    # 片頭片尾
+    assert by_path["02_片頭片尾/intro.mp4"]["kind"] == "intro_outro"
+    # 工作檔
+    assert by_path["04_工作檔/switch_list.json"]["kind"] == "work"
+
+
 def test_start_job_rejects_when_running(tmp_episode_full):
     from podcast_toolkit.web import assemble_job
     from podcast_toolkit.episode import Episode

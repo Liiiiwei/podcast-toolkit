@@ -75,12 +75,22 @@ def _save_config(data: dict) -> None:
 
 
 def _list_episode_files(root: Path) -> list[dict]:
-    """遞迴列出集資料夾內所有檔案，標註是否可轉字幕。"""
+    """遞迴列出集資料夾內所有檔案，標註 kind / 字幕角色。"""
     files: list[dict] = []
+    try:
+        ep = Episode(root)
+        main_video_path = ep.main_video()
+        main_srt_path = ep.main_srt()
+        v2_srt_path = ep.output_v2_srt()
+        yt_out = ep.output_yt_video()
+        reels_out = ep.output_reels_video()
+    except Exception:
+        main_video_path = main_srt_path = v2_srt_path = None
+        yt_out = reels_out = None
+
     for p in sorted(root.rglob("*")):
         if not p.is_file():
             continue
-        # 過濾隱藏 / 快取目錄
         if any(part in SKIP_DIRS or part.startswith(".") for part in p.relative_to(root).parts):
             continue
         rel = str(p.relative_to(root))
@@ -88,11 +98,41 @@ def _list_episode_files(root: Path) -> list[dict]:
             size = p.stat().st_size
         except OSError:
             size = 0
+
+        first = p.relative_to(root).parts[0] if p.relative_to(root).parts else ""
+        kind = "other"
+        is_active_srt = False
+        is_main_srt_backup = False
+
+        if main_video_path and p == main_video_path:
+            kind = "main_video"
+        elif v2_srt_path and p == v2_srt_path:
+            kind = "subtitle"
+            is_active_srt = True
+        elif main_srt_path and p == main_srt_path:
+            kind = "subtitle"
+            is_main_srt_backup = True
+        elif (yt_out and p == yt_out) or (reels_out and p == reels_out):
+            kind = "composite"
+        elif p.suffix.lower() == ".srt":
+            kind = "subtitle"
+        elif first == "01_母帶":
+            kind = "master"
+        elif first == "02_片頭片尾":
+            kind = "intro_outro"
+        elif first == "04_工作檔":
+            kind = "work"
+        elif first == "03_成品":
+            kind = "composite"
+
         files.append({
             "path": rel,
             "size": size,
             "transcribable": p.suffix.lower() in TRANSCRIBABLE_EXTS,
             "previewable": p.suffix.lower() in PREVIEWABLE_EXTS,
+            "kind": kind,
+            "is_active_srt": is_active_srt,
+            "is_main_srt_backup": is_main_srt_backup,
         })
     return files
 
