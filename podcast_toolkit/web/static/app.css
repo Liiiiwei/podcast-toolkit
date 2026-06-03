@@ -451,6 +451,36 @@ h2 {
   gap: 6px;
   max-height: 28vh;
   overflow-y: auto;
+  position: relative;
+}
+.files-pane.dragover {
+  outline: 2px dashed #ff6b35;
+  outline-offset: -4px;
+}
+.files-drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 107, 53, 0.12);
+  color: #ff6b35;
+  font-size: 14px;
+  font-weight: 600;
+  pointer-events: none;
+  border-radius: 4px;
+  z-index: 5;
+}
+.files-pane.dragover .files-drop-overlay {
+  display: flex;
+}
+.files-upload-status {
+  font-size: 11px;
+  color: #aaa;
+  padding: 2px 4px;
+}
+.files-upload-status.error {
+  color: #ff6b6b;
 }
 .files-list {
   display: flex;

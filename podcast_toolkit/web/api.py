@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -284,6 +284,35 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/typo-dict")
     def get_typo_dict():
         return JSONResponse(_load_typo_dict())
+
+    @app.post("/api/upload")
+    async def post_upload(file: UploadFile = File(...)):
+        """拖放上傳：把音/影片寫到 01_母帶/。
+        檔名只取 basename 防跳脫；副檔名須在 TRANSCRIBABLE_EXTS；同名不覆蓋。"""
+        ep = holder["ep"]
+        raw_name = file.filename or ""
+        if not raw_name:
+            raise HTTPException(status_code=400, detail="缺少檔名")
+        # 防路徑跳脫：含分隔字元的檔名一律 reject（不只取 basename，避免歧義）
+        if "/" in raw_name or "\\" in raw_name or raw_name in (".", ".."):
+            raise HTTPException(status_code=400, detail="檔名不可包含路徑分隔字元")
+        ext = Path(raw_name).suffix.lower()
+        if ext not in TRANSCRIBABLE_EXTS:
+            raise HTTPException(status_code=400, detail=f"不支援的副檔名：{ext}")
+
+        dest_dir = ep.dir / "01_母帶"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / raw_name
+        if dest.exists():
+            raise HTTPException(status_code=409, detail=f"已存在同名檔案：{raw_name}")
+
+        # 串流寫入，避免大檔吃光記憶體
+        with dest.open("wb") as out:
+            while chunk := await file.read(1024 * 1024):
+                out.write(chunk)
+
+        rel = str(dest.relative_to(ep.dir))
+        return JSONResponse({"ok": True, "path": rel, "size": dest.stat().st_size})
 
     @app.get("/api/files")
     def get_files():

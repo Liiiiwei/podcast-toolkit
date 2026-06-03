@@ -706,6 +706,8 @@ load().catch((err) => {
   console.error(err);
 });
 
+initUploadDropZone();
+
 // === Crop 框：固定比例 4:5 / 9:16 / 16:9，只能拖移不能 free resize ===
 (function setupCrop() {
   const wrap = $(".video-wrap");
@@ -1094,6 +1096,126 @@ function switchPreview(relPath) {
   }
   video.load();
   renderFiles();
+}
+
+// === A1：拖放上傳到 01_母帶/ ===
+const UPLOAD_EXTS = new Set([
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".flac",
+  ".aac",
+  ".ogg",
+  ".opus",
+  ".mp4",
+  ".mov",
+  ".mkv",
+  ".webm",
+]);
+
+function setUploadStatus(msg, isError = false) {
+  const el = $("#files-upload-status");
+  if (!msg) {
+    el.hidden = true;
+    el.textContent = "";
+    el.classList.remove("error");
+    return;
+  }
+  el.hidden = false;
+  el.textContent = msg;
+  el.classList.toggle("error", isError);
+}
+
+async function uploadOne(file) {
+  const ext = "." + (file.name.split(".").pop() || "").toLowerCase();
+  if (!UPLOAD_EXTS.has(ext)) {
+    return { ok: false, name: file.name, error: `不支援的副檔名 ${ext}` };
+  }
+  const form = new FormData();
+  form.append("file", file, file.name);
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: form });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      return {
+        ok: false,
+        name: file.name,
+        error: body.detail || `HTTP ${r.status}`,
+      };
+    }
+    const body = await r.json();
+    return { ok: true, name: file.name, path: body.path };
+  } catch (e) {
+    return { ok: false, name: file.name, error: e.message };
+  }
+}
+
+async function handleUploadDrop(fileList) {
+  const files = Array.from(fileList || []);
+  if (files.length === 0) return;
+  setUploadStatus(`上傳中 0 / ${files.length}…`);
+  let done = 0;
+  const errors = [];
+  for (const f of files) {
+    const res = await uploadOne(f);
+    done += 1;
+    if (res.ok) {
+      setUploadStatus(`上傳中 ${done} / ${files.length}：${res.name} ✓`);
+    } else {
+      errors.push(`${res.name}：${res.error}`);
+      setUploadStatus(`上傳中 ${done} / ${files.length}：${res.name} ✗`, true);
+    }
+  }
+  await loadFiles();
+  renderFiles();
+  if (errors.length === 0) {
+    setUploadStatus(`✓ 已上傳 ${files.length} 個檔案到 01_母帶/`);
+    setTimeout(() => setUploadStatus(""), 3000);
+  } else {
+    setUploadStatus(
+      `完成 ${done - errors.length} / ${files.length}，失敗：${errors.join("；")}`,
+      true,
+    );
+  }
+}
+
+function initUploadDropZone() {
+  const pane = $("#files-pane");
+  if (!pane) return;
+  let depth = 0;
+  pane.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    depth += 1;
+    pane.classList.add("dragover");
+  });
+  pane.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  pane.addEventListener("dragleave", () => {
+    depth -= 1;
+    if (depth <= 0) {
+      depth = 0;
+      pane.classList.remove("dragover");
+    }
+  });
+  pane.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    depth = 0;
+    pane.classList.remove("dragover");
+    handleUploadDrop(e.dataTransfer.files);
+  });
+  // 防止整個瀏覽器頁面被拖放檔案蓋掉（拖到 pane 之外時 fallback：直接忽略）
+  ["dragover", "drop"].forEach((evt) => {
+    document.addEventListener(evt, (e) => {
+      if (!e.dataTransfer?.types?.includes("Files")) return;
+      if (pane.contains(e.target)) return;
+      e.preventDefault();
+    });
+  });
 }
 
 // 簡易 modal 控制

@@ -396,3 +396,58 @@ def test_get_episode_reflects_cameras_b_after_save(tmp_episode_dir):
     state = c.get("/api/episode").json()
     assert state["cameras"].get("b") == "01_母帶/B-roll.mp4"
     assert state["camera_sync_offset"].get("b") == 1.5
+
+
+# ─── A1：拖放上傳到 01_母帶/ ───────────────────────────────────────────
+
+
+def test_post_upload_writes_audio_to_madai(client, tmp_episode_dir):
+    """POST /api/upload 把音檔寫到 01_母帶/。"""
+    files = {"file": ("note.mp3", b"FAKE_MP3_BYTES", "audio/mpeg")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["path"] == "01_母帶/note.mp3"
+    assert (tmp_episode_dir / "01_母帶" / "note.mp3").read_bytes() == b"FAKE_MP3_BYTES"
+
+
+def test_post_upload_writes_video_to_madai(client, tmp_episode_dir):
+    """POST /api/upload 把影片寫到 01_母帶/。"""
+    files = {"file": ("clip.mov", b"FAKE_MOV_BYTES", "video/quicktime")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code == 200, r.text
+    assert (tmp_episode_dir / "01_母帶" / "clip.mov").read_bytes() == b"FAKE_MOV_BYTES"
+
+
+def test_post_upload_rejects_unknown_extension(client):
+    """不在 TRANSCRIBABLE_EXTS 內的副檔名 → 400。"""
+    files = {"file": ("readme.txt", b"hello", "text/plain")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code == 400
+    assert "副檔名" in r.json()["detail"]
+
+
+def test_post_upload_rejects_path_traversal(client, tmp_episode_dir):
+    """檔名含路徑分隔字元 → 400，且絕對不會寫到 ep.dir 之外。"""
+    files = {"file": ("../evil.mp3", b"x", "audio/mpeg")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code == 400
+    # 確認沒寫到 tmp_episode_dir 的上層
+    assert not (tmp_episode_dir.parent / "evil.mp3").exists()
+
+
+def test_post_upload_rejects_overwrite_existing(client, tmp_episode_dir):
+    """同名檔案已存在 → 409，不覆蓋。"""
+    existing = tmp_episode_dir / "01_母帶" / "dup.mp3"
+    existing.write_bytes(b"OLD_CONTENT")
+    files = {"file": ("dup.mp3", b"NEW_CONTENT", "audio/mpeg")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code == 409
+    assert existing.read_bytes() == b"OLD_CONTENT"
+
+
+def test_post_upload_rejects_empty_filename(client):
+    """空檔名 → FastAPI 多媒體層 422 或我們的 400，都算 reject。"""
+    files = {"file": ("", b"x", "audio/mpeg")}
+    r = client.post("/api/upload", files=files)
+    assert r.status_code in (400, 422)
