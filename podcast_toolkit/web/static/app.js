@@ -832,8 +832,10 @@ async function runTranscribe(file) {
 }
 
 // === 合成流程 ===
+// 流程：點 #assemble-btn → 開 modal 顯示版本選擇區 → 使用者勾 targets + 確認
+//      → POST /api/assemble {targets, force} → 切換到進度區 + 開始 polling
+//      → done/error 各自渲染收尾畫面
 let _assemblePollTimer = null;
-let _assembleOutPath = null;
 
 function fmtEta(s) {
   if (s == null) return "估算中…";
@@ -843,20 +845,6 @@ function fmtEta(s) {
   return m > 0 ? `剩餘 約 ${m} 分 ${r} 秒` : `剩餘 約 ${r} 秒`;
 }
 
-function resetAssembleModal() {
-  $("#assemble-fill").style.width = "0%";
-  $("#assemble-percent").textContent = "0%";
-  $("#assemble-eta").textContent = "—";
-  $("#assemble-reveal").hidden = true;
-  const cancel = $("#assemble-cancel");
-  cancel.disabled = false;
-  cancel.textContent = "關閉";
-  cancel.onclick = () => {
-    stopAssemblePoll();
-    hideModal("assemble-modal");
-  };
-}
-
 function stopAssemblePoll() {
   if (_assemblePollTimer) {
     clearInterval(_assemblePollTimer);
@@ -864,34 +852,76 @@ function stopAssemblePoll() {
   }
 }
 
-async function startAssemble({ force = false } = {}) {
-  resetAssembleModal();
+// 把 modal 重設成「選擇版本」初始畫面：選擇區可見、進度區隱藏、按鈕回到預設
+function resetAssembleModal() {
+  // 切回選擇區
+  $("#assemble-select").classList.remove("hidden");
+  $("#assemble-progress").classList.add("hidden");
+  // 進度區欄位歸零
+  $("#assemble-fill").style.width = "0%";
+  $("#assemble-percent").textContent = "0%";
+  $("#assemble-eta").textContent = "—";
+  $("#assemble-current-label").textContent = "準備中…";
+  $("#assemble-eta-label").textContent = "—";
+  $("#assemble-msg").textContent = "…";
+  // 按鈕狀態
+  const confirmBtn = $("#assemble-confirm");
+  confirmBtn.hidden = false;
+  confirmBtn.disabled = false;
+  confirmBtn.textContent = "開始合成";
+  const reveal = $("#assemble-reveal");
+  reveal.hidden = true;
+  reveal.onclick = null;
+  const cancel = $("#assemble-cancel");
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+  // cancel.onclick 在 setupAssembleButton 內統一綁定，這裡不重綁
+}
+
+// 收集 targets + force 後，POST /api/assemble 並切換 UI 進入進度模式
+async function onAssembleConfirm({ force = null } = {}) {
+  const wantYt = $("#assemble-yt").checked;
+  const wantReels = $("#assemble-reels").checked;
+  const targets = [];
+  if (wantYt) targets.push("yt");
+  if (wantReels) targets.push("reels");
+  if (targets.length === 0) {
+    alert("至少要勾一個版本（YT 或 Reels）");
+    return;
+  }
+  const useForce = force == null ? $("#assemble-force").checked : force;
+
+  // UI 切換到進度模式
+  $("#assemble-select").classList.add("hidden");
+  $("#assemble-progress").classList.remove("hidden");
+  $("#assemble-confirm").hidden = true;
   $("#assemble-title").textContent = "合成中…";
   $("#assemble-msg").textContent =
     "ffmpeg 正在合成片頭 + 正片（含字幕與裁切）+ 片尾，請保留分頁。";
-  showModal("assemble-modal");
 
   try {
     const r = await fetch("/api/assemble", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force }),
+      body: JSON.stringify({ targets, force: useForce }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));
       const msg = body.detail || `HTTP ${r.status}`;
-      // 409 / 400「輸出已存在」→ 提供覆寫選項
-      if (r.status === 400 && /輸出已存在|--force/.test(msg) && !force) {
+      // 400「輸出已存在」→ 提供覆寫選項，使用者同意就以 force=true 重打
+      if (r.status === 400 && /輸出已存在|--force/.test(msg) && !useForce) {
         if (confirm(`${msg}\n\n要覆寫並重新合成嗎？`)) {
-          return startAssemble({ force: true });
+          // 重設 UI 回到準備狀態，再用 force=true 重打
+          $("#assemble-select").classList.add("hidden");
+          $("#assemble-progress").classList.remove("hidden");
+          $("#assemble-confirm").hidden = true;
+          return onAssembleConfirm({ force: true });
         }
         hideModal("assemble-modal");
         return;
       }
       throw new Error(msg);
     }
-    const data = await r.json();
-    _assembleOutPath = data.out_path;
   } catch (e) {
     $("#assemble-title").textContent = "❌ 無法啟動";
     $("#assemble-msg").innerHTML =
@@ -911,53 +941,99 @@ async function pollAssemble() {
     return; // 暫時失敗，下次再試
   }
 
-  const pct = Math.max(0, Math.min(100, s.percent || 0));
-  $("#assemble-fill").style.width = pct.toFixed(1) + "%";
-  $("#assemble-percent").textContent = pct.toFixed(1) + "%";
-  $("#assemble-eta").textContent = fmtEta(s.eta_s);
+  if (s.state === "idle") {
+    // 還沒開始或已重置，避免覆蓋 done 後的畫面
+    return;
+  }
+
+  if (s.state === "running") {
+    const pct = Math.max(0, Math.min(100, s.percent || 0));
+    const targetName = s.current === "yt" ? "YT" : "Reels";
+    let label;
+    if ((s.total || 0) > 1) {
+      label = `[${(s.index || 0) + 1}/${s.total}] ${targetName} 合成中… ${pct.toFixed(1)}%`;
+    } else {
+      label = `${targetName} 合成中… ${pct.toFixed(1)}%`;
+    }
+    $("#assemble-current-label").textContent = label;
+    $("#assemble-percent").textContent = `${pct.toFixed(1)}%`;
+    $("#assemble-eta").textContent = fmtEta(s.eta_s);
+    $("#assemble-eta-label").textContent = fmtEta(s.eta_s);
+    $("#assemble-fill").style.width = `${pct.toFixed(1)}%`;
+    return;
+  }
 
   if (s.state === "done") {
     stopAssemblePoll();
     $("#assemble-title").textContent = "✅ 合成完成";
-    $("#assemble-msg").innerHTML = `已輸出：<code>${s.out_path}</code>`;
+    const outs = s.output_files || [];
+    if (outs.length === 0) {
+      $("#assemble-msg").innerHTML = "已完成（找不到輸出檔資訊）";
+    } else {
+      const lines = outs.map((p) => `<code>${p}</code>`).join("<br>");
+      $("#assemble-msg").innerHTML = `已輸出：<br>${lines}`;
+    }
     const reveal = $("#assemble-reveal");
-    reveal.hidden = false;
-    reveal.onclick = async () => {
-      try {
-        await fetch("/api/reveal", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: s.out_path }),
-        });
-      } catch (e) {
-        alert(`開啟失敗：${e.message}`);
-      }
-    };
-  } else if (s.state === "error") {
+    if (outs.length > 0) {
+      reveal.hidden = false;
+      reveal.onclick = async () => {
+        try {
+          await fetch("/api/reveal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: outs[0] }),
+          });
+        } catch (e) {
+          alert(`開啟失敗：${e.message}`);
+        }
+      };
+    }
+    // 重新載入專案檔案列表，讓新合成檔出現在右側
+    try {
+      await loadFiles();
+      renderFiles();
+    } catch (_) {}
+    return;
+  }
+
+  if (s.state === "error") {
     stopAssemblePoll();
     $("#assemble-title").textContent = "❌ 合成失敗";
     $("#assemble-msg").innerHTML =
       `<div style="color:#ff6b35;white-space:pre-wrap">${s.error || "未知錯誤"}</div>`;
+    return;
   }
 }
 
-$("#assemble-btn").addEventListener("click", () => {
-  const dirty =
-    state.deletions.size > 0 ||
-    state.textOverrides.size > 0 ||
-    state.cropYt != null ||
-    state.cropReels != null;
-  if (dirty) {
-    if (
-      !confirm(
-        "有未儲存的修改，建議先按「完成並儲存」再合成。\n仍要直接合成嗎？（會用磁碟上的 _v2.srt）",
-      )
-    ) {
-      return;
+// 集中綁定 assemble 相關 listener，啟動時呼叫一次
+function setupAssembleButton() {
+  $("#assemble-btn").addEventListener("click", () => {
+    const dirty =
+      state.deletions.size > 0 ||
+      state.textOverrides.size > 0 ||
+      state.cropYt != null ||
+      state.cropReels != null;
+    if (dirty) {
+      if (
+        !confirm(
+          "有未儲存的修改，建議先按「完成並儲存」再合成。\n仍要直接合成嗎？（會用磁碟上的 _v2.srt）",
+        )
+      ) {
+        return;
+      }
     }
-  }
-  startAssemble();
-});
+    resetAssembleModal();
+    $("#assemble-title").textContent = "選擇要合成的版本";
+    showModal("assemble-modal");
+  });
+
+  $("#assemble-cancel").addEventListener("click", () => {
+    stopAssemblePoll();
+    hideModal("assemble-modal");
+  });
+
+  $("#assemble-confirm").addEventListener("click", () => onAssembleConfirm());
+}
 
 // === 設定 modal ===
 function openSettings() {
@@ -1224,3 +1300,4 @@ $("#init-cancel").addEventListener("click", closeInitModal);
 $("#init-go").addEventListener("click", runInitAndSwitch);
 
 setupVersionTabs();
+setupAssembleButton();
