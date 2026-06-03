@@ -154,6 +154,190 @@ def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
     return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
+def _multicam_cam_prep(
+    src_idx: int,
+    cam_label: str,
+    srt_rel: str,
+    style_str: str,
+    res_w: str | int,
+    res_h: str | int,
+    crop_part: str,
+    fps,
+    fmt: str,
+    setpts_prefix: str = "",
+) -> str:
+    """組單一鏡頭的前處理 chain（PTS 對齊 → 字幕 → scale/crop → 規格化）。
+
+    cam_label='a' 或 'b'；輸出 label 為 [m_{cam_label}_v]。
+    setpts_prefix 給 cam B 用來把 PTS 移到主時間軸（cam A 留空）。
+    """
+    return (
+        f"[{src_idx}:v]{setpts_prefix}subtitles={srt_rel}:force_style='{style_str}',"
+        f"scale={res_w}:{res_h},{crop_part}setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
+    )
+
+
+def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
+    """組 per-segment trim + 必要時的 segment concat。
+
+    回傳 (parts, main_v_in, main_a_in)。單段時直接用 seg_v_0/seg_a_0，
+    多段才額外加 concat=n=N 進 main_v_raw/main_a_raw。
+    """
+    parts: list[str] = []
+    n = len(segments)
+    for i, seg in enumerate(segments):
+        cam = seg["cam"]
+        s, e = float(seg["start"]), float(seg["end"])
+        parts.append(
+            f"[m_{cam}_v]trim={s:.3f}:{e:.3f},setpts=PTS-STARTPTS[seg_v_{i}]"
+        )
+        # 音訊永遠取 cam A（多鏡頭只切畫面，聲音來源固定）
+        parts.append(
+            f"[m_a_a]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS[seg_a_{i}]"
+        )
+    if n > 1:
+        seg_labels = "".join(f"[seg_v_{i}][seg_a_{i}]" for i in range(n))
+        parts.append(
+            f"{seg_labels}concat=n={n}:v=1:a=1[main_v_raw][main_a_raw]"
+        )
+        return parts, "main_v_raw", "main_a_raw"
+    return parts, "seg_v_0", "seg_a_0"
+
+
+def build_filter_complex_yt_multicam(
+    cfg: dict,
+    main_dur: float,
+    srt_rel: str,
+    segments: list[dict],
+    sync_offset_b: float = 0.0,
+) -> str:
+    """YT 雙鏡頭：[0]=intro, [1]=cam A, [2]=cam B, [3]=outro image, [4]=outro audio。
+
+    Cam B 先 setpts 對齊主時間軸再燒字幕；音訊一律走 cam A。
+    每段依 segments[i].cam 從 [m_a_v]/[m_b_v] trim 出來，最後與 intro/outro concat=n=3。
+    """
+    enc = cfg["encode"]
+    res_w, res_h = enc["resolution"].split("x")
+    intro_dur = cfg["assets"]["intro_duration"]
+    intro_fade_out = cfg["assets"]["intro_fade_out"]
+    style_str = build_style_string(cfg["subtitle_style"])
+    sr = enc["audio_sample_rate"]
+    fmt = enc["pix_fmt"]
+    fps = enc["framerate"]
+
+    crop = cfg.get("crop_yt")
+    crop_part = ""
+    if crop:
+        cw = int(int(res_w) * crop["width"])
+        ch = int(int(res_h) * crop["height"])
+        cx = int(int(res_w) * crop["x"])
+        cy = int(int(res_h) * crop["y"])
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+
+    parts: list[str] = []
+    # Cam A：不需 PTS 位移（主時間軸就是它的時間軸）
+    parts.append(
+        _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt)
+    )
+    parts.append(
+        f"[1:a]aformat=sample_rates={sr}:channel_layouts=stereo[m_a_a]"
+    )
+    # Cam B：先把 PTS 移到主時間軸，subtitles 之後讀到的時間才會對
+    parts.append(
+        _multicam_cam_prep(
+            2, "b", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt,
+            setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+        )
+    )
+
+    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    parts.extend(seg_parts)
+
+    # main 段 fade in/out
+    parts.append(
+        f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
+    )
+    parts.append(
+        f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
+    )
+
+    # Intro / outro
+    parts.append(
+        f"[0:v]scale={res_w}:{res_h},setsar=1,fps={fps},format={fmt},"
+        f"fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v_intro]"
+    )
+    parts.append(
+        f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a_intro]"
+    )
+    parts.append(
+        f"[3:v]scale={res_w}:{res_h},setsar=1,fps={fps},format={fmt},"
+        f"fade=t=in:st=0:d=0.5[v_outro]"
+    )
+    parts.append(
+        f"[4:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        f"afade=t=in:st=0:d=0.5[a_outro]"
+    )
+
+    parts.append(
+        "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
+        "concat=n=3:v=1:a=1[v][a]"
+    )
+
+    return ";".join(parts)
+
+
+def build_filter_complex_reels_multicam(
+    cfg: dict,
+    main_dur: float,
+    srt_rel: str,
+    segments: list[dict],
+    sync_offset_b: float = 0.0,
+) -> str:
+    """Reels 雙鏡頭：[0]=cam A, [1]=cam B。1080×1920，無 intro/outro。"""
+    enc = cfg["encode"]
+    res_w, res_h = 1080, 1920
+    style_str = build_style_string(cfg["subtitle_style"])
+    sr = enc["audio_sample_rate"]
+    fmt = enc["pix_fmt"]
+    fps = enc["framerate"]
+
+    crop = cfg.get("crop_reels")
+    crop_part = ""
+    if crop:
+        cw = int(res_w * crop["width"])
+        ch = int(res_h * crop["height"])
+        cx = int(res_w * crop["x"])
+        cy = int(res_h * crop["y"])
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+
+    parts: list[str] = []
+    parts.append(
+        _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt)
+    )
+    parts.append(
+        f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo[m_a_a]"
+    )
+    parts.append(
+        _multicam_cam_prep(
+            1, "b", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt,
+            setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+        )
+    )
+
+    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    parts.extend(seg_parts)
+
+    parts.append(
+        f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
+    )
+    parts.append(
+        f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+    )
+
+    return ";".join(parts)
+
+
 class AssembleError(RuntimeError):
     """assemble 任一階段失敗都丟這個；exit_code 給 CLI 對應退出碼。"""
 

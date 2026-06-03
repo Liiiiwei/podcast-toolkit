@@ -207,3 +207,104 @@ def test_prepare_assembly_reels_crop_rescales_back_to_1080x1920(tmp_episode_full
     fc = plan["cmd"][fc_idx + 1]
     # crop=432:1920:324:0 後緊接 scale=1080:1920，標準 IG/TikTok 規格
     assert "crop=432:1920:324:0,scale=1080:1920" in fc
+
+
+# --- T23a Step 4b: 雙鏡頭 multicam filter_complex ---
+
+ONE_SEG_A = [{"cam": "a", "start": 0.0, "end": 50.0}]
+TWO_SEG_AB = [
+    {"cam": "a", "start": 0.0, "end": 20.0},
+    {"cam": "b", "start": 20.0, "end": 50.0},
+]
+
+
+def test_filter_complex_yt_multicam_single_segment_no_concat():
+    """單段（整集都 cam a）→ trim + setpts，但不需 segment concat。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=ONE_SEG_A,
+    )
+    assert "trim=0.000:50.000" in fc
+    assert "[seg_v_0]" in fc
+    assert "[seg_a_0]" in fc
+    # 單段不需 segment-level concat（只剩最後 intro+main+outro 的 concat=n=3）
+    assert "concat=n=3:v=1:a=1[v][a]" in fc
+
+
+def test_filter_complex_yt_multicam_two_segments_concat():
+    """兩段 a→b → 兩個 trim + segment concat=n=2。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "trim=0.000:20.000" in fc
+    assert "trim=20.000:50.000" in fc
+    # segment concat：兩段視訊+音訊 → concat=n=2
+    assert "concat=n=2:v=1:a=1[main_v_raw][main_a_raw]" in fc
+    # 最後仍要和 intro/outro concat=n=3
+    assert "concat=n=3:v=1:a=1[v][a]" in fc
+
+
+def test_filter_complex_yt_multicam_cam_b_uses_b_input():
+    """cam b 段要從 [m_b_v] trim，不是 [m_a_v]。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    # seg_v_1 是 b 段 → 從 m_b_v 來
+    assert "[m_b_v]trim=20.000:50.000" in fc
+    assert "[m_a_v]trim=0.000:20.000" in fc
+
+
+def test_filter_complex_yt_multicam_audio_always_from_cam_a():
+    """音訊永遠從 cam a（[m_a_a]）取，不論該段視訊是 a 或 b。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    # 兩段的 atrim 都從 [m_a_a]
+    assert fc.count("[m_a_a]atrim") == 2
+
+
+def test_filter_complex_yt_multicam_cam_b_applies_sync_offset():
+    """cam b 視訊先做 setpts=PTS-offset/TB 對齊主時間軸，再 burn 字幕 + trim。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt",
+        segments=TWO_SEG_AB, sync_offset_b=1.25,
+    )
+    assert "[2:v]setpts=PTS-1.25/TB" in fc
+
+
+def test_filter_complex_yt_multicam_subtitles_burned_on_both_cams():
+    """字幕燒在 cam a 與 cam b 兩個 prep stream 上（不是 segment 後再燒）。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert fc.count("subtitles=x.srt") == 2
+
+
+def test_filter_complex_yt_multicam_with_crop_applied_to_both_cams():
+    """crop_yt 同時套到 cam a 與 cam b（兩鏡頭同畫面）。"""
+    cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
+    fc = assemble.build_filter_complex_yt_multicam(
+        cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    # 1920 * 0.8 = 1536, 1080 * 0.9 = 972
+    assert fc.count("crop=1536:972:192:54") == 2
+
+
+def test_filter_complex_reels_multicam_basic():
+    """Reels multicam：1080×1920，無 intro/outro。"""
+    fc = assemble.build_filter_complex_reels_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "scale=1080:1920" in fc
+    # Reels 沒 intro/outro → 不該有 [v_intro] 之類
+    assert "[v_intro]" not in fc
+    assert "concat=n=2:v=1:a=1[main_v_raw][main_a_raw]" in fc
+    # 最終輸出 [v][a]
+    assert "[v]" in fc and "[a]" in fc
+
+
+def test_filter_complex_reels_multicam_audio_from_cam_a():
+    """Reels 也是 cam a 出音訊。"""
+    fc = assemble.build_filter_complex_reels_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert fc.count("[m_a_a]atrim") == 2
