@@ -240,7 +240,8 @@ def prepare_assembly(
         main_dur = main_dur - deleted_total
 
     # tmp_out 寫在 work/，成功後由呼叫端 rename 到 out
-    tmp_out = ep.subdir("work") / f".{out.name}.tmp"
+    # 保留 .mp4 結尾，否則 ffmpeg 從 .tmp 副檔名無法判斷輸出格式
+    tmp_out = ep.subdir("work") / f".{out.stem}.tmp{out.suffix}"
     tmp_out_rel = str(tmp_out.relative_to(cwd)) if tmp_out.is_relative_to(cwd) else str(tmp_out)
 
     if output_kind == "yt":

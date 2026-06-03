@@ -88,6 +88,16 @@ def test_prepare_assembly_yt_uses_yt_output(tmp_episode_full):
     assert any("intro" in str(a) for a in plan["cmd"])
 
 
+def test_prepare_assembly_tmp_out_keeps_mp4_extension(tmp_episode_full):
+    """tmp_out 必須以 .mp4 結尾，否則 ffmpeg 無法從副檔名判斷輸出格式。"""
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    tmp_out = plan["tmp_out"]
+    # .X.mp4.tmp 會讓 ffmpeg 報 "Unable to choose an output format"
+    assert tmp_out.suffix == ".mp4", f"tmp_out 副檔名要是 .mp4，目前是 {tmp_out.suffix}"
+    # 仍是隱藏檔（以 . 開頭），方便清理
+    assert tmp_out.name.startswith(".")
+
+
 def test_prepare_assembly_reels_skips_intro_outro(tmp_episode_full):
     """output_kind='reels' 時 ffmpeg cmd 不含 intro / outro 輸入。"""
     plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
