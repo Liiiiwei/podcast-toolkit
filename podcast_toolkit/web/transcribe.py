@@ -33,12 +33,14 @@ def run_grok_pipeline(
     src_audio: Path,
     out_srt: Path,
     work_dir: Path,
+    progress=None,
 ) -> Path:
     """完整 pipeline：壓縮 → 上傳 → 簡轉繁 → 寫 SRT。
 
     src_audio: 集資料夾內任一可轉字幕檔案（mp3/wav/mp4/...）
     out_srt:   最終輸出位置（通常是 ep.output_v2_srt()）
     work_dir:  04_工作檔/，存壓縮後的暫存 mp3
+    progress:  callable(phase: str, percent: float)，可選；用來餵 background job 狀態
     回傳：out_srt 路徑
     """
     if not shutil.which("ffmpeg"):
@@ -48,11 +50,19 @@ def run_grok_pipeline(
     out_srt.parent.mkdir(parents=True, exist_ok=True)
 
     # 1. ffmpeg 壓縮成 16kHz mono mp3（暫存於 04_工作檔/）
+    if progress:
+        progress("compress", 0.0)
     compressed = work_dir / f"_grok_stt_{src_audio.stem}.mp3"
     _ffmpeg_compress(src_audio, compressed)
+    if progress:
+        progress("compress", 100.0)
 
     # 2. POST 到 x.ai
+    if progress:
+        progress("upload", 0.0)
     data = _post_to_grok(api_key, compressed)
+    if progress:
+        progress("upload", 100.0)
 
     # 3. 簡 → 繁（s2tw：台灣字形，但不做詞彙替換）
     words = data.get("words") or []

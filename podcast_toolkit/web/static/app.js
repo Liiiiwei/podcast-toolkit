@@ -1136,12 +1136,59 @@ function requestTranscribe(file) {
   showModal("transcribe-modal");
 }
 
+// 三段進度條：每段佔總長 1/3
+const TRANSCRIBE_PHASES = ["compress", "upload", "resegment"];
+const TRANSCRIBE_PHASE_LABELS = {
+  compress: "壓縮音檔",
+  upload: "上傳並等待 Grok STT",
+  resegment: "重新切句",
+};
+let _transcribePollTimer = null;
+
+function stopTranscribePoll() {
+  if (_transcribePollTimer) {
+    clearInterval(_transcribePollTimer);
+    _transcribePollTimer = null;
+  }
+}
+
+function renderTranscribePhasePills(currentPhase, state) {
+  // pending / active / done 三種狀態，依目前 phase 與 state 推導
+  const curIdx = TRANSCRIBE_PHASES.indexOf(currentPhase);
+  for (const phase of TRANSCRIBE_PHASES) {
+    const el = document.querySelector(
+      `#transcribe-progress .phase-pill[data-phase="${phase}"]`,
+    );
+    if (!el) continue;
+    el.classList.remove("active", "done");
+    const i = TRANSCRIBE_PHASES.indexOf(phase);
+    if (state === "done") {
+      el.classList.add("done");
+    } else if (i < curIdx) {
+      el.classList.add("done");
+    } else if (i === curIdx) {
+      el.classList.add("active");
+    }
+  }
+}
+
+function computeOverallPercent(phase, percent) {
+  const idx = TRANSCRIBE_PHASES.indexOf(phase);
+  if (idx < 0) return 0;
+  return idx * (100 / 3) + Math.max(0, Math.min(100, percent)) / 3;
+}
+
 async function runTranscribe(file) {
   $("#transcribe-title").textContent = "轉字幕中…";
   $("#transcribe-msg").innerHTML =
     `處理中：<code>${file.path}</code><br>` +
-    `會做：ffmpeg 壓縮 → 上傳 x.ai → 簡轉繁 → 寫 SRT<br>` +
-    `<br><em>請保留這個分頁，不要關閉。</em>`;
+    `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
+  $("#transcribe-progress").hidden = false;
+  $("#transcribe-fill").style.width = "0%";
+  $("#transcribe-percent").textContent = "0%";
+  $("#transcribe-phase-label").textContent = "啟動中…";
+  renderTranscribePhasePills(null, "running");
+
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   go.disabled = true;
@@ -1153,40 +1200,83 @@ async function runTranscribe(file) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: file.path }),
     });
-    if (!r.ok) {
+    if (!r.ok && r.status !== 202) {
       const body = await r.json().catch(() => ({}));
       throw new Error(body.detail || `HTTP ${r.status}`);
     }
-    const data = await r.json();
+  } catch (e) {
+    finishTranscribe({ ok: false, error: e.message });
+    return;
+  }
 
+  _transcribePollTimer = setInterval(pollTranscribe, 500);
+}
+
+async function pollTranscribe() {
+  let s;
+  try {
+    const r = await fetch("/api/transcribe/status");
+    s = await r.json();
+  } catch (e) {
+    return; // 暫時失敗，下次再試
+  }
+
+  if (s.state === "idle") return;
+
+  if (s.state === "running") {
+    const phase = s.phase || "compress";
+    const pct = Math.max(0, Math.min(100, s.percent || 0));
+    const overall = computeOverallPercent(phase, pct);
+    $("#transcribe-fill").style.width = `${overall.toFixed(1)}%`;
+    $("#transcribe-percent").textContent = `${overall.toFixed(0)}%`;
+    $("#transcribe-phase-label").textContent =
+      TRANSCRIBE_PHASE_LABELS[phase] || phase;
+    renderTranscribePhasePills(phase, "running");
+    return;
+  }
+
+  if (s.state === "done") {
+    stopTranscribePoll();
+    finishTranscribe({ ok: true, out_srt: s.out_srt });
+    return;
+  }
+
+  if (s.state === "error") {
+    stopTranscribePoll();
+    finishTranscribe({ ok: false, error: s.error || "未知錯誤" });
+    return;
+  }
+}
+
+async function finishTranscribe({ ok, out_srt, error }) {
+  const cancel = $("#transcribe-cancel");
+  if (ok) {
+    $("#transcribe-fill").style.width = "100%";
+    $("#transcribe-percent").textContent = "100%";
+    $("#transcribe-phase-label").textContent = "完成";
+    renderTranscribePhasePills(null, "done");
     $("#transcribe-title").textContent = "✅ 完成";
     $("#transcribe-msg").innerHTML =
-      `已寫入：<code>${data.out_srt}</code><br>` + `正在重新載入編輯區…`;
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>正在重新載入編輯區…`;
 
-    // 重抓 episode state 並重 render 字幕卡
     await loadEpisodeState();
     renderTopbar();
     renderCards();
     renderCaption();
     renderTypo();
-
-    cancel.disabled = false;
-    cancel.textContent = "關閉";
-    cancel.onclick = () => {
-      hideModal("transcribe-modal");
-      cancel.textContent = "取消";
-    };
-  } catch (e) {
+  } else {
     $("#transcribe-title").textContent = "❌ 失敗";
     $("#transcribe-msg").innerHTML =
-      `<div style="color:#ff6b35">${e.message}</div>`;
-    cancel.disabled = false;
-    cancel.textContent = "關閉";
-    cancel.onclick = () => {
-      hideModal("transcribe-modal");
-      cancel.textContent = "取消";
-    };
+      `<div style="color:#ff6b35">${error}</div>`;
+    $("#transcribe-progress").hidden = true;
   }
+  cancel.disabled = false;
+  cancel.textContent = "關閉";
+  cancel.onclick = () => {
+    hideModal("transcribe-modal");
+    cancel.textContent = "取消";
+    $("#transcribe-progress").hidden = true;
+  };
 }
 
 // === 合成流程 ===

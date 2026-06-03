@@ -745,6 +745,38 @@ h2 {
   margin-bottom: 8px;
   font-variant-numeric: tabular-nums;
 }
+.phase-pills {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0 10px;
+}
+.phase-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0a0a0a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #777;
+  font-size: 12px;
+  transition: all 0.2s;
+}
+.phase-pill.active {
+  background: #1a0e07;
+  border-color: #ff6b35;
+  color: #ff8c5a;
+}
+.phase-pill.done {
+  background: #0a1a0a;
+  border-color: #3a7;
+  color: #6c9;
+}
+.phase-pill .phase-icon {
+  font-size: 14px;
+}
 .init-block {
   margin-bottom: 12px;
 }

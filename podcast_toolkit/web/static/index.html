@@ -264,6 +264,29 @@
         <div class="modal-head" id="transcribe-title">準備轉字幕</div>
         <div class="modal-body">
           <div id="transcribe-msg">…</div>
+          <div id="transcribe-progress" hidden>
+            <div class="phase-pills">
+              <div class="phase-pill" data-phase="compress">
+                <span class="phase-icon">🗜</span>
+                <span class="phase-label">壓縮音檔</span>
+              </div>
+              <div class="phase-pill" data-phase="upload">
+                <span class="phase-icon">☁️</span>
+                <span class="phase-label">Grok STT</span>
+              </div>
+              <div class="phase-pill" data-phase="resegment">
+                <span class="phase-icon">✂️</span>
+                <span class="phase-label">重新切句</span>
+              </div>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="transcribe-fill"></div>
+            </div>
+            <div class="progress-meta">
+              <span id="transcribe-phase-label">準備中…</span>
+              <span id="transcribe-percent">0%</span>
+            </div>
+          </div>
         </div>
         <div class="modal-actions" id="transcribe-actions">
           <button id="transcribe-cancel">取消</button>

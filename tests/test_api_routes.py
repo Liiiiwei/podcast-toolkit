@@ -275,10 +275,18 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     monkeypatch, tmp_episode_dir
 ):
     """Grok STT 回字層 words[]，pipeline 寫到 main_srt 後要跑 resegment
-    把字層合成句子層 _v2.srt。沒做 resegment 的話 _v2.srt 會變一字一段。"""
+    把字層合成句子層 _v2.srt。沒做 resegment 的話 _v2.srt 會變一字一段。
+
+    /api/transcribe 是 background job：202 立即回，要 poll /api/transcribe/status
+    直到 state == done 才檢查檔案。"""
+    import time as _time
+
     from podcast_toolkit.web import api as api_mod
     from podcast_toolkit.web import transcribe as transcribe_mod
+    from podcast_toolkit.web import transcribe_job as transcribe_job_mod
     from podcast_toolkit.episode import Episode
+
+    transcribe_job_mod._reset()
 
     # 主影片 stub（POST 用 path 指向它）
     main_video = tmp_episode_dir / "01_母帶" / "測試集.mp4"
@@ -288,7 +296,7 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     monkeypatch.setattr(api_mod, "_load_config", lambda: {"xai_api_key": "fake"})
 
     # 模擬 Grok：一個字一張 card 寫到 out_srt（看起來像現在線上 bug）
-    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir):
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None):
         out_srt.parent.mkdir(parents=True, exist_ok=True)
         chars = "大家好歡迎來到我愛上班今天要聊的是過嗨乳牛"
         lines = []
@@ -312,7 +320,16 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     c = TestClient(app)
 
     r = c.post("/api/transcribe", json={"path": "01_母帶/測試集.mp4"})
-    assert r.status_code == 200, r.text
+    assert r.status_code == 202, r.text
+
+    # poll status
+    deadline = _time.monotonic() + 5.0
+    while _time.monotonic() < deadline:
+        s = c.get("/api/transcribe/status").json()
+        if s["state"] in ("done", "error"):
+            break
+        _time.sleep(0.05)
+    assert s["state"] == "done", f"job 沒 done：{s}"
 
     # 字層原稿要落在 main_srt
     main_srt = tmp_episode_dir / "01_母帶" / "測試集.srt"
@@ -327,6 +344,18 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     assert avg_len >= 3, (
         f"_v2.srt 看起來沒跑 resegment：平均每張卡只有 {avg_len:.1f} 字"
     )
+
+
+def test_get_transcribe_status_returns_idle_initially(client):
+    """還沒跑過任何 job 時，/api/transcribe/status 回 idle。"""
+    from podcast_toolkit.web import transcribe_job as transcribe_job_mod
+    transcribe_job_mod._reset()
+
+    r = client.get("/api/transcribe/status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["state"] == "idle"
+    assert body["phase"] is None
 
 
 def test_post_auto_align_400_when_cam_b_missing(client):
