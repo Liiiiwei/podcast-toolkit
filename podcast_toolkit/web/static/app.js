@@ -782,6 +782,133 @@ async function runTranscribe(file) {
   }
 }
 
+// === 合成流程 ===
+let _assemblePollTimer = null;
+let _assembleOutPath = null;
+
+function fmtEta(s) {
+  if (s == null) return "估算中…";
+  if (s <= 0) return "完成";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `剩餘 約 ${m} 分 ${r} 秒` : `剩餘 約 ${r} 秒`;
+}
+
+function resetAssembleModal() {
+  $("#assemble-fill").style.width = "0%";
+  $("#assemble-percent").textContent = "0%";
+  $("#assemble-eta").textContent = "—";
+  $("#assemble-reveal").hidden = true;
+  const cancel = $("#assemble-cancel");
+  cancel.disabled = false;
+  cancel.textContent = "關閉";
+  cancel.onclick = () => {
+    stopAssemblePoll();
+    hideModal("assemble-modal");
+  };
+}
+
+function stopAssemblePoll() {
+  if (_assemblePollTimer) {
+    clearInterval(_assemblePollTimer);
+    _assemblePollTimer = null;
+  }
+}
+
+async function startAssemble({ force = false } = {}) {
+  resetAssembleModal();
+  $("#assemble-title").textContent = "合成中…";
+  $("#assemble-msg").textContent =
+    "ffmpeg 正在合成片頭 + 正片（含字幕與裁切）+ 片尾，請保留分頁。";
+  showModal("assemble-modal");
+
+  try {
+    const r = await fetch("/api/assemble", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const msg = body.detail || `HTTP ${r.status}`;
+      // 409 / 400「輸出已存在」→ 提供覆寫選項
+      if (r.status === 400 && /輸出已存在|--force/.test(msg) && !force) {
+        if (confirm(`${msg}\n\n要覆寫並重新合成嗎？`)) {
+          return startAssemble({ force: true });
+        }
+        hideModal("assemble-modal");
+        return;
+      }
+      throw new Error(msg);
+    }
+    const data = await r.json();
+    _assembleOutPath = data.out_path;
+  } catch (e) {
+    $("#assemble-title").textContent = "❌ 無法啟動";
+    $("#assemble-msg").innerHTML =
+      `<div style="color:#ff6b35">${e.message}</div>`;
+    return;
+  }
+
+  _assemblePollTimer = setInterval(pollAssemble, 1000);
+}
+
+async function pollAssemble() {
+  let s;
+  try {
+    const r = await fetch("/api/assemble/status");
+    s = await r.json();
+  } catch (e) {
+    return; // 暫時失敗，下次再試
+  }
+
+  const pct = Math.max(0, Math.min(100, s.percent || 0));
+  $("#assemble-fill").style.width = pct.toFixed(1) + "%";
+  $("#assemble-percent").textContent = pct.toFixed(1) + "%";
+  $("#assemble-eta").textContent = fmtEta(s.eta_s);
+
+  if (s.state === "done") {
+    stopAssemblePoll();
+    $("#assemble-title").textContent = "✅ 合成完成";
+    $("#assemble-msg").innerHTML = `已輸出：<code>${s.out_path}</code>`;
+    const reveal = $("#assemble-reveal");
+    reveal.hidden = false;
+    reveal.onclick = async () => {
+      try {
+        await fetch("/api/reveal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: s.out_path }),
+        });
+      } catch (e) {
+        alert(`開啟失敗：${e.message}`);
+      }
+    };
+  } else if (s.state === "error") {
+    stopAssemblePoll();
+    $("#assemble-title").textContent = "❌ 合成失敗";
+    $("#assemble-msg").innerHTML =
+      `<div style="color:#ff6b35;white-space:pre-wrap">${s.error || "未知錯誤"}</div>`;
+  }
+}
+
+$("#assemble-btn").addEventListener("click", () => {
+  const dirty =
+    state.deletions.size > 0 ||
+    state.textOverrides.size > 0 ||
+    state.crop != null;
+  if (dirty) {
+    if (
+      !confirm(
+        "有未儲存的修改，建議先按「完成並儲存」再合成。\n仍要直接合成嗎？（會用磁碟上的 _v2.srt）",
+      )
+    ) {
+      return;
+    }
+  }
+  startAssemble();
+});
+
 // === 設定 modal ===
 function openSettings() {
   const input = $("#settings-xai-key");

@@ -111,29 +111,38 @@ def build_filter_complex(
     )
 
 
-def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
+class AssembleError(RuntimeError):
+    """assemble 任一階段失敗都丟這個；exit_code 給 CLI 對應退出碼。"""
+
+    def __init__(self, message: str, exit_code: int = 4):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def prepare_assembly(episode_dir: Path, force: bool = False) -> dict:
+    """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
+
+    web 端和 CLI 共用同一條 pipeline；web 多包一層 -progress pipe:1 讀進度。
+    回傳 dict：cmd / cwd / out / main_dur / total_dur。
+    """
     if not shutil.which("ffmpeg"):
-        print("✗ 找不到 ffmpeg，請 brew install ffmpeg", file=sys.stderr)
-        return 4
+        raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
     if not shutil.which("ffprobe"):
-        print("✗ 找不到 ffprobe（隨 ffmpeg 安裝）", file=sys.stderr)
-        return 4
+        raise AssembleError("找不到 ffprobe（隨 ffmpeg 安裝）")
 
     ep = Episode(episode_dir)
     cfg = ep.cfg
 
     main_video = ep.main_video()
     if not main_video.exists():
-        print(f"✗ 找不到正片：{main_video}", file=sys.stderr)
-        return 3
+        raise AssembleError(f"找不到正片：{main_video}", exit_code=3)
 
     # 字幕：用 v2（resegment 輸出）優先，沒有就回退原 srt
     srt = ep.output_v2_srt()
     if not srt.exists():
         srt = ep.main_srt()
         if not srt.exists():
-            print(f"✗ 找不到字幕（_v2 或原 srt）", file=sys.stderr)
-            return 3
+            raise AssembleError("找不到字幕（_v2 或原 srt）", exit_code=3)
 
     intro = ep.asset_path("intro")
     outro_audio = ep.asset_path("outro_audio")
@@ -141,20 +150,18 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
 
     for p, label in [(intro, "intro"), (outro_audio, "outro_audio"), (outro_image, "outro_image")]:
         if not p.exists():
-            print(f"✗ 共用資產缺失：{label} = {p}", file=sys.stderr)
-            print(f"  跑 podcast relink {episode_dir} 試試", file=sys.stderr)
-            return 3
+            raise AssembleError(
+                f"共用資產缺失：{label} = {p}（跑 podcast relink {episode_dir} 試試）",
+                exit_code=3,
+            )
 
     out = ep.output_yt_video()
     if out.exists() and not force:
-        print(f"✗ 輸出已存在：{out}", file=sys.stderr)
-        print(f"  加 --force 覆寫", file=sys.stderr)
-        return 1
+        raise AssembleError(f"輸出已存在：{out}（加 --force 覆寫）", exit_code=1)
 
     # 量正片時長
     main_dur = ffprobe_duration(main_video)
     intro_dur = cfg["assets"]["intro_duration"]
-    intro_fade_out = cfg["assets"]["intro_fade_out"]
     outro_dur = cfg["assets"]["outro_duration"]
 
     enc = cfg["encode"]
@@ -200,9 +207,31 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
         out_rel,
     ]
 
+    total_dur = intro_dur + main_dur + outro_dur
+
+    return {
+        "cmd": cmd,
+        "cwd": cwd,
+        "out": out,
+        "main_dur": main_dur,
+        "total_dur": total_dur,
+    }
+
+
+def run(episode_dir: Path, dry_run: bool = False, force: bool = False) -> int:
+    try:
+        plan = prepare_assembly(episode_dir, force=force)
+    except AssembleError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return e.exit_code
+
+    cmd = plan["cmd"]
+    cwd = plan["cwd"]
+    out = plan["out"]
+
     if dry_run:
         print(f"# cwd: {cwd}")
-        print(f"# main_duration: {main_dur}")
+        print(f"# main_duration: {plan['main_dur']}")
         print(" ".join(f"'{c}'" if " " in c or "[" in c else c for c in cmd))
         return 0
 

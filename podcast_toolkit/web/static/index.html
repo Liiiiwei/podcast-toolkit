@@ -17,6 +17,7 @@
       </div>
       <div class="actions">
         <button id="settings-btn" title="設定">⚙</button>
+        <button id="assemble-btn">🎬 開始合成</button>
         <button id="cancel-btn">取消</button>
         <button id="save-btn" class="primary" disabled>完成並儲存</button>
       </div>
@@ -136,6 +137,29 @@
         <div class="modal-actions">
           <button id="init-cancel">取消</button>
           <button id="init-go" class="primary">建立並切集</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 合成進度 modal -->
+    <div class="modal-backdrop hidden" id="assemble-modal">
+      <div class="modal">
+        <div class="modal-head" id="assemble-title">準備合成</div>
+        <div class="modal-body">
+          <div class="progress-bar">
+            <div class="progress-fill" id="assemble-fill"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="assemble-percent">0%</span>
+            <span id="assemble-eta">—</span>
+          </div>
+          <div id="assemble-msg" class="modal-hint">…</div>
+        </div>
+        <div class="modal-actions" id="assemble-actions">
+          <button id="assemble-cancel">關閉</button>
+          <button id="assemble-reveal" class="primary" hidden>
+            📁 在 Finder 開啟
+          </button>
         </div>
       </div>
     </div>

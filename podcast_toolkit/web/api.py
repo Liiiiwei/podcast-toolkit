@@ -12,8 +12,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from podcast_toolkit import init as ep_init
+from podcast_toolkit.assemble import AssembleError
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.web import episode_io, transcribe, video
+from podcast_toolkit.web import assemble_job, episode_io, transcribe, video
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -313,6 +314,55 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
             "ok": True,
             "out_srt": str(out_srt.relative_to(ep.dir)),
         })
+
+    @app.post("/api/assemble")
+    def post_assemble(payload: dict):
+        ep = holder["ep"]
+        force = bool(payload.get("force"))
+        try:
+            info = assemble_job.start_job(ep, force=force)
+        except AssembleError as e:
+            # 資產缺失 / 輸出存在 / 找不到 ffmpeg
+            # 注意：AssembleError 繼承 RuntimeError，必須先攔
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            # 已有 job 在跑
+            raise HTTPException(status_code=409, detail=str(e))
+        return JSONResponse({
+            "ok": True,
+            "out_path": info["out_path"],
+            "total_dur": info["total_dur"],
+        })
+
+    @app.get("/api/assemble/status")
+    def get_assemble_status():
+        return JSONResponse(assemble_job.get_status())
+
+    @app.post("/api/reveal")
+    def post_reveal(payload: dict):
+        """用 macOS `open` 開資料夾或檔案；路徑必須在 ep.dir 內。"""
+        ep = holder["ep"]
+        raw = (payload.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        target = Path(raw)
+        if not target.is_absolute():
+            target = (ep.dir / target).resolve()
+        else:
+            target = target.resolve()
+        try:
+            target.relative_to(ep.dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="路徑必須在集資料夾內")
+        if not target.exists():
+            raise HTTPException(status_code=404, detail=f"找不到：{target}")
+        # 若是檔案就用 -R reveal in Finder；資料夾直接開
+        cmd = ["open", "-R", str(target)] if target.is_file() else ["open", str(target)]
+        try:
+            subprocess.run(cmd, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            raise HTTPException(status_code=500, detail=f"無法開啟：{e}")
+        return JSONResponse({"ok": True})
 
     @app.post("/api/typo-dict")
     def post_typo_dict(payload: dict):
