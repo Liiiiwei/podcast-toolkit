@@ -274,8 +274,6 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/save")
     def save(payload: dict):
         episode_io.save_state(holder["ep"], payload)
-        # 延遲呼叫 shutdown,讓 response 先送出
-        threading.Timer(0.3, shutdown).start()
         return {"ok": True}
 
     @app.post("/api/shutdown")
