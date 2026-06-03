@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from podcast_toolkit import srt_io
+from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
 
 
@@ -67,6 +67,12 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
+        # T23a：雙鏡頭資訊（單機集 cameras 只有 a；前端要知道 b 在不在）
+        "cameras": dict(ep.cfg.get("cameras") or {}),
+        "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
+        "audio": ep.cfg.get("audio"),
+        # 字幕卡 → 鏡頭對應表（只含 explicit 標過的；前端用 carry-forward 補其他卡）
+        "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
     }
 
 
@@ -123,3 +129,11 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         if c.get("text")
     }
     v2.write_text(srt_io.serialize(cards, overrides=overrides), encoding="utf-8")
+
+    # T23a：字幕卡 → 鏡頭對應表 sidecar；前端傳回只含 explicit 標記的 mapping
+    cameras_mapping = {
+        int(k): str(v)
+        for k, v in (payload.get("cameras_mapping") or {}).items()
+        if v in ("a", "b")
+    }
+    cameras_io.save(ep.output_v2_cameras_json(), cameras_mapping)

@@ -191,3 +191,97 @@ def test_episode_io_save_writes_both_crops(tmp_episode_dir):
     assert data["crop_yt"]["width"] == 0.8
     assert data["crop_reels"]["width"] == 0.4
     assert "crop" not in data  # 舊欄位被清掉
+
+
+# --- T23a：雙鏡頭資訊透出 / sidecar 讀寫 ---
+
+
+def test_load_state_exposes_cameras_from_cfg(tmp_episode_dir):
+    """單機集 cameras 只有 a（從 main_video 遷移）。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cameras"] == {"a": "01_母帶/{name}.mp4"}
+    assert state["camera_sync_offset"] == {}
+    assert state["audio"] is None
+
+
+def test_load_state_exposes_cameras_dict_when_dual_cam(tmp_episode_dir):
+    """有 cameras dict 時要透出兩個鏡頭。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "cameras:\n  a: 01_母帶/cam_a.mp4\n  b: 01_母帶/cam_b.mp4\n"
+        + "audio:\n  main: 01_母帶/stereo.wav\n  sync_ref: a\n  offset_sec: 0.0\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cameras"] == {"a": "01_母帶/cam_a.mp4", "b": "01_母帶/cam_b.mp4"}
+    assert state["audio"] == {"main": "01_母帶/stereo.wav", "sync_ref": "a", "offset_sec": 0.0}
+
+
+def test_load_state_returns_empty_cameras_mapping_when_no_sidecar(tmp_episode_dir):
+    """sidecar 不存在 → cameras_mapping 是空 dict。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cameras_mapping"] == {}
+
+
+def test_load_state_returns_cameras_mapping_from_sidecar(tmp_episode_dir):
+    """sidecar 存在 → cameras_mapping 從 JSON 讀出來（int key）。"""
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
+    sidecar.write_text('{"2": "b", "4": "a"}', encoding="utf-8")
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cameras_mapping"] == {2: "b", 4: "a"}
+
+
+def test_save_state_writes_cameras_mapping_sidecar(tmp_episode_dir):
+    """save_state 把 cameras_mapping 寫進 sidecar JSON。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None,
+            "crop_reels": None,
+            "deletions": [],
+            "cards": [],
+            "cameras_mapping": {1: "a", 3: "b"},
+        },
+    )
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
+    assert sidecar.exists()
+    import json
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data == {"1": "a", "3": "b"}
+
+
+def test_save_state_empty_cameras_mapping_removes_sidecar(tmp_episode_dir):
+    """空 mapping 把舊 sidecar 刪掉。"""
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
+    sidecar.write_text('{"1": "b"}', encoding="utf-8")
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "cameras_mapping": {},
+        },
+    )
+    assert not sidecar.exists()
+
+
+def test_save_state_filters_invalid_camera_values(tmp_episode_dir):
+    """payload 裡若混進 'c' 或 None 之類的雜值要過濾掉。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "cameras_mapping": {1: "a", 2: "c", 3: "b", 4: None},
+        },
+    )
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
+    import json
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data == {"1": "a", "3": "b"}
