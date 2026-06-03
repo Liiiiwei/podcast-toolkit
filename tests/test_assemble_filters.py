@@ -42,6 +42,14 @@ def test_filter_complex_yt_with_crop_adds_crop_filter():
     assert "crop=1536:972:192:54" in fc
 
 
+def test_filter_complex_yt_with_crop_rescales_back_to_resolution():
+    """crop 後必須 scale 回 1920x1080，否則 concat 會因尺寸不符失敗。"""
+    cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
+    fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
+    # crop 後緊接著 scale 回原解析度
+    assert "crop=1536:972:192:54,scale=1920:1080" in fc
+
+
 def test_filter_complex_yt_with_deletions_adds_select():
     cfg = {**BASE_CFG, "deletions": [3]}
     intervals = [(12.0, 14.0)]

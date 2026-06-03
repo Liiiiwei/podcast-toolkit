@@ -83,7 +83,8 @@ def build_filter_complex_yt(
         ch = int(int(res_h) * crop["height"])
         cx = int(int(res_w) * crop["x"])
         cy = int(int(res_h) * crop["y"])
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},"
+        # crop 後 scale 回原解析度，否則和 intro/outro concat 時尺寸不符
+        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
 
     # 刪除區間：select / aselect filter（跳過 deletion 時間段）
     select_v, select_a = "", ""
