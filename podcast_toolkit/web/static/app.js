@@ -1585,19 +1585,25 @@ async function pollAssemble() {
       $("#assemble-msg").innerHTML = `已輸出：<br>${lines}`;
     }
     const reveal = $("#assemble-reveal");
+    const revealPath = async (p) => {
+      await fetch("/api/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: p }),
+      });
+    };
     if (outs.length > 0) {
       reveal.hidden = false;
       reveal.onclick = async () => {
         try {
-          await fetch("/api/reveal", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ path: outs[0] }),
-          });
+          await revealPath(outs[0]);
         } catch (e) {
           alert(`開啟失敗：${e.message}`);
         }
       };
+      // 自動 reveal 第一個輸出 — 使用者剛在等合成結果，跳 Finder 是合理回饋；
+      // 失敗就靜默退回手動按鈕（按鈕本身仍可重試）
+      revealPath(outs[0]).catch(() => {});
     }
     // 重新載入專案檔案列表，讓新合成檔出現在右側
     try {
