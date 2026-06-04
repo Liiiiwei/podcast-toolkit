@@ -23,6 +23,15 @@ pip3 install --user openai-whisper
 
 其他系統請手動跟著上面四步走（pip3 install pyyaml、brew/apt install ffmpeg、`ln -s "$(pwd)/bin/podcast" /usr/local/bin/podcast`）。
 
+## GUI 模式（推薦）
+
+```bash
+python3 setup_app.py py2app -A
+open dist/Podcast.app
+```
+
+雙擊 `Podcast.app` 後在瀏覽器 dashboard 選集、新建集、設定集數根目錄。CLI 仍保留，供腳本化使用。
+
 ## 工作流
 
 ```bash
