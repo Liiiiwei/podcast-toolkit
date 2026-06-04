@@ -155,6 +155,8 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/")
     def index():
+        if holder["ep"] is None:
+            return FileResponse(STATIC_DIR / "dashboard.html")
         return FileResponse(STATIC_DIR / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
