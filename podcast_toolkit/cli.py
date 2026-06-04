@@ -24,6 +24,11 @@ def cmd_edit(args):
     return edit.run(Path(args.path))
 
 
+def cmd_ui(args):
+    from podcast_toolkit import edit
+    return edit.run_dashboard()
+
+
 def build_parser():
     p = argparse.ArgumentParser(prog="podcast", description="Podcast 剪輯 toolkit")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -46,6 +51,9 @@ def build_parser():
     pe = sub.add_parser("edit", help="在瀏覽器編輯：裁切 / 刪段 / 改字")
     pe.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pe.set_defaults(func=cmd_edit)
+
+    pu = sub.add_parser("ui", help="開啟瀏覽器 dashboard（無預選集）")
+    pu.set_defaults(func=cmd_ui)
 
     return p
 
