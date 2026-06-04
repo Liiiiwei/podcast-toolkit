@@ -6,3 +6,6 @@ __pycache__/
 *.swp
 .superpowers/
 .gstack/
+build/
+dist/
+*.egg-info/
