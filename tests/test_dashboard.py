@@ -89,3 +89,96 @@ def test_save_atomic(tmp_path: Path):
     cfg = tmp_path / "config.json"
     dashboard.save_recent(cfg, ["/a"])
     assert not (tmp_path / "config.json.tmp").exists()
+
+
+def _make_initialized_episode(parent: Path, folder_name: str) -> Path:
+    """快速建一個 init 過的 episode 資料夾。"""
+    import yaml
+    ep = parent / folder_name
+    ep.mkdir()
+    for sub in ("01_母帶", "03_成品", "04_工作檔"):
+        (ep / sub).mkdir()
+    date, name = folder_name.split(" ", 1)
+    (ep / "episode.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "date": int(date),
+                "name": name,
+                "main_video": "01_母帶/{name}.mp4",
+                "main_srt": "01_母帶/{name}.srt",
+                "fixes": [], "card_fixes": [],
+                "force_break": [], "force_join": [],
+            },
+            allow_unicode=True, sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    return ep
+
+
+def test_list_episodes_from_root(tmp_path: Path):
+    root = tmp_path / "Downloads"
+    root.mkdir()
+    ep1 = _make_initialized_episode(root, "20260601 第一集")
+    (ep1 / "01_母帶" / "第一集.mp4").write_bytes(b"X")  # needs_transcribe
+    ep2 = _make_initialized_episode(root, "20260608 第二集")  # empty → 不列
+
+    result = dashboard.list_episodes(roots=[str(root)], recent=[])
+    assert result["warnings"] == []
+    paths = [e["path"] for e in result["episodes"]]
+    assert str(ep1) in paths
+    assert str(ep2) not in paths  # empty 不列
+
+
+def test_list_episodes_skips_non_episode_folders(tmp_path: Path):
+    root = tmp_path / "Downloads"
+    root.mkdir()
+    (root / "random_folder").mkdir()
+    (root / "file.txt").write_text("X")
+    result = dashboard.list_episodes(roots=[str(root)], recent=[])
+    assert result["episodes"] == []
+
+
+def test_list_episodes_warning_for_missing_root(tmp_path: Path):
+    missing = tmp_path / "nope"
+    result = dashboard.list_episodes(roots=[str(missing)], recent=[])
+    assert result["episodes"] == []
+    assert len(result["warnings"]) == 1
+    assert "nope" in result["warnings"][0]
+
+
+def test_list_episodes_dedup_across_recent_and_roots(tmp_path: Path):
+    root = tmp_path / "Downloads"
+    root.mkdir()
+    ep1 = _make_initialized_episode(root, "20260601 集A")
+    (ep1 / "01_母帶" / "集A.mp4").write_bytes(b"X")
+
+    result = dashboard.list_episodes(roots=[str(root)], recent=[str(ep1)])
+    paths = [e["path"] for e in result["episodes"]]
+    assert paths.count(str(ep1)) == 1
+
+
+def test_list_episodes_includes_name_and_stage(tmp_path: Path):
+    root = tmp_path / "Downloads"
+    root.mkdir()
+    ep1 = _make_initialized_episode(root, "20260601 第一集")
+    (ep1 / "01_母帶" / "第一集.mp4").write_bytes(b"X")
+
+    result = dashboard.list_episodes(roots=[str(root)], recent=[])
+    assert len(result["episodes"]) == 1
+    e = result["episodes"][0]
+    assert e["name"] == "第一集"
+    assert e["stage"] == "needs_transcribe"
+    assert "date" in e
+
+
+def test_list_episodes_recent_includes_paths_outside_roots(tmp_path: Path):
+    """recent 裡的路徑不在 roots 也要列出（使用者過去手動開過的）。"""
+    elsewhere = tmp_path / "OtherPlace"
+    elsewhere.mkdir()
+    ep = _make_initialized_episode(elsewhere, "20260615 別處集")
+    (ep / "01_母帶" / "別處集.mp4").write_bytes(b"X")
+
+    result = dashboard.list_episodes(roots=[], recent=[str(ep)])
+    paths = [e["path"] for e in result["episodes"]]
+    assert str(ep) in paths

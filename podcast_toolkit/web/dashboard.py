@@ -69,3 +69,66 @@ def add_recent(config_path: Path, path: str) -> None:
     recent = [p for p in recent if p != path]
     recent.insert(0, path)
     save_recent(config_path, recent)
+
+
+def _episode_meta(ep_dir: Path) -> dict | None:
+    """從一個 episode 資料夾抽出 dashboard card 需要的 metadata。
+    回 None 代表這資料夾不是 episode 或 stage='empty'（不顯示）。"""
+    stage = episode_stage(ep_dir)
+    if stage == "empty":
+        return None
+    name = ep_dir.name
+    date = ""
+    if " " in name and name[:8].isdigit():
+        date = name[:8]
+        name = name[9:]
+    try:
+        mtime = ep_dir.stat().st_mtime
+    except OSError:
+        mtime = 0
+    return {
+        "path": str(ep_dir),
+        "name": name,
+        "date": date,
+        "stage": stage,
+        "mtime": mtime,
+    }
+
+
+def list_episodes(roots: list[str], recent: list[str]) -> dict:
+    """掃 roots + recent，回 {episodes: [...], warnings: [...]}。
+    episodes 依 mtime 倒序；同一 path 去重。"""
+    warnings: list[str] = []
+    seen: dict[str, dict] = {}
+
+    for raw_root in roots:
+        root = Path(raw_root).expanduser()
+        if not root.is_dir():
+            warnings.append(f"找不到資料夾：{raw_root}")
+            continue
+        try:
+            children = list(root.iterdir())
+        except PermissionError:
+            warnings.append(f"沒有權限讀取：{raw_root}")
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            if not (child / "episode.yaml").is_file():
+                continue
+            meta = _episode_meta(child)
+            if meta is not None:
+                seen[meta["path"]] = meta
+
+    for raw_path in recent:
+        ep_dir = Path(raw_path).expanduser()
+        if not ep_dir.is_dir():
+            continue
+        if not (ep_dir / "episode.yaml").is_file():
+            continue
+        meta = _episode_meta(ep_dir)
+        if meta is not None and meta["path"] not in seen:
+            seen[meta["path"]] = meta
+
+    episodes = sorted(seen.values(), key=lambda e: e["mtime"], reverse=True)
+    return {"episodes": episodes, "warnings": warnings}
