@@ -286,6 +286,23 @@ h2 {
 .trim-band.tail {
   right: 0;
 }
+.trim-handle {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 18px;
+  background: #ff6b35;
+  border: 1px solid #fff;
+  border-radius: 3px;
+  transform: translate(-50%, -50%);
+  cursor: ew-resize;
+  z-index: 3;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.trim-handle:hover,
+.trim-handle.dragging {
+  background: #ff8a5b;
+}
 .trim-controls {
   display: flex;
   align-items: center;

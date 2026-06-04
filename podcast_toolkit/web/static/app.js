@@ -210,12 +210,27 @@ function renderTrimControls() {
     tailBand.style.display = "none";
   }
 
+  // 兩個拖把：影片載入後才能定位（沒 duration 時藏起來，避免拖到沒意義的位置）
+  const headHandle = $("#trim-handle-head");
+  const tailHandle = $("#trim-handle-tail");
+  if (dur > 0) {
+    const headPct = Math.min(100, Math.max(0, (head / dur) * 100));
+    const tailPct = Math.min(100, Math.max(0, ((dur - tail) / dur) * 100));
+    headHandle.style.left = `${headPct.toFixed(2)}%`;
+    tailHandle.style.left = `${tailPct.toFixed(2)}%`;
+    headHandle.style.display = "block";
+    tailHandle.style.display = "block";
+  } else {
+    headHandle.style.display = "none";
+    tailHandle.style.display = "none";
+  }
+
   const hint = $("#trim-hint");
   if (head > 0 || tail > 0) {
     const remain = Math.max(0, dur - head - tail);
     hint.textContent = `保留 ${remain.toFixed(1)}s / 總長 ${dur.toFixed(1)}s`;
   } else {
-    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾";
+    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾，或直接拖把";
   }
 }
 
@@ -867,6 +882,67 @@ $("#trim-reset").addEventListener("click", () => {
   state.tailTrimSec = 0;
   renderTrimControls();
   renderTopbar();
+});
+
+// 拖曳 trim handle：mousedown 在拖把上 → mousemove 即時更新 sec → mouseup 收工。
+// pushUndo 只在第一次 move 時押一次，避免拖一下噴一堆 history。
+// 點下去沒拖 = 沒進 stack，跟 frame drag / resize 同 pattern。
+function startTrimDrag(kind) {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  if (!dur) return;
+  const handle =
+    kind === "head" ? $("#trim-handle-head") : $("#trim-handle-tail");
+  handle.classList.add("dragging");
+  const wrap = $(".seek-wrap");
+  const rect = wrap.getBoundingClientRect();
+  let pushed = false;
+
+  const onMove = (e) => {
+    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+    const sec = (x / rect.width) * dur;
+    // clamp：頭不能超過尾的對面；尾同理；最少留 0.5s 內容免得整段被吃光
+    const MIN_REMAIN = 0.5;
+    if (kind === "head") {
+      const maxHead = dur - (state.tailTrimSec || 0) - MIN_REMAIN;
+      const next = Math.round(Math.max(0, Math.min(sec, maxHead)) * 10) / 10;
+      if (next === state.headTrimSec) return;
+      if (!pushed) {
+        pushUndo();
+        pushed = true;
+      }
+      state.headTrimSec = next;
+    } else {
+      const tailFromEnd = dur - sec;
+      const maxTail = dur - (state.headTrimSec || 0) - MIN_REMAIN;
+      const next =
+        Math.round(Math.max(0, Math.min(tailFromEnd, maxTail)) * 10) / 10;
+      if (next === state.tailTrimSec) return;
+      if (!pushed) {
+        pushUndo();
+        pushed = true;
+      }
+      state.tailTrimSec = next;
+    }
+    renderTrimControls();
+    renderTopbar();
+  };
+  const onUp = () => {
+    handle.classList.remove("dragging");
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+}
+
+$("#trim-handle-head").addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  startTrimDrag("head");
+});
+$("#trim-handle-tail").addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  startTrimDrag("tail");
 });
 
 // C5：智慧建議 — POST /api/detect-silence；結果顯示在 hint，按下 hint 套用
