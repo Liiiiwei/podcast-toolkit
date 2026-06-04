@@ -156,9 +156,13 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/")
     def index():
+        # 同一個 URL 會依 holder 狀態回 dashboard.html 或 index.html，
+        # 沒設 no-store 的話 Chromium 會用啟發式快取直接吃 cache 不打 server，
+        # 導致 open 完 redirect 回 / 還是看到舊頁
+        headers = {"Cache-Control": "no-store"}
         if holder["ep"] is None:
-            return FileResponse(STATIC_DIR / "dashboard.html")
-        return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(STATIC_DIR / "dashboard.html", headers=headers)
+        return FileResponse(STATIC_DIR / "index.html", headers=headers)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
