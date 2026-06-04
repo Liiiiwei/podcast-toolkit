@@ -425,6 +425,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
             "provider": provider,
+            "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
         })
 
     @app.post("/api/config")
@@ -451,12 +452,18 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             tcfg = cfg.get("transcribe") or {}
             tcfg["provider"] = provider
             cfg["transcribe"] = tcfg
+        if "episode_roots" in payload:
+            roots = payload.get("episode_roots")
+            if not isinstance(roots, list) or not all(isinstance(x, str) for x in roots):
+                raise HTTPException(status_code=400, detail="episode_roots 必須是字串陣列")
+            cfg["episode_roots"] = [r.strip() for r in roots if r.strip()]
         _save_config(cfg)
         out_provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
             "provider": out_provider,
+            "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
         })
 
     @app.post("/api/transcribe")

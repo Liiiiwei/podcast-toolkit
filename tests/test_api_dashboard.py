@@ -90,3 +90,34 @@ def test_post_close_clears_ep(edit_client):
     # 之後 GET / 應該回 dashboard
     r2 = edit_client.get("/")
     assert "Dashboard" in r2.text
+
+
+def test_config_includes_episode_roots(dashboard_client, monkeypatch, tmp_path):
+    from podcast_toolkit.web import api as api_mod
+    fake_config = tmp_path / "config.json"
+    monkeypatch.setattr(api_mod, "CONFIG_PATH", fake_config)
+
+    r = dashboard_client.get("/api/config")
+    assert r.status_code == 200
+    body = r.json()
+    assert "episode_roots" in body
+    assert isinstance(body["episode_roots"], list)
+
+
+def test_post_config_saves_episode_roots(dashboard_client, monkeypatch, tmp_path):
+    from podcast_toolkit.web import api as api_mod
+    fake_config = tmp_path / "config.json"
+    monkeypatch.setattr(api_mod, "CONFIG_PATH", fake_config)
+
+    r = dashboard_client.post("/api/config", json={"episode_roots": ["~/Podcasts", "~/Downloads"]})
+    assert r.status_code == 200
+    assert r.json()["episode_roots"] == ["~/Podcasts", "~/Downloads"]
+
+    import json
+    saved = json.loads(fake_config.read_text(encoding="utf-8"))
+    assert saved["episode_roots"] == ["~/Podcasts", "~/Downloads"]
+
+
+def test_post_config_rejects_non_list_episode_roots(dashboard_client):
+    r = dashboard_client.post("/api/config", json={"episode_roots": "not a list"})
+    assert r.status_code == 400
