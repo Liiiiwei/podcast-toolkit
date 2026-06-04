@@ -3,8 +3,59 @@
   <head>
     <meta charset="utf-8" />
     <title>podcast — Dashboard</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
   </head>
   <body>
-    <h1>Dashboard placeholder</h1>
+    <header class="dash-topbar">
+      <h1 class="dash-title">Podcast Toolkit</h1>
+      <div class="dash-actions">
+        <button id="open-folder-btn" type="button">📁 開資料夾</button>
+        <button id="new-episode-btn" type="button">📅 新建集</button>
+        <button id="settings-btn" type="button">⚙ 設定</button>
+      </div>
+    </header>
+
+    <main class="dash-body">
+      <div id="warnings" class="warnings" hidden></div>
+      <div id="loading" class="loading">載入中…</div>
+      <div id="empty" class="empty" hidden>
+        <p>還沒有任何集數。</p>
+        <p>請點上方「📁 開資料夾」選一個 episode、或「📅 新建集」建立新的。</p>
+      </div>
+      <ul id="episode-list" class="episode-list" hidden></ul>
+    </main>
+
+    <dialog id="settings-modal" class="modal">
+      <form method="dialog">
+        <h2>設定</h2>
+        <label>集數根目錄（每行一個路徑，預設 ~/Downloads）：</label>
+        <textarea
+          id="roots-input"
+          rows="4"
+          placeholder="~/Downloads&#10;~/Podcasts"
+        ></textarea>
+        <div class="modal-actions">
+          <button type="button" id="settings-save">儲存</button>
+          <button value="cancel">關閉</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="new-episode-modal" class="modal">
+      <form method="dialog">
+        <h2>新建集</h2>
+        <label
+          >日期（YYYYMMDD）<input id="new-date" type="text" maxlength="8"
+        /></label>
+        <label>集名<input id="new-name" type="text" /></label>
+        <div class="new-ep-error" id="new-ep-error" hidden></div>
+        <div class="modal-actions">
+          <button type="button" id="new-ep-create">建立</button>
+          <button value="cancel">取消</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/static/dashboard.js"></script>
   </body>
 </html>
