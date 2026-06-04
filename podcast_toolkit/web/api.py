@@ -597,19 +597,40 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         return JSONResponse({"ok": True})
 
     @app.post("/api/auto-align")
-    def auto_align_route():
-        """T23b：用兩台攝影機的前 120 秒做音訊互相關，回傳 cam B 相對 cam A
-        的秒偏移。不寫 yaml — 前端拿到值填到 input，使用者按儲存才走 /api/save。"""
+    def auto_align_route(payload: dict | None = None):
+        """T23b：前 120 秒做音訊互相關，回傳「對齊對象 相對 cam A」的秒偏移。
+        不寫 yaml — 前端拿到值填到 input，使用者按儲存才走 /api/save。
+
+        payload 接兩種對齊模式：
+        - {"audio_path": "..."}：對「外接音檔 vs cam A」算偏移
+        - 否則：對「cam B vs cam A」；cam B 優先讀 payload['cam_b_path']，
+          沒給才 fallback 讀 yaml 裡已存的 cameras.b
+        """
         ep = _require_ep()
+        payload = payload or {}
         cameras = ep.cfg.get("cameras") or {}
         cam_a_rel = cameras.get("a") or ep.cfg.get("main_video")
-        cam_b_rel = cameras.get("b")
-        if not cam_a_rel or not cam_b_rel:
-            raise HTTPException(status_code=400, detail="請先在鏡頭 modal 選好 cam B 再對齊")
+        if not cam_a_rel:
+            raise HTTPException(status_code=400, detail="缺 cam A，無法對齊")
         cam_a = ep.resolve_episode_path(cam_a_rel)
-        cam_b = ep.resolve_episode_path(cam_b_rel)
         if not cam_a.is_file():
             raise HTTPException(status_code=404, detail=f"找不到 cam A 檔案：{cam_a_rel}")
+
+        audio_path = (payload.get("audio_path") or "").strip()
+        if audio_path:
+            audio_file = ep.resolve_episode_path(audio_path)
+            if not audio_file.is_file():
+                raise HTTPException(status_code=404, detail=f"找不到音檔：{audio_path}")
+            try:
+                offset_sec = audio_align.auto_align(cam_a, audio_file)
+            except RuntimeError as e:
+                raise HTTPException(status_code=500, detail=str(e))
+            return {"ok": True, "offset_sec": offset_sec}
+
+        cam_b_rel = (payload.get("cam_b_path") or "").strip() or cameras.get("b")
+        if not cam_b_rel:
+            raise HTTPException(status_code=400, detail="請先在鏡頭 modal 選好 cam B 再對齊")
+        cam_b = ep.resolve_episode_path(cam_b_rel)
         if not cam_b.is_file():
             raise HTTPException(status_code=404, detail=f"找不到 cam B 檔案：{cam_b_rel}")
         try:

@@ -64,6 +64,38 @@ def _list_cam_b_candidates(ep: Episode) -> list[str]:
     return out
 
 
+# 外接音檔常見副檔名（小寫比對，相機/錄音機常出大寫）
+_AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
+
+
+def _list_audio_candidates(ep: Episode) -> list[str]:
+    """找外接音檔候選；掃集根目錄 + 01_母帶/ + 02_素材/，回相對路徑。
+
+    集根目錄：DAW / Audacity 直接輸出常落在這（如 Track1-Mic 1.wav）。
+    04_工作檔/ 是 STT 暫存，03_成品/ 是輸出，都不列。
+    """
+    out: list[str] = []
+    # 集根目錄頂層（不遞迴，避免抓到 04_工作檔/_grok_stt_*.mp3 暫存）
+    for entry in sorted(ep.dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() not in _AUDIO_EXTS:
+            continue
+        out.append(entry.name)
+    # 慣例子資料夾
+    for sub in ("01_母帶", "02_素材"):
+        d = ep.dir / sub
+        if not d.is_dir():
+            continue
+        for entry in sorted(d.iterdir()):
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() not in _AUDIO_EXTS:
+                continue
+            out.append(str(entry.relative_to(ep.dir)))
+    return out
+
+
 def load_state(ep: Episode) -> dict[str, Any]:
     """讀 episode.yaml + _v2.srt → 給前端的初始狀態。
 
@@ -96,6 +128,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
         # T23a-followup：cam B 候選清單（前端下拉用，避免使用者手改 yaml）
         "cam_b_candidates": _list_cam_b_candidates(ep),
+        # 外接音檔候選（.wav/.mp3/.m4a/...，掃 01_母帶 + 02_素材）
+        "audio_candidates": _list_audio_candidates(ep),
     }
 
 
@@ -157,6 +191,19 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["camera_sync_offset"] = {"b": sync_b}
         else:
             data.pop("camera_sync_offset", None)
+
+    # 外接音檔 + 同步偏移；用 key-presence 區分「沒動 UI」vs「明確清空」
+    if "audio" in payload:
+        audio_payload = payload.get("audio") or {}
+        audio_path = (audio_payload.get("path") or "").strip()
+        if audio_path:
+            audio_entry: dict[str, Any] = {"path": audio_path}
+            sync_audio = float(audio_payload.get("sync_offset") or 0)
+            if sync_audio:
+                audio_entry["sync_offset"] = sync_audio
+            data["audio"] = audio_entry
+        else:
+            data.pop("audio", None)
 
     yaml_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),

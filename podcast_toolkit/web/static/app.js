@@ -531,6 +531,12 @@ async function loadEpisodeState() {
     ? data.cam_b_candidates
     : [];
   state.camSyncOffsetB = Number((data.camera_sync_offset || {}).b || 0);
+  // 外接音檔：候選 + 已存的 path / sync_offset
+  state.audioCandidates = Array.isArray(data.audio_candidates)
+    ? data.audio_candidates
+    : [];
+  state.audioPath = (data.audio && data.audio.path) || "";
+  state.audioSyncOffset = Number((data.audio || {}).sync_offset || 0);
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
 }
@@ -2000,6 +2006,28 @@ function openCamModal() {
   $("#cam-sync-offset-b").value = state.camSyncOffsetB
     ? String(state.camSyncOffsetB)
     : "";
+
+  // 外接音檔下拉
+  const audioSel = $("#audio-select");
+  audioSel.innerHTML = "";
+  const audioNone = document.createElement("option");
+  audioNone.value = "";
+  audioNone.textContent = "（無，用鏡頭原音）";
+  audioSel.appendChild(audioNone);
+  const currentAudio = state.audioPath || "";
+  const audioOpts = new Set(state.audioCandidates || []);
+  if (currentAudio) audioOpts.add(currentAudio);
+  for (const path of [...audioOpts].sort()) {
+    const o = document.createElement("option");
+    o.value = path;
+    o.textContent = path;
+    if (path === currentAudio) o.selected = true;
+    audioSel.appendChild(o);
+  }
+  $("#audio-sync-offset").value = state.audioSyncOffset
+    ? String(state.audioSyncOffset)
+    : "";
+
   showModal("cam-modal");
 }
 
@@ -2018,13 +2046,109 @@ $("#cam-auto-align").addEventListener("click", async () => {
   btn.disabled = true;
   btn.textContent = "計算中…";
   try {
-    const r = await fetch("/api/auto-align", { method: "POST" });
+    const r = await fetch("/api/auto-align", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cam_b_path: camBPath }),
+    });
     if (!r.ok) {
       const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));
       throw new Error(err.detail || `HTTP ${r.status}`);
     }
     const data = await r.json();
     $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
+  } catch (e) {
+    alert(`自動對齊失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🎯 自動對齊";
+  }
+});
+
+// 一鍵全部對齊：並行打兩次 /api/auto-align（cam B + 音檔），各自填回對應 input。
+// 只選一邊就只跑那邊；都沒選 → 提示。
+$("#align-all").addEventListener("click", async () => {
+  const camBPath = $("#cam-b-select").value || "";
+  const audioPath = $("#audio-select").value || "";
+  if (!camBPath && !audioPath) {
+    alert("請先選 cam B 或音檔（兩邊都沒選等於沒事可做）");
+    return;
+  }
+  const btn = $("#align-all");
+  btn.disabled = true;
+  btn.textContent = "計算中…";
+
+  const tasks = [];
+  if (camBPath) {
+    tasks.push(
+      fetch("/api/auto-align", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cam_b_path: camBPath }),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const err = await r
+            .json()
+            .catch(() => ({ detail: `HTTP ${r.status}` }));
+          throw new Error(`cam B：${err.detail || r.status}`);
+        }
+        const data = await r.json();
+        $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
+      }),
+    );
+  }
+  if (audioPath) {
+    tasks.push(
+      fetch("/api/auto-align", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_path: audioPath }),
+      }).then(async (r) => {
+        if (!r.ok) {
+          const err = await r
+            .json()
+            .catch(() => ({ detail: `HTTP ${r.status}` }));
+          throw new Error(`音檔：${err.detail || r.status}`);
+        }
+        const data = await r.json();
+        $("#audio-sync-offset").value = data.offset_sec.toFixed(3);
+      }),
+    );
+  }
+
+  const results = await Promise.allSettled(tasks);
+  const errors = results
+    .filter((r) => r.status === "rejected")
+    .map((r) => r.reason.message);
+  btn.disabled = false;
+  btn.textContent = "🎯 一鍵全部對齊（cam B + 音檔）";
+  if (errors.length) {
+    alert(`部分對齊失敗：\n${errors.join("\n")}`);
+  }
+});
+
+// 外接音檔自動對齊（cam A vs audio file 互相關），跟 cam B 走同一條 /api/auto-align
+$("#audio-auto-align").addEventListener("click", async () => {
+  const audioPath = $("#audio-select").value || "";
+  if (!audioPath) {
+    alert("請先選音檔來源");
+    return;
+  }
+  const btn = $("#audio-auto-align");
+  btn.disabled = true;
+  btn.textContent = "計算中…";
+  try {
+    const r = await fetch("/api/auto-align", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ audio_path: audioPath }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));
+      throw new Error(err.detail || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    $("#audio-sync-offset").value = data.offset_sec.toFixed(3);
   } catch (e) {
     alert(`自動對齊失敗：${e.message}`);
   } finally {
@@ -2138,6 +2262,13 @@ $("#cam-save").addEventListener("click", async () => {
     alert("同步偏移要是數字");
     return;
   }
+  const audioPath = $("#audio-select").value || "";
+  const audioOffsetRaw = $("#audio-sync-offset").value;
+  const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
+  if (!Number.isFinite(audioOffset)) {
+    alert("音檔同步偏移要是數字");
+    return;
+  }
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
@@ -2155,6 +2286,7 @@ $("#cam-save").addEventListener("click", async () => {
     cameras_mapping: Object.fromEntries(state.camerasMapping),
     cam_b_path: camBPath,
     camera_sync_offset_b: offset,
+    audio: { path: audioPath, sync_offset: audioOffset },
   };
   try {
     const r = await fetch("/api/save", {

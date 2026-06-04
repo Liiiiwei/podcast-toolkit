@@ -337,6 +337,29 @@
       <div class="modal">
         <div class="modal-head">雙鏡頭設定</div>
         <div class="modal-body">
+          <div
+            class="modal-row"
+            style="
+              padding: 10px;
+              background: #f0f7ff;
+              border-radius: 6px;
+              margin-bottom: 12px;
+            "
+          >
+            <button
+              type="button"
+              id="align-all"
+              class="primary"
+              style="width: 100%"
+            >
+              🎯 一鍵全部對齊（cam B + 音檔）
+            </button>
+          </div>
+          <div class="modal-hint" style="margin-bottom: 12px">
+            選好 cam B /
+            音檔後按上面這顆，兩邊一起算偏移；只選一邊也行，另一邊會跳過。
+          </div>
+
           <label class="modal-label">Cam B 影片（從 01_母帶/ 挑）</label>
           <div class="modal-row">
             <select id="cam-b-select"></select>
@@ -362,6 +385,36 @@
             按「自動對齊」前請先儲存 cam B 來源（系統會抽兩支影片前 120
             秒做音訊互相關）。自動對齊不準時可用「手動標記」三個聲音事件
             fallback。
+          </div>
+
+          <hr
+            style="margin: 16px 0; border: none; border-top: 1px solid #e0e0e0"
+          />
+
+          <label class="modal-label">🎙️ 外接音檔（取代鏡頭原音用）</label>
+          <div class="modal-row">
+            <select id="audio-select"></select>
+          </div>
+          <div class="modal-hint">
+            從 01_母帶/ 或 02_素材/ 挑外接麥克風的
+            .wav/.mp3/.m4a；選「無」表示不用。
+          </div>
+          <label class="modal-label" style="margin-top: 12px"
+            >音檔同步偏移（秒）</label
+          >
+          <div class="modal-row">
+            <input
+              type="number"
+              id="audio-sync-offset"
+              step="0.01"
+              placeholder="0.0"
+            />
+            <button type="button" id="audio-auto-align">🎯 自動對齊</button>
+          </div>
+          <div class="modal-hint">
+            音檔比 cam A 慢幾秒就填正值；0 表示已對齊。「自動對齊」會抽 cam A
+            跟音檔前 120 秒做互相關。 ⚠️ 目前對齊資料只存進
+            episode.yaml，assemble 還沒接通 — 成品音軌仍會用鏡頭原音。
           </div>
         </div>
         <div class="modal-actions">
