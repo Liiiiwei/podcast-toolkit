@@ -53,9 +53,17 @@ def _set(**kwargs) -> None:
 
 
 def start_job(
-    ep: Episode, *, src_rel: str, provider: str, api_key: str
+    ep: Episode,
+    *,
+    src_rel: str,
+    provider: str,
+    api_key: str,
+    typo_entries: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "gemini"。"""
+    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "gemini"。
+
+    typo_entries：可選，會傳到 transcribe.run_pipeline 做錯字校正。
+    """
     with _LOCK:
         if _STATE["state"] == "running":
             raise RuntimeError("已有轉字幕正在進行中")
@@ -75,13 +83,21 @@ def start_job(
     )
 
     worker = threading.Thread(
-        target=_run, args=(ep, src, provider, api_key), daemon=True
+        target=_run,
+        args=(ep, src, provider, api_key, typo_entries),
+        daemon=True,
     )
     worker.start()
     return {"src_path": src_rel}
 
 
-def _run(ep: Episode, src: Path, provider: str, api_key: str) -> None:
+def _run(
+    ep: Episode,
+    src: Path,
+    provider: str,
+    api_key: str,
+    typo_entries: list[dict] | None,
+) -> None:
     """背景 worker：跑 pipeline → resegment → done / error。"""
     def progress(phase: str, percent: float) -> None:
         _set(phase=phase, percent=float(percent))
@@ -94,6 +110,7 @@ def _run(ep: Episode, src: Path, provider: str, api_key: str) -> None:
             out_srt=ep.main_srt(),
             work_dir=ep.subdir("work"),
             progress=progress,
+            typo_entries=typo_entries,
         )
     except _transcribe.TranscribeError as e:
         _set(state="error", error=str(e))

@@ -455,7 +455,11 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
         try:
             info = transcribe_job.start_job(
-                ep, src_rel=rel, provider=provider, api_key=api_key
+                ep,
+                src_rel=rel,
+                provider=provider,
+                api_key=api_key,
+                typo_entries=_load_typo_dict(),
             )
         except RuntimeError as e:
             # 已有 job 在跑

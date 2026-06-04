@@ -57,7 +57,7 @@ def test_start_job_sets_running_then_done(monkeypatch, tmp_episode_dir):
     # fake pipeline：直接寫 main_srt（不真的呼叫 Grok）
     from podcast_toolkit.web import transcribe as transcribe_mod
 
-    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         out_srt.parent.mkdir(parents=True, exist_ok=True)
         out_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\n哈囉\n", encoding="utf-8")
         if progress:
@@ -102,7 +102,7 @@ def test_start_job_rejects_when_already_running(monkeypatch, tmp_episode_dir):
 
     gate = threading.Event()
 
-    def slow_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def slow_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         gate.wait(timeout=2.0)
         out_srt.parent.mkdir(parents=True, exist_ok=True)
         out_srt.write_text("", encoding="utf-8")
@@ -139,7 +139,7 @@ def test_pipeline_error_sets_error_state(monkeypatch, tmp_episode_dir):
     """pipeline raise TranscribeError → state=error，error 訊息會被記下。"""
     from podcast_toolkit.web import transcribe as transcribe_mod
 
-    def boom(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def boom(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         raise transcribe_mod.TranscribeError("Grok 回 401")
 
     monkeypatch.setattr(
@@ -172,7 +172,7 @@ def test_progress_callback_advances_phase(monkeypatch, tmp_episode_dir):
     in_upload = threading.Event()
     leave_upload = threading.Event()
 
-    def staged_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def staged_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         progress("compress", 0.0)
         in_compress.set()
         leave_compress.wait(timeout=2.0)

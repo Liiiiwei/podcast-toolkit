@@ -29,7 +29,7 @@ def test_run_pipeline_dispatches_to_xai(tmp_path, monkeypatch):
     """provider="xai" → 呼叫 run_grok_pipeline。"""
     called = {}
 
-    def fake_grok(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def fake_grok(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         called["provider"] = "xai"
         called["api_key"] = api_key
         return out_srt
@@ -54,7 +54,7 @@ def test_run_pipeline_dispatches_to_gemini(tmp_path, monkeypatch):
     """provider="gemini" → 呼叫 run_gemini_pipeline。"""
     called = {}
 
-    def fake_gemini(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def fake_gemini(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         called["provider"] = "gemini"
         called["api_key"] = api_key
         return out_srt
@@ -109,7 +109,7 @@ def test_start_job_passes_provider_to_pipeline(monkeypatch, tmp_episode_dir):
     transcribe_job._reset()
     captured = {}
 
-    def fake_dispatch(*, provider, api_key, src_audio, out_srt, work_dir, progress=None):
+    def fake_dispatch(*, provider, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         captured["provider"] = provider
         captured["api_key"] = api_key
         out_srt.parent.mkdir(parents=True, exist_ok=True)
@@ -216,7 +216,7 @@ def test_post_transcribe_uses_configured_gemini_provider(
 
     captured = {}
 
-    def fake_start(ep, *, src_rel, provider, api_key):
+    def fake_start(ep, *, src_rel, provider, api_key, **_):
         captured["provider"] = provider
         captured["api_key"] = api_key
         return {"src_path": src_rel}

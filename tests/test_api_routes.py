@@ -296,7 +296,7 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     monkeypatch.setattr(api_mod, "_load_config", lambda: {"xai_api_key": "fake"})
 
     # 模擬 Grok：一個字一張 card 寫到 out_srt（看起來像現在線上 bug）
-    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None):
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
         out_srt.parent.mkdir(parents=True, exist_ok=True)
         chars = "大家好歡迎來到我愛上班今天要聊的是過嗨乳牛"
         lines = []

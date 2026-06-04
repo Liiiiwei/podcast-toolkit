@@ -37,13 +37,15 @@ def run_grok_pipeline(
     out_srt: Path,
     work_dir: Path,
     progress=None,
+    typo_entries: list[dict] | None = None,
 ) -> Path:
-    """完整 pipeline：壓縮 → 上傳 → 簡轉繁 → 寫 SRT。
+    """完整 pipeline：壓縮 → 上傳 → 簡轉繁 → 套錯字字典 → 寫 SRT。
 
     src_audio: 集資料夾內任一可轉字幕檔案（mp3/wav/mp4/...）
     out_srt:   最終輸出位置（通常是 ep.output_v2_srt()）
     work_dir:  04_工作檔/，存壓縮後的暫存 mp3
     progress:  callable(phase: str, percent: float)，可選；用來餵 background job 狀態
+    typo_entries: 使用者錯字字典 [{wrong, right, note}]；None 或空 list 都跳過
     回傳：out_srt 路徑
     """
     if not shutil.which("ffmpeg"):
@@ -67,11 +69,11 @@ def run_grok_pipeline(
     if progress:
         progress("upload", 100.0)
 
-    # 3. 簡 → 繁（s2tw：台灣字形，但不做詞彙替換）
+    # 3. 簡 → 繁 + 套錯字字典
     words = data.get("words") or []
     if not words:
         raise TranscribeError("Grok 回傳沒有 words，無法產生字幕")
-    words = [_convert_word(w) for w in words]
+    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
 
     # 4. 寫 SRT
     cards = _words_to_cards(words)
@@ -88,8 +90,13 @@ def run_gemini_pipeline(
     out_srt: Path,
     work_dir: Path,
     progress=None,
+    typo_entries: list[dict] | None = None,
 ) -> Path:
-    """Gemini STT pipeline：壓縮 → Files API 上傳 → generateContent → s2tw → 寫 SRT。"""
+    """Gemini STT pipeline：壓縮 → Files API 上傳 → generateContent → s2tw → 寫 SRT。
+
+    typo_entries：使用者錯字字典，會塞進 prompt 讓 Gemini 上下文判斷，
+                  並在 _convert_word 兜底做 str.replace。
+    """
     if not shutil.which("ffmpeg"):
         raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
     try:
@@ -124,11 +131,7 @@ def run_gemini_pipeline(
                 raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
             time.sleep(1)
             uploaded = client.files.get(name=uploaded.name)
-        prompt = (
-            "請把這段中文音訊轉成逐句字幕，輸出純 JSON 陣列，每筆 "
-            "{\"start\": 秒, \"end\": 秒, \"text\": 字串}。"
-            "不要包含 markdown 反引號。"
-        )
+        prompt = build_gemini_prompt(typo_entries)
         resp = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[uploaded, prompt],
@@ -148,7 +151,7 @@ def run_gemini_pipeline(
 
     if not words:
         raise TranscribeError("Gemini 沒回傳任何字幕")
-    words = [_convert_word(w) for w in words]
+    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
     cards = _words_to_cards(words)
     out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
     return out_srt
@@ -169,6 +172,7 @@ def run_pipeline(
     out_srt: Path,
     work_dir: Path,
     progress=None,
+    typo_entries: list[dict] | None = None,
 ) -> Path:
     """根據 provider 分流到對應 pipeline。未知 provider 丟 TranscribeError。"""
     fn = PROVIDERS.get(provider)
@@ -180,6 +184,7 @@ def run_pipeline(
         out_srt=out_srt,
         work_dir=work_dir,
         progress=progress,
+        typo_entries=typo_entries,
     )
 
 
@@ -229,14 +234,63 @@ def _post_to_grok(api_key: str, audio: Path) -> dict:
         raise TranscribeError(f"x.ai response 不是 JSON：{resp.text[:200]}") from e
 
 
-def _convert_word(w: dict) -> dict:
-    """套 OpenCC s2tw（簡 → 繁，台灣字形；不做詞彙替換以保留原意）。"""
+def _convert_word(w: dict, *, typo_entries: list[dict] | None = None) -> dict:
+    """套 OpenCC s2tw（簡 → 繁，台灣字形），再套使用者錯字字典兜底。"""
     text = w.get("text") or ""
+    text = _s2tw(text)
+    text = apply_typo_dict(text, typo_entries)
     return {
         "start": float(w.get("start", 0.0)),
         "end": float(w.get("end", 0.0)),
-        "text": _s2tw(text),
+        "text": text,
     }
+
+
+def apply_typo_dict(text: str, entries: list[dict] | None) -> str:
+    """字面 str.replace 套錯字字典；缺欄位的 entry 略過。"""
+    if not entries:
+        return text
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        wrong = e.get("wrong")
+        right = e.get("right")
+        if not wrong or not right:
+            continue
+        text = text.replace(str(wrong), str(right))
+    return text
+
+
+def build_gemini_prompt(typo_entries: list[dict] | None) -> str:
+    """組 Gemini prompt：要求斷句 + 錯字修正 + 填充詞處理 + 英文保留 + JSON 結構。"""
+    base = (
+        "請把這段中文音訊轉成繁體中文字幕，做到以下五件事：\n"
+        "1. 依語意斷句：每句 15-30 字為佳；不要把完整意思切成兩半。\n"
+        "2. 修正同音 / 近音錯字：依上下文判斷正確用字（例如「在」vs「再」、"
+        "「的」vs「得」vs「地」、「製作」vs「致勝」這類）。\n"
+        "3. 移除填充詞：「嗯」「啊」「呃」「就是」「然後就是」這類無意義口頭禪，"
+        "可以刪除；但口語感的「然後」「所以」如果承載語意請保留。\n"
+        "4. 英文人名 / 品牌 / 技術名詞保留原拼寫：例如 Claude、ChatGPT、"
+        "Python、Notion 等不要硬翻譯成中文。\n"
+        "5. 輸出純 JSON 陣列，每筆 {\"start\": 秒（float）, \"end\": 秒（float）, "
+        "\"text\": 字串}。不要包含 markdown 反引號。"
+    )
+    if typo_entries:
+        lines = []
+        for e in typo_entries:
+            if not isinstance(e, dict):
+                continue
+            wrong = e.get("wrong")
+            right = e.get("right")
+            if not wrong or not right:
+                continue
+            note = e.get("note", "")
+            tail = f"（{note}）" if note else ""
+            lines.append(f"- 「{wrong}」→「{right}」{tail}")
+        if lines:
+            base += "\n\n以下是使用者標註的常見錯字，請特別注意一律改正：\n"
+            base += "\n".join(lines)
+    return base
 
 
 _OPENCC = None  # 延遲載入，第一次呼叫才實例化
