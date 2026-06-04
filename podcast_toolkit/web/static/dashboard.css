@@ -50,6 +50,27 @@ body {
   text-align: center;
   color: #6e6e73;
 }
+.loading.error {
+  color: #842029;
+  background: #f8d7da;
+  border: 1px solid #f1aeb5;
+  border-radius: 8px;
+  padding: 24px;
+}
+.loading.error .retry-btn {
+  margin-top: 12px;
+  padding: 8px 16px;
+  border: 1px solid #842029;
+  background: #fff;
+  color: #842029;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.loading.error .retry-btn:hover {
+  background: #842029;
+  color: #fff;
+}
 .episode-list {
   list-style: none;
   padding: 0;
@@ -71,6 +92,11 @@ body {
 .episode-card:hover {
   transform: translateY(-1px);
   border-color: #007aff;
+}
+.episode-card.opening {
+  opacity: 0.55;
+  cursor: wait;
+  pointer-events: none;
 }
 .episode-card .ep-name {
   font-size: 16px;

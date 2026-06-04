@@ -26,7 +26,7 @@
     </main>
 
     <dialog id="settings-modal" class="modal">
-      <form method="dialog">
+      <div class="modal-body">
         <h2>設定</h2>
         <label>集數根目錄（每行一個路徑，預設 ~/Downloads）：</label>
         <textarea
@@ -36,13 +36,13 @@
         ></textarea>
         <div class="modal-actions">
           <button type="button" id="settings-save">儲存</button>
-          <button value="cancel">關閉</button>
+          <button type="button" id="settings-cancel">關閉</button>
         </div>
-      </form>
+      </div>
     </dialog>
 
     <dialog id="new-episode-modal" class="modal">
-      <form method="dialog">
+      <div class="modal-body">
         <h2>新建集</h2>
         <label
           >日期（YYYYMMDD）<input id="new-date" type="text" maxlength="8"
@@ -51,9 +51,9 @@
         <div class="new-ep-error" id="new-ep-error" hidden></div>
         <div class="modal-actions">
           <button type="button" id="new-ep-create">建立</button>
-          <button value="cancel">取消</button>
+          <button type="button" id="new-ep-cancel">取消</button>
         </div>
-      </form>
+      </div>
     </dialog>
 
     <script src="/static/dashboard.js"></script>
