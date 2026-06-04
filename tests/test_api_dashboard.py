@@ -49,3 +49,44 @@ def test_get_episodes_returns_list(dashboard_client, monkeypatch, tmp_path):
     assert "episodes" in body
     assert "warnings" in body
     assert isinstance(body["episodes"], list)
+
+
+def test_post_open_switches_to_edit_mode(dashboard_client, tmp_episode_dir, monkeypatch, tmp_path):
+    """open 後同一 client 的 GET / 應回 edit UI。"""
+    from podcast_toolkit.web import api as api_mod
+    fake_config = tmp_path / "config.json"
+    monkeypatch.setattr(api_mod, "CONFIG_PATH", fake_config)
+    (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"X")
+
+    r = dashboard_client.post("/api/episodes/open", json={"path": str(tmp_episode_dir)})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+    r2 = dashboard_client.get("/")
+    assert "podcast edit" in r2.text
+
+    # recent 已寫入
+    import json
+    recent = json.loads(fake_config.read_text(encoding="utf-8"))["recent_episodes"]
+    assert recent == [str(tmp_episode_dir)]
+
+
+def test_post_open_400_for_missing_path(dashboard_client, tmp_path):
+    r = dashboard_client.post("/api/episodes/open", json={"path": str(tmp_path / "nope")})
+    assert r.status_code == 400
+
+
+def test_post_open_400_for_no_episode_yaml(dashboard_client, tmp_path):
+    folder = tmp_path / "not_episode"
+    folder.mkdir()
+    r = dashboard_client.post("/api/episodes/open", json={"path": str(folder)})
+    assert r.status_code == 400
+
+
+def test_post_close_clears_ep(edit_client):
+    r = edit_client.post("/api/episodes/close")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    # 之後 GET / 應該回 dashboard
+    r2 = edit_client.get("/")
+    assert "Dashboard" in r2.text

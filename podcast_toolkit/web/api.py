@@ -169,6 +169,29 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         recent = dashboard_mod.load_recent(CONFIG_PATH)
         return JSONResponse(dashboard_mod.list_episodes(roots=roots, recent=recent))
 
+    @app.post("/api/episodes/open")
+    def open_episode(payload: dict):
+        raw = (payload.get("path") or "").strip()
+        if not raw:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        target = Path(os.path.expanduser(raw)).resolve()
+        if not target.is_dir():
+            raise HTTPException(status_code=400, detail=f"資料夾不存在：{target}")
+        if not (target / "episode.yaml").is_file():
+            raise HTTPException(status_code=400, detail=f"不是 episode 資料夾：{target}")
+        try:
+            new_ep = Episode(target)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}")
+        holder["ep"] = new_ep
+        dashboard_mod.add_recent(CONFIG_PATH, str(target))
+        return JSONResponse({"ok": True})
+
+    @app.post("/api/episodes/close")
+    def close_episode():
+        holder["ep"] = None
+        return JSONResponse({"ok": True})
+
     @app.get("/api/episode")
     def get_episode():
         return JSONResponse(episode_io.load_state(_require_ep()))
