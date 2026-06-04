@@ -26,7 +26,13 @@ const state = {
   // T23a-followup：cam B UI 用，避免使用者手改 yaml
   camBCandidates: [], // 後端掃 01_母帶/*.mp4 排除 cam A
   camSyncOffsetB: 0, // 秒；cam B 相對 cam A 的對齊偏移
+  // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
+  // 換集 / 儲存成功 → 一律清空兩 stacks（與 dirty 概念對齊）
+  undoStack: [],
+  redoStack: [],
 };
+
+const UNDO_MAX = 100;
 
 function getActiveCrop() {
   return state.activeVersion === "yt" ? state.cropYt : state.cropReels;
@@ -50,6 +56,101 @@ function setActiveCropRatio(ratio) {
     state.cropRatioReels = ratio;
   }
 }
+
+// === Undo / Redo（in-memory 編輯） ===
+// 追：deletions / textOverrides / cropYt / cropReels / cropRatio* / camerasMapping / head|tailTrimSec
+// 不追：susChecked（UI 暫態）、typoDict（自己的 API）、播放位置
+// mutation 前呼 pushUndo() → snapshot 入 undoStack；Cmd+Z undo、Cmd+Shift+Z redo
+function snapshotEditState() {
+  return {
+    deletions: new Set(state.deletions),
+    textOverrides: new Map(state.textOverrides),
+    cropYt: state.cropYt ? { ...state.cropYt } : null,
+    cropReels: state.cropReels ? { ...state.cropReels } : null,
+    cropRatioYt: state.cropRatioYt,
+    cropRatioReels: state.cropRatioReels,
+    camerasMapping: new Map(state.camerasMapping),
+    headTrimSec: state.headTrimSec,
+    tailTrimSec: state.tailTrimSec,
+  };
+}
+
+function applyEditSnapshot(snap) {
+  state.deletions = new Set(snap.deletions);
+  state.textOverrides = new Map(snap.textOverrides);
+  state.cropYt = snap.cropYt ? { ...snap.cropYt } : null;
+  state.cropReels = snap.cropReels ? { ...snap.cropReels } : null;
+  state.cropRatioYt = snap.cropRatioYt;
+  state.cropRatioReels = snap.cropRatioReels;
+  state.camerasMapping = new Map(snap.camerasMapping);
+  state.headTrimSec = snap.headTrimSec;
+  state.tailTrimSec = snap.tailTrimSec;
+}
+
+function pushUndo() {
+  state.undoStack.push(snapshotEditState());
+  if (state.undoStack.length > UNDO_MAX) state.undoStack.shift();
+  state.redoStack = [];
+}
+
+function clearUndoStacks() {
+  state.undoStack = [];
+  state.redoStack = [];
+}
+
+function rerenderEditState() {
+  renderTopbar();
+  renderCards();
+  renderCaption();
+  renderTypo();
+  renderCropInfo();
+  renderTrimControls();
+  // crop ratio 按鈕在 setupCrop IIFE 內，沒 export → 這裡重算
+  document.querySelectorAll(".ratio-btn").forEach((btn) => {
+    btn.classList.toggle(
+      "active",
+      getActiveCropRatio() === btn.dataset.ratio && getActiveCrop() != null,
+    );
+  });
+}
+
+function undo() {
+  if (state.undoStack.length === 0) return;
+  state.redoStack.push(snapshotEditState());
+  applyEditSnapshot(state.undoStack.pop());
+  rerenderEditState();
+}
+
+function redo() {
+  if (state.redoStack.length === 0) return;
+  state.undoStack.push(snapshotEditState());
+  applyEditSnapshot(state.redoStack.pop());
+  rerenderEditState();
+}
+
+document.addEventListener("keydown", (e) => {
+  const ctrl = e.metaKey || e.ctrlKey;
+  if (!ctrl) return;
+  const t = e.target;
+  // input/textarea/contenteditable focused → 讓瀏覽器原生 Cmd+Z 處理（編輯文字內容）
+  if (
+    t &&
+    (t.tagName === "INPUT" ||
+      t.tagName === "TEXTAREA" ||
+      t.isContentEditable === true)
+  ) {
+    return;
+  }
+  const key = (e.key || "").toLowerCase();
+  if (key !== "z") return;
+  if (e.shiftKey) {
+    e.preventDefault();
+    redo();
+  } else {
+    e.preventDefault();
+    undo();
+  }
+});
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -254,7 +355,17 @@ function renderCards() {
     text.addEventListener("blur", () => {
       const v = text.textContent.trim();
       const original = c.text;
-      if (v && v !== original) {
+      const willSet = !!v && v !== original;
+      const nextValue = willSet ? v : null;
+      const currentValue = state.textOverrides.has(c.idx)
+        ? state.textOverrides.get(c.idx)
+        : null;
+      // 沒實際改變 → 不入 undo stack，避免每次 focus/blur 都污染歷史
+      if (nextValue === currentValue) {
+        return;
+      }
+      pushUndo();
+      if (willSet) {
         state.textOverrides.set(c.idx, v);
         text.classList.add("dirty");
       } else {
@@ -270,6 +381,7 @@ function renderCards() {
     del.className = "card-del";
     del.textContent = state.deletions.has(c.idx) ? "↺" : "✕";
     del.addEventListener("click", () => {
+      pushUndo();
       if (state.deletions.has(c.idx)) {
         state.deletions.delete(c.idx);
       } else {
@@ -298,6 +410,9 @@ function renderCards() {
         : "目前鏡頭（沿用前一張）";
       aBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        // 已經 explicit 標 a → 不入 stack 也不重畫
+        if (state.camerasMapping.get(c.idx) === "a") return;
+        pushUndo();
         state.camerasMapping.set(c.idx, "a");
         renderCards();
       });
@@ -311,6 +426,8 @@ function renderCards() {
         : "切到 B 鏡頭";
       bBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (state.camerasMapping.get(c.idx) === "b") return;
+        pushUndo();
         state.camerasMapping.set(c.idx, "b");
         renderCards();
       });
@@ -383,6 +500,8 @@ async function loadEpisodeState() {
     ? data.cam_b_candidates
     : [];
   state.camSyncOffsetB = Number((data.camera_sync_offset || {}).b || 0);
+  // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
+  clearUndoStacks();
 }
 
 function setupSusToolbar() {
@@ -404,6 +523,7 @@ function setupSusToolbar() {
 
   $("#sus-delete-checked").addEventListener("click", () => {
     if (state.susChecked.size === 0) return;
+    pushUndo();
     for (const idx of state.susChecked) state.deletions.add(idx);
     state.susChecked.clear();
     renderCards();
@@ -549,6 +669,9 @@ function renderTypo() {
       apply.textContent = "全部套用";
       apply.disabled = totalCount === 0;
       apply.addEventListener("click", () => {
+        // 先確認會命中再 snapshot，避免空套用污染 undo 歷史
+        if (findHits(entry.wrong).length === 0) return;
+        pushUndo();
         const n = applyDictEntry(entry.wrong, entry.right);
         if (n > 0) {
           renderCards();
@@ -696,7 +819,10 @@ $("#trim-head-btn").addEventListener("click", () => {
   );
   const next = Math.round(t * 10) / 10;
   // 在同一位置再按一次 → 取消
-  state.headTrimSec = Math.abs(next - state.headTrimSec) < 0.05 ? 0 : next;
+  const nextValue = Math.abs(next - state.headTrimSec) < 0.05 ? 0 : next;
+  if (nextValue === state.headTrimSec) return;
+  pushUndo();
+  state.headTrimSec = nextValue;
   renderTrimControls();
   renderTopbar();
 });
@@ -710,12 +836,17 @@ $("#trim-tail-btn").addEventListener("click", () => {
     Math.min(dur - v.currentTime, dur - (state.headTrimSec || 0)),
   );
   const next = Math.round(tailFromEnd * 10) / 10;
-  state.tailTrimSec = Math.abs(next - state.tailTrimSec) < 0.05 ? 0 : next;
+  const nextValue = Math.abs(next - state.tailTrimSec) < 0.05 ? 0 : next;
+  if (nextValue === state.tailTrimSec) return;
+  pushUndo();
+  state.tailTrimSec = nextValue;
   renderTrimControls();
   renderTopbar();
 });
 
 $("#trim-reset").addEventListener("click", () => {
+  if (state.headTrimSec === 0 && state.tailTrimSec === 0) return;
+  pushUndo();
   state.headTrimSec = 0;
   state.tailTrimSec = 0;
   renderTrimControls();
@@ -747,6 +878,11 @@ $("#trim-suggest-btn").addEventListener("click", async () => {
     apply.type = "button";
     apply.className = "trim-suggest-apply";
     apply.addEventListener("click", () => {
+      if (seconds === state.headTrimSec) {
+        hint.textContent = `已套用 ${seconds.toFixed(1)}s`;
+        return;
+      }
+      pushUndo();
       state.headTrimSec = seconds;
       renderTrimControls();
       renderTopbar();
@@ -803,6 +939,11 @@ initUploadDropZone();
   }
 
   function applyRatio(ratioStr) {
+    // 同比例再按一次（且已 active）→ 視為 no-op，避免污染 undo 歷史
+    if (getActiveCropRatio() === ratioStr && getActiveCrop() != null) {
+      return;
+    }
+    pushUndo();
     setActiveCrop(cropForRatio(ratioStr));
     setActiveCropRatio(ratioStr);
     renderCropInfo();
@@ -827,8 +968,14 @@ initUploadDropZone();
     const startX = e.clientX;
     const startY = e.clientY;
     const c0 = { ...getActiveCrop() };
+    // 第一次 onMove 才 push — 純按一下沒拖動不算編輯
+    let pushed = false;
 
     function onMove(ev) {
+      if (!pushed) {
+        pushUndo();
+        pushed = true;
+      }
       const dx = (ev.clientX - startX) / rect.width;
       const dy = (ev.clientY - startY) / rect.height;
       setActiveCrop({
@@ -861,8 +1008,13 @@ initUploadDropZone();
     const anchorY = edge.includes("t") ? c0.y + c0.height : c0.y;
     const signX = edge.includes("l") ? -1 : 1; // 拖動方向：r=向右增寬, l=向左增寬
     const signY = edge.includes("t") ? -1 : 1;
+    let pushed = false;
 
     function onMove(ev) {
+      if (!pushed) {
+        pushUndo();
+        pushed = true;
+      }
       const mx = (ev.clientX - rect.left) / rect.width;
       const my = (ev.clientY - rect.top) / rect.height;
       // 拖動點距離錨點的標準化長度（每個軸都取正值）
@@ -911,6 +1063,8 @@ initUploadDropZone();
   });
 
   $("#crop-reset").addEventListener("click", () => {
+    if (getActiveCrop() == null && getActiveCropRatio() == null) return;
+    pushUndo();
     setActiveCrop(null);
     setActiveCropRatio(null);
     renderCropInfo();
@@ -967,6 +1121,8 @@ $("#save-btn").addEventListener("click", async () => {
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     $("#save-btn").textContent = "✅ 已儲存";
+    // 儲存成功後既有的 undo 紀錄已落地，視為起點 → 清空 stacks
+    clearUndoStacks();
     // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
     const ytBtn = $("#assemble-yt-btn");
     const reelsBtn = $("#assemble-reels-btn");
