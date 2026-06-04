@@ -2382,6 +2382,16 @@ async function switchEpisode(newPath) {
 }
 
 $("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
+document
+  .getElementById("back-to-dash-btn")
+  ?.addEventListener("click", async () => {
+    const r = await fetch("/api/episodes/close", { method: "POST" });
+    if (!r.ok) {
+      alert("回 dashboard 失敗");
+      return;
+    }
+    window.location.href = "/";
+  });
 $("#init-cancel").addEventListener("click", closeInitModal);
 $("#init-go").addEventListener("click", runInitAndSwitch);
 
