@@ -23,6 +23,7 @@ from podcast_toolkit.web import (
     transcribe_job,
     video,
 )
+from podcast_toolkit.web import dashboard as dashboard_mod
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -160,6 +161,13 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         return FileResponse(STATIC_DIR / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.get("/api/episodes")
+    def list_episodes():
+        cfg = _load_config()
+        roots = cfg.get("episode_roots") or [str(Path.home() / "Downloads")]
+        recent = dashboard_mod.load_recent(CONFIG_PATH)
+        return JSONResponse(dashboard_mod.list_episodes(roots=roots, recent=recent))
 
     @app.get("/api/episode")
     def get_episode():

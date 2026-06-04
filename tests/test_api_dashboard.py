@@ -34,3 +34,18 @@ def test_get_root_serves_edit_ui_when_ep(edit_client):
     assert r.status_code == 200
     # index.html 標題
     assert "podcast edit" in r.text
+
+
+def test_get_episodes_returns_list(dashboard_client, monkeypatch, tmp_path):
+    """掛掉 CONFIG_PATH 與 episode_roots，確保 endpoint 串得通。"""
+    from podcast_toolkit.web import api as api_mod
+    fake_config = tmp_path / "config.json"
+    fake_config.write_text('{"episode_roots": []}', encoding="utf-8")
+    monkeypatch.setattr(api_mod, "CONFIG_PATH", fake_config)
+
+    r = dashboard_client.get("/api/episodes")
+    assert r.status_code == 200
+    body = r.json()
+    assert "episodes" in body
+    assert "warnings" in body
+    assert isinstance(body["episodes"], list)
