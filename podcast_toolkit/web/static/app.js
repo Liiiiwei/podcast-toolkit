@@ -376,6 +376,22 @@ function renderCards() {
       renderCaption();
       renderTypo();
     });
+    // Enter = 提交 + 跳下一卡編輯；Shift+Enter 保留原生換行 escape hatch
+    // 注意 IME 組字中（如注音、拼音選字）不能攔 Enter，會吃掉候選確認
+    text.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      text.blur();
+      const cards = Array.from(document.querySelectorAll("#cards-list .card"));
+      const here = cards.indexOf(div);
+      for (let i = here + 1; i < cards.length; i++) {
+        const next = cards[i].querySelector(".card-text");
+        if (next) {
+          next.focus();
+          break;
+        }
+      }
+    });
 
     const del = document.createElement("button");
     del.className = "card-del";

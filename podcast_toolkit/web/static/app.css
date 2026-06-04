@@ -957,6 +957,14 @@ h2 {
   color: #ddd;
   line-height: 1.5;
   outline: none;
+  border-radius: 3px;
+  transition:
+    background 0.1s,
+    box-shadow 0.1s;
+}
+.card-text:focus {
+  background: rgba(255, 107, 53, 0.08);
+  box-shadow: 0 0 0 2px #ff6b35;
 }
 .card-text.dirty {
   border-bottom: 1px solid #ff6b35;
