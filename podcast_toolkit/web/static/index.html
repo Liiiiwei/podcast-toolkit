@@ -342,16 +342,51 @@
               placeholder="0.0"
             />
             <button type="button" id="cam-auto-align">🎯 自動對齊</button>
+            <button type="button" id="cam-manual-align">✋ 手動標記</button>
           </div>
           <div class="modal-hint">
             cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。
             按「自動對齊」前請先儲存 cam B 來源（系統會抽兩支影片前 120
-            秒做音訊互相關）。
+            秒做音訊互相關）。自動對齊不準時可用「手動標記」三個聲音事件
+            fallback。
           </div>
         </div>
         <div class="modal-actions">
           <button id="cam-cancel">取消</button>
           <button id="cam-save" class="primary">儲存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 手動標記三檔聲音事件 modal (T23c) -->
+    <div class="modal-backdrop hidden" id="manual-align-modal">
+      <div class="modal">
+        <div class="modal-head">手動標記三檔聲音</div>
+        <div class="modal-body">
+          <div class="modal-hint" style="margin-bottom: 12px">
+            在 QuickTime（或任何能看時碼的播放器）開 cam A、cam B 各播一次，
+            找三個同一瞬間都聽得到的「啪」/「碰」聲（拍手、敲桌、講者起音都行），
+            把兩邊的秒數填進來。
+          </div>
+          <div id="manual-align-rows">
+            <!-- 三組 row 由 JS 注入 -->
+          </div>
+          <div class="modal-row" style="margin-top: 12px">
+            <button type="button" id="manual-align-compute" class="primary">
+              算 offset
+            </button>
+          </div>
+          <div id="manual-align-result" class="modal-hint" hidden></div>
+          <div
+            id="manual-align-error"
+            class="modal-hint"
+            hidden
+            style="color: #c33"
+          ></div>
+        </div>
+        <div class="modal-actions">
+          <button id="manual-align-cancel">取消</button>
+          <button id="manual-align-apply" class="primary" disabled>套用</button>
         </div>
       </div>
     </div>

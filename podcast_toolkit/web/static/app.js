@@ -1779,6 +1779,103 @@ $("#cam-auto-align").addEventListener("click", async () => {
   }
 });
 
+// T23c: 手動標記三檔聲音事件 → 算 offset。fallback for T23b 不準時。
+function _manualAlignRender() {
+  const rows = $("#manual-align-rows");
+  rows.innerHTML = "";
+  for (let i = 1; i <= 3; i++) {
+    const row = document.createElement("div");
+    row.className = "modal-row";
+    row.style.marginBottom = "8px";
+    row.innerHTML =
+      `<span style="min-width:64px; display:inline-block">事件 ${i}</span>` +
+      `<input type="number" id="manual-a-${i}" step="0.01" ` +
+      `placeholder="cam A 秒數" style="margin-right:8px" />` +
+      `<input type="number" id="manual-b-${i}" step="0.01" ` +
+      `placeholder="cam B 秒數" />`;
+    rows.appendChild(row);
+  }
+  $("#manual-align-result").hidden = true;
+  $("#manual-align-error").hidden = true;
+  $("#manual-align-apply").disabled = true;
+  $("#manual-align-apply").dataset.offset = "";
+}
+
+$("#cam-manual-align").addEventListener("click", () => {
+  _manualAlignRender();
+  $("#manual-align-modal").classList.remove("hidden");
+});
+
+$("#manual-align-cancel").addEventListener("click", () => {
+  $("#manual-align-modal").classList.add("hidden");
+});
+
+$("#manual-align-compute").addEventListener("click", async () => {
+  const events = [];
+  for (let i = 1; i <= 3; i++) {
+    const a = $(`#manual-a-${i}`).value;
+    const b = $(`#manual-b-${i}`).value;
+    if (a === "" || b === "") {
+      $("#manual-align-error").textContent = `事件 ${i} 兩邊都要填`;
+      $("#manual-align-error").hidden = false;
+      $("#manual-align-result").hidden = true;
+      $("#manual-align-apply").disabled = true;
+      return;
+    }
+    events.push({ a: Number(a), b: Number(b) });
+  }
+  const btn = $("#manual-align-compute");
+  btn.disabled = true;
+  btn.textContent = "計算中…";
+  try {
+    const r = await fetch("/api/manual-align", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));
+      throw new Error(err.detail || `HTTP ${r.status}`);
+    }
+    const data = await r.json();
+    const offset = data.offset_sec;
+    const deltas = data.deltas || [];
+    const deltaStr = deltas
+      .map((d, i) => `事件${i + 1} 離差 ${d >= 0 ? "+" : ""}${d.toFixed(3)}s`)
+      .join("｜");
+    const maxAbs = deltas.length
+      ? Math.max(...deltas.map((d) => Math.abs(d)))
+      : 0;
+    const hint =
+      maxAbs > 0.2
+        ? "（離差 > 0.2s，建議重標一次）"
+        : maxAbs > 0.05
+          ? "（離差略大，可接受）"
+          : "（三筆很一致）";
+    $("#manual-align-result").innerHTML =
+      `算出 offset = <b>${offset.toFixed(3)}s</b><br/>${deltaStr} ${hint}`;
+    $("#manual-align-result").hidden = false;
+    $("#manual-align-error").hidden = true;
+    $("#manual-align-apply").disabled = false;
+    $("#manual-align-apply").dataset.offset = offset.toFixed(3);
+  } catch (e) {
+    $("#manual-align-error").textContent = `計算失敗：${e.message}`;
+    $("#manual-align-error").hidden = false;
+    $("#manual-align-result").hidden = true;
+    $("#manual-align-apply").disabled = true;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "算 offset";
+  }
+});
+
+$("#manual-align-apply").addEventListener("click", () => {
+  const offset = $("#manual-align-apply").dataset.offset;
+  if (offset === "") return;
+  $("#cam-sync-offset-b").value = offset;
+  $("#manual-align-modal").classList.add("hidden");
+});
+
 $("#cam-save").addEventListener("click", async () => {
   const camBPath = $("#cam-b-select").value || "";
   const offsetRaw = $("#cam-sync-offset-b").value;

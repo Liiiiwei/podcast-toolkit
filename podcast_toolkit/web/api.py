@@ -566,6 +566,17 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
         return {"ok": True, "offset_sec": offset_sec}
 
+    @app.post("/api/manual-align")
+    def manual_align_route(payload: dict):
+        """T23c：使用者手動標三組 (a, b) 時間點 → 算 offset + 一致性 deltas。
+        不寫 yaml — 前端拿到 offset 填到 #cam-sync-offset-b，使用者按儲存才走 /api/save。"""
+        events = payload.get("events")
+        try:
+            offset_sec, deltas = audio_align.compute_manual_offset(events)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "offset_sec": offset_sec, "deltas": deltas}
+
     @app.post("/api/typo-dict")
     def post_typo_dict(payload: dict):
         # payload = {"entries": [{"wrong": "...", "right": "...", "note": "..."}]}

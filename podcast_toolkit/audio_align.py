@@ -87,6 +87,38 @@ def compute_lag_seconds(
     return lag_samples / float(sample_rate)
 
 
+def compute_manual_offset(events: list[dict]) -> tuple[float, list[float]]:
+    """T23c：使用者手動標的三組 (a, b) 時間點 → 算 offset + 一致性 deltas。
+
+    events 必須剛好 3 筆，每筆 {"a": float, "b": float}。
+    a = 在 cam A 上聽到第 i 個事件的時間（秒）
+    b = 在 cam B 上聽到同一個事件的時間（秒）
+
+    offset = mean(a[i] - b[i])  → 與 T23b 一致：正值 = cam B 比 cam A 晚開始
+    deltas[i] = (a[i] - b[i]) - offset → 三筆的離差，幫使用者看一致性
+
+    錯誤：
+    - 數量不是 3 → ValueError
+    - a / b 不是數字 → ValueError
+    """
+    if not isinstance(events, list) or len(events) != 3:
+        raise ValueError("需要剛好三筆事件")
+    diffs: list[float] = []
+    for ev in events:
+        if not isinstance(ev, dict):
+            raise ValueError("每筆事件必須是 {a, b} 物件")
+        a = ev.get("a")
+        b = ev.get("b")
+        if not isinstance(a, (int, float)) or isinstance(a, bool):
+            raise ValueError(f"事件 a 必須是數字：{a!r}")
+        if not isinstance(b, (int, float)) or isinstance(b, bool):
+            raise ValueError(f"事件 b 必須是數字：{b!r}")
+        diffs.append(float(a) - float(b))
+    offset = sum(diffs) / 3.0
+    deltas = [d - offset for d in diffs]
+    return offset, deltas
+
+
 def auto_align(
     cam_a_video: Path,
     cam_b_video: Path,
