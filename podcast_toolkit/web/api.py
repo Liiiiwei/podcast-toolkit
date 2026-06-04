@@ -141,11 +141,17 @@ def _list_episode_files(root: Path) -> list[dict]:
     return files
 
 
-def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
+def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     """建立 FastAPI app。shutdown 是儲存後/取消時呼叫的 callback。"""
     app = FastAPI(title="podcast-edit")
     # 用 dict 包住，讓 /api/episode/switch 能 hot-swap
     holder = {"ep": ep}
+
+    def _require_ep() -> Episode:
+        ep = holder["ep"]
+        if ep is None:
+            raise HTTPException(status_code=409, detail="尚未選集，請先在 Dashboard 選一集")
+        return ep
 
     @app.get("/")
     def index():
@@ -155,12 +161,12 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/api/episode")
     def get_episode():
-        return JSONResponse(episode_io.load_state(holder["ep"]))
+        return JSONResponse(episode_io.load_state(_require_ep()))
 
     @app.post("/api/episode/pick")
     def pick_episode():
         ep = holder["ep"]
-        default_dir = str(ep.dir.parent)
+        default_dir = str(ep.dir.parent) if ep else str(Path.home() / "Downloads")
         script = (
             f'POSIX path of (choose folder with prompt "選擇集資料夾" '
             f'default location POSIX file "{default_dir}")'
@@ -252,7 +258,8 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
                 status_code=400,
                 detail=f"集名不可包含路徑分隔字元：{name}",
             )
-        parent = holder["ep"].dir.parent
+        ep = holder["ep"]
+        parent = ep.dir.parent if ep else (Path.home() / "Downloads")
         target = (parent / f"{date} {name}").resolve()
         if target.exists():
             raise HTTPException(
@@ -303,7 +310,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/api/video")
     def get_video(request: Request, path: str | None = None):
-        ep = holder["ep"]
+        ep = _require_ep()
         # path 為空 → main_video；否則必須在 ep.dir 內且可預覽
         if not path:
             target = ep.main_video()
@@ -321,10 +328,11 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.post("/api/save")
     def save(payload: dict):
-        episode_io.save_state(holder["ep"], payload)
+        ep = _require_ep()
+        episode_io.save_state(ep, payload)
         # 重新 init Episode 讓 cfg 反映剛寫入的 yaml；否則 GET /api/episode
         # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
-        holder["ep"] = Episode(holder["ep"].dir)
+        holder["ep"] = Episode(ep.dir)
         return {"ok": True}
 
     @app.post("/api/shutdown")
@@ -340,7 +348,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     async def post_upload(file: UploadFile = File(...)):
         """拖放上傳：把音/影片寫到 01_母帶/。
         檔名只取 basename 防跳脫；副檔名須在 TRANSCRIBABLE_EXTS；同名不覆蓋。"""
-        ep = holder["ep"]
+        ep = _require_ep()
         raw_name = file.filename or ""
         if not raw_name:
             raise HTTPException(status_code=400, detail="缺少檔名")
@@ -367,7 +375,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.get("/api/files")
     def get_files():
-        ep = holder["ep"]
+        ep = _require_ep()
         return JSONResponse({
             "root": ep.name,
             "dir": str(ep.dir),
@@ -422,7 +430,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     def post_transcribe(payload: dict):
         """非同步：立即回 202，背景跑壓縮 + Grok + resegment。
         前端 poll /api/transcribe/status 拿進度。"""
-        ep = holder["ep"]
+        ep = _require_ep()
         rel = (payload.get("path") or "").strip()
         if not rel:
             raise HTTPException(status_code=400, detail="缺少 path")
@@ -477,7 +485,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/detect-silence")
     def post_detect_silence():
         """智慧建議：跑 ffmpeg silencedetect 看 main_video 開頭靜音長度（秒）。"""
-        ep = holder["ep"]
+        ep = _require_ep()
         main = ep.main_video()
         if not main.is_file():
             raise HTTPException(
@@ -492,7 +500,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
 
     @app.post("/api/assemble")
     def post_assemble(payload: dict):
-        ep = holder["ep"]
+        ep = _require_ep()
         targets = payload.get("targets") or []
         if not targets or not isinstance(targets, list):
             raise HTTPException(status_code=400, detail="缺少 targets（list，例如 ['yt', 'reels']）")
@@ -521,7 +529,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/reveal")
     def post_reveal(payload: dict):
         """用 macOS `open` 開資料夾或檔案；路徑必須在 ep.dir 內。"""
-        ep = holder["ep"]
+        ep = _require_ep()
         raw = (payload.get("path") or "").strip()
         if not raw:
             raise HTTPException(status_code=400, detail="缺少 path")
@@ -548,7 +556,7 @@ def build_app(ep: Episode, shutdown: Callable[[], None]) -> FastAPI:
     def auto_align_route():
         """T23b：用兩台攝影機的前 120 秒做音訊互相關，回傳 cam B 相對 cam A
         的秒偏移。不寫 yaml — 前端拿到值填到 input，使用者按儲存才走 /api/save。"""
-        ep = holder["ep"]
+        ep = _require_ep()
         cameras = ep.cfg.get("cameras") or {}
         cam_a_rel = cameras.get("a") or ep.cfg.get("main_video")
         cam_b_rel = cameras.get("b")

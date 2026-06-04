@@ -547,3 +547,13 @@ def test_post_episode_new_rejects_name_with_path_sep(client):
         json={"date": "20260610", "name": "壞/名字"},
     )
     assert r.status_code == 400
+
+
+def test_build_app_with_none_ep_does_not_crash():
+    from podcast_toolkit.web.api import build_app
+    app = build_app(ep=None, shutdown=lambda: None)
+    client = TestClient(app)
+    # 任一既有 endpoint 在 ep=None 時應該回 409，不是 500
+    r = client.get("/api/episode")
+    assert r.status_code == 409
+    assert "尚未選集" in r.json()["detail"]
