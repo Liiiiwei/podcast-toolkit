@@ -1972,33 +1972,47 @@ function requestTranscribe(file) {
   const providerLabel = state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
   const hasSelectedKey =
     state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
+  // 重置上次跑剩的進度條 + 兩顆按鈕（避免 success 殘留把 #transcribe-go 藏起來）
+  $("#transcribe-progress").hidden = true;
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  go.hidden = false;
+  cancel.hidden = false;
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+
   if (!hasSelectedKey) {
-    $("#transcribe-title").textContent = "尚未設定 API key";
+    // 警告色 + alert icon，跟其他錯誤 modal 視覺一致（純 textContent 太低調，
+    // 之前使用者反映「沒看到提醒」）
+    setModalStatusTitle(
+      "transcribe-title",
+      "circle-alert",
+      "尚未設定 API key",
+      "warning",
+    );
     $("#transcribe-msg").innerHTML =
-      `請先到右上角「設定」設定 ${providerLabel} API key，才能轉字幕。`;
-    const go = $("#transcribe-go");
+      `<div class="modal-error-text">請先到右上角「設定」設定 ${providerLabel} API key，才能轉字幕。</div>`;
     go.textContent = "去設定";
     go.disabled = false;
     go.onclick = () => {
       hideModal("transcribe-modal");
       openSettings();
     };
-    $("#transcribe-cancel").onclick = () => hideModal("transcribe-modal");
+    cancel.onclick = () => hideModal("transcribe-modal");
     showModal("transcribe-modal");
     return;
   }
 
-  $("#transcribe-title").textContent = "轉字幕確認";
+  setModalStatusTitle("transcribe-title", "mic", "轉字幕確認", "accent");
   $("#transcribe-msg").innerHTML =
     `來源檔：<code>${file.path}</code><br>` +
     `大小：${fmtSize(file.size)}<br><br>` +
     `用 ${providerLabel} STT 轉字幕並覆寫 <code>_v2.srt</code>。<br>` +
     `預估時間：約音檔長度的 1 倍（3 分鐘片約 60–180 秒）。`;
-  const go = $("#transcribe-go");
   go.textContent = "開始";
   go.disabled = false;
   go.onclick = () => runTranscribe(file);
-  $("#transcribe-cancel").onclick = () => hideModal("transcribe-modal");
+  cancel.onclick = () => hideModal("transcribe-modal");
   showModal("transcribe-modal");
 }
 
@@ -2116,6 +2130,7 @@ async function pollTranscribe() {
 
 async function finishTranscribe({ ok, out_srt, error }) {
   const cancel = $("#transcribe-cancel");
+  const go = $("#transcribe-go");
   if (ok) {
     $("#transcribe-fill").style.width = "100%";
     $("#transcribe-percent").textContent = "100%";
@@ -2123,7 +2138,7 @@ async function finishTranscribe({ ok, out_srt, error }) {
     renderTranscribePhasePills(null, "done");
     setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
     $("#transcribe-msg").innerHTML =
-      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>正在重新載入編輯區…`;
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。`;
 
     await loadEpisodeState();
     renderTopbar();
@@ -2136,11 +2151,15 @@ async function finishTranscribe({ ok, out_srt, error }) {
       `<div class="modal-error-text">${error}</div>`;
     $("#transcribe-progress").hidden = true;
   }
+  // success/error 都只留一顆主按鈕（成功 → 繼續編輯；失敗 → 關閉），避免出現
+  // 一顆被禁用的「開始」+ 一顆「關閉」造成「下一步不明確」
+  go.hidden = true;
   cancel.disabled = false;
-  cancel.textContent = "關閉";
+  cancel.textContent = ok ? "繼續編輯" : "關閉";
   cancel.onclick = () => {
     hideModal("transcribe-modal");
     cancel.textContent = "取消";
+    go.hidden = false;
     $("#transcribe-progress").hidden = true;
   };
 }
