@@ -8,3 +8,11 @@ fixes: []
 card_fixes: []
 force_break: []
 force_join: []
+
+# 本集專屬詞庫（與 defaults.yaml common_glossary 合併後注入 Gemini prompt）
+# 來賓姓名、本集獨有的品牌 / 產品 / 術語放這。直接在下方加條目即可：
+glossary:
+  # - canonical: "張大明"
+  #   sounds_like: ["張大民", "章大明"]
+  #   note: "本集來賓"
+  # - "ChatGPT Pro"

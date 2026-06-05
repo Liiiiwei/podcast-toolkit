@@ -38,6 +38,22 @@ class Episode:
     def main_srt(self) -> Path:
         return self.resolve_episode_path(self.cfg["main_srt"])
 
+    def main_audio(self) -> Path:
+        """Gemini 轉字幕的輸入音檔。預設找 01_母帶/ 內最新一個 .m4a / .mp3 / .wav。"""
+        master = self.subdir("master")
+        candidates = sorted(
+            [p for p in master.glob("*") if p.suffix.lower() in (".m4a", ".mp3", ".wav")],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            raise FileNotFoundError(f"{master} 內找不到 .m4a / .mp3 / .wav 音檔")
+        return candidates[0]
+
+    def output_srt(self) -> Path:
+        """Gemini 產出的 SRT，即 main_srt 預設指向的位置。"""
+        return self.subdir("output") / f"{self.name}_final.srt"
+
     def output_v2_srt(self) -> Path:
         return self.subdir("output") / f"{self.name}_final_v2.srt"
 
