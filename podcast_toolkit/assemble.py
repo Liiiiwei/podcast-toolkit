@@ -80,6 +80,37 @@ def shift_srt(src: Path, dst: Path, offset_sec: float) -> None:
     dst.write_text(srt_io.serialize(shifted), encoding="utf-8")
 
 
+def _wm_overlay_params(wm_cfg: dict, res_w, res_h) -> tuple[int, str]:
+    """從 watermark cfg 推導 (scale_width_px, overlay_xy_expr)。
+
+    座標都是相對最終 frame（crop+scale 後的 final resolution），
+    所以 res_w/res_h 用 final encode resolution 即可。
+    """
+    rw, rh = int(res_w), int(res_h)
+    wm_w = int(rw * float(wm_cfg.get("width_pct", 0.11)))
+    mx = int(rw * float(wm_cfg.get("margin_right_pct", 0.03)))
+    my = int(rh * float(wm_cfg.get("margin_top_pct", 0.03)))
+    pos = wm_cfg.get("position", "top-right")
+    table = {
+        "top-right": f"main_w-overlay_w-{mx}:{my}",
+        "top-left": f"{mx}:{my}",
+        "bottom-right": f"main_w-overlay_w-{mx}:main_h-overlay_h-{my}",
+        "bottom-left": f"{mx}:main_h-overlay_h-{my}",
+    }
+    return wm_w, table.get(pos, table["top-right"])
+
+
+def _wm_enabled(cfg: dict, wm_input_idx: int | None) -> bool:
+    """watermark 是否真的會被燒進去。
+
+    需要同時：cfg.watermark.enabled=true、有人傳了 wm_input_idx（代表 prepare_assembly 已驗證 logo 檔存在並把它加進 ffmpeg input list）。
+    """
+    if wm_input_idx is None:
+        return False
+    wm = cfg.get("watermark") or {}
+    return bool(wm.get("enabled"))
+
+
 def _build_audio_align_filter(sync_offset: float) -> str:
     """組外接音檔的對齊 filter prefix（接在 aformat 後、aselect 前）。
 
@@ -103,6 +134,7 @@ def build_filter_complex_yt(
     main_dur: float,
     srt_rel: str,
     deletion_intervals: list[tuple[float, float]] | None = None,
+    wm_input_idx: int | None = None,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
 ) -> str:
@@ -144,13 +176,27 @@ def build_filter_complex_yt(
         a_idx = 1
         align_a = ""
 
+    v1_pre = (
+        f"[1:v]subtitles={srt_rel}:force_style='{style_str}',"
+        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
+        f"fps={enc['framerate']},format={enc['pix_fmt']}"
+    )
+    v1_fade = (
+        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
+    )
+    if _wm_enabled(cfg, wm_input_idx):
+        wm_w, xy = _wm_overlay_params(cfg["watermark"], res_w, res_h)
+        v1_chain = (
+            f"{v1_pre}[v1pre];"
+            f"[{wm_input_idx}:v]scale={wm_w}:-1[wm];"
+            f"[v1pre][wm]overlay={xy},{v1_fade}[v1]"
+        )
+    else:
+        v1_chain = f"{v1_pre},{v1_fade}[v1]"
     return (
         f"[0:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
         f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v0];"
-        f"[1:v]subtitles={srt_rel}:force_style='{style_str}',"
-        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
-        f"fps={enc['framerate']},format={enc['pix_fmt']},"
-        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v1];"
+        f"{v1_chain};"
         f"[2:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
         f"format={enc['pix_fmt']},fade=t=in:st=0:d=0.5[v2];"
         f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
@@ -170,6 +216,7 @@ def build_filter_complex_reels(
     deletion_intervals: list[tuple[float, float]] | None = None,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
+    wm_input_idx: int | None = None,
 ) -> str:
     """Reels 9:16：只有主影片，1080x1920，用 crop_reels。
 
@@ -203,11 +250,25 @@ def build_filter_complex_reels(
         a_idx = 0
         align_a = ""
 
-    return (
+    v_pre = (
         f"[0:v]subtitles={srt_rel}:force_style='{style_str}',"
         f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
-        f"fps={enc['framerate']},format={enc['pix_fmt']},"
-        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v];"
+        f"fps={enc['framerate']},format={enc['pix_fmt']}"
+    )
+    v_fade = (
+        f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
+    )
+    if _wm_enabled(cfg, wm_input_idx):
+        wm_w, xy = _wm_overlay_params(cfg["watermark"], res_w, res_h)
+        v_chain = (
+            f"{v_pre}[vpre];"
+            f"[{wm_input_idx}:v]scale={wm_w}:-1[wm];"
+            f"[vpre][wm]overlay={xy},{v_fade}[v]"
+        )
+    else:
+        v_chain = f"{v_pre},{v_fade}[v]"
+    return (
+        f"{v_chain};"
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
@@ -302,6 +363,7 @@ def build_filter_complex_yt_multicam(
     sync_offset_b: float = 0.0,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
+    wm_input_idx: int | None = None,
 ) -> str:
     """YT 雙鏡頭：[0]=intro, [1]=cam A, [2]=cam B, [3]=outro image, [4]=outro audio。
 
@@ -349,10 +411,18 @@ def build_filter_complex_yt_multicam(
     seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
     parts.extend(seg_parts)
 
-    # main 段 fade in/out
-    parts.append(
-        f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
-    )
+    # main 段 fade in/out（若有 watermark，先 overlay 再 fade，讓淡入淡出帶到 logo）
+    if _wm_enabled(cfg, wm_input_idx):
+        wm_w, xy = _wm_overlay_params(cfg["watermark"], res_w, res_h)
+        parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm_main]")
+        parts.append(
+            f"[{main_v_in}][wm_main]overlay={xy},"
+            f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
+        )
+    else:
+        parts.append(
+            f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
+        )
     parts.append(
         f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
     )
@@ -391,6 +461,7 @@ def build_filter_complex_reels_multicam(
     sync_offset_b: float = 0.0,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
+    wm_input_idx: int | None = None,
 ) -> str:
     """Reels 雙鏡頭：[0]=cam A, [1]=cam B。1080×1920，無 intro/outro。
 
@@ -431,9 +502,17 @@ def build_filter_complex_reels_multicam(
     seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
     parts.extend(seg_parts)
 
-    parts.append(
-        f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
-    )
+    if _wm_enabled(cfg, wm_input_idx):
+        wm_w, xy = _wm_overlay_params(cfg["watermark"], res_w, res_h)
+        parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm_main]")
+        parts.append(
+            f"[{main_v_in}][wm_main]overlay={xy},"
+            f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
+        )
+    else:
+        parts.append(
+            f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
+        )
     parts.append(
         f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
@@ -612,17 +691,36 @@ def prepare_assembly(
             str(audio_file.relative_to(cwd)) if audio_file.is_relative_to(cwd) else str(audio_file)
         )
 
+    # Watermark logo：cfg.watermark.enabled=true 且 assets.logo 指向的檔案實際存在才會 wire。
+    # 兩條件任一不符 → wm_rel_str=None，後面 wm_input_idx 也是 None，filter 自動 no-op。
+    wm_cfg = cfg.get("watermark") or {}
+    wm_rel_str: str | None = None
+    if wm_cfg.get("enabled"):
+        try:
+            logo_path = ep.asset_path("logo")
+            if logo_path.exists():
+                wm_rel_str = (
+                    str(logo_path.relative_to(cwd)) if logo_path.is_relative_to(cwd) else str(logo_path)
+                )
+            else:
+                print(f"⚠ watermark.enabled=true 但找不到 {logo_path}，自動跳過 overlay", file=sys.stderr)
+        except KeyError:
+            print("⚠ watermark.enabled=true 但 assets.logo 未設定，自動跳過 overlay", file=sys.stderr)
+
     if output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
         if multicam:
-            # yt multi inputs：intro(0) + camA(1) + camB(2) + outro_image(3) + outro_audio(4) → 外接音檔 = 5
+            # yt multi inputs：intro(0) + camA(1) + camB(2) + outro_image(3) + outro_audio(4) → 外接音檔 = 5 → watermark = 5 or 6
             audio_input_idx = 5 if audio_rel_str else None
+            wm_next = 6 if audio_rel_str else 5
+            wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_yt_multicam(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
+                wm_input_idx=wm_input_idx,
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -634,6 +732,8 @@ def prepare_assembly(
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
+            if wm_rel_str:
+                cmd += ["-i", wm_rel_str]
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
@@ -645,13 +745,16 @@ def prepare_assembly(
                 tmp_out_rel,
             ]
         else:
-            # yt non-multi inputs：intro(0) + main(1) + outro_image(2) + outro_audio(3) → 外接音檔 = 4
+            # yt non-multi inputs：intro(0) + main(1) + outro_image(2) + outro_audio(3) → 外接音檔 = 4 → watermark = 4 or 5
             audio_input_idx = 4 if audio_rel_str else None
+            wm_next = 5 if audio_rel_str else 4
+            wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_yt(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 deletion_intervals=deletion_intervals,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
+                wm_input_idx=wm_input_idx,
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -662,6 +765,8 @@ def prepare_assembly(
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
+            if wm_rel_str:
+                cmd += ["-i", wm_rel_str]
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
@@ -675,13 +780,16 @@ def prepare_assembly(
         total_dur = intro_dur + main_dur + outro_dur
     else:
         if multicam:
-            # reels multi inputs：camA(0) + camB(1) → 外接音檔 = 2
+            # reels multi inputs：camA(0) + camB(1) → 外接音檔 = 2 → watermark = 2 or 3
             audio_input_idx = 2 if audio_rel_str else None
+            wm_next = 3 if audio_rel_str else 2
+            wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_reels_multicam(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
+                wm_input_idx=wm_input_idx,
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -690,6 +798,8 @@ def prepare_assembly(
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
+            if wm_rel_str:
+                cmd += ["-i", wm_rel_str]
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
@@ -701,13 +811,16 @@ def prepare_assembly(
                 tmp_out_rel,
             ]
         else:
-            # reels non-multi inputs：main(0) → 外接音檔 = 1
+            # reels non-multi inputs：main(0) → 外接音檔 = 1 → watermark = 1 or 2
             audio_input_idx = 1 if audio_rel_str else None
+            wm_next = 2 if audio_rel_str else 1
+            wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_reels(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 deletion_intervals=deletion_intervals,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
+                wm_input_idx=wm_input_idx,
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -715,6 +828,8 @@ def prepare_assembly(
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
+            if wm_rel_str:
+                cmd += ["-i", wm_rel_str]
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",

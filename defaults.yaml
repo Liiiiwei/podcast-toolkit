@@ -42,14 +42,25 @@ common_glossary: []
 
 subtitle_style:
   font_name: "Hiragino Sans GB"
-  font_size: 24
+  font_size: 48
   bold: 1
   primary_colour: "&H00FFFFFF"
   outline_colour: "&H00000000"
   border_style: 1
   outline: 2
   shadow: 1
-  margin_v: 48
+  margin_v: 100
+
+# 影片浮水印（assemble 階段 ffmpeg overlay 燒上去）
+# enabled=false 時整段 no-op；要啟用先放 logo 檔到 assets.logo 指向的路徑
+# 座標都是相對最終輸出 frame（crop+scale 後的 1920×1080 / 1080×1920）
+watermark:
+  enabled: false
+  position: "top-right"        # top-right | top-left | bottom-right | bottom-left
+  width_pct: 0.11              # logo 寬佔 frame 寬比例（1920 → ~211px）
+  margin_top_pct: 0.03         # 距上/下邊距比例
+  margin_right_pct: 0.03       # 距右/左邊距比例
+  opacity: 1.0                 # 0.0-1.0，先預留欄位（目前 overlay 直接用原 alpha）
 
 assets:
   intro: "assets/intro.mp4"
@@ -58,6 +69,8 @@ assets:
   outro_audio: "assets/outro.mp3"
   outro_image: "assets/subscribe_card.png"
   outro_duration: 20.453333
+  # 浮水印 logo 檔（PNG 建議透明背景）；不存在時 watermark 段會被跳過
+  logo: "assets/logo.png"
 
 encode:
   video_codec: "libx264"
