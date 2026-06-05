@@ -43,13 +43,8 @@ def _flag_suspicious_pause(
     return cards
 
 
-def _list_cam_b_candidates(ep: Episode) -> list[str]:
-    """掃 01_母帶/*.mp4 當 cam B 候選；排除 cam A 那一檔。"""
-    cam_a_rel = (ep.cfg.get("cameras") or {}).get("a") or ep.cfg.get("main_video") or ""
-    try:
-        cam_a_resolved = ep.resolve_episode_path(cam_a_rel) if cam_a_rel else None
-    except Exception:
-        cam_a_resolved = None
+def _list_mother_videos(ep: Episode) -> list[str]:
+    """掃 01_母帶/*.mp4 回相對路徑（含 cam A）；給 cam A select 用。"""
     mother_dir = ep.dir / "01_母帶"
     if not mother_dir.is_dir():
         return []
@@ -58,9 +53,22 @@ def _list_cam_b_candidates(ep: Episode) -> list[str]:
         # DJI / iPhone 等相機常出大寫 .MP4，用 suffix.lower() 比對
         if not entry.is_file() or entry.suffix.lower() != ".mp4":
             continue
-        if cam_a_resolved and entry == cam_a_resolved:
-            continue
         out.append(str(entry.relative_to(ep.dir)))
+    return out
+
+
+def _list_cam_b_candidates(ep: Episode) -> list[str]:
+    """掃 01_母帶/*.mp4 當 cam B 候選；排除 cam A 那一檔。"""
+    cam_a_rel = (ep.cfg.get("cameras") or {}).get("a") or ep.cfg.get("main_video") or ""
+    try:
+        cam_a_resolved = ep.resolve_episode_path(cam_a_rel) if cam_a_rel else None
+    except Exception:
+        cam_a_resolved = None
+    out: list[str] = []
+    for rel in _list_mother_videos(ep):
+        if cam_a_resolved and (ep.dir / rel) == cam_a_resolved:
+            continue
+        out.append(rel)
     return out
 
 
@@ -105,6 +113,22 @@ def load_state(ep: Episode) -> dict[str, Any]:
     v2 = ep.output_v2_srt()
     needs_transcribe = not v2.exists()
     cards = [] if needs_transcribe else srt_io.parse(v2.read_text(encoding="utf-8"))
+    # 字幕檔路徑（顯示用）：以 ep.dir 為基底的相對路徑；不存在仍照樣回，前端標「未產生」
+    try:
+        srt_rel = str(v2.relative_to(ep.dir))
+    except ValueError:
+        srt_rel = str(v2)
+    # cam A：展開 {name} placeholder 再回傳；若 candidates 裡找得到完全相同的就直接用，
+    # 否則 fallback 到展開後的真實檔名，避免前端 select 出現帶 placeholder 的孤兒選項
+    cam_a_raw = (ep.cfg.get("cameras") or {}).get("a") or ep.cfg.get("main_video") or ""
+    if cam_a_raw:
+        try:
+            cam_a_abs = ep.resolve_episode_path(cam_a_raw)
+            cam_a_rel = str(cam_a_abs.relative_to(ep.dir))
+        except Exception:
+            cam_a_rel = cam_a_raw
+    else:
+        cam_a_rel = ""
     if cards:
         _flag_suspicious_pause(
             cards,
@@ -130,6 +154,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cam_b_candidates": _list_cam_b_candidates(ep),
         # 外接音檔候選（.wav/.mp3/.m4a/...，掃 01_母帶 + 02_素材）
         "audio_candidates": _list_audio_candidates(ep),
+        # 「最終合成檔案總覽」用：cam A 候選 + 目前 cam A + 字幕檔（read-only 顯示）
+        "cam_a_candidates": _list_mother_videos(ep),
+        "cam_a_path": cam_a_rel,
+        "srt_path": srt_rel,
     }
 
 
@@ -144,12 +172,22 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     for key in ("crop_yt", "crop_reels"):
         crop = payload.get(key)
         if crop:
-            data[key] = {
+            entry: dict[str, Any] = {
                 "x": float(crop["x"]),
                 "y": float(crop["y"]),
                 "width": float(crop["width"]),
                 "height": float(crop["height"]),
             }
+            # cam B 獨立 crop（optional override；沒設就 fallback 用 base）
+            crop_b = crop.get("b")
+            if crop_b:
+                entry["b"] = {
+                    "x": float(crop_b["x"]),
+                    "y": float(crop_b["y"]),
+                    "width": float(crop_b["width"]),
+                    "height": float(crop_b["height"]),
+                }
+            data[key] = entry
         else:
             data.pop(key, None)
 
@@ -167,6 +205,15 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data[key] = val
         else:
             data.pop(key, None)
+
+    # cam A 路徑：前端「最終合成總覽」可換 cam A。同步寫 cameras.a + main_video（保留舊欄位讓 fallback 路徑也對）。
+    if "cam_a_path" in payload:
+        cam_a_path = (payload.get("cam_a_path") or "").strip()
+        if cam_a_path:
+            cameras = dict(data.get("cameras") or {})
+            cameras["a"] = cam_a_path
+            data["cameras"] = cameras
+            data["main_video"] = cam_a_path
 
     # T23a-followup：cam B 路徑（前端 UI 寫入；用 key-presence 區分「沒動 UI」vs「明確清空」）
     if "cam_b_path" in payload:

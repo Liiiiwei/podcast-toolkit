@@ -2,60 +2,125 @@
 <html lang="zh-Hant">
   <head>
     <meta charset="utf-8" />
-    <title>podcast — Dashboard</title>
+    <title>Podcast Toolkit</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/tokens.css" />
     <link rel="stylesheet" href="/static/dashboard.css" />
   </head>
-  <body>
+  <body class="theme-dark">
     <header class="dash-topbar">
-      <h1 class="dash-title">Podcast Toolkit</h1>
+      <div class="dash-brand">
+        <span
+          class="dash-brand-mark"
+          data-icon="mic"
+          data-icon-size="18"
+        ></span>
+        <h1 class="dash-title">Podcast Toolkit</h1>
+      </div>
       <div class="dash-actions">
-        <button id="open-folder-btn" type="button">📁 開資料夾</button>
-        <button id="new-episode-btn" type="button">📅 新建集</button>
-        <button id="settings-btn" type="button">⚙ 設定</button>
+        <button id="open-folder-btn" type="button" class="btn btn-ghost">
+          <span data-icon="folder-open"></span>
+          <span>開資料夾</span>
+        </button>
+        <button id="new-episode-btn" type="button" class="btn btn-primary">
+          <span data-icon="plus"></span>
+          <span>新建集</span>
+        </button>
+        <button
+          id="settings-btn"
+          type="button"
+          class="btn btn-icon"
+          title="設定"
+          aria-label="設定"
+        >
+          <span data-icon="settings"></span>
+        </button>
       </div>
     </header>
 
     <main class="dash-body">
       <div id="warnings" class="warnings" hidden></div>
-      <div id="loading" class="loading">載入中…</div>
+      <div id="loading" class="loading">
+        <span class="spinner" aria-hidden="true"></span>
+        <span>載入集數中…</span>
+      </div>
       <div id="empty" class="empty" hidden>
-        <p>還沒有任何集數。</p>
-        <p>請點上方「📁 開資料夾」選一個 episode、或「📅 新建集」建立新的。</p>
+        <div class="empty-mark" data-icon="folder" data-icon-size="32"></div>
+        <p class="empty-title">尚無集數</p>
+        <p class="empty-hint">
+          點上方<strong>「開資料夾」</strong>選一個
+          episode、或<strong>「新建集」</strong>建立新的。
+        </p>
       </div>
       <ul id="episode-list" class="episode-list" hidden></ul>
     </main>
 
     <dialog id="settings-modal" class="modal">
-      <div class="modal-body">
+      <div class="modal-head">
         <h2>設定</h2>
-        <label>集數根目錄（每行一個路徑，預設 ~/Downloads）：</label>
+        <button
+          type="button"
+          class="modal-close"
+          id="settings-cancel"
+          aria-label="關閉"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label" for="roots-input"
+          >集數根目錄（每行一個路徑，預設 ~/Downloads）</label
+        >
         <textarea
           id="roots-input"
           rows="4"
           placeholder="~/Downloads&#10;~/Podcasts"
         ></textarea>
-        <div class="modal-actions">
-          <button type="button" id="settings-save">儲存</button>
-          <button type="button" id="settings-cancel">關閉</button>
-        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="settings-cancel-2">
+          取消
+        </button>
+        <button type="button" class="btn btn-primary" id="settings-save">
+          儲存
+        </button>
       </div>
     </dialog>
 
     <dialog id="new-episode-modal" class="modal">
-      <div class="modal-body">
+      <div class="modal-head">
         <h2>新建集</h2>
-        <label
-          >日期（YYYYMMDD）<input id="new-date" type="text" maxlength="8"
-        /></label>
-        <label>集名<input id="new-name" type="text" /></label>
+        <button
+          type="button"
+          class="modal-close"
+          id="new-ep-cancel"
+          aria-label="關閉"
+        >
+          <span data-icon="x"></span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <label class="modal-label" for="new-date"
+          >日期（YYYYMMDD）
+          <input id="new-date" type="text" maxlength="8" inputmode="numeric" />
+        </label>
+        <label class="modal-label" for="new-name"
+          >集名
+          <input id="new-name" type="text" placeholder="例：第 12 集 訪談" />
+        </label>
         <div class="new-ep-error" id="new-ep-error" hidden></div>
-        <div class="modal-actions">
-          <button type="button" id="new-ep-create">建立</button>
-          <button type="button" id="new-ep-cancel">取消</button>
-        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="new-ep-cancel-2">
+          取消
+        </button>
+        <button type="button" class="btn btn-primary" id="new-ep-create">
+          建立
+        </button>
       </div>
     </dialog>
 
+    <script src="/static/icons.js"></script>
     <script src="/static/dashboard.js"></script>
   </body>
 </html>

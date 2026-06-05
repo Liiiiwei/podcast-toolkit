@@ -1,4 +1,4 @@
-"""影片 Range streaming，回傳 starlette Response。"""
+"""影片 / 音檔 Range streaming，回傳 starlette Response。"""
 from __future__ import annotations
 from pathlib import Path
 import re
@@ -9,11 +9,11 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 _RANGE_RE = re.compile(r"^bytes=(\d*)-(\d*)$")
 
 
-def range_response(path: Path, range_header: str | None):
+def range_response(path: Path, range_header: str | None, media_type: str = "video/mp4"):
     size = path.stat().st_size
 
     if not range_header:
-        return FileResponse(path, media_type="video/mp4")
+        return FileResponse(path, media_type=media_type)
 
     m = _RANGE_RE.match(range_header.strip())
     if not m:
@@ -46,7 +46,7 @@ def range_response(path: Path, range_header: str | None):
     return StreamingResponse(
         stream(),
         status_code=206,
-        media_type="video/mp4",
+        media_type=media_type,
         headers={
             "content-range": f"bytes {start}-{end}/{size}",
             "content-length": str(length),

@@ -3,36 +3,98 @@
   <head>
     <meta charset="utf-8" />
     <title>podcast edit</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/tokens.css" />
     <link rel="stylesheet" href="/static/app.css" />
   </head>
-  <body>
+  <body class="theme-dark">
     <header class="topbar">
-      <div>
+      <div class="topbar-left">
+        <div class="topbar-group">
+          <button
+            id="back-to-dash-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="回集數列表"
+          >
+            <span data-icon="arrow-left"></span>
+            <span>列表</span>
+          </button>
+          <button
+            id="ep-switch-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="開啟集資料夾"
+          >
+            <span data-icon="folder-open"></span>
+            <span>開啟</span>
+          </button>
+          <button
+            id="ep-new-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="新建集"
+          >
+            <span data-icon="calendar-plus"></span>
+            <span>新建</span>
+          </button>
+        </div>
+        <div class="topbar-group">
+          <button
+            id="settings-btn"
+            type="button"
+            class="btn btn-icon"
+            title="設定"
+            aria-label="設定"
+          >
+            <span data-icon="settings"></span>
+          </button>
+        </div>
+        <div class="ep-switch-error" id="ep-switch-error" hidden></div>
+      </div>
+      <div class="topbar-center">
         <h1 class="title" id="title">載入中…</h1>
         <div class="status" id="status"></div>
       </div>
-      <div class="ep-switch">
-        <button id="back-to-dash-btn" type="button" title="回集數列表">
-          ← 列表
-        </button>
-        <button id="ep-switch-btn" type="button">📁 開啟集資料夾</button>
-        <button id="ep-new-btn" type="button">📅 新建集</button>
-        <div class="ep-switch-error" id="ep-switch-error" hidden></div>
-      </div>
-      <div class="actions">
-        <button id="settings-btn" title="設定">⚙</button>
-        <button id="cam-btn" title="雙鏡頭設定">🎥 鏡頭</button>
-        <button id="assemble-yt-btn" title="合成 YT 16:9 完整版（含片頭片尾）">
-          🎬 合成 YT
-        </button>
-        <button
-          id="assemble-reels-btn"
-          title="合成 Reels 9:16 短版（無片頭片尾）"
-        >
-          📱 合成 Reels
-        </button>
-        <button id="cancel-btn">取消</button>
-        <button id="save-btn" class="primary" disabled>完成並儲存</button>
+      <div class="topbar-right">
+        <div class="topbar-group">
+          <button
+            id="cam-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="雙鏡頭設定"
+          >
+            <span data-icon="video"></span>
+            <span>鏡頭</span>
+          </button>
+          <button
+            id="assemble-yt-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="合成 YT 16:9 完整版（含片頭片尾）"
+          >
+            <span data-icon="film"></span>
+            <span>合成 YT</span>
+          </button>
+          <button
+            id="assemble-reels-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="合成 Reels 9:16 短版（無片頭片尾）"
+          >
+            <span data-icon="smartphone"></span>
+            <span>合成 Reels</span>
+          </button>
+        </div>
+        <div class="topbar-group">
+          <button id="cancel-btn" type="button" class="btn btn-ghost">
+            取消
+          </button>
+          <button id="save-btn" type="button" class="btn btn-primary" disabled>
+            <span data-icon="check"></span>
+            <span>完成並儲存</span>
+          </button>
+        </div>
       </div>
     </header>
 
@@ -48,6 +110,8 @@
         </div>
         <div class="video-wrap">
           <video id="video" src="/api/video" preload="metadata"></video>
+          <video id="video-camb" preload="auto" muted playsinline></video>
+          <audio id="external-audio" hidden preload="auto"></audio>
           <div id="caption-overlay"></div>
           <div class="crop-frame" id="crop-frame">
             <div class="handle tl" data-edge="tl"></div>
@@ -57,8 +121,10 @@
           </div>
         </div>
         <div class="controls">
-          <button id="play-btn">▶</button>
-          <span id="time">00:00 / 00:00</span>
+          <button id="play-btn" type="button" class="btn btn-icon">
+            <span data-icon="play"></span>
+          </button>
+          <span id="time" class="time-readout">00:00 / 00:00</span>
           <div class="seek-wrap">
             <input type="range" id="seek" min="0" max="100" value="0" />
             <div class="trim-band head" id="trim-band-head"></div>
@@ -79,26 +145,40 @@
           <button
             id="trim-head-btn"
             type="button"
+            class="btn btn-ghost"
             title="把目前播放位置設成新片頭"
           >
-            ✂ 設頭 <span id="trim-head-val">0.0s</span>
+            <span data-icon="scissors"></span>
+            <span>設頭</span>
+            <span id="trim-head-val" class="kbd-val">0.0s</span>
           </button>
           <button
             id="trim-tail-btn"
             type="button"
+            class="btn btn-ghost"
             title="把目前播放位置設成新片尾"
           >
-            ✂ 設尾 <span id="trim-tail-val">0.0s</span>
+            <span data-icon="scissors"></span>
+            <span>設尾</span>
+            <span id="trim-tail-val" class="kbd-val">0.0s</span>
           </button>
-          <button id="trim-reset" type="button" title="清除頭尾裁切">
-            ↺ 重設
+          <button
+            id="trim-reset"
+            type="button"
+            class="btn btn-ghost"
+            title="清除頭尾裁切"
+          >
+            <span data-icon="rotate-ccw"></span>
+            <span>重設</span>
           </button>
           <button
             id="trim-suggest-btn"
             type="button"
+            class="btn btn-ghost"
             title="用 ffmpeg silencedetect 估開頭靜音"
           >
-            🤖 智慧建議
+            <span data-icon="sparkles"></span>
+            <span>智慧建議</span>
           </button>
           <span id="trim-suggest-hint" class="trim-hint"></span>
           <span id="trim-hint" class="trim-hint"></span>
@@ -106,10 +186,31 @@
         <div class="crop-info">
           <span id="crop-text">裁切框：未設定</span>
           <div class="crop-ratios">
-            <button class="ratio-btn" data-ratio="4:5">4:5</button>
-            <button class="ratio-btn" data-ratio="9:16">9:16</button>
-            <button class="ratio-btn" data-ratio="16:9">16:9</button>
-            <button id="crop-reset">↺ 重設</button>
+            <button
+              class="btn btn-ghost ratio-btn"
+              data-ratio="4:5"
+              type="button"
+            >
+              4:5
+            </button>
+            <button
+              class="btn btn-ghost ratio-btn"
+              data-ratio="9:16"
+              type="button"
+            >
+              9:16
+            </button>
+            <button
+              class="btn btn-ghost ratio-btn"
+              data-ratio="16:9"
+              type="button"
+            >
+              16:9
+            </button>
+            <button id="crop-reset" type="button" class="btn btn-ghost">
+              <span data-icon="rotate-ccw"></span>
+              <span>重設</span>
+            </button>
           </div>
         </div>
 
@@ -124,7 +225,10 @@
             hidden
           ></div>
           <div id="files-list" class="files-list"></div>
-          <div class="files-drop-overlay">📥 放開以上傳到 01_母帶/</div>
+          <div class="files-drop-overlay">
+            <span data-icon="inbox" data-icon-size="20"></span>
+            <span>放開以上傳到 01_母帶/</span>
+          </div>
         </div>
 
         <div class="typo-pane">
@@ -148,26 +252,35 @@
       <section class="cards-pane">
         <div class="sus-toolbar hidden" id="sus-toolbar">
           <span class="sus-count" id="sus-count">0</span>
-          <span style="color: #aaa">張可疑空拍卡</span>
-          <button id="sus-select-all" type="button">☐ 全選紅卡</button>
-          <button id="sus-delete-checked" type="button" disabled>
-            🗑 刪除已勾
+          <span class="sus-label">張可疑空拍卡</span>
+          <button id="sus-select-all" type="button" class="btn btn-ghost">
+            <span data-icon="square"></span>
+            <span>全選紅卡</span>
+          </button>
+          <button
+            id="sus-delete-checked"
+            type="button"
+            class="btn btn-ghost"
+            disabled
+          >
+            <span data-icon="trash-2"></span>
+            <span>刪除已勾</span>
           </button>
           <span class="spacer"></span>
-          <span id="sus-checked-count" style="color: #aaa">已勾 0</span>
+          <span id="sus-checked-count" class="sus-label">已勾 0</span>
         </div>
         <div id="cards-list"></div>
       </section>
     </main>
 
     <!-- 設定 modal -->
-    <div class="modal-backdrop hidden" id="settings-modal">
-      <div class="modal">
-        <div class="modal-head">設定</div>
+    <dialog class="modal" id="settings-modal">
+      <div class="modal-head">設定</div>
+      <form id="settings-form">
         <div class="modal-body">
           <label class="modal-label">STT 供應商</label>
-          <div class="modal-row">
-            <label style="margin-right: 12px">
+          <div class="modal-row modal-row-inline">
+            <label class="modal-radio">
               <input
                 type="radio"
                 name="settings-provider"
@@ -176,7 +289,7 @@
               />
               xAI（Grok）
             </label>
-            <label>
+            <label class="modal-radio">
               <input
                 type="radio"
                 name="settings-provider"
@@ -195,8 +308,14 @@
               placeholder="xai-..."
               autocomplete="off"
             />
-            <button id="settings-show" type="button" title="顯示/隱藏">
-              👁
+            <button
+              id="settings-show"
+              type="button"
+              class="btn btn-icon"
+              title="顯示/隱藏"
+              aria-label="顯示或隱藏"
+            >
+              <span data-icon="eye"></span>
             </button>
           </div>
           <div class="modal-hint" id="settings-xai-status">尚未設定</div>
@@ -205,9 +324,7 @@
             取得
           </div>
 
-          <label class="modal-label" style="margin-top: 12px"
-            >Gemini API key</label
-          >
+          <label class="modal-label modal-label-spaced">Gemini API key</label>
           <div class="modal-row">
             <input
               type="password"
@@ -215,8 +332,14 @@
               placeholder="AIza..."
               autocomplete="off"
             />
-            <button id="settings-show-gemini" type="button" title="顯示/隱藏">
-              👁
+            <button
+              id="settings-show-gemini"
+              type="button"
+              class="btn btn-icon"
+              title="顯示/隱藏"
+              aria-label="顯示或隱藏"
+            >
+              <span data-icon="eye"></span>
             </button>
           </div>
           <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
@@ -229,271 +352,378 @@
           </div>
         </div>
         <div class="modal-actions">
-          <button id="settings-cancel">取消</button>
-          <button id="settings-save" class="primary">儲存</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 建立集架構 modal -->
-    <div class="modal-backdrop hidden" id="init-modal">
-      <div class="modal">
-        <div class="modal-head">這個資料夾還沒有 episode.yaml</div>
-        <div class="modal-body">
-          <div class="init-block">
-            <div class="init-label">資料夾</div>
-            <div class="init-value" id="init-folder-path"></div>
-          </div>
-          <div class="init-block" id="init-warn-block" hidden>
-            <div class="init-warn" id="init-warn"></div>
-          </div>
-          <div class="init-cols">
-            <div class="init-col">
-              <div class="init-label">現有內容</div>
-              <div class="init-list" id="init-current-list"></div>
-            </div>
-            <div class="init-col">
-              <div class="init-label">將會建立</div>
-              <div class="init-list" id="init-create-list"></div>
-            </div>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="init-cancel">取消</button>
-          <button id="init-go" class="primary">建立並切集</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- A3 新建集 modal -->
-    <div class="modal-backdrop hidden" id="new-ep-modal">
-      <div class="modal">
-        <div class="modal-head">新建一集</div>
-        <div class="modal-body">
-          <div class="modal-hint" id="new-ep-parent-hint">
-            將建在目前集的父資料夾下
-          </div>
-          <label class="modal-label">日期（YYYYMMDD）</label>
-          <div class="modal-row">
-            <input
-              type="text"
-              id="new-ep-date"
-              inputmode="numeric"
-              maxlength="8"
-              placeholder="20260604"
-              autocomplete="off"
-            />
-          </div>
-          <label class="modal-label">集名</label>
-          <div class="modal-row">
-            <input
-              type="text"
-              id="new-ep-name"
-              placeholder="例：第 12 集 訪談"
-              autocomplete="off"
-            />
-          </div>
-          <div class="modal-hint" id="new-ep-preview">→</div>
-          <div class="modal-hint error" id="new-ep-error" hidden></div>
-        </div>
-        <div class="modal-actions">
-          <button id="new-ep-cancel">取消</button>
-          <button id="new-ep-go" class="primary">建立並切集</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 合成進度 modal -->
-    <div class="modal-backdrop hidden" id="assemble-modal">
-      <div class="modal">
-        <div class="modal-head" id="assemble-title">準備合成</div>
-        <div class="modal-body">
-          <div id="assemble-progress">
-            <div class="progress-line">
-              <span id="assemble-current-label">準備中…</span>
-              <span id="assemble-eta-label">—</span>
-            </div>
-            <div class="progress-bar">
-              <div class="progress-fill" id="assemble-fill"></div>
-            </div>
-            <div class="progress-meta">
-              <span id="assemble-percent">0%</span>
-              <span id="assemble-eta">—</span>
-            </div>
-            <div id="assemble-msg" class="modal-hint">…</div>
-          </div>
-        </div>
-        <div class="modal-actions" id="assemble-actions">
-          <button id="assemble-cancel">取消</button>
-          <button id="assemble-reveal" class="primary" hidden>
-            📁 在 Finder 開啟
+          <button id="settings-cancel" type="button" class="btn btn-ghost">
+            取消
+          </button>
+          <button id="settings-save" type="submit" class="btn btn-primary">
+            儲存
           </button>
         </div>
+      </form>
+    </dialog>
+
+    <!-- 建立集架構 modal -->
+    <dialog class="modal" id="init-modal">
+      <div class="modal-head">這個資料夾還沒有 episode.yaml</div>
+      <div class="modal-body">
+        <div class="init-block">
+          <div class="init-label">資料夾</div>
+          <div class="init-value" id="init-folder-path"></div>
+        </div>
+        <div class="init-block" id="init-warn-block" hidden>
+          <div class="init-warn" id="init-warn"></div>
+        </div>
+        <div class="init-cols">
+          <div class="init-col">
+            <div class="init-label">現有內容</div>
+            <div class="init-list" id="init-current-list"></div>
+          </div>
+          <div class="init-col">
+            <div class="init-label">將會建立</div>
+            <div class="init-list" id="init-create-list"></div>
+          </div>
+        </div>
       </div>
-    </div>
+      <div class="modal-actions">
+        <button id="init-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="init-go" type="button" class="btn btn-primary">
+          建立並切集
+        </button>
+      </div>
+    </dialog>
+
+    <!-- A3 新建集 modal -->
+    <dialog class="modal" id="new-ep-modal">
+      <div class="modal-head">新建一集</div>
+      <div class="modal-body">
+        <div class="modal-hint" id="new-ep-parent-hint">
+          將建在目前集的父資料夾下
+        </div>
+        <label class="modal-label">日期（YYYYMMDD）</label>
+        <div class="modal-row">
+          <input
+            type="text"
+            id="new-ep-date"
+            inputmode="numeric"
+            maxlength="8"
+            placeholder="20260604"
+            autocomplete="off"
+          />
+        </div>
+        <label class="modal-label">集名</label>
+        <div class="modal-row">
+          <input
+            type="text"
+            id="new-ep-name"
+            placeholder="例：第 12 集 訪談"
+            autocomplete="off"
+          />
+        </div>
+        <div class="modal-hint" id="new-ep-preview">→</div>
+        <div class="modal-hint error" id="new-ep-error" hidden></div>
+      </div>
+      <div class="modal-actions">
+        <button id="new-ep-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="new-ep-go" type="button" class="btn btn-primary">
+          建立並切集
+        </button>
+      </div>
+    </dialog>
+
+    <!-- 合成進度 modal -->
+    <dialog class="modal" id="assemble-modal">
+      <div class="modal-head" id="assemble-title">準備合成</div>
+      <div class="modal-body">
+        <div class="assemble-status">
+          <span
+            class="assemble-status-pill"
+            id="assemble-pill"
+            data-state="starting"
+          >
+            <span class="assemble-pill-dot"></span>
+            <span id="assemble-pill-label">啟動中</span>
+          </span>
+          <span class="assemble-target-label" id="assemble-current-label"
+            >準備中…</span
+          >
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="assemble-fill"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="assemble-percent" class="assemble-percent">0%</span>
+          <span id="assemble-eta" class="assemble-eta">—</span>
+        </div>
+        <div id="assemble-output" class="assemble-output" hidden></div>
+        <details
+          class="modal-advanced assemble-log-wrap"
+          id="assemble-log-wrap"
+          hidden
+        >
+          <summary class="modal-advanced-summary">
+            <span data-icon="file-text"></span>
+            <span>ffmpeg 訊息</span>
+            <span class="modal-advanced-caret" data-icon="chevron-down"></span>
+          </summary>
+          <div class="modal-advanced-body">
+            <div id="assemble-msg" class="modal-error-pre"></div>
+          </div>
+        </details>
+      </div>
+      <div class="modal-actions" id="assemble-actions">
+        <button id="assemble-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button
+          id="assemble-retry"
+          type="button"
+          class="btn btn-primary"
+          hidden
+        >
+          <span data-icon="rotate-ccw"></span>
+          <span>重試</span>
+        </button>
+        <button
+          id="assemble-reveal"
+          type="button"
+          class="btn btn-primary"
+          hidden
+        >
+          <span data-icon="folder-open"></span>
+          <span>在 Finder 開啟</span>
+        </button>
+      </div>
+    </dialog>
 
     <!-- 雙鏡頭 cam B 設定 modal -->
-    <div class="modal-backdrop hidden" id="cam-modal">
-      <div class="modal">
-        <div class="modal-head">雙鏡頭設定</div>
-        <div class="modal-body">
-          <div
-            class="modal-row"
-            style="
-              padding: 10px;
-              background: #f0f7ff;
-              border-radius: 6px;
-              margin-bottom: 12px;
-            "
+    <dialog class="modal modal-wide" id="cam-modal">
+      <div class="modal-head">鏡頭與音檔對齊</div>
+      <div class="modal-body">
+        <!-- 「最終合成總覽」：使用者一眼看見哪 4 檔會被組進 03_成品 -->
+        <div class="cam-overview">
+          <div class="cam-overview-head">
+            <span data-icon="package" data-icon-size="16"></span>
+            <span>最終合成檔案（assemble 會用這四個）</span>
+          </div>
+          <label
+            class="modal-label"
+            title="這顆是時間軸基準；改 cam A 後 cam B / 音檔的對齊都要重算。"
           >
-            <button
-              type="button"
-              id="align-all"
-              class="primary"
-              style="width: 100%"
+            <span>Cam A 影片（主鏡頭，必填）</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <select id="cam-a-select"></select>
+          </div>
+          <div class="modal-row cam-overview-row">
+            <div class="cam-overview-cell">
+              <div class="cam-overview-label">Cam B 影片</div>
+              <div id="overview-cam-b" class="cam-overview-value">—</div>
+            </div>
+            <div class="cam-overview-cell">
+              <div class="cam-overview-label">外接音檔</div>
+              <div id="overview-audio" class="cam-overview-value">—</div>
+            </div>
+          </div>
+          <div class="cam-overview-srt">
+            <div class="cam-overview-label">字幕檔（編輯器當前在編輯這份）</div>
+            <div id="overview-srt" class="cam-overview-value">—</div>
+          </div>
+        </div>
+
+        <div class="cam-align-all">
+          <button
+            type="button"
+            id="align-all"
+            class="btn btn-primary cam-align-all-btn"
+          >
+            <span data-icon="target"></span>
+            <span>一鍵全部對齊（cam B + 音檔）並儲存</span>
+          </button>
+        </div>
+        <div class="modal-hint cam-align-all-hint">
+          下方「進階」展開後選好 cam B / 音檔來源，再按這顆就會一次算完並寫回
+          episode.yaml。
+        </div>
+
+        <details class="modal-advanced" id="cam-advanced">
+          <summary class="modal-advanced-summary">
+            <span data-icon="wrench" data-icon-size="14"></span>
+            <span>進階：選擇來源與手動調整偏移</span>
+            <span
+              data-icon="chevron-down"
+              data-icon-size="14"
+              class="modal-advanced-caret"
+            ></span>
+          </summary>
+          <div class="modal-advanced-body">
+            <label
+              class="modal-label"
+              title="選「無」可移除 cam B；雙機集才會顯示字幕卡 A/B 切換。"
             >
-              🎯 一鍵全部對齊（cam B + 音檔）
-            </button>
-          </div>
-          <div class="modal-hint" style="margin-bottom: 12px">
-            選好 cam B /
-            音檔後按上面這顆，兩邊一起算偏移；只選一邊也行，另一邊會跳過。
-          </div>
+              <span>Cam B 影片（從 01_母帶/ 挑）</span>
+              <span class="modal-label-help" aria-hidden="true">?</span>
+            </label>
+            <div class="modal-row">
+              <select id="cam-b-select"></select>
+            </div>
+            <div class="modal-hint" id="cam-b-hint" hidden></div>
+            <label
+              class="modal-label modal-label-spaced"
+              title="cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽兩支影片前 120 秒做音訊互相關；不準時用『手動標記』三個聲音事件 fallback。"
+            >
+              <span>Cam B 同步偏移（秒）</span>
+              <span class="modal-label-help" aria-hidden="true">?</span>
+            </label>
+            <div class="modal-row">
+              <input
+                type="number"
+                id="cam-sync-offset-b"
+                step="0.01"
+                placeholder="0.0"
+              />
+              <button type="button" id="cam-auto-align" class="btn btn-ghost">
+                <span data-icon="target"></span>
+                <span>自動對齊</span>
+              </button>
+              <button type="button" id="cam-manual-align" class="btn btn-ghost">
+                <span data-icon="hand"></span>
+                <span>手動標記</span>
+              </button>
+            </div>
 
-          <label class="modal-label">Cam B 影片（從 01_母帶/ 挑）</label>
-          <div class="modal-row">
-            <select id="cam-b-select"></select>
-          </div>
-          <div class="modal-hint" id="cam-b-hint">
-            選「無」可移除 cam B；雙機集才會顯示字幕卡 A/B 切換。
-          </div>
-          <label class="modal-label" style="margin-top: 12px"
-            >Cam B 同步偏移（秒）</label
-          >
-          <div class="modal-row">
-            <input
-              type="number"
-              id="cam-sync-offset-b"
-              step="0.01"
-              placeholder="0.0"
-            />
-            <button type="button" id="cam-auto-align">🎯 自動對齊</button>
-            <button type="button" id="cam-manual-align">✋ 手動標記</button>
-          </div>
-          <div class="modal-hint">
-            cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。
-            按「自動對齊」前請先儲存 cam B 來源（系統會抽兩支影片前 120
-            秒做音訊互相關）。自動對齊不準時可用「手動標記」三個聲音事件
-            fallback。
-          </div>
+            <hr class="modal-divider" />
 
-          <hr
-            style="margin: 16px 0; border: none; border-top: 1px solid #e0e0e0"
-          />
-
-          <label class="modal-label">🎙️ 外接音檔（取代鏡頭原音用）</label>
-          <div class="modal-row">
-            <select id="audio-select"></select>
+            <label
+              class="modal-label"
+              title="從 01_母帶/ 或 02_素材/ 挑外接麥克風的 .wav/.mp3/.m4a；選「無」表示不用。"
+            >
+              <span data-icon="mic" data-icon-size="14"></span>
+              <span>外接音檔（取代鏡頭原音用）</span>
+              <span class="modal-label-help" aria-hidden="true">?</span>
+            </label>
+            <div class="modal-row">
+              <select id="audio-select"></select>
+            </div>
+            <label
+              class="modal-label modal-label-spaced"
+              title="音檔比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽 cam A 跟音檔前 120 秒做互相關。合成時會自動套這個偏移，外接音檔取代鏡頭原音。"
+            >
+              <span>音檔同步偏移（秒）</span>
+              <span class="modal-label-help" aria-hidden="true">?</span>
+            </label>
+            <div class="modal-row">
+              <input
+                type="number"
+                id="audio-sync-offset"
+                step="0.01"
+                placeholder="0.0"
+              />
+              <button type="button" id="audio-auto-align" class="btn btn-ghost">
+                <span data-icon="target"></span>
+                <span>自動對齊</span>
+              </button>
+            </div>
           </div>
-          <div class="modal-hint">
-            從 01_母帶/ 或 02_素材/ 挑外接麥克風的
-            .wav/.mp3/.m4a；選「無」表示不用。
-          </div>
-          <label class="modal-label" style="margin-top: 12px"
-            >音檔同步偏移（秒）</label
-          >
-          <div class="modal-row">
-            <input
-              type="number"
-              id="audio-sync-offset"
-              step="0.01"
-              placeholder="0.0"
-            />
-            <button type="button" id="audio-auto-align">🎯 自動對齊</button>
-          </div>
-          <div class="modal-hint">
-            音檔比 cam A 慢幾秒就填正值；0 表示已對齊。「自動對齊」會抽 cam A
-            跟音檔前 120 秒做互相關。 ⚠️ 目前對齊資料只存進
-            episode.yaml，assemble 還沒接通 — 成品音軌仍會用鏡頭原音。
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button id="cam-cancel">取消</button>
-          <button id="cam-save" class="primary">儲存</button>
-        </div>
+        </details>
       </div>
-    </div>
+      <div class="modal-actions">
+        <button id="cam-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="cam-save" type="button" class="btn btn-primary">
+          儲存
+        </button>
+      </div>
+    </dialog>
 
     <!-- 手動標記三檔聲音事件 modal (T23c) -->
-    <div class="modal-backdrop hidden" id="manual-align-modal">
-      <div class="modal">
-        <div class="modal-head">手動標記三檔聲音</div>
-        <div class="modal-body">
-          <div class="modal-hint" style="margin-bottom: 12px">
-            在 QuickTime（或任何能看時碼的播放器）開 cam A、cam B 各播一次，
-            找三個同一瞬間都聽得到的「啪」/「碰」聲（拍手、敲桌、講者起音都行），
-            把兩邊的秒數填進來。
-          </div>
-          <div id="manual-align-rows">
-            <!-- 三組 row 由 JS 注入 -->
-          </div>
-          <div class="modal-row" style="margin-top: 12px">
-            <button type="button" id="manual-align-compute" class="primary">
-              算 offset
-            </button>
-          </div>
-          <div id="manual-align-result" class="modal-hint" hidden></div>
-          <div
-            id="manual-align-error"
-            class="modal-hint"
-            hidden
-            style="color: #c33"
-          ></div>
+    <dialog class="modal" id="manual-align-modal">
+      <div class="modal-head">手動標記三檔聲音</div>
+      <div class="modal-body">
+        <div class="modal-hint cam-align-all-hint">
+          在 QuickTime（或任何能看時碼的播放器）開 cam A、cam B 各播一次，
+          找三個同一瞬間都聽得到的「啪」/「碰」聲（拍手、敲桌、講者起音都行），
+          把兩邊的秒數填進來。
         </div>
-        <div class="modal-actions">
-          <button id="manual-align-cancel">取消</button>
-          <button id="manual-align-apply" class="primary" disabled>套用</button>
+        <div id="manual-align-rows">
+          <!-- 三組 row 由 JS 注入 -->
         </div>
+        <div class="modal-row modal-row-spaced">
+          <button
+            type="button"
+            id="manual-align-compute"
+            class="btn btn-primary"
+          >
+            算 offset
+          </button>
+        </div>
+        <div id="manual-align-result" class="modal-hint" hidden></div>
+        <div
+          id="manual-align-error"
+          class="modal-hint modal-hint-error"
+          hidden
+        ></div>
       </div>
-    </div>
+      <div class="modal-actions">
+        <button id="manual-align-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button
+          id="manual-align-apply"
+          type="button"
+          class="btn btn-primary"
+          disabled
+        >
+          套用
+        </button>
+      </div>
+    </dialog>
 
     <!-- 轉字幕進度 modal -->
-    <div class="modal-backdrop hidden" id="transcribe-modal">
-      <div class="modal">
-        <div class="modal-head" id="transcribe-title">準備轉字幕</div>
-        <div class="modal-body">
-          <div id="transcribe-msg">…</div>
-          <div id="transcribe-progress" hidden>
-            <div class="phase-pills">
-              <div class="phase-pill" data-phase="compress">
-                <span class="phase-icon">🗜</span>
-                <span class="phase-label">壓縮音檔</span>
-              </div>
-              <div class="phase-pill" data-phase="upload">
-                <span class="phase-icon">☁️</span>
-                <span class="phase-label">STT</span>
-              </div>
-              <div class="phase-pill" data-phase="resegment">
-                <span class="phase-icon">✂️</span>
-                <span class="phase-label">重新切句</span>
-              </div>
+    <dialog class="modal" id="transcribe-modal">
+      <div class="modal-head" id="transcribe-title">準備轉字幕</div>
+      <div class="modal-body">
+        <div id="transcribe-msg">…</div>
+        <div id="transcribe-progress" hidden>
+          <div class="phase-pills">
+            <div class="phase-pill" data-phase="compress">
+              <span class="phase-icon" data-icon="package"></span>
+              <span class="phase-label">壓縮音檔</span>
             </div>
-            <div class="progress-bar">
-              <div class="progress-fill" id="transcribe-fill"></div>
+            <div class="phase-pill" data-phase="upload">
+              <span class="phase-icon" data-icon="cloud-upload"></span>
+              <span class="phase-label">STT</span>
             </div>
-            <div class="progress-meta">
-              <span id="transcribe-phase-label">準備中…</span>
-              <span id="transcribe-percent">0%</span>
+            <div class="phase-pill" data-phase="resegment">
+              <span class="phase-icon" data-icon="scissors"></span>
+              <span class="phase-label">重新切句</span>
             </div>
           </div>
-        </div>
-        <div class="modal-actions" id="transcribe-actions">
-          <button id="transcribe-cancel">取消</button>
-          <button id="transcribe-go" class="primary">開始</button>
+          <div class="progress-bar">
+            <div class="progress-fill" id="transcribe-fill"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="transcribe-phase-label">準備中…</span>
+            <span id="transcribe-percent">0%</span>
+          </div>
         </div>
       </div>
-    </div>
+      <div class="modal-actions" id="transcribe-actions">
+        <button id="transcribe-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="transcribe-go" type="button" class="btn btn-primary">
+          開始
+        </button>
+      </div>
+    </dialog>
 
+    <script src="/static/icons.js"></script>
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>

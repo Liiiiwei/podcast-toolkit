@@ -38,6 +38,17 @@ TRANSCRIBABLE_EXTS = {
 }
 # 可在瀏覽器直接預覽的影片副檔名
 PREVIEWABLE_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
+# 可在瀏覽器直接預覽的音檔副檔名 + MIME 對照
+AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
+AUDIO_MIME = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+}
 # 列檔時忽略的目錄/檔名片段
 SKIP_DIRS = {".DS_Store", "__pycache__", ".git"}
 
@@ -296,7 +307,14 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 detail=f"集名不可包含路徑分隔字元：{name}",
             )
         ep = holder["ep"]
-        parent = ep.dir.parent if ep else (Path.home() / "Downloads")
+        if ep is not None:
+            parent = ep.dir.parent
+        else:
+            # 沒有 active ep（從 dashboard 開新集）→ 用 config 第一個 root，
+            # 否則 default 到 ~/Downloads。這樣新集才會被 dashboard 掃到。
+            cfg = _load_config()
+            roots = cfg.get("episode_roots") or []
+            parent = Path(os.path.expanduser(roots[0])) if roots else (Path.home() / "Downloads")
         target = (parent / f"{date} {name}").resolve()
         if target.exists():
             raise HTTPException(
@@ -315,6 +333,9 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"無法載入新集：{e}")
         holder["ep"] = new_ep
+        # 與 open_episode 一致：新建集也要進 recent，這樣即使集落在 roots 之外
+        # dashboard 仍能看到。
+        dashboard_mod.add_recent(CONFIG_PATH, str(target))
         return JSONResponse({
             "ok": True,
             "path": str(target),
@@ -362,6 +383,24 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             if target.suffix.lower() not in PREVIEWABLE_EXTS:
                 raise HTTPException(status_code=400, detail="不支援預覽的副檔名")
         return video.range_response(target, request.headers.get("range"))
+
+    @app.get("/api/audio")
+    def get_audio(request: Request, path: str):
+        ep = _require_ep()
+        if not path:
+            raise HTTPException(status_code=400, detail="缺少 path")
+        target = (ep.dir / path).resolve()
+        try:
+            target.relative_to(ep.dir)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="路徑必須在集資料夾內")
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail=f"找不到檔案：{path}")
+        ext = target.suffix.lower()
+        if ext not in AUDIO_EXTS:
+            raise HTTPException(status_code=400, detail="不支援預覽的音檔副檔名")
+        mime = AUDIO_MIME.get(ext, "audio/mpeg")
+        return video.range_response(target, request.headers.get("range"), media_type=mime)
 
     @app.post("/api/save")
     def save(payload: dict):

@@ -1,11 +1,12 @@
 "use strict";
 
+// 階段文字標籤；視覺用 .stage-badge::before 的色點處理。
 const STAGE_LABEL = {
-  empty: "⬜ 空集",
-  needs_transcribe: "⚪ 未轉字幕",
-  needs_assemble: "🟡 未合成",
-  done: "🟢 完成",
-  broken: "⚠ 損毀",
+  empty: "空集",
+  needs_transcribe: "未轉字幕",
+  needs_assemble: "未合成",
+  done: "完成",
+  broken: "損毀",
 };
 
 let isOpening = false;
@@ -23,9 +24,12 @@ async function withButton(btn, fn) {
 function renderLoadError(message) {
   const loading = document.getElementById("loading");
   loading.classList.add("error");
-  loading.textContent = "";
+  loading.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.innerHTML = `<span data-icon="alert-triangle" data-icon-size="18"></span>`;
   const msg = document.createElement("div");
-  msg.textContent = "⚠ 載入失敗：" + message;
+  msg.textContent = "載入失敗：" + message;
   const retry = document.createElement("button");
   retry.type = "button";
   retry.className = "retry-btn";
@@ -34,9 +38,12 @@ function renderLoadError(message) {
     loading.classList.remove("error");
     loadEpisodes();
   });
+
+  loading.appendChild(head);
   loading.appendChild(msg);
   loading.appendChild(retry);
   loading.hidden = false;
+  if (window.Icons) window.Icons.inject(loading);
 }
 
 async function loadEpisodes() {
@@ -46,7 +53,7 @@ async function loadEpisodes() {
   const warningsBox = document.getElementById("warnings");
 
   loading.classList.remove("error");
-  loading.textContent = "載入中…";
+  loading.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>載入集數中…</span>`;
   loading.hidden = false;
   empty.hidden = true;
   list.hidden = true;
@@ -66,6 +73,7 @@ async function loadEpisodes() {
 
     if (data.episodes.length === 0) {
       empty.hidden = false;
+      if (window.Icons) window.Icons.inject(empty);
       return;
     }
 
@@ -74,11 +82,13 @@ async function loadEpisodes() {
       const li = document.createElement("li");
       li.className = "episode-card";
       li.innerHTML = `
-        <div>
-          <h3 class="ep-name"></h3>
-          <div class="ep-date"></div>
+        <div class="ep-head">
+          <div>
+            <h3 class="ep-name"></h3>
+            <div class="ep-date"></div>
+          </div>
+          <span class="stage-badge stage-${ep.stage}"></span>
         </div>
-        <span class="stage-badge stage-${ep.stage}"></span>
       `;
       li.querySelector(".ep-name").textContent = ep.name;
       li.querySelector(".ep-date").textContent = ep.date || "—";
@@ -126,7 +136,6 @@ async function pickFolder() {
     const data = await r.json();
     if (data.cancelled || !data.path) return;
 
-    // 開的可能是 episode（有 yaml）或要 init 的資料夾
     const preview = await fetch("/api/episode/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -223,7 +232,6 @@ async function createNewEpisode() {
       errBox.hidden = false;
       return;
     }
-    // new_episode 已切了 holder["ep"]，直接導向 edit UI
     window.location.href = "/";
   });
 }
@@ -244,7 +252,6 @@ document
   .getElementById("new-ep-create")
   .addEventListener("click", createNewEpisode);
 
-// 按 Enter 在 modal 輸入框內 → 觸發主要動作（避免落入 form 預設 submit）
 for (const id of ["new-date", "new-name"]) {
   document.getElementById(id).addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -260,16 +267,18 @@ document.getElementById("roots-input").addEventListener("keydown", (e) => {
   }
 });
 
-// 取消鈕：脫離 <form method="dialog"> 後，要手動 close()
-document
-  .getElementById("settings-cancel")
-  .addEventListener("click", () =>
-    document.getElementById("settings-modal").close(),
-  );
-document
-  .getElementById("new-ep-cancel")
-  .addEventListener("click", () =>
-    document.getElementById("new-episode-modal").close(),
-  );
+// 兩組關閉按鈕（右上 X + 底部「取消」）共用 close()
+function bindClose(modalId, ...btnIds) {
+  const modal = document.getElementById(modalId);
+  for (const bid of btnIds) {
+    const btn = document.getElementById(bid);
+    if (btn) btn.addEventListener("click", () => modal.close());
+  }
+}
+bindClose("settings-modal", "settings-cancel", "settings-cancel-2");
+bindClose("new-episode-modal", "new-ep-cancel", "new-ep-cancel-2");
+
+// 初始 icon 注入
+if (window.Icons) window.Icons.inject();
 
 loadEpisodes();

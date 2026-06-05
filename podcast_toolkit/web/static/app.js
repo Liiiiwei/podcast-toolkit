@@ -4,6 +4,10 @@ const state = {
   activeVersion: "yt", // "yt" | "reels"
   cropYt: null,
   cropReels: null,
+  // cam B 獨立 crop（雙機集才用）；null = fallback 用 cropYt / cropReels
+  // ratio 仍是 per-version 共享，因為輸出尺寸固定 → 兩鏡頭 crop aspect 必須一致
+  cropYtB: null,
+  cropReelsB: null,
   cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
   cropRatioReels: null,
   deletions: new Set(),
@@ -34,14 +38,33 @@ const state = {
 
 const UNDO_MAX = 100;
 
-function getActiveCrop() {
+// 預覽 overlay 是否正在顯示 cam B → 決定 crop UI 在編 A 還是 B
+function isCamBOverlayActive() {
+  const camb = document.querySelector("#video-camb");
+  return !!(camb && camb.classList.contains("active"));
+}
+function getActiveCropCam() {
+  return isCamBOverlayActive() ? "b" : "a";
+}
+function _baseCrop() {
   return state.activeVersion === "yt" ? state.cropYt : state.cropReels;
 }
+function _bCrop() {
+  return state.activeVersion === "yt" ? state.cropYtB : state.cropReelsB;
+}
+function getActiveCrop() {
+  // 編 B 時：有 override 就用 override；沒就 fallback 用 base（顯示用，不會寫回）
+  if (getActiveCropCam() === "b") return _bCrop() || _baseCrop();
+  return _baseCrop();
+}
 function setActiveCrop(crop) {
+  const cam = getActiveCropCam();
   if (state.activeVersion === "yt") {
-    state.cropYt = crop;
+    if (cam === "b") state.cropYtB = crop;
+    else state.cropYt = crop;
   } else {
-    state.cropReels = crop;
+    if (cam === "b") state.cropReelsB = crop;
+    else state.cropReels = crop;
   }
 }
 function getActiveCropRatio() {
@@ -56,6 +79,11 @@ function setActiveCropRatio(ratio) {
     state.cropRatioReels = ratio;
   }
 }
+// 寫回 yaml 用：base + 可選 .b override 合成單一 dict；base null → null
+function serializeCropForSave(base, b) {
+  if (!base) return null;
+  return b ? { ...base, b: { ...b } } : { ...base };
+}
 
 // === Undo / Redo（in-memory 編輯） ===
 // 追：deletions / textOverrides / cropYt / cropReels / cropRatio* / camerasMapping / head|tailTrimSec
@@ -67,6 +95,8 @@ function snapshotEditState() {
     textOverrides: new Map(state.textOverrides),
     cropYt: state.cropYt ? { ...state.cropYt } : null,
     cropReels: state.cropReels ? { ...state.cropReels } : null,
+    cropYtB: state.cropYtB ? { ...state.cropYtB } : null,
+    cropReelsB: state.cropReelsB ? { ...state.cropReelsB } : null,
     cropRatioYt: state.cropRatioYt,
     cropRatioReels: state.cropRatioReels,
     camerasMapping: new Map(state.camerasMapping),
@@ -80,6 +110,8 @@ function applyEditSnapshot(snap) {
   state.textOverrides = new Map(snap.textOverrides);
   state.cropYt = snap.cropYt ? { ...snap.cropYt } : null;
   state.cropReels = snap.cropReels ? { ...snap.cropReels } : null;
+  state.cropYtB = snap.cropYtB ? { ...snap.cropYtB } : null;
+  state.cropReelsB = snap.cropReelsB ? { ...snap.cropReelsB } : null;
   state.cropRatioYt = snap.cropRatioYt;
   state.cropRatioReels = snap.cropRatioReels;
   state.camerasMapping = new Map(snap.camerasMapping);
@@ -112,6 +144,8 @@ function rerenderEditState() {
       getActiveCropRatio() === btn.dataset.ratio && getActiveCrop() != null,
     );
   });
+  // undo/redo 拉回 camerasMapping 後也要立刻反映在 overlay 上
+  if (typeof refreshCamBOverlay === "function") refreshCamBOverlay();
 }
 
 function undo() {
@@ -168,7 +202,7 @@ function fmtTime(sec) {
 function renderTopbar() {
   $("#title").textContent = state.name;
   if (state.needsTranscribe) {
-    $("#status").textContent = "尚未轉字幕（從左側檔案列點 🎙 開始）";
+    $("#status").textContent = "尚未轉字幕（從左側檔案列點「轉字幕」開始）";
     $("#save-btn").disabled = true;
     return;
   }
@@ -237,8 +271,19 @@ function renderTrimControls() {
 function renderCropInfo() {
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
+  // 只有雙機集才顯示鏡頭徽章；單機集 cam B 一直沒值就略過徽章
+  const hasCamB = !!(state.cameras && state.cameras.b);
+  let camBadge = "";
+  if (hasCamB) {
+    const cam = getActiveCropCam();
+    if (cam === "b") {
+      camBadge = _bCrop() ? "（B 獨立）· " : "（B 沿用 A）· ";
+    } else {
+      camBadge = "（A）· ";
+    }
+  }
   if (!c) {
-    $("#crop-text").textContent = "裁切框：未設定（整張畫面）";
+    $("#crop-text").textContent = `裁切框：${camBadge}未設定（整張畫面）`;
     $("#crop-frame").classList.add("hidden");
     // 字幕回到整個影片區（清除 inline style 讓 CSS 預設生效）
     overlay.style.left = "";
@@ -249,7 +294,7 @@ function renderCropInfo() {
   }
   const ratio = getActiveCropRatio() ? `${getActiveCropRatio()}` : "自訂";
   $("#crop-text").textContent =
-    `裁切框：${ratio} · x=${(c.x * 100).toFixed(0)}% y=${(c.y * 100).toFixed(0)}%`;
+    `裁切框：${camBadge}${ratio} · x=${(c.x * 100).toFixed(0)}% y=${(c.y * 100).toFixed(0)}%`;
   const frame = $("#crop-frame");
   frame.classList.remove("hidden");
   frame.style.left = `${c.x * 100}%`;
@@ -309,6 +354,9 @@ function renderCardSkeletons(n = 8) {
 }
 
 function renderCards() {
+  // T60：量測 renderCards 用時（搭配 .card 的 content-visibility）。
+  // 若 cardCount > 500 且 dur > 50ms 就警告，當作導入 windowing 的訊號。
+  const _t0 = performance.now();
   const list = $("#cards-list");
   list.innerHTML = "";
   if (state.needsTranscribe) {
@@ -318,7 +366,7 @@ function renderCards() {
     empty.style.lineHeight = "1.6";
     empty.innerHTML =
       '<div style="font-size:14px;margin-bottom:8px">這一集還沒轉字幕</div>' +
-      '<div style="color:#888;font-size:12px">到左側「檔案」面板找一軌主檔（通常是 Mic / Stereo Mix），點 🎙 開始轉字幕。轉完會自動回到這裡。</div>';
+      '<div style="color:var(--text-dim);font-size:12px">到左側「檔案」面板找一軌主檔（通常是 Mic / Stereo Mix），點「轉字幕」開始。轉完會自動回到這裡。</div>';
     list.appendChild(empty);
     return;
   }
@@ -410,7 +458,17 @@ function renderCards() {
 
     const del = document.createElement("button");
     del.className = "card-del";
-    del.textContent = state.deletions.has(c.idx) ? "↺" : "✕";
+    del.setAttribute(
+      "aria-label",
+      state.deletions.has(c.idx) ? "復原" : "刪除",
+    );
+    del.innerHTML = window.Icons
+      ? window.Icons.get(state.deletions.has(c.idx) ? "rotate-ccw" : "x", {
+          size: 14,
+        })
+      : state.deletions.has(c.idx)
+        ? "↺"
+        : "✕";
     del.addEventListener("click", () => {
       pushUndo();
       if (state.deletions.has(c.idx)) {
@@ -446,6 +504,8 @@ function renderCards() {
         pushUndo();
         state.camerasMapping.set(c.idx, "a");
         renderCards();
+        // 暫停時 timeupdate 不會 fire，手動 refresh 一次 overlay 才會收掉
+        refreshCamBOverlay();
       });
 
       const bBtn = document.createElement("button");
@@ -461,6 +521,8 @@ function renderCards() {
         pushUndo();
         state.camerasMapping.set(c.idx, "b");
         renderCards();
+        // 暫停時也要立刻把 cam B overlay 疊上來
+        refreshCamBOverlay();
       });
 
       camPill.append(aBtn, bBtn);
@@ -474,6 +536,16 @@ function renderCards() {
     list.appendChild(div);
   }
   renderSusToolbar();
+  // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
+  const _dur = performance.now() - _t0;
+  list.dataset.lastRenderMs = _dur.toFixed(1);
+  list.dataset.cardCount = String(state.cards.length);
+  if (state.cards.length > 500 && _dur > 50) {
+    console.warn(
+      `[T60] renderCards 慢：${state.cards.length} 卡 / ${_dur.toFixed(1)}ms` +
+        `（如果常態 > 50ms 就該導入 windowing）`,
+    );
+  }
 }
 
 // 紅卡 toolbar：總可疑數 / 已勾數 / 全選 / 刪除已勾
@@ -499,19 +571,42 @@ function renderSusToolbar() {
   $("#sus-checked-count").textContent = `已勾 ${checkedCount}`;
   $("#sus-delete-checked").disabled = checkedCount === 0;
 
-  // 全選按鈕：全勾就顯示「☐ 取消全選」反之顯示「☐ 全選紅卡」
+  // 全選按鈕：全勾就顯示「取消全選」反之顯示「全選紅卡」（用 icon 區分）
   const allChecked = susCards.length > 0 && checkedCount === susCards.length;
-  $("#sus-select-all").textContent = allChecked ? "☑ 取消全選" : "☐ 全選紅卡";
+  const iconName = allChecked ? "check-square" : "square";
+  const label = allChecked ? "取消全選" : "全選紅卡";
+  $("#sus-select-all").innerHTML = window.Icons
+    ? `${window.Icons.get(iconName, { size: 14 })}<span>${label}</span>`
+    : label;
 }
 
 async function loadEpisodeState() {
   // 只重抓 episode + cards，重新轉字幕後會用到
   const r = await fetch("/api/episode");
+  if (r.status === 409) {
+    // 後端尚未選集（重啟 / 多分頁 / 直接打 /edit URL）→ 回 dashboard 重選
+    window.location.href = "/";
+    throw new Error("尚未選集，導回 dashboard");
+  }
   if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
   const data = await r.json();
   state.name = data.name;
-  state.cropYt = data.crop_yt || null;
-  state.cropReels = data.crop_reels || null;
+  // crop_yt / crop_reels：拆 base + .b override 成兩個 state（前端編輯流好用）
+  const ytIn = data.crop_yt || null;
+  state.cropYt = ytIn
+    ? { x: ytIn.x, y: ytIn.y, width: ytIn.width, height: ytIn.height }
+    : null;
+  state.cropYtB = ytIn && ytIn.b ? { ...ytIn.b } : null;
+  const reelsIn = data.crop_reels || null;
+  state.cropReels = reelsIn
+    ? {
+        x: reelsIn.x,
+        y: reelsIn.y,
+        width: reelsIn.width,
+        height: reelsIn.height,
+      }
+    : null;
+  state.cropReelsB = reelsIn && reelsIn.b ? { ...reelsIn.b } : null;
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
@@ -537,6 +632,24 @@ async function loadEpisodeState() {
     : [];
   state.audioPath = (data.audio && data.audio.path) || "";
   state.audioSyncOffset = Number((data.audio || {}).sync_offset || 0);
+  // 「最終合成總覽」：cam A 候選 / 目前 cam A / 字幕檔（read-only）
+  state.camACandidates = Array.isArray(data.cam_a_candidates)
+    ? data.cam_a_candidates
+    : [];
+  state.camAPath = data.cam_a_path || "";
+  state.srtPath = data.srt_path || "";
+  // 字幕時間軸對齊：原始字幕是 cam A 時間軸；外接音檔比 cam A 慢 sync_offset 秒
+  // → 字幕 start/end 都要往前推 -audioSyncOffset，讓字幕顯示時機跟外接音檔同步
+  if (state.audioPath && state.audioSyncOffset) {
+    const shift = -state.audioSyncOffset;
+    state.cards = state.cards
+      .map((c) => ({
+        ...c,
+        start: Math.max(0, (c.start || 0) + shift),
+        end: (c.end || 0) + shift,
+      }))
+      .filter((c) => c.end > 0);
+  }
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
 }
@@ -605,6 +718,8 @@ async function load() {
   renderCaption();
   renderTypo();
   renderFiles();
+  setupExternalAudio();
+  setupCamBOverlay();
 }
 
 // === 錯字表 ===
@@ -824,15 +939,23 @@ playBtn.addEventListener("click", () => {
   else v.pause();
 });
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
+function setPlayIcon(name) {
+  playBtn.innerHTML = window.Icons
+    ? window.Icons.get(name, { size: 16 })
+    : name === "pause"
+      ? "⏸"
+      : "▶";
+  playBtn.setAttribute("aria-label", name === "pause" ? "暫停" : "播放");
+}
 $("#video").addEventListener("play", () => {
-  playBtn.textContent = "⏸";
+  setPlayIcon("pause");
   // C3：按 play 時若卡在 head trim 區 → 自動跳到 headTrim 邊界
   const v = $("#video");
   const head = state.headTrimSec || 0;
   if (head > 0 && v.currentTime < head) v.currentTime = head;
 });
 $("#video").addEventListener("pause", () => {
-  playBtn.textContent = "▶";
+  setPlayIcon("play");
 });
 
 $("#seek").addEventListener("input", (e) => {
@@ -844,6 +967,70 @@ $("#seek").addEventListener("input", (e) => {
 $("#video").addEventListener("loadedmetadata", () => {
   renderTrimControls();
 });
+
+// === 外接音檔預覽綁定 ===
+// 有 audio.path → 用外接音檔的聲音覆蓋影片原音、保持時間軸鏡像
+// 沒有 → 還原影片原音、解綁所有事件
+function setupExternalAudio() {
+  const video = $("#video");
+  const audio = $("#external-audio");
+  if (!audio) return;
+  // 每次重綁前先卸載舊 listeners，避免換集後多次累積
+  if (window.__audioMirror) {
+    for (const [ev, fn] of window.__audioMirror) {
+      video.removeEventListener(ev, fn);
+    }
+    window.__audioMirror = null;
+  }
+  if (!state.audioPath) {
+    video.muted = false;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load();
+    return;
+  }
+  // cache-bust：換集後同檔名也要重抓
+  audio.src = `/api/audio?path=${encodeURIComponent(state.audioPath)}&_=${Date.now()}`;
+  audio.load();
+  video.muted = true;
+  const offset = state.audioSyncOffset || 0;
+  // 影片在 cam A 時間軸；audio 的同一個物理瞬間 = video.currentTime + sync_offset
+  const sync = () => {
+    const target = Math.max(0, video.currentTime + offset);
+    if (Math.abs(audio.currentTime - target) > 0.05) {
+      audio.currentTime = target;
+    }
+  };
+  const onPlay = () => {
+    sync();
+    audio.play().catch(() => {});
+  };
+  const onPause = () => audio.pause();
+  const onSeek = () => sync();
+  const onRate = () => {
+    audio.playbackRate = video.playbackRate;
+  };
+  const onVol = () => {
+    audio.volume = video.volume;
+    // video.muted 永遠維持 true（外接音檔在播），不要被 UI 一鍵切回
+  };
+  const onLoadedAudio = () => sync();
+  video.addEventListener("play", onPlay);
+  video.addEventListener("pause", onPause);
+  video.addEventListener("seeking", onSeek);
+  video.addEventListener("seeked", onSeek);
+  video.addEventListener("ratechange", onRate);
+  video.addEventListener("volumechange", onVol);
+  audio.addEventListener("loadedmetadata", onLoadedAudio, { once: true });
+  window.__audioMirror = [
+    ["play", onPlay],
+    ["pause", onPause],
+    ["seeking", onSeek],
+    ["seeked", onSeek],
+    ["ratechange", onRate],
+    ["volumechange", onVol],
+  ];
+}
 
 // 頭尾 trim 按鈕：用目前播放位置設值，再次按同位置 → 視為清除
 $("#trim-head-btn").addEventListener("click", () => {
@@ -996,6 +1183,8 @@ $("#trim-suggest-btn").addEventListener("click", async () => {
 });
 
 load().catch((err) => {
+  // 409 → loadEpisodeState 已觸發 window.location.href，不要 flash 錯誤畫面
+  if (err?.message?.includes("尚未選集")) return;
   $("#title").textContent = "載入失敗";
   $("#status").textContent = `載入失敗：${err?.message || err}`;
   console.error(err);
@@ -1042,7 +1231,16 @@ initUploadDropZone();
       return;
     }
     pushUndo();
-    setActiveCrop(cropForRatio(ratioStr));
+    // ratio 是 per-version 共享（輸出尺寸固定 → 兩鏡頭 aspect 必須一致）
+    // 所以一律重設 base；B override 若已存在也同步到新 ratio
+    const newCrop = cropForRatio(ratioStr);
+    if (state.activeVersion === "yt") {
+      state.cropYt = { ...newCrop };
+      if (state.cropYtB) state.cropYtB = { ...newCrop };
+    } else {
+      state.cropReels = { ...newCrop };
+      if (state.cropReelsB) state.cropReelsB = { ...newCrop };
+    }
     setActiveCropRatio(ratioStr);
     renderCropInfo();
     updateRatioButtons();
@@ -1161,9 +1359,25 @@ initUploadDropZone();
   });
 
   $("#crop-reset").addEventListener("click", () => {
+    // 編 B 且有 B override → 只清 B（回到沿用 A）
+    if (getActiveCropCam() === "b" && _bCrop()) {
+      pushUndo();
+      if (state.activeVersion === "yt") state.cropYtB = null;
+      else state.cropReelsB = null;
+      renderCropInfo();
+      updateRatioButtons();
+      return;
+    }
+    // 否則整版本全清（base + B override + ratio）
     if (getActiveCrop() == null && getActiveCropRatio() == null) return;
     pushUndo();
-    setActiveCrop(null);
+    if (state.activeVersion === "yt") {
+      state.cropYt = null;
+      state.cropYtB = null;
+    } else {
+      state.cropReels = null;
+      state.cropReelsB = null;
+    }
     setActiveCropRatio(null);
     renderCropInfo();
     updateRatioButtons();
@@ -1195,12 +1409,49 @@ function setupVersionTabs() {
 }
 
 // === 儲存 / 取消 ===
+function setSaveBtnLabel(iconName, text) {
+  const btn = $("#save-btn");
+  btn.innerHTML = window.Icons
+    ? `${window.Icons.get(iconName, { size: 16 })}<span>${text}</span>`
+    : text;
+}
+
+// 任意按鈕：icon + 文字。傳 null 給 iconName 表示純文字（loading 狀態用）。
+function setBtnLabel(btn, iconName, text) {
+  if (!btn) return;
+  if (iconName && window.Icons) {
+    btn.innerHTML = `${window.Icons.get(iconName, { size: 14 })}<span>${text}</span>`;
+  } else {
+    btn.textContent = text;
+  }
+}
+
+// 統一 modal 標題：icon + 文字 + 狀態色（success / danger / warning / accent）
+function setModalStatusTitle(elId, iconName, text, tone = "") {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const ico = window.Icons ? window.Icons.get(iconName, { size: 16 }) : "";
+  el.innerHTML = `${ico}<span>${text}</span>`;
+  el.classList.remove(
+    "tone-success",
+    "tone-danger",
+    "tone-warning",
+    "tone-accent",
+  );
+  if (tone) el.classList.add("tone-" + tone);
+}
+
+// init modal 的檔案列表用：icon + 檔名
+function _setInitRow(row, iconName, label) {
+  const ico = window.Icons ? window.Icons.get(iconName, { size: 14 }) : "";
+  row.innerHTML = `${ico}<span>${label}</span>`;
+}
 $("#save-btn").addEventListener("click", async () => {
   $("#save-btn").disabled = true;
-  $("#save-btn").textContent = "儲存中…";
+  setSaveBtnLabel("save", "儲存中…");
   const payload = {
-    crop_yt: state.cropYt,
-    crop_reels: state.cropReels,
+    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
+    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
     deletions: [...state.deletions].sort((a, b) => a - b),
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
@@ -1218,7 +1469,7 @@ $("#save-btn").addEventListener("click", async () => {
       body: JSON.stringify(payload),
     });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    $("#save-btn").textContent = "✅ 已儲存";
+    setSaveBtnLabel("check", "已儲存");
     // 儲存成功後既有的 undo 紀錄已落地，視為起點 → 清空 stacks
     clearUndoStacks();
     // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
@@ -1232,13 +1483,13 @@ $("#save-btn").addEventListener("click", async () => {
       reelsBtn.classList.remove("pulse");
     }, 6000);
     setTimeout(() => {
-      $("#save-btn").textContent = "完成並儲存";
+      setSaveBtnLabel("check", "完成並儲存");
       $("#save-btn").disabled = false;
     }, 2000);
   } catch (e) {
     alert(`儲存失敗：${e.message}`);
     $("#save-btn").disabled = false;
-    $("#save-btn").textContent = "完成並儲存";
+    setSaveBtnLabel("check", "完成並儲存");
   }
 });
 
@@ -1252,12 +1503,12 @@ function fmtSize(bytes) {
 }
 
 const FILE_SECTIONS = [
-  { kind: "main_video", label: "主影片", icon: "🎬" },
-  { kind: "subtitle", label: "字幕", icon: "💬" },
-  { kind: "composite", label: "合成輸出", icon: "📦" },
-  { kind: "master", label: "母帶", icon: "🎙️" },
-  { kind: "work", label: "工作檔", icon: "🛠️" },
-  { kind: "other", label: "其他", icon: "📄" },
+  { kind: "main_video", label: "主影片", icon: "film" },
+  { kind: "subtitle", label: "字幕", icon: "file-text" },
+  { kind: "composite", label: "合成輸出", icon: "package" },
+  { kind: "master", label: "母帶", icon: "mic" },
+  { kind: "work", label: "工作檔", icon: "wrench" },
+  { kind: "other", label: "其他", icon: "file" },
 ];
 
 const COLLAPSE_KEY = "podcast-edit-collapsed-sections";
@@ -1305,11 +1556,15 @@ function renderFileItem(f) {
   size.className = "file-size";
   size.textContent = fmtSize(f.size);
 
+  const iconHtml = (name, size = 12) =>
+    window.Icons ? window.Icons.get(name, { size }) : "";
+
   let preview;
   if (f.previewable) {
     preview = document.createElement("button");
     preview.className = "file-preview" + (isActive ? " active" : "");
-    preview.textContent = isActive ? "📺 預覽中" : "📺 預覽";
+    const eyeIcon = iconHtml(isActive ? "eye" : "eye-off", 12);
+    preview.innerHTML = `${eyeIcon}<span>${isActive ? "預覽中" : "預覽"}</span>`;
     preview.title = "切換為此檔案預覽";
     preview.addEventListener("click", () => switchPreview(f.path));
   } else {
@@ -1322,14 +1577,14 @@ function renderFileItem(f) {
   if (f.transcribable) {
     action = document.createElement("button");
     action.className = "file-stt";
-    action.textContent = "🎙 轉字幕";
+    action.innerHTML = `${iconHtml("mic", 12)}<span>轉字幕</span>`;
     const providerLabel =
       state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
     const hasSelectedKey =
       state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
     action.title = hasSelectedKey
       ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
-      : `請先到 ⚙ 設定 ${providerLabel} API key`;
+      : `請先到設定面板填 ${providerLabel} API key`;
     action.addEventListener("click", () => requestTranscribe(f));
   } else {
     action = document.createElement("span");
@@ -1379,9 +1634,19 @@ function renderFiles() {
     const header = document.createElement("header");
     header.className = "file-section-header";
     const isCollapsed = collapsed.has(section.kind);
+    const caretIcon = window.Icons
+      ? window.Icons.get(isCollapsed ? "chevron-right" : "chevron-down", {
+          size: 12,
+        })
+      : isCollapsed
+        ? "▶"
+        : "▼";
+    const sectionIcon = window.Icons
+      ? window.Icons.get(section.icon, { size: 14 })
+      : "";
     header.innerHTML = `
-      <span class="caret">${isCollapsed ? "▶" : "▼"}</span>
-      <span class="section-icon">${section.icon}</span>
+      <span class="caret">${caretIcon}</span>
+      <span class="section-icon">${sectionIcon}</span>
       <span class="section-label">${section.label}</span>
       <span class="section-count">${items.length}</span>
     `;
@@ -1415,7 +1680,139 @@ function switchPreview(relPath) {
   }
   video.load();
   renderFiles();
+  // 預覽非主影片時暫時關掉外接音檔鏡像；切回主影片時重綁
+  if (state.previewPath) {
+    const audio = $("#external-audio");
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    video.muted = false;
+    if (window.__audioMirror) {
+      for (const [ev, fn] of window.__audioMirror) {
+        video.removeEventListener(ev, fn);
+      }
+      window.__audioMirror = null;
+    }
+  } else {
+    setupExternalAudio();
+  }
 }
+
+// === 播放時跟著 cameras_mapping 切預覽（用兩個 video 疊加 + visibility toggle）===
+// 主 #video 永遠播 cam A，#video-camb 疊上去 mirror 播 cam B；卡片邊界切時只 flip visibility。
+// 好處：無黑畫面、字幕時軸永遠以 cam A 為主所以不會偏、seek 精度不受影響。
+// 成本：cam B 一直在背景 decode，記憶體 / CPU 多一份。
+function setupCamBOverlay() {
+  const main = $("#video");
+  const camb = $("#video-camb");
+  if (!camb) return;
+  // 卸舊 mirror
+  if (window.__camBMirror) {
+    for (const [ev, fn] of window.__camBMirror) {
+      main.removeEventListener(ev, fn);
+    }
+    window.__camBMirror = null;
+  }
+  camb.classList.remove("active");
+  camb.pause();
+
+  const camBPath = state.cameras && state.cameras.b;
+  if (!camBPath) {
+    camb.removeAttribute("src");
+    camb.load();
+    return;
+  }
+
+  camb.src = `/api/video?path=${encodeURIComponent(camBPath)}&_=${Date.now()}`;
+  camb.muted = true;
+  camb.load();
+
+  const offset = state.camSyncOffsetB || 0;
+  // assemble.py 用 setpts=PTS-{sync_offset_b}/TB → camB.currentTime = main.currentTime + offset
+  const sync = () => {
+    const target = Math.max(0, main.currentTime + offset);
+    if (Math.abs(camb.currentTime - target) > 0.05) {
+      camb.currentTime = target;
+    }
+  };
+  const onPlay = () => {
+    sync();
+    if (camb.classList.contains("active")) camb.play().catch(() => {});
+  };
+  const onPause = () => camb.pause();
+  const onSeek = () => sync();
+  const onRate = () => {
+    camb.playbackRate = main.playbackRate;
+  };
+  main.addEventListener("play", onPlay);
+  main.addEventListener("pause", onPause);
+  main.addEventListener("seeking", onSeek);
+  main.addEventListener("seeked", onSeek);
+  main.addEventListener("ratechange", onRate);
+  window.__camBMirror = [
+    ["play", onPlay],
+    ["pause", onPause],
+    ["seeking", onSeek],
+    ["seeked", onSeek],
+    ["ratechange", onRate],
+  ];
+  // 載入後若當下卡片就標 B，立刻 overlay；不等到 user hit play / seek
+  refreshCamBOverlay();
+}
+
+// 抽出共用切換邏輯，給 timeupdate（播放中）和 A/B 按鈕點擊（暫停時）共用
+// 不靠 timeupdate fire 才生效，按鈕一按就反映在 overlay 上
+function refreshCamBOverlay() {
+  const main = $("#video");
+  const camb = $("#video-camb");
+  if (!camb) return;
+  const camBPath = state.cameras && state.cameras.b;
+  // 沒 cam B / 使用者手動切到別的預覽（switchPreview）→ 收 overlay
+  if (!camBPath || state.previewPath !== null) {
+    if (camb.classList.contains("active")) {
+      camb.classList.remove("active");
+      camb.pause();
+    }
+    return;
+  }
+  const card = activeCardAt(main.currentTime);
+  if (!card) return;
+  const eff = computeEffectiveCamera(card.idx);
+  const shouldBeActive = eff === "b";
+  const isActive = camb.classList.contains("active");
+  if (shouldBeActive === isActive) return;
+
+  if (shouldBeActive) {
+    // 顯示前 force-sync 一次，避免上次 sync 後又漂掉
+    const target = Math.max(0, main.currentTime + (state.camSyncOffsetB || 0));
+    try {
+      camb.currentTime = target;
+    } catch (_) {
+      // codec 還沒 ready 就忽略
+    }
+    camb.classList.add("active");
+    if (!main.paused) camb.play().catch(() => {});
+  } else {
+    camb.classList.remove("active");
+    camb.pause();
+  }
+  // overlay 切換後 crop UI 編輯目標也跟著切（implicit follow）
+  // → 重畫 crop frame + ratio 按鈕到新的 active cam 對應狀態
+  renderCropInfo();
+  document.querySelectorAll(".ratio-btn").forEach((b) => {
+    b.classList.toggle(
+      "active",
+      getActiveCropRatio() === b.dataset.ratio && getActiveCrop() != null,
+    );
+  });
+}
+
+function setupCameraMappingFollow() {
+  $("#video").addEventListener("timeupdate", refreshCamBOverlay);
+}
+setupCameraMappingFollow();
 
 // === A1：拖放上傳到 01_母帶/ ===
 const UPLOAD_EXTS = new Set([
@@ -1479,16 +1876,19 @@ async function handleUploadDrop(fileList) {
     const res = await uploadOne(f);
     done += 1;
     if (res.ok) {
-      setUploadStatus(`上傳中 ${done} / ${files.length}：${res.name} ✓`);
+      setUploadStatus(`上傳中 ${done} / ${files.length}：${res.name}（OK）`);
     } else {
       errors.push(`${res.name}：${res.error}`);
-      setUploadStatus(`上傳中 ${done} / ${files.length}：${res.name} ✗`, true);
+      setUploadStatus(
+        `上傳中 ${done} / ${files.length}：${res.name}（失敗）`,
+        true,
+      );
     }
   }
   await loadFiles();
   renderFiles();
   if (errors.length === 0) {
-    setUploadStatus(`✓ 已上傳 ${files.length} 個檔案到 01_母帶/`);
+    setUploadStatus(`已上傳 ${files.length} 個檔案到 01_母帶/`);
     setTimeout(() => setUploadStatus(""), 3000);
   } else {
     setUploadStatus(
@@ -1537,12 +1937,14 @@ function initUploadDropZone() {
   });
 }
 
-// 簡易 modal 控制
+// 簡易 modal 控制（native <dialog>）
 function showModal(id) {
-  $(`#${id}`).classList.remove("hidden");
+  const el = $(`#${id}`);
+  if (el && typeof el.showModal === "function" && !el.open) el.showModal();
 }
 function hideModal(id) {
-  $(`#${id}`).classList.add("hidden");
+  const el = $(`#${id}`);
+  if (el && typeof el.close === "function" && el.open) el.close();
 }
 
 // === 轉字幕流程 ===
@@ -1553,7 +1955,7 @@ function requestTranscribe(file) {
   if (!hasSelectedKey) {
     $("#transcribe-title").textContent = "尚未設定 API key";
     $("#transcribe-msg").innerHTML =
-      `請先到右上角 ⚙ 設定 ${providerLabel} API key，才能轉字幕。`;
+      `請先到右上角「設定」設定 ${providerLabel} API key，才能轉字幕。`;
     const go = $("#transcribe-go");
     go.textContent = "去設定";
     go.disabled = false;
@@ -1699,7 +2101,7 @@ async function finishTranscribe({ ok, out_srt, error }) {
     $("#transcribe-percent").textContent = "100%";
     $("#transcribe-phase-label").textContent = "完成";
     renderTranscribePhasePills(null, "done");
-    $("#transcribe-title").textContent = "✅ 完成";
+    setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
     $("#transcribe-msg").innerHTML =
       `已寫入：<code>${out_srt || "_v2.srt"}</code><br>正在重新載入編輯區…`;
 
@@ -1709,9 +2111,9 @@ async function finishTranscribe({ ok, out_srt, error }) {
     renderCaption();
     renderTypo();
   } else {
-    $("#transcribe-title").textContent = "❌ 失敗";
+    setModalStatusTitle("transcribe-title", "circle-alert", "失敗", "danger");
     $("#transcribe-msg").innerHTML =
-      `<div style="color:#ff6b35">${error}</div>`;
+      `<div class="modal-error-text">${error}</div>`;
     $("#transcribe-progress").hidden = true;
   }
   cancel.disabled = false;
@@ -1729,6 +2131,9 @@ async function finishTranscribe({ ok, out_srt, error }) {
 //      → done/error 各自渲染收尾畫面
 // 400「輸出已存在」會 confirm 後自動以 force=true 重打
 let _assemblePollTimer = null;
+// 記住上次合成的 targets / title，給「重試」按鈕用
+let _lastAssembleTargets = null;
+let _lastAssembleTitle = null;
 
 function fmtEta(s) {
   if (s == null) return "估算中…";
@@ -1745,28 +2150,108 @@ function stopAssemblePoll() {
   }
 }
 
+// 切換狀態 pill：starting / running / done / error
+function setAssemblePill(stateName, label) {
+  const pill = $("#assemble-pill");
+  if (!pill) return;
+  pill.setAttribute("data-state", stateName);
+  $("#assemble-pill-label").textContent = label;
+}
+
+// 渲染輸出檔列表：每列檔名 + 「在 Finder 開啟」小按鈕
+function renderAssembleOutputs(outs) {
+  const wrap = $("#assemble-output");
+  if (!outs || outs.length === 0) {
+    wrap.hidden = true;
+    wrap.innerHTML = "";
+    return;
+  }
+  const revealPath = async (p) => {
+    await fetch("/api/reveal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p }),
+    });
+  };
+  wrap.innerHTML = "";
+  outs.forEach((p) => {
+    const row = document.createElement("div");
+    row.className = "assemble-output-row";
+    const name = document.createElement("span");
+    name.className = "assemble-output-name";
+    name.textContent = p;
+    name.title = p;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "assemble-output-reveal";
+    btn.textContent = "在 Finder 開啟";
+    btn.onclick = async () => {
+      try {
+        await revealPath(p);
+      } catch (e) {
+        alert(`開啟失敗：${e.message}`);
+      }
+    };
+    row.appendChild(name);
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  });
+  wrap.hidden = false;
+}
+
 // 把 modal 重設成「進度模式」初始畫面：欄位歸零、按鈕回到預設
 function resetAssembleModal() {
   $("#assemble-fill").style.width = "0%";
   $("#assemble-percent").textContent = "0%";
   $("#assemble-eta").textContent = "—";
   $("#assemble-current-label").textContent = "準備中…";
-  $("#assemble-eta-label").textContent = "—";
-  $("#assemble-msg").textContent = "…";
-  const reveal = $("#assemble-reveal");
-  reveal.hidden = true;
-  reveal.onclick = null;
+  $("#assemble-msg").textContent = "";
+  setAssemblePill("starting", "啟動中");
+  // 輸出列表、ffmpeg 訊息折疊：歸零並隱藏
+  renderAssembleOutputs([]);
+  const logWrap = $("#assemble-log-wrap");
+  logWrap.hidden = true;
+  logWrap.open = false;
+  // 三顆按鈕：cancel 顯示為「取消」，retry / reveal 都隱藏
   const cancel = $("#assemble-cancel");
   cancel.disabled = false;
   cancel.textContent = "取消";
-  // cancel.onclick 在 setupAssembleButtons 內統一綁定
+  const retry = $("#assemble-retry");
+  retry.hidden = true;
+  retry.onclick = null;
+  const reveal = $("#assemble-reveal");
+  reveal.hidden = true;
+  reveal.onclick = null;
+}
+
+// 失敗收尾：顯示 retry 按鈕、把 cancel 改成「關閉」、把錯誤訊息塞進 ffmpeg log
+function showAssembleErrorState(message) {
+  setModalStatusTitle("assemble-title", "circle-alert", "合成失敗", "danger");
+  setAssemblePill("error", "失敗");
+  $("#assemble-current-label").textContent = "已停止";
+  const logWrap = $("#assemble-log-wrap");
+  $("#assemble-msg").textContent = message || "未知錯誤";
+  logWrap.hidden = false;
+  logWrap.open = true; // 失敗時預設展開讓使用者直接看到原因
+  $("#assemble-cancel").textContent = "關閉";
+  const retry = $("#assemble-retry");
+  if (_lastAssembleTargets) {
+    retry.hidden = false;
+    retry.onclick = () => {
+      resetAssembleModal();
+      $("#assemble-title").textContent = _lastAssembleTitle || "合成中…";
+      startAssemble(_lastAssembleTargets);
+    };
+  }
 }
 
 // 由「合成 YT」/「合成 Reels」按鈕呼叫，targets 是單一字串陣列
 async function startAssemble(targets, { force = false } = {}) {
+  _lastAssembleTargets = targets;
   $("#assemble-title").textContent = "合成中…";
-  $("#assemble-msg").textContent =
-    "ffmpeg 正在合成片頭 + 正片（含字幕與裁切）+ 片尾，請保留分頁。";
+  setAssemblePill("running", "合成中");
+  $("#assemble-current-label").textContent =
+    "ffmpeg 啟動中（片頭 + 正片 + 片尾）";
 
   try {
     const r = await fetch("/api/assemble", {
@@ -1788,9 +2273,14 @@ async function startAssemble(targets, { force = false } = {}) {
       throw new Error(msg);
     }
   } catch (e) {
-    $("#assemble-title").textContent = "❌ 無法啟動";
-    $("#assemble-msg").innerHTML =
-      `<div style="color:#ff6b35">${e.message}</div>`;
+    setModalStatusTitle("assemble-title", "circle-alert", "無法啟動", "danger");
+    setAssemblePill("error", "失敗");
+    $("#assemble-current-label").textContent = "請求失敗";
+    const logWrap = $("#assemble-log-wrap");
+    $("#assemble-msg").textContent = e.message;
+    logWrap.hidden = false;
+    logWrap.open = true;
+    $("#assemble-cancel").textContent = "關閉";
     return;
   }
 
@@ -1816,49 +2306,57 @@ async function pollAssemble() {
     const targetName = s.current === "yt" ? "YT" : "Reels";
     let label;
     if ((s.total || 0) > 1) {
-      label = `[${(s.index || 0) + 1}/${s.total}] ${targetName} 合成中… ${pct.toFixed(1)}%`;
+      label = `[${(s.index || 0) + 1}/${s.total}] ${targetName} 合成中`;
     } else {
-      label = `${targetName} 合成中… ${pct.toFixed(1)}%`;
+      label = `${targetName} 合成中`;
     }
+    setAssemblePill("running", "合成中");
     $("#assemble-current-label").textContent = label;
     $("#assemble-percent").textContent = `${pct.toFixed(1)}%`;
     $("#assemble-eta").textContent = fmtEta(s.eta_s);
-    $("#assemble-eta-label").textContent = fmtEta(s.eta_s);
     $("#assemble-fill").style.width = `${pct.toFixed(1)}%`;
     return;
   }
 
   if (s.state === "done") {
     stopAssemblePoll();
-    $("#assemble-title").textContent = "✅ 合成完成";
+    setModalStatusTitle(
+      "assemble-title",
+      "circle-check",
+      "合成完成",
+      "success",
+    );
+    setAssemblePill("done", "完成");
+    $("#assemble-current-label").textContent = "輸出已寫入";
+    $("#assemble-fill").style.width = "100%";
+    $("#assemble-percent").textContent = "100%";
+    $("#assemble-eta").textContent = "—";
+
     const outs = s.output_files || [];
-    if (outs.length === 0) {
-      $("#assemble-msg").innerHTML = "已完成（找不到輸出檔資訊）";
-    } else {
-      const lines = outs.map((p) => `<code>${p}</code>`).join("<br>");
-      $("#assemble-msg").innerHTML = `已輸出：<br>${lines}`;
-    }
+    renderAssembleOutputs(outs);
+
     const reveal = $("#assemble-reveal");
-    const revealPath = async (p) => {
-      await fetch("/api/reveal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: p }),
-      });
-    };
     if (outs.length > 0) {
       reveal.hidden = false;
       reveal.onclick = async () => {
         try {
-          await revealPath(outs[0]);
+          await fetch("/api/reveal", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: outs[0] }),
+          });
         } catch (e) {
           alert(`開啟失敗：${e.message}`);
         }
       };
-      // 自動 reveal 第一個輸出 — 使用者剛在等合成結果，跳 Finder 是合理回饋；
-      // 失敗就靜默退回手動按鈕（按鈕本身仍可重試）
-      revealPath(outs[0]).catch(() => {});
+      // 自動 reveal 第一個輸出；失敗就靜默退回手動按鈕
+      fetch("/api/reveal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: outs[0] }),
+      }).catch(() => {});
     }
+    $("#assemble-cancel").textContent = "關閉";
     // 重新載入專案檔案列表，讓新合成檔出現在右側
     try {
       await loadFiles();
@@ -1869,9 +2367,7 @@ async function pollAssemble() {
 
   if (s.state === "error") {
     stopAssemblePoll();
-    $("#assemble-title").textContent = "❌ 合成失敗";
-    $("#assemble-msg").innerHTML =
-      `<div style="color:#ff6b35;white-space:pre-wrap">${s.error || "未知錯誤"}</div>`;
+    showAssembleErrorState(s.error || "未知錯誤");
     return;
   }
 }
@@ -1893,6 +2389,7 @@ function setupAssembleButtons() {
         return;
       }
     }
+    _lastAssembleTitle = title;
     resetAssembleModal();
     $("#assemble-title").textContent = title;
     showModal("assemble-modal");
@@ -1948,7 +2445,8 @@ $("#settings-show-gemini").addEventListener("click", () => {
   input.type = input.type === "password" ? "text" : "password";
 });
 
-$("#settings-save").addEventListener("click", async () => {
+$("#settings-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
   const xaiKey = $("#settings-xai-key").value.trim();
   const geminiKey = $("#settings-gemini-key").value.trim();
   const provider =
@@ -1985,7 +2483,38 @@ $("#settings-save").addEventListener("click", async () => {
 });
 
 // === 雙鏡頭 cam B 設定 modal（T23a-followup：消除手改 yaml） ===
+function _renderCamOverview() {
+  // 即時把目前 cam B / 音檔 / srt 顯示在「最終合成總覽」區塊
+  const camB = $("#cam-b-select").value || "";
+  const audio = $("#audio-select").value || "";
+  $("#overview-cam-b").textContent = camB || "（無，單鏡頭）";
+  $("#overview-audio").textContent = audio || "（無，用鏡頭原音）";
+  $("#overview-srt").textContent = state.srtPath || "（尚未產生 _v2.srt）";
+}
+
 function openCamModal() {
+  // cam A 下拉（從 01_母帶/*.mp4 挑）
+  const camASel = $("#cam-a-select");
+  camASel.innerHTML = "";
+  const camAOpts = new Set(state.camACandidates || []);
+  if (state.camAPath) camAOpts.add(state.camAPath);
+  if (camAOpts.size === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "（01_母帶/ 沒有 .mp4）";
+    camASel.appendChild(o);
+    camASel.disabled = true;
+  } else {
+    camASel.disabled = false;
+    for (const path of [...camAOpts].sort()) {
+      const o = document.createElement("option");
+      o.value = path;
+      o.textContent = path;
+      if (path === state.camAPath) o.selected = true;
+      camASel.appendChild(o);
+    }
+  }
+
   const sel = $("#cam-b-select");
   sel.innerHTML = "";
   const none = document.createElement("option");
@@ -2028,11 +2557,17 @@ function openCamModal() {
     ? String(state.audioSyncOffset)
     : "";
 
+  _renderCamOverview();
   showModal("cam-modal");
 }
 
 $("#cam-btn").addEventListener("click", openCamModal);
 $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
+
+// 三個 select 變動就同步刷新「最終合成總覽」，使用者馬上看見組合
+for (const id of ["cam-a-select", "cam-b-select", "audio-select"]) {
+  document.getElementById(id).addEventListener("change", _renderCamOverview);
+}
 
 // T23b: 自動對齊（音訊互相關）。前端只負責叫 endpoint + 把結果填回 input；
 // 寫 yaml 仍走「儲存」按鈕，避免 race + 跟現有設計一致。
@@ -2044,7 +2579,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
   }
   const btn = $("#cam-auto-align");
   btn.disabled = true;
-  btn.textContent = "計算中…";
+  setBtnLabel(btn, null, "計算中…");
   try {
     const r = await fetch("/api/auto-align", {
       method: "POST",
@@ -2061,12 +2596,40 @@ $("#cam-auto-align").addEventListener("click", async () => {
     alert(`自動對齊失敗：${e.message}`);
   } finally {
     btn.disabled = false;
-    btn.textContent = "🎯 自動對齊";
+    setBtnLabel(btn, "target", "自動對齊");
   }
 });
 
+// 抓 cam-modal 目前狀態組 /api/save payload；align-all auto-save 跟 cam-save 共用，避免 drift
+function _buildCamModalSavePayload() {
+  const camAPath = $("#cam-a-select").value || "";
+  const camBPath = $("#cam-b-select").value || "";
+  const audioPath = $("#audio-select").value || "";
+  const offset = Number($("#cam-sync-offset-b").value || 0);
+  const audioOffset = Number($("#audio-sync-offset").value || 0);
+  return {
+    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
+    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
+    deletions: [...state.deletions].sort((a, b) => a - b),
+    head_trim_sec: state.headTrimSec,
+    tail_trim_sec: state.tailTrimSec,
+    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
+      idx,
+      text,
+    })),
+    cameras_mapping: Object.fromEntries(state.camerasMapping),
+    cam_a_path: camAPath,
+    cam_b_path: camBPath,
+    camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
+    audio: {
+      path: audioPath,
+      sync_offset: Number.isFinite(audioOffset) ? audioOffset : 0,
+    },
+  };
+}
+
 // 一鍵全部對齊：並行打兩次 /api/auto-align（cam B + 音檔），各自填回對應 input。
-// 只選一邊就只跑那邊；都沒選 → 提示。
+// 只選一邊就只跑那邊；都沒選 → 提示。完成後自動 /api/save，預覽立即跟上。
 $("#align-all").addEventListener("click", async () => {
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
@@ -2078,52 +2641,81 @@ $("#align-all").addEventListener("click", async () => {
   btn.disabled = true;
   btn.textContent = "計算中…";
 
-  const tasks = [];
-  if (camBPath) {
-    tasks.push(
-      fetch("/api/auto-align", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cam_b_path: camBPath }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const err = await r
-            .json()
-            .catch(() => ({ detail: `HTTP ${r.status}` }));
-          throw new Error(`cam B：${err.detail || r.status}`);
-        }
-        const data = await r.json();
-        $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
-      }),
-    );
-  }
-  if (audioPath) {
-    tasks.push(
-      fetch("/api/auto-align", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ audio_path: audioPath }),
-      }).then(async (r) => {
-        if (!r.ok) {
-          const err = await r
-            .json()
-            .catch(() => ({ detail: `HTTP ${r.status}` }));
-          throw new Error(`音檔：${err.detail || r.status}`);
-        }
-        const data = await r.json();
-        $("#audio-sync-offset").value = data.offset_sec.toFixed(3);
-      }),
-    );
-  }
+  try {
+    const tasks = [];
+    if (camBPath) {
+      tasks.push(
+        fetch("/api/auto-align", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cam_b_path: camBPath }),
+        }).then(async (r) => {
+          if (!r.ok) {
+            const err = await r
+              .json()
+              .catch(() => ({ detail: `HTTP ${r.status}` }));
+            throw new Error(`cam B：${err.detail || r.status}`);
+          }
+          const data = await r.json();
+          $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
+        }),
+      );
+    }
+    if (audioPath) {
+      tasks.push(
+        fetch("/api/auto-align", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ audio_path: audioPath }),
+        }).then(async (r) => {
+          if (!r.ok) {
+            const err = await r
+              .json()
+              .catch(() => ({ detail: `HTTP ${r.status}` }));
+            throw new Error(`音檔：${err.detail || r.status}`);
+          }
+          const data = await r.json();
+          $("#audio-sync-offset").value = data.offset_sec.toFixed(3);
+        }),
+      );
+    }
 
-  const results = await Promise.allSettled(tasks);
-  const errors = results
-    .filter((r) => r.status === "rejected")
-    .map((r) => r.reason.message);
-  btn.disabled = false;
-  btn.textContent = "🎯 一鍵全部對齊（cam B + 音檔）";
-  if (errors.length) {
-    alert(`部分對齊失敗：\n${errors.join("\n")}`);
+    const results = await Promise.allSettled(tasks);
+    const errors = results
+      .filter((r) => r.status === "rejected")
+      .map((r) => r.reason.message);
+    if (errors.length) {
+      // 有錯就不要自動 save，避免把錯誤值寫進 yaml
+      alert(`部分對齊失敗：\n${errors.join("\n")}`);
+      return;
+    }
+
+    // 全部成功 → 自動 save + 重抓 state + 重綁外接音檔
+    setBtnLabel(btn, null, "儲存中…");
+    const payload = _buildCamModalSavePayload();
+    const r = await fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`/api/save HTTP ${r.status}`);
+    await loadEpisodeState();
+    renderTopbar();
+    renderCards();
+    setupExternalAudio();
+    // cam A 可能被換掉；/api/video URL 不變，靠 cache-buster 強制 reload 主預覽
+    const video = $("#video");
+    video.src = `/api/video?_=${Date.now()}`;
+    video.load();
+    setBtnLabel(btn, "circle-check", "已對齊並儲存");
+    setTimeout(() => {
+      setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
+    }, 2000);
+  } catch (e) {
+    alert(`對齊或儲存失敗：${e.message}`);
+    setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
+  } finally {
+    btn.disabled = false;
   }
 });
 
@@ -2136,7 +2728,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
   }
   const btn = $("#audio-auto-align");
   btn.disabled = true;
-  btn.textContent = "計算中…";
+  setBtnLabel(btn, null, "計算中…");
   try {
     const r = await fetch("/api/auto-align", {
       method: "POST",
@@ -2153,7 +2745,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
     alert(`自動對齊失敗：${e.message}`);
   } finally {
     btn.disabled = false;
-    btn.textContent = "🎯 自動對齊";
+    setBtnLabel(btn, "target", "自動對齊");
   }
 });
 
@@ -2181,11 +2773,11 @@ function _manualAlignRender() {
 
 $("#cam-manual-align").addEventListener("click", () => {
   _manualAlignRender();
-  $("#manual-align-modal").classList.remove("hidden");
+  showModal("manual-align-modal");
 });
 
 $("#manual-align-cancel").addEventListener("click", () => {
-  $("#manual-align-modal").classList.add("hidden");
+  hideModal("manual-align-modal");
 });
 
 $("#manual-align-compute").addEventListener("click", async () => {
@@ -2251,10 +2843,11 @@ $("#manual-align-apply").addEventListener("click", () => {
   const offset = $("#manual-align-apply").dataset.offset;
   if (offset === "") return;
   $("#cam-sync-offset-b").value = offset;
-  $("#manual-align-modal").classList.add("hidden");
+  hideModal("manual-align-modal");
 });
 
 $("#cam-save").addEventListener("click", async () => {
+  const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   const offsetRaw = $("#cam-sync-offset-b").value;
   const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
@@ -2272,10 +2865,10 @@ $("#cam-save").addEventListener("click", async () => {
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
-  // 只送 cam B 相關欄位 + 必填的 deletions/cards（保留現有編輯）
+  // 只送 cam A/B 相關欄位 + 必填的 deletions/cards（保留現有編輯）
   const payload = {
-    crop_yt: state.cropYt,
-    crop_reels: state.cropReels,
+    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
+    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
     deletions: [...state.deletions].sort((a, b) => a - b),
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
@@ -2284,6 +2877,7 @@ $("#cam-save").addEventListener("click", async () => {
       text,
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: offset,
     audio: { path: audioPath, sync_offset: audioOffset },
@@ -2299,6 +2893,11 @@ $("#cam-save").addEventListener("click", async () => {
     await loadEpisodeState();
     renderTopbar();
     renderCards();
+    setupExternalAudio();
+    // cam A 可能被換掉；/api/video URL 不變，靠 cache-buster 強制 reload 主預覽
+    const video = $("#video");
+    video.src = `/api/video?_=${Date.now()}`;
+    video.load();
     hideModal("cam-modal");
   } catch (e) {
     alert(`儲存失敗：${e.message}`);
@@ -2413,7 +3012,11 @@ function openInitModal(preview) {
     for (const e of preview.entries) {
       const row = document.createElement("div");
       row.className = `row ${e.is_dir ? "dir" : ""}`;
-      row.textContent = e.is_dir ? `📁 ${e.name}/` : `📄 ${e.name}`;
+      _setInitRow(
+        row,
+        e.is_dir ? "folder" : "file",
+        `${e.name}${e.is_dir ? "/" : ""}`,
+      );
       cur.appendChild(row);
     }
   }
@@ -2422,26 +3025,26 @@ function openInitModal(preview) {
   for (const d of preview.subdirs_to_create) {
     const row = document.createElement("div");
     row.className = "row dir new";
-    row.textContent = `📁 ${d}/`;
+    _setInitRow(row, "folder", `${d}/`);
     create.appendChild(row);
   }
   const yamlRow = document.createElement("div");
   yamlRow.className = "row new";
-  yamlRow.textContent = "📄 episode.yaml";
+  _setInitRow(yamlRow, "file", "episode.yaml");
   create.appendChild(yamlRow);
   const todoRow = document.createElement("div");
   todoRow.className = "row new";
-  todoRow.textContent = "📄 TODO.md";
+  _setInitRow(todoRow, "file", "TODO.md");
   create.appendChild(todoRow);
 
   const modal = $("#init-modal");
-  modal.classList.remove("hidden");
   modal.dataset.path = preview.path;
+  showModal("init-modal");
 }
 
 function closeInitModal() {
   const modal = $("#init-modal");
-  modal.classList.add("hidden");
+  hideModal("init-modal");
   modal.dataset.path = "";
 }
 
@@ -2557,12 +3160,12 @@ function openNewEpModal() {
   $("#new-ep-error").hidden = true;
   $("#new-ep-error").textContent = "";
   updateNewEpPreview();
-  $("#new-ep-modal").classList.remove("hidden");
+  showModal("new-ep-modal");
   $("#new-ep-name").focus();
 }
 
 function closeNewEpModal() {
-  $("#new-ep-modal").classList.add("hidden");
+  hideModal("new-ep-modal");
 }
 
 async function submitNewEpisode() {
@@ -2639,3 +3242,6 @@ $("#new-ep-date").addEventListener("keydown", (e) => {
 setupVersionTabs();
 setupAssembleButtons();
 setupSusToolbar();
+
+// 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
+if (window.Icons) window.Icons.inject();

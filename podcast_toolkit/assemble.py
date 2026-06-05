@@ -61,13 +61,56 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
     dst.write_text(srt_io.serialize(kept), encoding="utf-8")
 
 
+def shift_srt(src: Path, dst: Path, offset_sec: float) -> None:
+    """把 SRT 時間軸整體位移 offset_sec 秒，寫到 dst。
+
+    用途：外接音檔對齊。字幕原本是外接音檔時間軸，audio sync_offset 把
+    外接音檔對齊到 cam A 後，字幕也要 shift -sync_offset 才能對到 cam A 時間軸。
+    位移後 end<=0 的卡片整段被丟掉；start<0 則 clamp 到 0。
+    """
+    from podcast_toolkit import srt_io
+    cards = srt_io.parse(src.read_text(encoding="utf-8"))
+    shifted: list[dict] = []
+    for c in cards:
+        new_end = c["end"] + offset_sec
+        if new_end <= 0:
+            continue
+        new_start = max(0.0, c["start"] + offset_sec)
+        shifted.append({**c, "start": new_start, "end": new_end})
+    dst.write_text(srt_io.serialize(shifted), encoding="utf-8")
+
+
+def _build_audio_align_filter(sync_offset: float) -> str:
+    """組外接音檔的對齊 filter prefix（接在 aformat 後、aselect 前）。
+
+    與 audio_align 的 sign convention 一致：
+    - 正值 offset = 外接音檔比 cam A 晚 X 秒 → 跳掉前 X 秒（atrim + reset PTS）
+    - 負值 offset = 外接音檔比 cam A 早 |X| 秒 → 前面補 |X| 秒靜音（adelay）
+    - 接近 0 → 不加任何 filter
+
+    回傳的字串以逗號結尾，方便直接接在後續 filter 之前；不對齊則回 ""。
+    """
+    if abs(sync_offset) < 0.001:
+        return ""
+    if sync_offset > 0:
+        return f"atrim=start={sync_offset:.3f},asetpts=PTS-STARTPTS,"
+    delay_ms = int(round(-sync_offset * 1000))
+    return f"adelay=delays={delay_ms}:all=1,"
+
+
 def build_filter_complex_yt(
     cfg: dict,
     main_dur: float,
     srt_rel: str,
     deletion_intervals: list[tuple[float, float]] | None = None,
+    audio_input_idx: int | None = None,
+    audio_sync_offset: float = 0.0,
 ) -> str:
-    """YT 16:9：原本的三段 concat（intro + main + outro card），讀 crop_yt。"""
+    """YT 16:9：原本的三段 concat（intro + main + outro card），讀 crop_yt。
+
+    audio_input_idx：若提供，正片音訊改從該 input idx 取（外接音檔），
+    並套用 audio_sync_offset 對齊；None = 用 cam A 原音。
+    """
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
     intro_dur = cfg["assets"]["intro_duration"]
@@ -93,6 +136,14 @@ def build_filter_complex_yt(
         select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
         select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
 
+    # 主音訊來源：外接音檔（含對齊）或 cam A 原音
+    if audio_input_idx is not None:
+        a_idx = audio_input_idx
+        align_a = _build_audio_align_filter(audio_sync_offset)
+    else:
+        a_idx = 1
+        align_a = ""
+
     return (
         f"[0:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
         f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[v0];"
@@ -104,8 +155,8 @@ def build_filter_complex_yt(
         f"format={enc['pix_fmt']},fade=t=in:st=0:d=0.5[v2];"
         f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
-        f"[1:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
         f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
@@ -117,8 +168,13 @@ def build_filter_complex_reels(
     main_dur: float,
     srt_rel: str,
     deletion_intervals: list[tuple[float, float]] | None = None,
+    audio_input_idx: int | None = None,
+    audio_sync_offset: float = 0.0,
 ) -> str:
-    """Reels 9:16：只有主影片，1080x1920，用 crop_reels。"""
+    """Reels 9:16：只有主影片，1080x1920，用 crop_reels。
+
+    audio_input_idx：若提供，音訊改從該 input idx 取（外接音檔）並對齊；
+    None = 用主影片原音。"""
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
     style_str = build_style_string(cfg["subtitle_style"])
@@ -139,13 +195,21 @@ def build_filter_complex_reels(
         select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
         select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
 
+    # 主音訊來源：外接音檔（含對齊）或主影片原音
+    if audio_input_idx is not None:
+        a_idx = audio_input_idx
+        align_a = _build_audio_align_filter(audio_sync_offset)
+    else:
+        a_idx = 0
+        align_a = ""
+
     return (
         f"[0:v]subtitles={srt_rel}:force_style='{style_str}',"
         f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
         f"fps={enc['framerate']},format={enc['pix_fmt']},"
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v];"
-        f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+        f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
+        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
 
 
@@ -204,17 +268,48 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     return parts, "seg_v_0", "seg_a_0"
 
 
+def _crop_part_str(crop: dict | None, res_w, res_h) -> str:
+    """把 crop dict 轉成 ffmpeg crop+scale filter 片段；None / 空 dict → 空字串。
+
+    res_w / res_h 可傳 str 或 int（YT 用 cfg 字串 split、Reels 是 int），統一 int() 處理。
+    """
+    if not crop:
+        return ""
+    rw, rh = int(res_w), int(res_h)
+    cw = int(rw * crop["width"])
+    ch = int(rh * crop["height"])
+    cx = int(rw * crop["x"])
+    cy = int(rh * crop["y"])
+    return f"crop={cw}:{ch}:{cx}:{cy},scale={rw}:{rh},"
+
+
+def _cam_crop_parts(base_crop: dict | None, res_w, res_h) -> tuple[str, str]:
+    """把 crop_yt / crop_reels 拆成 (crop_part_a, crop_part_b)。
+
+    base_crop.b（optional dict）= cam B 獨立 crop；沒設就 fallback 用 base 給兩鏡頭。
+    """
+    if not base_crop:
+        return "", ""
+    crop_b = base_crop.get("b") or base_crop
+    return _crop_part_str(base_crop, res_w, res_h), _crop_part_str(crop_b, res_w, res_h)
+
+
 def build_filter_complex_yt_multicam(
     cfg: dict,
     main_dur: float,
     srt_rel: str,
     segments: list[dict],
     sync_offset_b: float = 0.0,
+    audio_input_idx: int | None = None,
+    audio_sync_offset: float = 0.0,
 ) -> str:
     """YT 雙鏡頭：[0]=intro, [1]=cam A, [2]=cam B, [3]=outro image, [4]=outro audio。
 
-    Cam B 先 setpts 對齊主時間軸再燒字幕；音訊一律走 cam A。
+    Cam B 先 setpts 對齊主時間軸再燒字幕；音訊一律走 cam A（除非提供 audio_input_idx）。
     每段依 segments[i].cam 從 [m_a_v]/[m_b_v] trim 出來，最後與 intro/outro concat=n=3。
+
+    audio_input_idx：若提供，主音訊改從該 input idx 取（外接音檔），
+    並套用 audio_sync_offset 對齊；None = 走 cam A 原音。
     """
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
@@ -225,27 +320,28 @@ def build_filter_complex_yt_multicam(
     fmt = enc["pix_fmt"]
     fps = enc["framerate"]
 
-    crop = cfg.get("crop_yt")
-    crop_part = ""
-    if crop:
-        cw = int(int(res_w) * crop["width"])
-        ch = int(int(res_h) * crop["height"])
-        cx = int(int(res_w) * crop["x"])
-        cy = int(int(res_h) * crop["y"])
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+    crop_part_a, crop_part_b = _cam_crop_parts(cfg.get("crop_yt"), res_w, res_h)
+
+    # 主音訊來源：外接音檔（含對齊）或 cam A 原音
+    if audio_input_idx is not None:
+        a_idx_main = audio_input_idx
+        align_a = _build_audio_align_filter(audio_sync_offset)
+    else:
+        a_idx_main = 1
+        align_a = ""
 
     parts: list[str] = []
     # Cam A：不需 PTS 位移（主時間軸就是它的時間軸）
     parts.append(
-        _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt)
+        _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
     )
     parts.append(
-        f"[1:a]aformat=sample_rates={sr}:channel_layouts=stereo[m_a_a]"
+        f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
     # Cam B：先把 PTS 移到主時間軸，subtitles 之後讀到的時間才會對
     parts.append(
         _multicam_cam_prep(
-            2, "b", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt,
+            2, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
             setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
         )
     )
@@ -293,8 +389,14 @@ def build_filter_complex_reels_multicam(
     srt_rel: str,
     segments: list[dict],
     sync_offset_b: float = 0.0,
+    audio_input_idx: int | None = None,
+    audio_sync_offset: float = 0.0,
 ) -> str:
-    """Reels 雙鏡頭：[0]=cam A, [1]=cam B。1080×1920，無 intro/outro。"""
+    """Reels 雙鏡頭：[0]=cam A, [1]=cam B。1080×1920，無 intro/outro。
+
+    audio_input_idx：若提供，音訊改從該 input idx 取（外接音檔）並對齊；
+    None = 用 cam A 原音。
+    """
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
     style_str = build_style_string(cfg["subtitle_style"])
@@ -302,25 +404,26 @@ def build_filter_complex_reels_multicam(
     fmt = enc["pix_fmt"]
     fps = enc["framerate"]
 
-    crop = cfg.get("crop_reels")
-    crop_part = ""
-    if crop:
-        cw = int(res_w * crop["width"])
-        ch = int(res_h * crop["height"])
-        cx = int(res_w * crop["x"])
-        cy = int(res_h * crop["y"])
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+    crop_part_a, crop_part_b = _cam_crop_parts(cfg.get("crop_reels"), res_w, res_h)
+
+    # 主音訊來源：外接音檔（含對齊）或 cam A 原音
+    if audio_input_idx is not None:
+        a_idx_main = audio_input_idx
+        align_a = _build_audio_align_filter(audio_sync_offset)
+    else:
+        a_idx_main = 0
+        align_a = ""
 
     parts: list[str] = []
     parts.append(
-        _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt)
+        _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
     )
     parts.append(
-        f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo[m_a_a]"
+        f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
     parts.append(
         _multicam_cam_prep(
-            1, "b", srt_rel, style_str, res_w, res_h, crop_part, fps, fmt,
+            1, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
             setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
         )
     )
@@ -394,6 +497,22 @@ def prepare_assembly(
         srt = ep.main_srt()
         if not srt.exists():
             raise AssembleError("找不到字幕（_v2 或原 srt）", exit_code=3)
+
+    # 外接音檔（T64）：cfg.audio.path 有設且檔案存在 → 主音訊改走外接，並套 sync_offset 對齊
+    # 字幕原本錄在外接音檔時間軸；先 shift -sync_offset 對到 cam A 時間軸後，
+    # 後面的 deletion_intervals / segment_plan / ffmpeg subtitles= 才會用到同一份時間軸。
+    audio_cfg = cfg.get("audio") or {}
+    audio_file: Path | None = None
+    audio_sync_offset = 0.0
+    if audio_cfg.get("path"):
+        audio_file = ep.resolve_episode_path(audio_cfg["path"])
+        if not audio_file.exists():
+            raise AssembleError(f"找不到外接音檔：{audio_file}", exit_code=3)
+        audio_sync_offset = float(audio_cfg.get("sync_offset") or 0.0)
+        if abs(audio_sync_offset) >= 0.001:
+            shifted_srt = ep.subdir("work") / "_v2_aligned.srt"
+            shift_srt(srt, shifted_srt, -audio_sync_offset)
+            srt = shifted_srt
 
     # 輸出路徑分支
     if output_kind == "yt":
@@ -483,13 +602,25 @@ def prepare_assembly(
             str(cam_b_video.relative_to(cwd)) if cam_b_video.is_relative_to(cwd) else str(cam_b_video)
         )
 
+    # 外接音檔（T64）：audio_file / audio_sync_offset 已在 SRT shift 區塊驗證過，
+    # 這裡只把 ffmpeg input 用的相對路徑算出來。
+    audio_rel_str: str | None = None
+    if audio_file is not None:
+        audio_rel_str = (
+            str(audio_file.relative_to(cwd)) if audio_file.is_relative_to(cwd) else str(audio_file)
+        )
+
     if output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
         if multicam:
+            # yt multi inputs：intro(0) + camA(1) + camB(2) + outro_image(3) + outro_audio(4) → 外接音檔 = 5
+            audio_input_idx = 5 if audio_rel_str else None
             fc = build_filter_complex_yt_multicam(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
+                audio_input_idx=audio_input_idx,
+                audio_sync_offset=audio_sync_offset,
             )
             cmd = [
                 "ffmpeg", "-y",
@@ -498,6 +629,10 @@ def prepare_assembly(
                 "-i", cam_b_rel_str,
                 "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
                 "-i", str(outro_audio),
+            ]
+            if audio_rel_str:
+                cmd += ["-i", audio_rel_str]
+            cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
                 "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
@@ -508,14 +643,24 @@ def prepare_assembly(
                 tmp_out_rel,
             ]
         else:
-            fc = build_filter_complex_yt(cfg, main_dur=main_dur, srt_rel=srt_rel,
-                                         deletion_intervals=deletion_intervals)
+            # yt non-multi inputs：intro(0) + main(1) + outro_image(2) + outro_audio(3) → 外接音檔 = 4
+            audio_input_idx = 4 if audio_rel_str else None
+            fc = build_filter_complex_yt(
+                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                deletion_intervals=deletion_intervals,
+                audio_input_idx=audio_input_idx,
+                audio_sync_offset=audio_sync_offset,
+            )
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(intro),
                 "-i", main_rel,
                 "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
                 "-i", str(outro_audio),
+            ]
+            if audio_rel_str:
+                cmd += ["-i", audio_rel_str]
+            cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
                 "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
@@ -528,14 +673,22 @@ def prepare_assembly(
         total_dur = intro_dur + main_dur + outro_dur
     else:
         if multicam:
+            # reels multi inputs：camA(0) + camB(1) → 外接音檔 = 2
+            audio_input_idx = 2 if audio_rel_str else None
             fc = build_filter_complex_reels_multicam(
                 cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
+                audio_input_idx=audio_input_idx,
+                audio_sync_offset=audio_sync_offset,
             )
             cmd = [
                 "ffmpeg", "-y",
                 "-i", main_rel,
                 "-i", cam_b_rel_str,
+            ]
+            if audio_rel_str:
+                cmd += ["-i", audio_rel_str]
+            cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
                 "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
@@ -546,11 +699,21 @@ def prepare_assembly(
                 tmp_out_rel,
             ]
         else:
-            fc = build_filter_complex_reels(cfg, main_dur=main_dur, srt_rel=srt_rel,
-                                            deletion_intervals=deletion_intervals)
+            # reels non-multi inputs：main(0) → 外接音檔 = 1
+            audio_input_idx = 1 if audio_rel_str else None
+            fc = build_filter_complex_reels(
+                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                deletion_intervals=deletion_intervals,
+                audio_input_idx=audio_input_idx,
+                audio_sync_offset=audio_sync_offset,
+            )
             cmd = [
                 "ffmpeg", "-y",
                 "-i", main_rel,
+            ]
+            if audio_rel_str:
+                cmd += ["-i", audio_rel_str]
+            cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
                 "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
