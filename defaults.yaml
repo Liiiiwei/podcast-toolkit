@@ -14,6 +14,25 @@ resegment:
 
 common_fixes: []
 
+# Gemini 轉字幕設定（podcast subtitle 用）
+gemini:
+  model: "gemini-2.5-flash"
+  # 字幕格式規則（會注入 prompt）
+  max_chars_per_line: 17
+  max_lines_per_card: 1
+  punctuation: "half_width"      # half_width | full_width
+  allow_ellipsis: false
+  # 自訂規則（list of str，每行一條，會逐條附在 prompt 末段）
+  extra_rules: []
+
+# 通用詞庫（所有集共用，會與 episode.yaml 的 glossary 合併）
+# 格式：
+#   - canonical: "正確寫法"
+#     sounds_like: ["可能誤聽 1", "可能誤聽 2"]   # 可省略
+#     note: "說明"                                  # 可省略
+# 也可直接寫純字串：- "Liwei Sia"
+common_glossary: []
+
 subtitle_style:
   font_name: "Hiragino Sans GB"
   font_size: 24
