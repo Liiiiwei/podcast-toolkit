@@ -101,11 +101,12 @@ def _list_episode_files(root: Path) -> list[dict]:
         ep = Episode(root)
         main_video_path = ep.main_video()
         main_srt_path = ep.main_srt()
-        v2_srt_path = ep.output_v2_srt()
+        # active_srt 反映 cam-modal 手選；override 沒設時仍會等於 _v2.srt
+        active_srt_path = ep.active_srt()
         yt_out = ep.output_yt_video()
         reels_out = ep.output_reels_video()
     except Exception:
-        main_video_path = main_srt_path = v2_srt_path = None
+        main_video_path = main_srt_path = active_srt_path = None
         yt_out = reels_out = None
 
     for p in sorted(root.rglob("*")):
@@ -126,7 +127,7 @@ def _list_episode_files(root: Path) -> list[dict]:
 
         if main_video_path and p == main_video_path:
             kind = "main_video"
-        elif v2_srt_path and p == v2_srt_path:
+        elif active_srt_path and p == active_srt_path:
             kind = "subtitle"
             is_active_srt = True
         elif main_srt_path and p == main_srt_path:

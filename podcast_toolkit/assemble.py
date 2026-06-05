@@ -491,12 +491,14 @@ def prepare_assembly(
         if not main_video.exists():
             raise AssembleError(f"找不到正片：{main_video}", exit_code=3)
 
-    # 字幕：用 v2（resegment 輸出）優先，沒有就回退原 srt
-    srt = ep.output_v2_srt()
+    # 字幕：尊重 yaml srt_path override（cam-modal 手選），否則 fallback _v2 → 原 srt
+    srt = ep.active_srt()
     if not srt.exists():
-        srt = ep.main_srt()
+        srt = ep.output_v2_srt()
         if not srt.exists():
-            raise AssembleError("找不到字幕（_v2 或原 srt）", exit_code=3)
+            srt = ep.main_srt()
+            if not srt.exists():
+                raise AssembleError("找不到字幕（srt_path / _v2 / 原 srt 都不存在）", exit_code=3)
 
     # 外接音檔（T64）：cfg.audio.path 有設且檔案存在 → 主音訊改走外接，並套 sync_offset 對齊
     # 字幕原本錄在外接音檔時間軸；先 shift -sync_offset 對到 cam A 時間軸後，

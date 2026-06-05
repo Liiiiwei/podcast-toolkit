@@ -139,11 +139,13 @@ def load_state(ep: Episode) -> dict[str, Any]:
     v2 = ep.output_v2_srt()
     needs_transcribe = not v2.exists()
     cards = [] if needs_transcribe else srt_io.parse(v2.read_text(encoding="utf-8"))
-    # 字幕檔路徑（顯示用）：以 ep.dir 為基底的相對路徑；不存在仍照樣回，前端標「未產生」
+    # 字幕檔路徑（顯示用）：尊重 yaml srt_path override，否則 fallback _v2.srt；
+    # cards 永遠來自 _v2.srt（編輯器只編這一份），override 只影響「最終合成讀哪份」
+    active = ep.active_srt()
     try:
-        srt_rel = str(v2.relative_to(ep.dir))
+        srt_rel = str(active.relative_to(ep.dir))
     except ValueError:
-        srt_rel = str(v2)
+        srt_rel = str(active)
     # cam A：展開 {name} placeholder 再回傳；若 candidates 裡找得到完全相同的就直接用，
     # 否則 fallback 到展開後的真實檔名，避免前端 select 出現帶 placeholder 的孤兒選項
     cam_a_raw = (ep.cfg.get("cameras") or {}).get("a") or ep.cfg.get("main_video") or ""
