@@ -140,13 +140,24 @@ def run_gemini_pipeline(
         resp = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[uploaded, prompt],
-            config=genai_types.GenerateContentConfig(response_mime_type="application/json"),
+            # max_output_tokens 拉到 Flash 上限 65536；不設的話預設 8192，長集 STT
+            # 字幕陣列會被截斷 → json.loads 壞在尾段（症狀：頭看似正常的 JSON）
+            config=genai_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=65536,
+            ),
         )
         text = (resp.text or "").strip()
         try:
             words = json.loads(text)
         except json.JSONDecodeError as e:
-            raise TranscribeError(f"Gemini 回應不是 JSON：{text[:200]}") from e
+            # 同時顯示頭尾 + 長度 + decode 位置，方便診斷截斷 vs 格式錯誤
+            head = text[:200]
+            tail = text[-200:] if len(text) > 200 else ""
+            raise TranscribeError(
+                f"Gemini 回應不是 JSON（長度={len(text)}, decode_pos={e.pos}, "
+                f"err={e.msg}）\n頭 200 字：{head}\n尾 200 字：{tail}"
+            ) from e
     except TranscribeError:
         raise
     except Exception as e:
@@ -157,6 +168,13 @@ def run_gemini_pipeline(
     if not words:
         raise TranscribeError("Gemini 沒回傳任何字幕")
     words = [_convert_word(w, typo_entries=typo_entries) for w in words]
+    # Gemini 2.5 Flash 偶爾把 start/end 用 mod 60 回傳（只剩秒分量），
+    # 導致 SRT 內 segment 時間不單調遞增 → 預覽時右側字幕卡片亂跳。
+    # 用單調遞增假設重建絕對秒。
+    words = _unwrap_mod60_times(words)
+    # Gemini 也常把一句話拆成多條 entry 但給相同 start/end → 預覽時
+    # activeCardAt(t) 永遠只回第一條，後面的卡片不顯示。把同時段平均切分。
+    words = _dedup_overlapping_times(words)
     cards = _words_to_cards(words)
     out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
     return out_srt
@@ -310,7 +328,7 @@ def build_gemini_prompt(
     優先順序最高（來賓姓名 / 本集獨有的品牌名）。
     """
     base = (
-        "請把這段中文音訊轉成繁體中文字幕，做到以下五件事：\n"
+        "請把這段中文音訊轉成繁體中文字幕，做到以下六件事：\n"
         "1. 依語意斷句：每句 15-30 字為佳；不要把完整意思切成兩半。\n"
         "2. 修正同音 / 近音錯字：依上下文判斷正確用字（例如「在」vs「再」、"
         "「的」vs「得」vs「地」、「製作」vs「致勝」這類）。\n"
@@ -318,8 +336,13 @@ def build_gemini_prompt(
         "可以刪除；但口語感的「然後」「所以」如果承載語意請保留。\n"
         "4. 英文人名 / 品牌 / 技術名詞保留原拼寫：例如 Claude、ChatGPT、"
         "Python、Notion 等不要硬翻譯成中文。\n"
-        "5. 輸出純 JSON 陣列，每筆 {\"start\": 秒（float）, \"end\": 秒（float）, "
-        "\"text\": 字串}。不要包含 markdown 反引號。"
+        "5. text 內**絕對不要使用任何標點符號**：句號、逗號、問號、驚嘆號、頓號、"
+        "冒號、分號、引號、括號、破折號等中英文標點全部不要。需要停頓或斷詞時"
+        "用「半形空格」區隔即可（例：「今天我們要聊一個很重要的主題 就是 AI」）。\n"
+        "6. 輸出純 JSON 陣列，每筆 {\"start\": 秒（float）, \"end\": 秒（float）, "
+        "\"text\": 字串}。不要包含 markdown 反引號。\n"
+        "重要：start/end 是「從音訊 0 秒起的累計絕對秒數」，必須單調遞增；"
+        "請勿用 mm:ss 拆開或對 60 取餘數（例如第 62 秒要寫成 62.0，不是 2.0）。"
     )
 
     if glossary:
@@ -376,6 +399,64 @@ def _s2tw(text: str) -> str:
             ) from e
         _OPENCC = OpenCC("s2tw")
     return _OPENCC.convert(text)
+
+
+def _unwrap_mod60_times(words: list[dict]) -> list[dict]:
+    """Gemini 2.5 Flash 常把 start/end 用「秒 mod 60」回傳（少了分鐘分量）。
+    例：seg N end=58.764 → seg N+1 start=59.204 end=1.764（end wrap）
+         → seg N+2 start=2.224 end=7.954（start wrap，實為 62.224）
+    用單調遞增 + 60s 步進重建絕對秒；若 start 突然倒退 >30s，視為跨分鐘。
+    """
+    out = []
+    offset = 0.0
+    last_end_abs = 0.0
+    for w in words:
+        s = float(w["start"]) + offset
+        e = float(w["end"]) + offset
+        # start 比上次 end 倒退 >30s → 視為 wrap，補一個 60s
+        while s + 30 < last_end_abs:
+            offset += 60.0
+            s += 60.0
+            e += 60.0
+        # end < start → 該 segment 的 end 在分鐘界線後 wrap，補 60s
+        while e < s:
+            e += 60.0
+        out.append({**w, "start": s, "end": e})
+        last_end_abs = e
+    return out
+
+
+def _dedup_overlapping_times(words: list[dict]) -> list[dict]:
+    """相鄰 word 共用同一個 start/end（Gemini 把整段話拆成多條 entry 但給同時間）→
+    activeCardAt 線性掃描永遠回傳第一個 → 後面卡片在預覽中被遮蔽。
+    把連續同時段的 entries 平均切分時間，讓每張卡片有不重疊的播放窗。
+    """
+    if not words:
+        return words
+    out: list[dict] = []
+    i = 0
+    while i < len(words):
+        s = float(words[i]["start"])
+        e = float(words[i]["end"])
+        j = i + 1
+        while (
+            j < len(words)
+            and float(words[j]["start"]) == s
+            and float(words[j]["end"]) == e
+        ):
+            j += 1
+        n = j - i
+        if n == 1 or e <= s:
+            out.append(words[i])
+        else:
+            step = (e - s) / n
+            for k in range(n):
+                w = dict(words[i + k])
+                w["start"] = s + step * k
+                w["end"] = s + step * (k + 1)
+                out.append(w)
+        i = j
+    return out
 
 
 def _words_to_cards(words: list[dict]) -> list[dict]:
