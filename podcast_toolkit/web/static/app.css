@@ -987,9 +987,6 @@ dialog.modal::backdrop {
   font-family: var(--font-mono);
   word-break: break-all;
 }
-.cam-overview-srt {
-  margin-top: var(--space-xs);
-}
 .cam-align-all {
   padding: var(--space-sm) var(--space-md);
   background: var(--accent-soft);

@@ -529,9 +529,15 @@
               <div id="overview-audio" class="cam-overview-value">—</div>
             </div>
           </div>
-          <div class="cam-overview-srt">
-            <div class="cam-overview-label">字幕檔（編輯器當前在編輯這份）</div>
-            <div id="overview-srt" class="cam-overview-value">—</div>
+          <label
+            class="modal-label modal-label-spaced"
+            title="預設用編輯器當前在編輯的 _v2.srt；想拿其他份（如 03_成品/_final.srt 原始稿）就在這選。"
+          >
+            <span>字幕檔</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <select id="srt-select"></select>
           </div>
         </div>
 

@@ -638,6 +638,9 @@ async function loadEpisodeState() {
     : [];
   state.camAPath = data.cam_a_path || "";
   state.srtPath = data.srt_path || "";
+  state.srtCandidates = Array.isArray(data.srt_candidates)
+    ? data.srt_candidates
+    : [];
   // 字幕時間軸對齊：原始字幕是 cam A 時間軸；外接音檔比 cam A 慢 sync_offset 秒
   // → 字幕 start/end 都要往前推 -audioSyncOffset，讓字幕顯示時機跟外接音檔同步
   if (state.audioPath && state.audioSyncOffset) {
@@ -2484,12 +2487,12 @@ $("#settings-form").addEventListener("submit", async (e) => {
 
 // === 雙鏡頭 cam B 設定 modal（T23a-followup：消除手改 yaml） ===
 function _renderCamOverview() {
-  // 即時把目前 cam B / 音檔 / srt 顯示在「最終合成總覽」區塊
+  // 即時把目前 cam B / 音檔顯示在「最終合成總覽」區塊；
+  // cam A / 字幕已經是 select 形式，自己會顯示，不需要鏡像
   const camB = $("#cam-b-select").value || "";
   const audio = $("#audio-select").value || "";
   $("#overview-cam-b").textContent = camB || "（無，單鏡頭）";
   $("#overview-audio").textContent = audio || "（無，用鏡頭原音）";
-  $("#overview-srt").textContent = state.srtPath || "（尚未產生 _v2.srt）";
 }
 
 function openCamModal() {
@@ -2557,6 +2560,28 @@ function openCamModal() {
     ? String(state.audioSyncOffset)
     : "";
 
+  // 字幕下拉（從 03_成品/ + 04_工作檔/ + 集根目錄挑 .srt）
+  const srtSel = $("#srt-select");
+  srtSel.innerHTML = "";
+  const srtOpts = new Set(state.srtCandidates || []);
+  if (state.srtPath) srtOpts.add(state.srtPath);
+  if (srtOpts.size === 0) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "（尚未產生 _v2.srt）";
+    srtSel.appendChild(o);
+    srtSel.disabled = true;
+  } else {
+    srtSel.disabled = false;
+    for (const path of [...srtOpts].sort()) {
+      const o = document.createElement("option");
+      o.value = path;
+      o.textContent = path;
+      if (path === state.srtPath) o.selected = true;
+      srtSel.appendChild(o);
+    }
+  }
+
   _renderCamOverview();
   showModal("cam-modal");
 }
@@ -2605,6 +2630,7 @@ function _buildCamModalSavePayload() {
   const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
+  const srtPath = $("#srt-select").value || "";
   const offset = Number($("#cam-sync-offset-b").value || 0);
   const audioOffset = Number($("#audio-sync-offset").value || 0);
   return {
@@ -2625,6 +2651,7 @@ function _buildCamModalSavePayload() {
       path: audioPath,
       sync_offset: Number.isFinite(audioOffset) ? audioOffset : 0,
     },
+    srt_path: srtPath,
   };
 }
 

@@ -104,6 +104,32 @@ def _list_audio_candidates(ep: Episode) -> list[str]:
     return out
 
 
+def _list_srt_candidates(ep: Episode) -> list[str]:
+    """找字幕檔候選；掃集根目錄 + 03_成品/ + 04_工作檔/，回相對路徑。
+
+    04_工作檔/<name>_v2.srt 是編輯器當前在編輯的；03_成品/<name>_final.srt
+    是原始轉錄。讓使用者在 cam-modal 手動挑要拿哪份做最終合成。
+    """
+    out: list[str] = []
+    for entry in sorted(ep.dir.iterdir()):
+        if not entry.is_file():
+            continue
+        if entry.suffix.lower() != ".srt":
+            continue
+        out.append(entry.name)
+    for sub in ("03_成品", "04_工作檔"):
+        d = ep.dir / sub
+        if not d.is_dir():
+            continue
+        for entry in sorted(d.iterdir()):
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() != ".srt":
+                continue
+            out.append(str(entry.relative_to(ep.dir)))
+    return out
+
+
 def load_state(ep: Episode) -> dict[str, Any]:
     """讀 episode.yaml + _v2.srt → 給前端的初始狀態。
 
@@ -158,6 +184,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cam_a_candidates": _list_mother_videos(ep),
         "cam_a_path": cam_a_rel,
         "srt_path": srt_rel,
+        # 字幕候選（_v2.srt + 原始轉錄 + 集根目錄 .srt）；前端 cam-modal 下拉用
+        "srt_candidates": _list_srt_candidates(ep),
     }
 
 
@@ -238,6 +266,14 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["camera_sync_offset"] = {"b": sync_b}
         else:
             data.pop("camera_sync_offset", None)
+
+    # 字幕檔路徑：cam-modal 手動選哪份 .srt 進最終合成。空字串 → 移除 key，回退預設 _v2.srt。
+    if "srt_path" in payload:
+        srt_path = (payload.get("srt_path") or "").strip()
+        if srt_path:
+            data["srt_path"] = srt_path
+        else:
+            data.pop("srt_path", None)
 
     # 外接音檔 + 同步偏移；用 key-presence 區分「沒動 UI」vs「明確清空」
     if "audio" in payload:
