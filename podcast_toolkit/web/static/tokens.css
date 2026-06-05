@@ -83,6 +83,18 @@
   --icon-md: 16px;
   --icon-lg: 20px;
 
+  /* font-size scale：UI 字級的統一階梯 */
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 15px;
+  --text-xl: 16px;
+
+  /* 雙鏡頭專案語意色：A 深藍、B 用品牌橘（共用 --accent） */
+  --cam-a: #2a3a5a;
+  --cam-a-soft: rgba(42, 58, 90, 0.12);
+
   /* timing */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
   --duration-fast: 120ms;
