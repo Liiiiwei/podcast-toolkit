@@ -519,16 +519,72 @@
           <div class="modal-row">
             <select id="cam-a-select"></select>
           </div>
-          <div class="modal-row cam-overview-row">
-            <div class="cam-overview-cell">
-              <div class="cam-overview-label">Cam B 影片</div>
-              <div id="overview-cam-b" class="cam-overview-value">—</div>
-            </div>
-            <div class="cam-overview-cell">
-              <div class="cam-overview-label">外接音檔</div>
-              <div id="overview-audio" class="cam-overview-value">—</div>
-            </div>
+          <label
+            class="modal-label modal-label-spaced"
+            title="選「無」可移除 cam B；雙機集才會顯示字幕卡 A/B 切換。"
+          >
+            <span>Cam B 影片（從 01_母帶/ 挑）</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <select id="cam-b-select"></select>
           </div>
+          <div class="modal-hint" id="cam-b-hint" hidden></div>
+          <label
+            class="modal-label modal-label-spaced"
+            title="cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽兩支影片前 120 秒做音訊互相關；不準時用『手動標記』三個聲音事件 fallback。"
+          >
+            <span>Cam B 同步偏移（秒）</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <input
+              type="number"
+              id="cam-sync-offset-b"
+              step="0.01"
+              placeholder="0.0"
+            />
+            <button type="button" id="cam-auto-align" class="btn btn-ghost">
+              <span data-icon="target"></span>
+              <span>自動對齊</span>
+            </button>
+            <button type="button" id="cam-manual-align" class="btn btn-ghost">
+              <span data-icon="hand"></span>
+              <span>手動標記</span>
+            </button>
+          </div>
+
+          <label
+            class="modal-label modal-label-spaced"
+            title="從 01_母帶/ 或 02_素材/ 挑外接麥克風的 .wav/.mp3/.m4a；選「無」表示不用。"
+          >
+            <span data-icon="mic" data-icon-size="14"></span>
+            <span>外接音檔（取代鏡頭原音用）</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <select id="audio-select"></select>
+          </div>
+          <label
+            class="modal-label modal-label-spaced"
+            title="音檔比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽 cam A 跟音檔前 120 秒做互相關。合成時會自動套這個偏移，外接音檔取代鏡頭原音。"
+          >
+            <span>音檔同步偏移（秒）</span>
+            <span class="modal-label-help" aria-hidden="true">?</span>
+          </label>
+          <div class="modal-row">
+            <input
+              type="number"
+              id="audio-sync-offset"
+              step="0.01"
+              placeholder="0.0"
+            />
+            <button type="button" id="audio-auto-align" class="btn btn-ghost">
+              <span data-icon="target"></span>
+              <span>自動對齊</span>
+            </button>
+          </div>
+
           <label
             class="modal-label modal-label-spaced"
             title="預設用編輯器當前在編輯的 _v2.srt；想拿其他份（如 03_成品/_final.srt 原始稿）就在這選。"
@@ -552,90 +608,8 @@
           </button>
         </div>
         <div class="modal-hint cam-align-all-hint">
-          下方「進階」展開後選好 cam B / 音檔來源，再按這顆就會一次算完並寫回
-          episode.yaml。
+          選好 cam B / 音檔來源後按這顆，會一次算完同步偏移並寫回 episode.yaml。
         </div>
-
-        <details class="modal-advanced" id="cam-advanced">
-          <summary class="modal-advanced-summary">
-            <span data-icon="wrench" data-icon-size="14"></span>
-            <span>進階：選擇來源與手動調整偏移</span>
-            <span
-              data-icon="chevron-down"
-              data-icon-size="14"
-              class="modal-advanced-caret"
-            ></span>
-          </summary>
-          <div class="modal-advanced-body">
-            <label
-              class="modal-label"
-              title="選「無」可移除 cam B；雙機集才會顯示字幕卡 A/B 切換。"
-            >
-              <span>Cam B 影片（從 01_母帶/ 挑）</span>
-              <span class="modal-label-help" aria-hidden="true">?</span>
-            </label>
-            <div class="modal-row">
-              <select id="cam-b-select"></select>
-            </div>
-            <div class="modal-hint" id="cam-b-hint" hidden></div>
-            <label
-              class="modal-label modal-label-spaced"
-              title="cam B 比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽兩支影片前 120 秒做音訊互相關；不準時用『手動標記』三個聲音事件 fallback。"
-            >
-              <span>Cam B 同步偏移（秒）</span>
-              <span class="modal-label-help" aria-hidden="true">?</span>
-            </label>
-            <div class="modal-row">
-              <input
-                type="number"
-                id="cam-sync-offset-b"
-                step="0.01"
-                placeholder="0.0"
-              />
-              <button type="button" id="cam-auto-align" class="btn btn-ghost">
-                <span data-icon="target"></span>
-                <span>自動對齊</span>
-              </button>
-              <button type="button" id="cam-manual-align" class="btn btn-ghost">
-                <span data-icon="hand"></span>
-                <span>手動標記</span>
-              </button>
-            </div>
-
-            <hr class="modal-divider" />
-
-            <label
-              class="modal-label"
-              title="從 01_母帶/ 或 02_素材/ 挑外接麥克風的 .wav/.mp3/.m4a；選「無」表示不用。"
-            >
-              <span data-icon="mic" data-icon-size="14"></span>
-              <span>外接音檔（取代鏡頭原音用）</span>
-              <span class="modal-label-help" aria-hidden="true">?</span>
-            </label>
-            <div class="modal-row">
-              <select id="audio-select"></select>
-            </div>
-            <label
-              class="modal-label modal-label-spaced"
-              title="音檔比 cam A 慢幾秒就填正值；0 表示已對齊。自動對齊抽 cam A 跟音檔前 120 秒做互相關。合成時會自動套這個偏移，外接音檔取代鏡頭原音。"
-            >
-              <span>音檔同步偏移（秒）</span>
-              <span class="modal-label-help" aria-hidden="true">?</span>
-            </label>
-            <div class="modal-row">
-              <input
-                type="number"
-                id="audio-sync-offset"
-                step="0.01"
-                placeholder="0.0"
-              />
-              <button type="button" id="audio-auto-align" class="btn btn-ghost">
-                <span data-icon="target"></span>
-                <span>自動對齊</span>
-              </button>
-            </div>
-          </div>
-        </details>
       </div>
       <div class="modal-actions">
         <button id="cam-cancel" type="button" class="btn btn-ghost">

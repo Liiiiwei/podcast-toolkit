@@ -944,12 +944,6 @@ dialog.modal::backdrop {
   background: var(--surface-sunken);
   border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
-.modal-divider {
-  margin: var(--space-md) 0;
-  border: none;
-  border-top: 1px solid var(--border);
-}
-
 /* —— Cam modal「最終合成總覽」區塊 —— */
 .cam-overview {
   padding: var(--space-md);
@@ -968,24 +962,6 @@ dialog.modal::backdrop {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-.cam-overview-row {
-  margin-top: var(--space-xs);
-}
-.cam-overview-cell {
-  flex: 1;
-  min-width: 0;
-}
-.cam-overview-label {
-  font-size: 11px;
-  color: var(--text-dim);
-  margin-bottom: 2px;
-}
-.cam-overview-value {
-  font-size: 13px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  word-break: break-all;
 }
 .cam-align-all {
   padding: var(--space-sm) var(--space-md);

@@ -2485,16 +2485,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
   }
 });
 
-// === 雙鏡頭 cam B 設定 modal（T23a-followup：消除手改 yaml） ===
-function _renderCamOverview() {
-  // 即時把目前 cam B / 音檔顯示在「最終合成總覽」區塊；
-  // cam A / 字幕已經是 select 形式，自己會顯示，不需要鏡像
-  const camB = $("#cam-b-select").value || "";
-  const audio = $("#audio-select").value || "";
-  $("#overview-cam-b").textContent = camB || "（無，單鏡頭）";
-  $("#overview-audio").textContent = audio || "（無，用鏡頭原音）";
-}
-
+// === 鏡頭與音檔對齊 modal（4 個檔案全部手動下拉） ===
 function openCamModal() {
   // cam A 下拉（從 01_母帶/*.mp4 挑）
   const camASel = $("#cam-a-select");
@@ -2582,17 +2573,11 @@ function openCamModal() {
     }
   }
 
-  _renderCamOverview();
   showModal("cam-modal");
 }
 
 $("#cam-btn").addEventListener("click", openCamModal);
 $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
-
-// 三個 select 變動就同步刷新「最終合成總覽」，使用者馬上看見組合
-for (const id of ["cam-a-select", "cam-b-select", "audio-select"]) {
-  document.getElementById(id).addEventListener("change", _renderCamOverview);
-}
 
 // T23b: 自動對齊（音訊互相關）。前端只負責叫 endpoint + 把結果填回 input；
 // 寫 yaml 仍走「儲存」按鈕，避免 race + 跟現有設計一致。
