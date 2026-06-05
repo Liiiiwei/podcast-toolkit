@@ -9,3 +9,8 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+
+# Session 截圖 / Playwright MCP / design review 工件 — 留本機就好
+*.png
+.playwright-mcp/
+design-review/

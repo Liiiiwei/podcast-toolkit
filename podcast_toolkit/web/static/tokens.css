@@ -1,0 +1,106 @@
+/* Studio Dark · Design Tokens
+ *
+ * 兩個 UI（dashboard + edit）共用統一深色，靈感取自 DaVinci / Logic Pro。
+ * 命名規則：
+ *   --space-*        間距 scale（4/8/12/16/24/32）
+ *   --radius-*       圓角 scale（4/6/8/12）
+ *   --bg / --surface / --raised   背景三層
+ *   --border / --border-strong    邊框兩層
+ *   --text / --text-dim / --text-faint  文字三層
+ *   --accent / --accent-hover / --accent-soft / --accent-ring  橘色 accent
+ *   --danger / --success / --warning   語意色
+ *   --font-sans / --font-mono   字體 stack
+ *   --icon-sm / --icon-md / --icon-lg  icon 尺寸
+ */
+
+/* 字體：IBM Plex Sans（技術感的人文 sans）+ JetBrains Mono（時碼/路徑）
+ * 無網路時 fallback 到系統字體，視覺不會崩 */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+:root {
+  /* spacing scale */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 24px;
+  --space-2xl: 32px;
+
+  /* radius scale */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* shadow */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.6);
+
+  /* 三層背景：bg = 整頁底色，surface = 卡片/topbar，raised = 互動元件 */
+  --bg: #0e0e11;
+  --surface: #16161a;
+  --surface-raised: #1f1f24;
+  --surface-sunken: #0a0a0c; /* code blocks / input */
+
+  /* 邊框：default 接近 surface 的細線，strong 用於 hover / focus 對比 */
+  --border: #26262d;
+  --border-strong: #3a3a44;
+
+  /* 文字：text 主、dim 次、faint 第三層；對比都 ≥ 7:1（AAA） */
+  --text: #ebebee;
+  --text-dim: #9b9ba8;
+  --text-faint: #6c6c78;
+
+  /* Accent：偏暖橘，pro tool 感（避免 #ff6b35 的鮮豔 saas 感） */
+  --accent: #ff7849;
+  --accent-hover: #ff9168;
+  --accent-soft: rgba(255, 120, 73, 0.1);
+  --accent-ring: rgba(255, 120, 73, 0.45);
+
+  /* 語意色 */
+  --danger: #ff6b6b;
+  --danger-soft: rgba(255, 107, 107, 0.12);
+  --success: #5fce8b;
+  --success-soft: rgba(95, 206, 139, 0.12);
+  --warning: #f0b95a;
+  --warning-soft: rgba(240, 185, 90, 0.12);
+
+  /* modal backdrop */
+  --backdrop-dim: rgba(0, 0, 0, 0.55);
+  --backdrop-strong: rgba(0, 0, 0, 0.75);
+
+  /* 字體 stack */
+  --font-sans:
+    "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", "Noto Sans TC", "PingFang TC", sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas,
+    monospace;
+
+  /* icon 尺寸 */
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+
+  /* timing */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+}
+
+/* edit UI 維持掛 body.theme-dark，避免改動所有 selector；但兩個主題已合一。 */
+body.theme-dark {
+  --bg: #0e0e11;
+  --surface: #16161a;
+  --surface-raised: #1f1f24;
+  --border: #26262d;
+  --border-strong: #3a3a44;
+  --text: #ebebee;
+  --text-dim: #9b9ba8;
+  --text-faint: #6c6c78;
+  --accent: #ff7849;
+  --accent-hover: #ff9168;
+  --accent-soft: rgba(255, 120, 73, 0.1);
+  --accent-ring: rgba(255, 120, 73, 0.45);
+}
