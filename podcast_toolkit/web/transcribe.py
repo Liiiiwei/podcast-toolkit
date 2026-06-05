@@ -38,6 +38,7 @@ def run_grok_pipeline(
     work_dir: Path,
     progress=None,
     typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,  # 統一介面接受；Grok STT 無 prompt 故僅靠 typo_entries 兜底
 ) -> Path:
     """完整 pipeline：壓縮 → 上傳 → 簡轉繁 → 套錯字字典 → 寫 SRT。
 
@@ -45,9 +46,11 @@ def run_grok_pipeline(
     out_srt:   最終輸出位置（通常是 ep.output_v2_srt()）
     work_dir:  04_工作檔/，存壓縮後的暫存 mp3
     progress:  callable(phase: str, percent: float)，可選；用來餵 background job 狀態
-    typo_entries: 使用者錯字字典 [{wrong, right, note}]；None 或空 list 都跳過
+    typo_entries: 使用者錯字字典 [{wrong, right, note}]；None 或空 list 都跳過。
+                  glossary 的 sounds_like→canonical 也由 run_pipeline 展開塞進這個 list。
     回傳：out_srt 路徑
     """
+    del glossary  # 訊號明確：Grok pipeline 不用 prompt-injected glossary
     if not shutil.which("ffmpeg"):
         raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
 
@@ -91,11 +94,13 @@ def run_gemini_pipeline(
     work_dir: Path,
     progress=None,
     typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,
 ) -> Path:
     """Gemini STT pipeline：壓縮 → Files API 上傳 → generateContent → s2tw → 寫 SRT。
 
-    typo_entries：使用者錯字字典，會塞進 prompt 讓 Gemini 上下文判斷，
-                  並在 _convert_word 兜底做 str.replace。
+    typo_entries：使用者錯字字典（全域），塞進 prompt + _convert_word 兜底。
+    glossary：本集專有名詞詞庫（episode-level），同樣塞進 prompt；
+              sounds_like→canonical 由 run_pipeline 統一展開到 typo_entries。
     """
     if not shutil.which("ffmpeg"):
         raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
@@ -131,7 +136,7 @@ def run_gemini_pipeline(
                 raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
             time.sleep(1)
             uploaded = client.files.get(name=uploaded.name)
-        prompt = build_gemini_prompt(typo_entries)
+        prompt = build_gemini_prompt(typo_entries, glossary=glossary)
         resp = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[uploaded, prompt],
@@ -173,19 +178,51 @@ def run_pipeline(
     work_dir: Path,
     progress=None,
     typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,
 ) -> Path:
-    """根據 provider 分流到對應 pipeline。未知 provider 丟 TranscribeError。"""
+    """根據 provider 分流到對應 pipeline。未知 provider 丟 TranscribeError。
+
+    glossary 兩用：
+    - 整包丟給 gemini provider，在 prompt 注入「必須寫成 X」段落
+    - sounds_like→canonical 展開成 typo_entries 形式 merge 進去，給 _convert_word 兜底
+      （Grok STT 沒 prompt，全靠這個兜底）
+    """
     fn = PROVIDERS.get(provider)
     if fn is None:
         raise TranscribeError(f"未知的 STT 供應商：{provider}")
+    merged_typo = _merge_glossary_into_typo(typo_entries, glossary)
     return fn(
         api_key=api_key,
         src_audio=src_audio,
         out_srt=out_srt,
         work_dir=work_dir,
         progress=progress,
-        typo_entries=typo_entries,
+        typo_entries=merged_typo,
+        glossary=glossary,
     )
+
+
+def _merge_glossary_into_typo(
+    typo_entries: list[dict] | None,
+    glossary: list[dict] | None,
+) -> list[dict]:
+    """把 glossary 的 sounds_like→canonical 展開成 {wrong, right} 疊到 typo 尾端。
+    使用者錯字優先（在前），glossary 兜底（在後）；同 wrong 重複時前者勝出。
+    """
+    out = list(typo_entries or [])
+    seen_wrong = {e.get("wrong") for e in out if isinstance(e, dict)}
+    for it in glossary or []:
+        if not isinstance(it, dict):
+            continue
+        canonical = it.get("canonical")
+        if not canonical:
+            continue
+        for sound in it.get("sounds_like") or []:
+            if not sound or sound == canonical or sound in seen_wrong:
+                continue
+            out.append({"wrong": sound, "right": canonical, "note": "glossary"})
+            seen_wrong.add(sound)
+    return out
 
 
 def _ffmpeg_compress(src: Path, dst: Path) -> None:
@@ -261,8 +298,17 @@ def apply_typo_dict(text: str, entries: list[dict] | None) -> str:
     return text
 
 
-def build_gemini_prompt(typo_entries: list[dict] | None) -> str:
-    """組 Gemini prompt：要求斷句 + 錯字修正 + 填充詞處理 + 英文保留 + JSON 結構。"""
+def build_gemini_prompt(
+    typo_entries: list[dict] | None,
+    *,
+    glossary: list[dict] | None = None,
+) -> str:
+    """組 Gemini prompt：要求斷句 + 錯字修正 + 填充詞處理 + 英文保留 + JSON 結構。
+
+    glossary：本集專屬詞庫（episode.yaml + defaults.yaml 合併後的 normalize 結果），
+    結構為 [{canonical, sounds_like, note}]。獨立於全域 typo_entries 之外，
+    優先順序最高（來賓姓名 / 本集獨有的品牌名）。
+    """
     base = (
         "請把這段中文音訊轉成繁體中文字幕，做到以下五件事：\n"
         "1. 依語意斷句：每句 15-30 字為佳；不要把完整意思切成兩半。\n"
@@ -275,6 +321,29 @@ def build_gemini_prompt(typo_entries: list[dict] | None) -> str:
         "5. 輸出純 JSON 陣列，每筆 {\"start\": 秒（float）, \"end\": 秒（float）, "
         "\"text\": 字串}。不要包含 markdown 反引號。"
     )
+
+    if glossary:
+        lines = []
+        for it in glossary:
+            if not isinstance(it, dict):
+                continue
+            canonical = it.get("canonical")
+            if not canonical:
+                continue
+            sounds = it.get("sounds_like") or []
+            note = it.get("note") or ""
+            line = f"- 必須寫成「{canonical}」"
+            if sounds:
+                line += "（聽到類似「" + "」「".join(sounds) + "」也都寫成此正確版）"
+            if note:
+                line += f" — {note}"
+            lines.append(line)
+        if lines:
+            base += (
+                "\n\n本集專有名詞詞庫（來賓姓名 / 品牌 / 術語，最優先套用）：\n"
+                + "\n".join(lines)
+            )
+
     if typo_entries:
         lines = []
         for e in typo_entries:

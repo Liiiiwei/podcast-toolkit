@@ -59,10 +59,12 @@ def start_job(
     provider: str,
     api_key: str,
     typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,
 ) -> dict[str, Any]:
     """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "gemini"。
 
-    typo_entries：可選，會傳到 transcribe.run_pipeline 做錯字校正。
+    typo_entries：全域錯字字典（~/.podcast-toolkit/typo-dict.json）。
+    glossary：本集專有名詞詞庫（episode.yaml + defaults.yaml 合併後 normalize）。
     """
     with _LOCK:
         if _STATE["state"] == "running":
@@ -84,7 +86,7 @@ def start_job(
 
     worker = threading.Thread(
         target=_run,
-        args=(ep, src, provider, api_key, typo_entries),
+        args=(ep, src, provider, api_key, typo_entries, glossary),
         daemon=True,
     )
     worker.start()
@@ -97,6 +99,7 @@ def _run(
     provider: str,
     api_key: str,
     typo_entries: list[dict] | None,
+    glossary: list[dict] | None,
 ) -> None:
     """背景 worker：跑 pipeline → resegment → done / error。"""
     def progress(phase: str, percent: float) -> None:
@@ -111,6 +114,7 @@ def _run(
             work_dir=ep.subdir("work"),
             progress=progress,
             typo_entries=typo_entries,
+            glossary=glossary,
         )
     except _transcribe.TranscribeError as e:
         _set(state="error", error=str(e))

@@ -551,6 +551,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 provider=provider,
                 api_key=api_key,
                 typo_entries=_load_typo_dict(),
+                glossary=ep.cfg.get("glossary") or [],
             )
         except RuntimeError as e:
             # 已有 job 在跑
