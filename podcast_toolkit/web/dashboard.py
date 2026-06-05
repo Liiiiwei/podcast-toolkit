@@ -73,10 +73,9 @@ def add_recent(config_path: Path, path: str) -> None:
 
 def _episode_meta(ep_dir: Path) -> dict | None:
     """從一個 episode 資料夾抽出 dashboard card 需要的 metadata。
-    回 None 代表這資料夾不是 episode 或 stage='empty'（不顯示）。"""
+    回 None 代表這資料夾連 episode.yaml 都沒有，list_episodes 上層已過濾，
+    這裡保留 return 型別讓未來新增 fail-cases 可以擴充。"""
     stage = episode_stage(ep_dir)
-    if stage == "empty":
-        return None
     name = ep_dir.name
     date = ""
     if " " in name and name[:8].isdigit():

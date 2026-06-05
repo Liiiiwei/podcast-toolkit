@@ -28,9 +28,9 @@
 
 ---
 
-## 2. Edit UI 在某些 episode 狀態下回 409
+## 2. Edit UI 在某些 episode 狀態下回 409 ✅ resolved（2026-06-05 驗證）
 
-**現象**
+**原始現象**（已過時）
 從 dashboard 點 card 開啟某些 episode 後，edit UI 載入 `app.js`：
 ```
 GET /api/video 409 (Conflict)
@@ -39,64 +39,55 @@ GET /api/files 409 (Conflict)
 Error: /api/episode HTTP 409  at loadEpisodeState (app.js:510:20)
 ```
 
-**根因（待驗證）**
-推測是 edit UI 預期某些檔案（main_video、episode.yaml 某些欄位、files/ 目錄結構）存在，但被打開的 episode 沒有 → 後端 raise 409。
+**根因**
+409 全部來自 `api.py:166` 的 `_require_ep()` — 當 `holder["ep"] is None` 時所有需要選集的 endpoint 都會 raise。當時的觸發路徑：
+1. Server 啟動後 `holder["ep"]` 為 None（dashboard 模式）
+2. 使用者點 card → `/api/episodes/open` set holder → `window.location.href = "/"`
+3. 但瀏覽器吃舊 cache 的 index.html（沒設 no-store），或 redirect 慢一拍
+4. app.js 觸發 /api/episode 等 → 409
 
-**待做**
-1. 在 `api.py` 找出回 409 的 endpoint（grep `409` 或 `HTTPException`）
-2. 釐清：是 edit UI 本來就只能開「已完整」episode（那 dashboard 不該讓使用者點未完成集數），還是 edit UI 應該 graceful degrade
-3. 二選一：
-   - **Dashboard 端守門**：未滿足條件的 episode card 顯示 disabled，附 tooltip 說明缺什麼
-   - **Edit UI 端容錯**：缺檔時顯示 placeholder + 引導使用者補齊
+**已修（post-2026-06-04）**
+- `5264446 fix(dashboard): / 端點加 Cache-Control: no-store` — / 不再被瀏覽器靜默 cache，dashboard ↔ edit UI 切換永遠打到 server
+- `a6d228d` 的 `loadEpisodeState`：偵測到 409 → `window.location.href = "/"` 自我修復 → server 因 holder=None 改 serve `dashboard.html`
+- `a6d228d` 的 `load().catch`：吞掉「尚未選集」error，不 flash 紅色錯誤畫面
+- `/api/files` 用 `if (!r.ok) return;` 安靜失敗
+- `/api/video` 設給 `<video>.src` 直接吃 409，瀏覽器只 emit error event 不 throw
 
-**影響檔案**
-- `podcast_toolkit/web/api.py`
-- `podcast_toolkit/web/static/app.js`
-- 可能 `podcast_toolkit/web/static/dashboard.js`（card disabled 邏輯）
+**2026-06-05 curl 驗證**
+```
+POST /api/episodes/close → holder=None
+GET / → text/html，title=Podcast Toolkit（dashboard.html）
+GET /api/episode → 409 {"detail":"尚未選集..."}
+GET /api/video → 409
+GET /api/files → 409
+```
+前端流程：loadEpisodeState 看到 409 → location.href="/" → server 回 dashboard.html → 使用者落地 dashboard，無錯誤畫面。
+
+**剩下的 console 噪音**：/api/video 和 /api/files 平行 fire 時仍會在 DevTools network panel 留下 409 紀錄。屬無害紀錄，不影響 UX。若未來想根除，可在 `loadFiles` 開頭 peek `window.location.pathname` 或加一個 holder-status probe，但目前 not worth it。
 
 ---
 
-## 3. 新建集數立刻被 dashboard 過濾掉
+## 3. 新建集數立刻被 dashboard 過濾掉 ✅ resolved（2026-06-05）
 
 **現象**
-按「📅 新建集」建立 `20260604 test` 後，回到 dashboard 列表看不到它。
+按「📅 新建集」建立 `20260604 test` 後，若使用者按 back-to-dashboard 想看 list，看不到剛建的集數。
 
 **根因**
-`podcast_toolkit/web/dashboard.py:78-79`：
-```python
-def _episode_meta(ep_dir: Path) -> dict | None:
-    stage = episode_stage(ep_dir)
-    if stage == "empty":
-        return None  # ← 把空集數過濾掉
-```
+`podcast_toolkit/web/dashboard.py:78-79` 把 `stage="empty"` 過濾掉。新集沒放錄音 → empty → 從 list 消失。
 
-新集數沒放錄音 → `stage="empty"` → 過濾掉。
+**正常流程不會踩到**：`/api/episode/new` set holder + 前端 `window.location.href = "/"` 會直接進 edit UI。只有當使用者再從 edit UI 按 back-to-dashboard 時才會發現「集不見了」。
 
-**但流程上不應該感受到這個 bug**
-`/api/episode/new` 建立完會 set `holder["ep"]` → 前端 `window.location.href = "/"` → 應該直接進 edit UI，**不該回 dashboard**。
-
-如果使用者真的看到「回 dashboard 但找不到新集數」，代表前端流程有斷點。要驗證的兩個分支：
-1. `/api/episode/new` 真的有 set `holder["ep"]` 嗎？（看 api.py:275-318 應該是有）
-2. 前端 `createNewEpisode` 真的有跑 `window.location.href = "/"` 嗎？（看 dashboard.js:226 應該是有）
-3. 如果都有，可能是 race condition 或 redirect 失效
-
-**建議修法**
-1. 先重現問題 + 看實際行為
-2. 若確認 redirect 沒生效 → 修前端
-3. 順便決定：`_episode_meta` 要不要把 `empty` 也列出來（標示為「⬜ 空集」讓使用者點進去補錄音），這在 P3 review 也提過
+**修法（2026-06-05）**
+直接移除 `_episode_meta` 的 `stage == "empty"` 過濾。dashboard 已有 `STAGE_LABEL.empty = "空集"` 與 `.stage-empty` CSS（faint gray），點進去 edit UI 的 `needs_transcribe`/empty-state flow 已可處理空集。讓 dashboard 顯示空集 = 使用者能找回剛建好還沒錄的集數，亦能單擊回到 edit UI 補錄音檔。
 
 **影響檔案**
-- `podcast_toolkit/web/dashboard.py:78-79`
-- `podcast_toolkit/web/static/dashboard.js:207-229`（createNewEpisode）
-- 可能 `podcast_toolkit/web/api.py:275-318`（new endpoint）
+- `podcast_toolkit/web/dashboard.py`（移除 empty 過濾）
 
 ---
 
 ## 排程建議
 
-3 條的優先序：1 > 2 > 3
-- **#1（back-to-dashboard）**：最高優先，現在沒這個基本上 dashboard 無法 dogfood
-- **#2（409）**：要先 reproduce + 看 server log 才知道 root cause，可能 30 分鐘也可能 2 小時
-- **#3（空集過濾）**：低，等使用者真的抱怨再說
-
-要不要做一個 PR 一次處理，還是各自分 PR，等實際下手前再決定。
+3 條皆已處理（2026-06-05 收尾）：
+- **#1（back-to-dashboard）**：commit `675f295`
+- **#2（409）**：post-2026-06-04 已自我修復（commits `5264446` + `a6d228d`），本日 curl 驗證通過
+- **#3（空集過濾）**：本日移除 `_episode_meta` empty 過濾
