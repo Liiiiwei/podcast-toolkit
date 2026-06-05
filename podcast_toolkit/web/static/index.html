@@ -41,6 +41,15 @@
         </div>
         <div class="topbar-group">
           <button
+            id="glossary-btn"
+            type="button"
+            class="btn btn-icon"
+            title="詞庫（給 Gemini 提示的專有名詞表）"
+            aria-label="詞庫"
+          >
+            <span data-icon="book-open"></span>
+          </button>
+          <button
             id="settings-btn"
             type="button"
             class="btn btn-icon"
@@ -360,6 +369,96 @@
           </button>
         </div>
       </form>
+    </dialog>
+
+    <!-- 詞庫 modal：給 Gemini prompt 的專有名詞 + 同音字 -->
+    <dialog class="modal modal-wide" id="glossary-modal">
+      <div class="modal-head">
+        <span data-icon="book-open"></span>
+        詞庫
+      </div>
+      <div class="modal-body">
+        <div class="modal-hint">
+          幫 Gemini
+          把同音/相近發音的字寫成正確的版本。儲存後下次轉字幕會自動帶入 prompt。
+        </div>
+        <div class="glossary-tabs" role="tablist">
+          <button
+            type="button"
+            class="glossary-tab active"
+            data-scope="episode"
+            role="tab"
+            aria-selected="true"
+          >
+            本集
+            <span class="glossary-tab-count" id="glossary-count-episode"
+              >0</span
+            >
+          </button>
+          <button
+            type="button"
+            class="glossary-tab"
+            data-scope="common"
+            role="tab"
+            aria-selected="false"
+          >
+            全域
+            <span class="glossary-tab-count" id="glossary-count-common">0</span>
+          </button>
+        </div>
+
+        <div class="glossary-pane" id="glossary-pane-episode">
+          <div id="glossary-list-episode" class="glossary-list"></div>
+          <button
+            type="button"
+            class="btn btn-ghost glossary-add"
+            data-scope="episode"
+          >
+            <span data-icon="plus"></span>
+            <span>新增一條</span>
+          </button>
+          <div class="modal-hint">
+            存於 <code>&lt;集資料夾&gt;/.glossary.json</code>，只影響這一集。
+          </div>
+        </div>
+
+        <div class="glossary-pane" id="glossary-pane-common" hidden>
+          <div id="glossary-list-common" class="glossary-list"></div>
+          <button
+            type="button"
+            class="btn btn-ghost glossary-add"
+            data-scope="common"
+          >
+            <span data-icon="plus"></span>
+            <span>新增一條</span>
+          </button>
+          <div class="modal-hint">
+            存於
+            <code>~/.podcast-toolkit/common-glossary.json</code>，所有集共用。
+          </div>
+        </div>
+
+        <details class="modal-advanced" id="glossary-yaml-details">
+          <summary class="modal-advanced-summary">
+            <span>來自 episode.yaml / defaults.yaml 的詞庫（唯讀）</span>
+            <span class="glossary-tab-count" id="glossary-count-yaml">0</span>
+            <span class="modal-advanced-caret" data-icon="chevron-down"></span>
+          </summary>
+          <div
+            id="glossary-list-yaml"
+            class="glossary-list glossary-list-yaml"
+          ></div>
+        </details>
+      </div>
+      <div class="modal-actions">
+        <button id="glossary-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="glossary-save" type="button" class="btn btn-primary">
+          <span data-icon="check"></span>
+          <span>儲存</span>
+        </button>
+      </div>
     </dialog>
 
     <!-- 建立集架構 modal -->

@@ -30,6 +30,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONFIG_DIR = Path.home() / ".podcast-toolkit"
 TYPO_DICT_PATH = CONFIG_DIR / "typo-dict.json"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+COMMON_GLOSSARY_PATH = CONFIG_DIR / "common-glossary.json"
+EPISODE_GLOSSARY_FILENAME = ".glossary.json"
 
 # 可轉字幕的副檔名（含音訊與含音訊軌的影片）
 TRANSCRIBABLE_EXTS = {
@@ -75,6 +77,74 @@ def _save_typo_dict(entries: list[dict]) -> None:
         json.dumps(entries, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def _normalize_glossary_entries(raw: list) -> list[dict]:
+    """整理使用者貼進來的詞庫條目；canonical 為主鍵，去重保留最後一筆。
+    支援純字串簡寫（同 config.normalize_glossary）→ {canonical, sounds_like, note}。
+    """
+    seen: dict[str, dict] = {}
+    for item in raw or []:
+        if isinstance(item, str):
+            c = item.strip()
+            if c:
+                seen[c] = {"canonical": c, "sounds_like": [], "note": ""}
+            continue
+        if not isinstance(item, dict):
+            continue
+        canonical = (item.get("canonical") or "").strip()
+        if not canonical:
+            continue
+        sounds_like_raw = item.get("sounds_like") or []
+        sounds_like = []
+        if isinstance(sounds_like_raw, list):
+            sounds_like = [str(s).strip() for s in sounds_like_raw if str(s).strip()]
+        seen[canonical] = {
+            "canonical": canonical,
+            "sounds_like": sounds_like,
+            "note": str(item.get("note", "")),
+        }
+    return list(seen.values())
+
+
+def _load_glossary_file(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return _normalize_glossary_entries(data)
+
+
+def _save_glossary_file(path: Path, entries: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(entries, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _load_common_glossary() -> list[dict]:
+    return _load_glossary_file(COMMON_GLOSSARY_PATH)
+
+
+def _save_common_glossary(entries: list[dict]) -> None:
+    _save_glossary_file(COMMON_GLOSSARY_PATH, entries)
+
+
+def _episode_glossary_path(ep_dir: Path) -> Path:
+    return ep_dir / EPISODE_GLOSSARY_FILENAME
+
+
+def _load_episode_glossary(ep_dir: Path) -> list[dict]:
+    return _load_glossary_file(_episode_glossary_path(ep_dir))
+
+
+def _save_episode_glossary(ep_dir: Path, entries: list[dict]) -> None:
+    _save_glossary_file(_episode_glossary_path(ep_dir), entries)
 
 
 def _load_config() -> dict:
@@ -545,6 +615,12 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 detail=f"尚未設定 {label_map[provider]} API key",
             )
 
+        # yaml glossary + UI 編輯（全域 + 本集）→ canonical 為主鍵去重
+        merged_glossary = _normalize_glossary_entries(
+            (ep.cfg.get("glossary") or [])
+            + _load_common_glossary()
+            + _load_episode_glossary(ep.dir)
+        )
         try:
             info = transcribe_job.start_job(
                 ep,
@@ -552,7 +628,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 provider=provider,
                 api_key=api_key,
                 typo_entries=_load_typo_dict(),
-                glossary=ep.cfg.get("glossary") or [],
+                glossary=merged_glossary,
             )
         except RuntimeError as e:
             # 已有 job 在跑
@@ -690,6 +766,32 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "offset_sec": offset_sec, "deltas": deltas}
+
+    @app.get("/api/glossary")
+    def get_glossary():
+        """回傳 {episode: [...], common: [...], yaml: [...]}。
+        yaml 段是 episode.yaml + defaults.yaml 內既有的（唯讀，提示用），
+        episode / common 是 UI 可編輯的 JSON sidecar。
+        """
+        ep = _require_ep()
+        return JSONResponse({
+            "episode": _load_episode_glossary(ep.dir),
+            "common": _load_common_glossary(),
+            "yaml": ep.cfg.get("glossary") or [],
+        })
+
+    @app.post("/api/glossary/common")
+    def post_glossary_common(payload: dict):
+        entries = _normalize_glossary_entries(payload.get("entries") or [])
+        _save_common_glossary(entries)
+        return JSONResponse(entries)
+
+    @app.post("/api/glossary/episode")
+    def post_glossary_episode(payload: dict):
+        ep = _require_ep()
+        entries = _normalize_glossary_entries(payload.get("entries") or [])
+        _save_episode_glossary(ep.dir, entries)
+        return JSONResponse(entries)
 
     @app.post("/api/typo-dict")
     def post_typo_dict(payload: dict):

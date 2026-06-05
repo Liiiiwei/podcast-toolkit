@@ -2521,6 +2521,300 @@ $("#settings-form").addEventListener("submit", async (e) => {
   }
 });
 
+// === 詞庫 modal ===
+// 工作集（modal 開啟時複製來自 server 的快照，避免使用者「取消」也已動到 state）
+const glossaryWork = {
+  episode: [], // [{canonical, sounds_like: [...], note}]
+  common: [],
+  yaml: [], // read-only
+  activeTab: "episode",
+};
+
+async function openGlossary() {
+  try {
+    const r = await fetch("/api/glossary");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    glossaryWork.episode = (data.episode || []).map(cloneGlossaryEntry);
+    glossaryWork.common = (data.common || []).map(cloneGlossaryEntry);
+    glossaryWork.yaml = (data.yaml || []).map(cloneGlossaryEntry);
+  } catch (e) {
+    alert(`載入詞庫失敗：${e.message}`);
+    return;
+  }
+  glossaryWork.activeTab = "episode";
+  renderGlossary();
+  showModal("glossary-modal");
+}
+
+function cloneGlossaryEntry(e) {
+  return {
+    canonical: String(e.canonical || ""),
+    sounds_like: Array.isArray(e.sounds_like) ? e.sounds_like.map(String) : [],
+    note: String(e.note || ""),
+  };
+}
+
+function renderGlossary() {
+  // tabs：active 樣式 + count
+  document.querySelectorAll(".glossary-tab").forEach((btn) => {
+    const active = btn.dataset.scope === glossaryWork.activeTab;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  $("#glossary-count-episode").textContent = String(
+    glossaryWork.episode.length,
+  );
+  $("#glossary-count-common").textContent = String(glossaryWork.common.length);
+  $("#glossary-count-yaml").textContent = String(glossaryWork.yaml.length);
+  $("#glossary-pane-episode").hidden = glossaryWork.activeTab !== "episode";
+  $("#glossary-pane-common").hidden = glossaryWork.activeTab !== "common";
+
+  renderGlossaryList("episode");
+  renderGlossaryList("common");
+  renderGlossaryYamlList();
+}
+
+function renderGlossaryList(scope) {
+  const list = $(`#glossary-list-${scope}`);
+  const entries = glossaryWork[scope];
+  list.innerHTML = "";
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "glossary-empty";
+    empty.textContent =
+      scope === "episode"
+        ? "本集還沒有專屬詞庫條目。點「新增一條」開始。"
+        : "全域詞庫是空的。加進來的條目所有集都會用到。";
+    list.appendChild(empty);
+    return;
+  }
+  entries.forEach((entry, idx) => {
+    list.appendChild(buildGlossaryItem(scope, entry, idx));
+  });
+}
+
+function renderGlossaryYamlList() {
+  const list = $("#glossary-list-yaml");
+  list.innerHTML = "";
+  if (glossaryWork.yaml.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "glossary-empty";
+    empty.textContent = "episode.yaml / defaults.yaml 沒有條目。";
+    list.appendChild(empty);
+    return;
+  }
+  glossaryWork.yaml.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "glossary-item readonly";
+    const left = document.createElement("div");
+    left.className = "glossary-item-readonly-pill";
+    left.textContent = entry.canonical;
+    const mid = document.createElement("div");
+    mid.className = "glossary-item-mid";
+    const chips = document.createElement("div");
+    chips.className = "glossary-chips";
+    if (entry.sounds_like.length === 0) {
+      const span = document.createElement("span");
+      span.className = "modal-hint";
+      span.textContent = "（無同音字）";
+      chips.appendChild(span);
+    } else {
+      entry.sounds_like.forEach((s) => {
+        const chip = document.createElement("span");
+        chip.className = "glossary-chip";
+        chip.textContent = s;
+        chips.appendChild(chip);
+      });
+    }
+    mid.appendChild(chips);
+    if (entry.note) {
+      const note = document.createElement("div");
+      note.className = "modal-hint";
+      note.textContent = entry.note;
+      mid.appendChild(note);
+    }
+    row.appendChild(left);
+    row.appendChild(mid);
+    list.appendChild(row);
+  });
+}
+
+function buildGlossaryItem(scope, entry, idx) {
+  const row = document.createElement("div");
+  row.className = "glossary-item";
+
+  // 正式名
+  const left = document.createElement("div");
+  left.className = "glossary-item-canonical";
+  const canInput = document.createElement("input");
+  canInput.type = "text";
+  canInput.placeholder = "正確寫法";
+  canInput.value = entry.canonical;
+  canInput.addEventListener("input", () => {
+    entry.canonical = canInput.value;
+  });
+  left.appendChild(canInput);
+
+  // 中間：sounds_like chips + note
+  const mid = document.createElement("div");
+  mid.className = "glossary-item-mid";
+
+  const chips = document.createElement("div");
+  chips.className = "glossary-chips";
+
+  const renderChips = () => {
+    chips.innerHTML = "";
+    entry.sounds_like.forEach((sound, sIdx) => {
+      const chip = document.createElement("span");
+      chip.className = "glossary-chip";
+      chip.textContent = sound;
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "×";
+      del.title = "移除";
+      del.addEventListener("click", () => {
+        entry.sounds_like.splice(sIdx, 1);
+        renderChips();
+      });
+      chip.appendChild(del);
+      chips.appendChild(chip);
+    });
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "glossary-chip-input";
+    input.placeholder =
+      entry.sounds_like.length === 0
+        ? "Gemini 可能誤聽成（Enter / 逗號分隔）"
+        : "+ 再加一個";
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === ",") {
+        ev.preventDefault();
+        const v = input.value.trim().replace(/,$/, "").trim();
+        if (v && !entry.sounds_like.includes(v)) {
+          entry.sounds_like.push(v);
+          renderChips();
+          const newInput = chips.querySelector(".glossary-chip-input");
+          if (newInput) newInput.focus();
+        } else {
+          input.value = "";
+        }
+      } else if (ev.key === "Backspace" && input.value === "") {
+        // 空 backspace → 移除最後一個 chip
+        if (entry.sounds_like.length > 0) {
+          entry.sounds_like.pop();
+          renderChips();
+          const newInput = chips.querySelector(".glossary-chip-input");
+          if (newInput) newInput.focus();
+        }
+      }
+    });
+    input.addEventListener("blur", () => {
+      const v = input.value.trim();
+      if (v && !entry.sounds_like.includes(v)) {
+        entry.sounds_like.push(v);
+        renderChips();
+      }
+    });
+    chips.appendChild(input);
+  };
+  renderChips();
+
+  const noteWrap = document.createElement("div");
+  noteWrap.className = "glossary-item-note";
+  const noteInput = document.createElement("input");
+  noteInput.type = "text";
+  noteInput.placeholder = "備註（選填）";
+  noteInput.value = entry.note;
+  noteInput.addEventListener("input", () => {
+    entry.note = noteInput.value;
+  });
+  noteWrap.appendChild(noteInput);
+
+  mid.appendChild(chips);
+  mid.appendChild(noteWrap);
+
+  // 刪除整條
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "glossary-item-delete";
+  del.title = "刪除這條";
+  del.innerHTML = window.Icons.get("trash-2", { size: 14 });
+  del.addEventListener("click", () => {
+    glossaryWork[scope].splice(idx, 1);
+    renderGlossary();
+  });
+
+  row.appendChild(left);
+  row.appendChild(mid);
+  row.appendChild(del);
+  return row;
+}
+
+function addGlossaryEntry(scope) {
+  glossaryWork[scope].push({ canonical: "", sounds_like: [], note: "" });
+  renderGlossary();
+  // 自動 focus 新一條的 canonical 輸入框
+  const list = $(`#glossary-list-${scope}`);
+  const lastInput = list.querySelectorAll(".glossary-item-canonical input")[
+    glossaryWork[scope].length - 1
+  ];
+  if (lastInput) lastInput.focus();
+}
+
+async function saveGlossary() {
+  const btn = $("#glossary-save");
+  btn.disabled = true;
+  const orig = btn.innerHTML;
+  btn.textContent = "儲存中…";
+  // 寫入前過濾：canonical 必填，trim 後為空的丟掉
+  const clean = (arr) =>
+    arr
+      .map((e) => ({
+        canonical: e.canonical.trim(),
+        sounds_like: e.sounds_like.map((s) => s.trim()).filter(Boolean),
+        note: e.note.trim(),
+      }))
+      .filter((e) => e.canonical);
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch("/api/glossary/episode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: clean(glossaryWork.episode) }),
+      }),
+      fetch("/api/glossary/common", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entries: clean(glossaryWork.common) }),
+      }),
+    ]);
+    if (!r1.ok) throw new Error(`本集 HTTP ${r1.status}`);
+    if (!r2.ok) throw new Error(`全域 HTTP ${r2.status}`);
+    hideModal("glossary-modal");
+  } catch (e) {
+    alert(`儲存詞庫失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = orig;
+  }
+}
+
+$("#glossary-btn").addEventListener("click", openGlossary);
+$("#glossary-cancel").addEventListener("click", () =>
+  hideModal("glossary-modal"),
+);
+$("#glossary-save").addEventListener("click", saveGlossary);
+document.querySelectorAll(".glossary-tab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    glossaryWork.activeTab = btn.dataset.scope;
+    renderGlossary();
+  });
+});
+document.querySelectorAll(".glossary-add").forEach((btn) => {
+  btn.addEventListener("click", () => addGlossaryEntry(btn.dataset.scope));
+});
+
 // === 鏡頭與音檔對齊 modal（4 個檔案全部手動下拉） ===
 function openCamModal() {
   // cam A 下拉（從 01_母帶/*.mp4 挑）
