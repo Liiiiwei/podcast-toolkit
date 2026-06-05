@@ -191,6 +191,24 @@ h2 {
   }
 }
 
+/* 長時 async 動作的 loading spinner（自動對齊 / 互相關計算等 30 秒~3 分鐘流程） */
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .body {
   display: grid;
   grid-template-columns: 1fr 400px;
@@ -1341,7 +1359,7 @@ dialog.modal::backdrop {
 }
 .card-del {
   background: transparent;
-  color: #666;
+  color: var(--text-dim);
   border: none;
   cursor: pointer;
   font-size: 16px;
@@ -1440,7 +1458,7 @@ dialog.modal::backdrop {
 }
 .cam-btn {
   background: transparent;
-  color: #777;
+  color: var(--text-dim);
   border: none;
   font-size: 10px;
   font-weight: 600;
@@ -1463,7 +1481,9 @@ dialog.modal::backdrop {
   color: #fff;
 }
 
-/* === 響應式：≤900 改單欄；≤640 topbar 改成兩列 === */
+/* === 響應式：≤900 改單欄；≤640 topbar 改成兩列 ===
+ * 注意：cards-pane 在 ≤900px 仍保留 overflow:auto + max-height:60vh，
+ * 否則 569 張字幕卡會把整頁攤平到 30000+ px，使用者要捲到地老天荒。 */
 @media (max-width: 900px) {
   body {
     height: auto;
@@ -1486,8 +1506,8 @@ dialog.modal::backdrop {
     max-height: none;
   }
   .cards-pane {
-    overflow: visible;
-    max-height: none;
+    overflow-y: auto;
+    max-height: 60vh;
   }
 }
 @media (max-width: 640px) {

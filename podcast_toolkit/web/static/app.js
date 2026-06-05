@@ -1429,6 +1429,23 @@ function setBtnLabel(btn, iconName, text) {
   }
 }
 
+// 把按鈕切到 loading 狀態：左側 spinner + 「<label>… mm:ss」每秒跳動。
+// 用於自動對齊這類 30 秒到 3 分鐘的 ffmpeg + correlate 流程，避免使用者誤判卡住。
+// 回傳 stop()；呼叫端在最終狀態之前先 stop()，再用 setBtnLabel 接續顯示。
+function startBtnSpinner(btn, label = "計算中") {
+  if (!btn) return () => {};
+  const t0 = performance.now();
+  const render = () => {
+    const sec = Math.floor((performance.now() - t0) / 1000);
+    const mm = Math.floor(sec / 60);
+    const ss = String(sec % 60).padStart(2, "0");
+    btn.innerHTML = `<span class="spinner"></span><span>${label}… ${mm}:${ss}</span>`;
+  };
+  render();
+  const timer = setInterval(render, 1000);
+  return () => clearInterval(timer);
+}
+
 // 統一 modal 標題：icon + 文字 + 狀態色（success / danger / warning / accent）
 function setModalStatusTitle(elId, iconName, text, tone = "") {
   const el = document.getElementById(elId);
@@ -2589,7 +2606,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
   }
   const btn = $("#cam-auto-align");
   btn.disabled = true;
-  setBtnLabel(btn, null, "計算中…");
+  const stopSpin = startBtnSpinner(btn, "計算中");
   try {
     const r = await fetch("/api/auto-align", {
       method: "POST",
@@ -2605,6 +2622,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
   } catch (e) {
     alert(`自動對齊失敗：${e.message}`);
   } finally {
+    stopSpin();
     btn.disabled = false;
     setBtnLabel(btn, "target", "自動對齊");
   }
@@ -2651,7 +2669,7 @@ $("#align-all").addEventListener("click", async () => {
   }
   const btn = $("#align-all");
   btn.disabled = true;
-  btn.textContent = "計算中…";
+  let stopSpin = startBtnSpinner(btn, "計算中");
 
   try {
     const tasks = [];
@@ -2698,12 +2716,15 @@ $("#align-all").addEventListener("click", async () => {
       .map((r) => r.reason.message);
     if (errors.length) {
       // 有錯就不要自動 save，避免把錯誤值寫進 yaml
+      stopSpin();
+      setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
       alert(`部分對齊失敗：\n${errors.join("\n")}`);
       return;
     }
 
     // 全部成功 → 自動 save + 重抓 state + 重綁外接音檔
-    setBtnLabel(btn, null, "儲存中…");
+    stopSpin();
+    stopSpin = startBtnSpinner(btn, "儲存中");
     const payload = _buildCamModalSavePayload();
     const r = await fetch("/api/save", {
       method: "POST",
@@ -2719,12 +2740,14 @@ $("#align-all").addEventListener("click", async () => {
     const video = $("#video");
     video.src = `/api/video?_=${Date.now()}`;
     video.load();
+    stopSpin();
     setBtnLabel(btn, "circle-check", "已對齊並儲存");
     setTimeout(() => {
       setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
     }, 2000);
   } catch (e) {
     alert(`對齊或儲存失敗：${e.message}`);
+    stopSpin();
     setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
   } finally {
     btn.disabled = false;
@@ -2740,7 +2763,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
   }
   const btn = $("#audio-auto-align");
   btn.disabled = true;
-  setBtnLabel(btn, null, "計算中…");
+  const stopSpin = startBtnSpinner(btn, "計算中");
   try {
     const r = await fetch("/api/auto-align", {
       method: "POST",
@@ -2756,6 +2779,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
   } catch (e) {
     alert(`自動對齊失敗：${e.message}`);
   } finally {
+    stopSpin();
     btn.disabled = false;
     setBtnLabel(btn, "target", "自動對齊");
   }
