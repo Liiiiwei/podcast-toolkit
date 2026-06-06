@@ -44,7 +44,8 @@ podcast init "$HOME/Downloads/20260601 新集名"
 # 3. 把錄音放進 01_母帶/
 #    字幕可選兩條路：
 #    (a) 本機 whisper：python3 -m whisper ... → 03_成品/新集名_final.srt
-#    (b) 跑 edit 後在瀏覽器按「轉字幕」（走 xAI Grok STT，要先在 ~/.podcast-toolkit/config.json 放 xai_api_key）
+#    (b) 跑 edit 後在瀏覽器按「轉字幕」→ STT 三選一：xAI Grok / Gemini 2.5 Flash / OpenAI Whisper-1
+#        在右上「設定」modal 填對應 api key；每家都吃詞庫提詞偏值（見下方「詞庫」段）
 
 # 4. 跑 resegment 重新斷句（用 (b) 走 web 轉字幕已內建這步）
 podcast resegment "$HOME/Downloads/20260601 新集名"
@@ -54,7 +55,8 @@ podcast resegment "$HOME/Downloads/20260601 新集名"
 # 5.5 (可選) 視覺化編輯：裁切畫框 / 刪段 / 改字
 podcast edit "$HOME/Downloads/20260601 新集名"
 
-# 6. 跑 assemble 合成（CLI 預設 YT 完整版；web 端可勾選 YT + Reels 一起跑）
+# 6. 跑 assemble 合成
+#    CLI：預設 YT 完整版；web 端可勾 YT 完整版 / Reels 直式 / 多鏡頭（搭配 cam B 來源）
 podcast assemble "$HOME/Downloads/20260601 新集名"
 ```
 
@@ -74,10 +76,44 @@ podcast assemble "$HOME/Downloads/20260601 新集名"
 | `force_break` | 否 | 強制斷句的 whisper 段落 index 列表 |
 | `force_join` | 否 | 強制合併的 whisper 段落 index 列表 |
 | `resegment` | 否 | 覆寫 toolkit defaults（極少用） |
+| `cameras` | 否 | 多鏡頭：`{a: 主鏡頭路徑, b: 副鏡頭路徑}`，舊集只有 `main_video` 時自動視為 cameras.a |
+| `head_trim_sec` | 否 | 從正片開頭裁掉的秒數（不影響字幕時軸；assemble 階段才裁） |
+| `tail_trim_sec` | 否 | 從正片結尾裁掉的秒數（同上） |
+| `glossary` | 否 | 本集詞庫（見下方「詞庫」段）；會與 toolkit `common_glossary` 合併 |
+| `subtitle_style` | 否 | YT 字幕樣式覆寫（合進 defaults.subtitle_style） |
+| `subtitle_style_reels` | 否 | Reels 字幕樣式覆寫（合進 defaults.subtitle_style_reels） |
 
 ## defaults.yaml
 
-全域預設值，包含字幕樣式、長度參數、ffmpeg 編碼參數。改了會影響所有集。
+全域預設值，改了會影響所有集。主要區段：
+
+- `resegment` — 斷句長度 / dangle endings / reaction words
+- `suspicious_pause` — 編輯介面標紅「可疑空拍卡」門檻
+- `gemini` — Gemini STT 字幕格式規則（會注入 prompt）
+- `common_glossary` — 全域詞庫（見下方「詞庫」段）
+- `subtitle_style` — YT 16:9 字幕樣式（font/size/outline/shadow/margin）
+- `subtitle_style_reels` — Reels 9:16 字幕樣式（手機豎屏 + 動作列遮擋專用，缺欄位自動回退到 subtitle_style）
+- `watermark` — 影片浮水印 logo overlay（assemble 階段 ffmpeg 燒上去；enabled=false 時整段 no-op）
+- `assets` — 片頭片尾 / 浮水印 logo 路徑（toolkit/assets/）
+- `encode` — ffmpeg 編碼參數（codec、crf、preset、resolution、framerate）
+
+## 詞庫
+
+把固定的專有名詞、暱稱、人名統一寫成「詞庫」，STT 階段以 prompt 偏值降低誤聽，後處理階段把誤聽自動改正。三層合併：
+
+1. `defaults.yaml` 的 `common_glossary` — toolkit 全域共用
+2. web 端「字典」分頁的全域字典 — 跨集共用、可即時編輯
+3. `episode.yaml` 的 `glossary` — 只影響本集
+
+格式：
+
+```yaml
+glossary:
+  - canonical: "Liwei Sia"
+    sounds_like: ["你為夏", "你為下"]
+    note: "節目主持人"
+  - "我愛上班"   # 純字串 = 只當提詞、不展開誤聽
+```
 
 ## 指令
 
@@ -111,8 +147,8 @@ bash tests/regression.sh
 11. 「完成並儲存」→ 頁面變「✅ 已儲存」、CLI exit 0、`episode.yaml` 與 `_v2.srt` 真的有改
 12. 「合成」modal 勾 YT + Reels → queue 進度條依序跑兩個 target，輸出 `_YT完整版.mp4` 與 `_Reels.mp4`（1080×1920）
 13. 檔案列表 group-by 七大區塊（母帶 / 片頭片尾 / 成品 / 工作檔 ...）、折疊狀態存 localStorage
+14. 底部抽屜（drawer）：「專案檔案 / 字典」分頁切換 + 右側收合按鈕 → 收合 / 展開狀態與當前分頁存 localStorage、重新整理後還原
 
 ## Roadmap（未做）
 
 - `podcast podcast-audio` — 純音檔輸出（mp3 320k，-16 LUFS）
-- `podcast multicam` — 多機切鏡（讀 switch_list.json）
