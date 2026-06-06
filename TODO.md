@@ -4,44 +4,45 @@
 
 ## 抽屜（drawer）a11y
 
-- [ ] **A1. 補 `aria-controls` 與 `role="tabpanel"`**
+- [x] **A1. 補 `aria-controls` 與 `role="tabpanel"`** ✅ 2026-06-06 commit 34ec794
   - `podcast_toolkit/web/static/index.html:252-310`
   - `.drawer-tab` 加 `aria-controls="drawer-pane-{name}"` 與 `id="drawer-tab-{name}"`
   - `.drawer-pane` 加 `role="tabpanel"` + `aria-labelledby="drawer-tab-{name}"` + `tabindex="0"`
 
-- [ ] **A2. `#drawer-toggle` 移出 `role="tablist"`**
+- [x] **A2. `#drawer-toggle` 移出 `role="tablist"`** ✅ 2026-06-06 commit 34ec794
   - `podcast_toolkit/web/static/index.html:253, 276-284`
-  - 現在收合按鈕在 tablist 內，螢幕閱讀器會當成第 3 個 tab
-  - 解法：把 `#drawer-toggle` 包成獨立節點放在 `.drawer-tabs` 外，用 flex 對齊保持視覺位置
+  - 用 `.drawer-header` flex 容器包住 tablist + toggle 為兄弟節點，padding/border-bottom 上移
 
-- [ ] **A3. 抽屜分頁加 ArrowLeft / ArrowRight / Home / End 鍵盤切換**
-  - `podcast_toolkit/web/static/app.js:1230-1241`
-  - WAI-ARIA tab pattern 標準鍵盤導覽
-  - 在 `setupDrawer()` 內補 `keydown` handler，切完要 `tabs[next].focus()`
+- [x] **A3. 抽屜分頁加 ArrowLeft / ArrowRight / Home / End 鍵盤切換** ✅ 2026-06-06 commit 34ec794
+  - `podcast_toolkit/web/static/app.js` setupDrawer 內 keydown handler
+  - 含 roving tabindex（active=0、非 active=-1）+ focus 跟隨
 
 ## 響應式
 
-- [ ] **A4. `@media (max-width: 900px)` 沒同步新的 `.body` / `.body-top` grid**
-  - `podcast_toolkit/web/static/app.css:1499-1525`
-  - `.body` 現用 `grid-template-rows: minmax(0,1fr) auto` + `--drawer-h: 32vh`；`.body-top` 用 `1fr 420px`
-  - ≤900px 應該補：`.body-top { grid-template-columns: 1fr; }` 與調小 `--drawer-h`（或設 auto）
-  - 手機上目前 cards-pane 420px 固定欄會擠掉影片
+- [x] **A4. `@media (max-width: 900px)` 沒同步新的 `.body` / `.body-top` grid** ✅ 2026-06-06 commit 34ec794
+  - `podcast_toolkit/web/static/app.css` @media 補 `.body { grid-template-rows: auto auto; --drawer-h: auto; }` 與 `.body-top { grid-template-columns: 1fr; overflow: visible; }`
+  - `.drawer` 改 `height: auto; max-height: 60vh`
 
 ## 程式碼註解
 
-- [ ] **A5. `transcribe.py:22` 註解誤導**
-  - 現註解寫「用 chat completions audio modality；唯一支援 prompt-injected glossary」
-  - 實際跑的是 `/v1/audio/transcriptions verbose_json + word_timestamps`，且 xAI/Gemini 都吃 prompt
-  - 改成：`# OpenAI Whisper-1：/v1/audio/transcriptions verbose_json + word timestamps，prompt 欄注入 glossary 提詞（224 token 上限）`
+- [x] **A5. `transcribe.py:22` 註解誤導** ✅ 2026-06-06 commit 34ec794
+  - 改成 `# OpenAI Whisper-1：/v1/audio/transcriptions verbose_json + word timestamps；prompt 欄接受 224 token 的詞庫提詞偏值`
 
 ## UI polish
 
-- [ ] **A6. 抽屜 count pill 在 0 時別顯示**
-  - `podcast_toolkit/web/static/app.css:1777-1786`
-  - 空狀態下會看到灰色「0」pill，視覺噪音
-  - CSS 補 `.drawer-tab-count:empty { display: none; }`，JS 端 0 改塞 `""`
+- [x] **A6. 抽屜 count pill 在 0 時別顯示** ✅ 2026-06-06 commit 34ec794
+  - CSS 補 `.drawer-tab-count:empty { display: none; }`
+  - JS renderTypo / renderFiles 改 `n > 0 ? String(n) : ""`
 
 ## 觀察項（暫不動，列為背景）
 
 - `subtitle_style` 與 `subtitle_style_reels` 同時設 outline + shadow，DESIGN.md A1 反 pattern 邊緣案例，但燒字幕需要對比，可接受
 - `assemble._write_ass_from_srt` 不清舊 `.ass`，work_dir 失敗會被外層整包清，影響極低
+
+## 待驗證（A1-A6 落地後）
+
+- [ ] **V1. 跑 dev server 開瀏覽器人工驗證 A1-A6**
+  - 抽屜 Tab 鍵跳進去、ArrowLeft/Right 切分頁、Home/End 跳首尾
+  - VoiceOver 念 tab/tabpanel 角色正確、不再把 toggle 當第 3 個 tab
+  - 縮窗 ≤900px 看 cards-pane 是否正確堆到下方、影片不被擠
+  - 抽屜 count pill 在 0 typo / 0 file 時消失
