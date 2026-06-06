@@ -51,6 +51,21 @@ subtitle_style:
   shadow: 1
   margin_v: 100
 
+# Reels 9:16 專用字幕風格（手機豎屏 + IG/TikTok 底部動作列遮擋）
+# 缺欄位時自動回退到上面的 subtitle_style；episode.yaml 可整段覆寫
+# alignment: ASS numpad（2=底部置中、5=畫面正中央、8=頂部置中）
+subtitle_style_reels:
+  font_name: "Hiragino Sans GB"
+  font_size: 80               # 比 YT +66%，手機小螢幕看得清
+  bold: 1
+  primary_colour: "&H00FFFFFF"
+  outline_colour: "&H00000000"
+  border_style: 1
+  outline: 3                  # 描邊 +1px，避免在動態畫面糊掉
+  shadow: 1
+  alignment: 5                # 畫面正中央
+  margin_v: 0                 # alignment=5 時 MarginV 是距中心偏移，0=完全置中
+
 # 影片浮水印（assemble 階段 ffmpeg overlay 燒上去）
 # enabled=false 時整段 no-op；要啟用先放 logo 檔到 assets.logo 指向的路徑
 # 座標都是相對最終輸出 frame（crop+scale 後的 1920×1080 / 1080×1920）

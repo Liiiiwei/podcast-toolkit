@@ -95,6 +95,14 @@ def merge(defaults: dict, episode: dict) -> dict:
             **(episode.get("suspicious_pause") or {}),
         },
         "subtitle_style": {**defaults["subtitle_style"], **(episode.get("subtitle_style") or {})},
+        # Reels 專用字幕風格：defaults > subtitle_style_reels > subtitle_style（base） > episode override
+        # 缺欄位時自動回退到 subtitle_style，讓只想微調幾欄的 episode 不用整段重抄
+        "subtitle_style_reels": {
+            **defaults["subtitle_style"],
+            **(defaults.get("subtitle_style_reels") or {}),
+            **(episode.get("subtitle_style") or {}),
+            **(episode.get("subtitle_style_reels") or {}),
+        },
         "gemini": {**(defaults.get("gemini") or {}), **(episode.get("gemini") or {})},
         "assets": dict(defaults["assets"]),
         "encode": dict(defaults["encode"]),

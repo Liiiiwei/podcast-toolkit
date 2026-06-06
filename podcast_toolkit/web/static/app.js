@@ -19,7 +19,8 @@ const state = {
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasApiKey: false,
   hasGeminiKey: false,
-  sttProvider: "xai", // "xai" | "gemini"
+  hasOpenAIKey: false,
+  sttProvider: "xai", // "xai" | "gemini" | "openai"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   headTrimSec: 0, // 影片開頭要砍掉幾秒
   tailTrimSec: 0, // 影片結尾要砍掉幾秒
@@ -702,6 +703,7 @@ async function loadConfig() {
     const data = await r.json();
     state.hasApiKey = !!data.has_xai_api_key;
     state.hasGeminiKey = !!data.has_gemini_api_key;
+    state.hasOpenAIKey = !!data.has_openai_api_key;
     state.sttProvider = data.provider || "xai";
   } catch (_) {}
 }
@@ -848,6 +850,11 @@ function renderTypo() {
   overList.innerHTML = "";
   const overrides = [...state.textOverrides.entries()];
   overSummary.textContent = `${overrides.length} 處`;
+  const tabCount = $("#drawer-count-typo");
+  if (tabCount) {
+    const n = state.typoDict.length + overrides.length;
+    tabCount.textContent = n > 0 ? String(n) : "";
+  }
   if (overrides.length === 0) {
     const empty = document.createElement("div");
     empty.className = "typo-empty";
@@ -1194,6 +1201,84 @@ load().catch((err) => {
 });
 
 initUploadDropZone();
+setupDrawer();
+
+// === Drawer：底部「專案檔案 / 字典」分頁 + 收合（localStorage 持久化） ===
+function setupDrawer() {
+  const drawer = $("#drawer");
+  if (!drawer) return;
+  const tabs = drawer.querySelectorAll(".drawer-tab");
+  const panes = drawer.querySelectorAll(".drawer-pane");
+  const toggle = $("#drawer-toggle");
+
+  const KEY_TAB = "edit.drawer.tab";
+  const KEY_COLLAPSED = "edit.drawer.collapsed";
+
+  const showTab = (name) => {
+    tabs.forEach((t) => {
+      const active = t.dataset.drawerTab === name;
+      t.classList.toggle("active", active);
+      t.setAttribute("aria-selected", active ? "true" : "false");
+      // WAI-ARIA roving tabindex：只有 active tab 進 Tab 序列
+      t.setAttribute("tabindex", active ? "0" : "-1");
+    });
+    panes.forEach((p) => {
+      p.hidden = p.dataset.drawerPane !== name;
+    });
+    try {
+      localStorage.setItem(KEY_TAB, name);
+    } catch (_) {}
+  };
+
+  const expandIfCollapsed = () => {
+    if (drawer.classList.contains("collapsed")) {
+      drawer.classList.remove("collapsed");
+      try {
+        localStorage.setItem(KEY_COLLAPSED, "0");
+      } catch (_) {}
+    }
+  };
+
+  tabs.forEach((t, idx) => {
+    t.addEventListener("click", () => {
+      expandIfCollapsed();
+      showTab(t.dataset.drawerTab);
+    });
+    // ArrowLeft/Right 切上下 tab + focus；Home/End 跳第一/最後
+    t.addEventListener("keydown", (e) => {
+      let next = -1;
+      if (e.key === "ArrowRight") next = (idx + 1) % tabs.length;
+      else if (e.key === "ArrowLeft")
+        next = (idx - 1 + tabs.length) % tabs.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = tabs.length - 1;
+      else return;
+      e.preventDefault();
+      const nextName = tabs[next].dataset.drawerTab;
+      expandIfCollapsed();
+      showTab(nextName);
+      tabs[next].focus();
+    });
+  });
+
+  if (toggle) {
+    toggle.addEventListener("click", () => {
+      const collapsed = drawer.classList.toggle("collapsed");
+      try {
+        localStorage.setItem(KEY_COLLAPSED, collapsed ? "1" : "0");
+      } catch (_) {}
+    });
+  }
+
+  // 還原上次狀態
+  try {
+    const savedTab = localStorage.getItem(KEY_TAB);
+    if (savedTab) showTab(savedTab);
+    if (localStorage.getItem(KEY_COLLAPSED) === "1") {
+      drawer.classList.add("collapsed");
+    }
+  } catch (_) {}
+}
 
 // === Crop 框：固定比例 4:5 / 9:16 / 16:9，只能拖移不能 free resize ===
 (function setupCrop() {
@@ -1598,10 +1683,8 @@ function renderFileItem(f) {
     action = document.createElement("button");
     action.className = "file-stt";
     action.innerHTML = `${iconHtml("mic", 12)}<span>轉字幕</span>`;
-    const providerLabel =
-      state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
-    const hasSelectedKey =
-      state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
+    const providerLabel = providerLabelOf(state.sttProvider);
+    const hasSelectedKey = hasKeyForProvider(state.sttProvider);
     action.title = hasSelectedKey
       ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
       : `請先到設定面板填 ${providerLabel} API key`;
@@ -1623,7 +1706,11 @@ function renderFiles() {
   const total = state.files.length;
   const audio = state.files.filter((f) => f.transcribable).length;
   const previewLabel = state.previewPath ? state.previewPath : "主影片";
-  summary.textContent = `${total} 個檔案 · ${audio} 個可轉字幕 · 預覽中：${previewLabel}`;
+  if (summary) {
+    summary.textContent = `${total} 個檔案 · ${audio} 個可轉字幕 · 預覽中：${previewLabel}`;
+  }
+  const tabCount = $("#drawer-count-files");
+  if (tabCount) tabCount.textContent = total > 0 ? String(total) : "";
 
   if (total === 0) {
     const empty = document.createElement("div");
@@ -1967,11 +2054,23 @@ function hideModal(id) {
   if (el && typeof el.close === "function" && el.open) el.close();
 }
 
+// 供應商 label + state key 對照表（避免散落 ternary）
+function providerLabelOf(p) {
+  return (
+    { xai: "xAI Grok", gemini: "Gemini", openai: "OpenAI whisper-1" }[p] ||
+    "xAI Grok"
+  );
+}
+function hasKeyForProvider(p) {
+  if (p === "gemini") return state.hasGeminiKey;
+  if (p === "openai") return state.hasOpenAIKey;
+  return state.hasApiKey;
+}
+
 // === 轉字幕流程 ===
 function requestTranscribe(file) {
-  const providerLabel = state.sttProvider === "gemini" ? "Gemini" : "xAI Grok";
-  const hasSelectedKey =
-    state.sttProvider === "gemini" ? state.hasGeminiKey : state.hasApiKey;
+  const providerLabel = providerLabelOf(state.sttProvider);
+  const hasSelectedKey = hasKeyForProvider(state.sttProvider);
   // 重置上次跑剩的進度條 + 兩顆按鈕（避免 success 殘留把 #transcribe-go 藏起來）
   $("#transcribe-progress").hidden = true;
   const go = $("#transcribe-go");
@@ -2454,10 +2553,15 @@ function openSettings() {
   $("#settings-xai-key").type = "password";
   $("#settings-gemini-key").value = "";
   $("#settings-gemini-key").type = "password";
+  $("#settings-openai-key").value = "";
+  $("#settings-openai-key").type = "password";
   $("#settings-xai-status").textContent = state.hasApiKey
     ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
   $("#settings-gemini-status").textContent = state.hasGeminiKey
+    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
+    : "尚未設定";
+  $("#settings-openai-status").textContent = state.hasOpenAIKey
     ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
   const provider = state.sttProvider || "xai";
@@ -2484,16 +2588,23 @@ $("#settings-show-gemini").addEventListener("click", () => {
   input.type = input.type === "password" ? "text" : "password";
 });
 
+$("#settings-show-openai").addEventListener("click", () => {
+  const input = $("#settings-openai-key");
+  input.type = input.type === "password" ? "text" : "password";
+});
+
 $("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const xaiKey = $("#settings-xai-key").value.trim();
   const geminiKey = $("#settings-gemini-key").value.trim();
+  const openaiKey = $("#settings-openai-key").value.trim();
   const provider =
     document.querySelector('input[name="settings-provider"]:checked')?.value ||
     "xai";
   const payload = { provider };
   if (xaiKey) payload.xai_api_key = xaiKey;
   if (geminiKey) payload.gemini_api_key = geminiKey;
+  if (openaiKey) payload.openai_api_key = openaiKey;
   const btn = $("#settings-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
@@ -2510,6 +2621,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
     const data = await r.json();
     state.hasApiKey = !!data.has_xai_api_key;
     state.hasGeminiKey = !!data.has_gemini_api_key;
+    state.hasOpenAIKey = !!data.has_openai_api_key;
     state.sttProvider = data.provider || "xai";
     hideModal("settings-modal");
     renderFiles();

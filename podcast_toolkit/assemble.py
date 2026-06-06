@@ -20,7 +20,8 @@ def ffprobe_duration(path: Path) -> float:
 
 
 def build_style_string(style: dict) -> str:
-    """組 ffmpeg subtitles filter 的 force_style 字串"""
+    """組 ffmpeg subtitles filter 的 force_style 字串。
+    alignment 為選用：ASS numpad 對應（2=底部置中預設、5=畫面正中、8=頂部置中）。"""
     parts = [
         f"FontName={style['font_name']}",
         f"FontSize={style['font_size']}",
@@ -32,6 +33,8 @@ def build_style_string(style: dict) -> str:
         f"Shadow={style['shadow']}",
         f"MarginV={style['margin_v']}",
     ]
+    if "alignment" in style and style["alignment"] is not None:
+        parts.append(f"Alignment={style['alignment']}")
     return ",".join(parts)
 
 
@@ -78,6 +81,50 @@ def shift_srt(src: Path, dst: Path, offset_sec: float) -> None:
         new_start = max(0.0, c["start"] + offset_sec)
         shifted.append({**c, "start": new_start, "end": new_end})
     dst.write_text(srt_io.serialize(shifted), encoding="utf-8")
+
+
+def _write_ass_from_srt(src: Path, dst: Path, play_res_x: int, play_res_y: int) -> None:
+    """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
+
+    libass 對 SRT 預設 PlayResY=288，會把 MarginV/FontSize 用 frame_h/288 放大
+    （MarginV=100 在 1080 frame 變成 374px from bottom），跟前端預覽的
+    「字幕距裁切框底 8%」對不上。把 PlayResY 設為 output frame 高度後，
+    MarginV=N 就等同於最終輸出的 N 像素，預覽 / 輸出一致。
+    """
+    from podcast_toolkit import srt_io
+
+    def _fmt(t: float) -> str:
+        t = max(0.0, float(t))
+        h = int(t // 3600)
+        m = int((t % 3600) // 60)
+        s = t - h * 3600 - m * 60
+        return f"{h}:{m:02d}:{s:05.2f}"
+
+    cards = srt_io.parse(src.read_text(encoding="utf-8"))
+    head = (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        "WrapStyle: 0\n"
+        "ScaledBorderAndShadow: yes\n"
+        f"PlayResX: {play_res_x}\n"
+        f"PlayResY: {play_res_y}\n\n"
+        "[V4+ Styles]\n"
+        "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
+        "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
+        "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
+        "Alignment, MarginL, MarginR, MarginV, Encoding\n"
+        "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,"
+        "0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1\n\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+    rows = [head]
+    for c in cards:
+        text = (c["text"] or "").replace("\r\n", "\n").replace("\n", "\\N")
+        rows.append(
+            f"Dialogue: 0,{_fmt(c['start'])},{_fmt(c['end'])},Default,,0,0,0,,{text}\n"
+        )
+    dst.write_text("".join(rows), encoding="utf-8")
 
 
 def _wm_overlay_params(wm_cfg: dict, res_w, res_h) -> tuple[int, str]:
@@ -176,10 +223,12 @@ def build_filter_complex_yt(
         a_idx = 1
         align_a = ""
 
+    # 字幕必須燒在最終 res_w×res_h frame 上（在 scale+crop 之後），否則
+    # 字幕會以原片底部為基準算 MarginV，crop 後跟前端預覽（鎖在裁切框內）對不上。
     v1_pre = (
-        f"[1:v]subtitles={srt_rel}:force_style='{style_str}',"
-        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
-        f"fps={enc['framerate']},format={enc['pix_fmt']}"
+        f"[1:v]scale={res_w}:{res_h},{crop_part}"
+        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
     v1_fade = (
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
@@ -224,7 +273,7 @@ def build_filter_complex_reels(
     None = 用主影片原音。"""
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
-    style_str = build_style_string(cfg["subtitle_style"])
+    style_str = build_style_string(cfg.get("subtitle_style_reels") or cfg["subtitle_style"])
 
     crop = cfg.get("crop_reels")
     crop_part = ""
@@ -250,10 +299,11 @@ def build_filter_complex_reels(
         a_idx = 0
         align_a = ""
 
+    # 字幕燒在最終 1080×1920 frame 上（scale+crop 之後），對齊前端「字幕鎖在裁切框內」預覽。
     v_pre = (
-        f"[0:v]subtitles={srt_rel}:force_style='{style_str}',"
-        f"scale={res_w}:{res_h},{crop_part}{select_v}setsar=1,"
-        f"fps={enc['framerate']},format={enc['pix_fmt']}"
+        f"[0:v]scale={res_w}:{res_h},{crop_part}"
+        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
     v_fade = (
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
@@ -296,9 +346,11 @@ def _multicam_cam_prep(
     cam_label='a' 或 'b'；輸出 label 為 [m_{cam_label}_v]。
     setpts_prefix 給 cam B 用來把 PTS 移到主時間軸（cam A 留空）。
     """
+    # 字幕燒在最終裁切後 frame（scale+crop 之後），對齊前端「字幕鎖在裁切框內」預覽。
     return (
-        f"[{src_idx}:v]{setpts_prefix}subtitles={srt_rel}:force_style='{style_str}',"
-        f"scale={res_w}:{res_h},{crop_part}setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
+        f"[{src_idx}:v]{setpts_prefix}scale={res_w}:{res_h},{crop_part}"
+        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
     )
 
 
@@ -307,18 +359,43 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
 
     回傳 (parts, main_v_in, main_a_in)。單段時直接用 seg_v_0/seg_a_0，
     多段才額外加 concat=n=N 進 main_v_raw/main_a_raw。
+
+    [m_a_v]/[m_b_v]/[m_a_a] 多次引用時必須明確 split/asplit；ffmpeg 的
+    auto-split 在這個 trim+concat 圖形下會吃掉幀導致主段截斷（只剩前 1-2 段）。
     """
     parts: list[str] = []
     n = len(segments)
+
+    n_a_v = sum(1 for s in segments if s["cam"] == "a")
+    n_b_v = sum(1 for s in segments if s["cam"] == "b")
+    n_a_a = n  # 音訊全部走 cam A
+
+    if n_a_v > 1:
+        labels = "".join(f"[m_a_v_{i}]" for i in range(n_a_v))
+        parts.append(f"[m_a_v]split={n_a_v}{labels}")
+    if n_b_v > 1:
+        labels = "".join(f"[m_b_v_{i}]" for i in range(n_b_v))
+        parts.append(f"[m_b_v]split={n_b_v}{labels}")
+    if n_a_a > 1:
+        labels = "".join(f"[m_a_a_{i}]" for i in range(n_a_a))
+        parts.append(f"[m_a_a]asplit={n_a_a}{labels}")
+
+    cam_idx = {"a": 0, "b": 0}
+    audio_idx = 0
     for i, seg in enumerate(segments):
         cam = seg["cam"]
         s, e = float(seg["start"]), float(seg["end"])
+        n_cam = n_a_v if cam == "a" else n_b_v
+        v_src = f"m_{cam}_v_{cam_idx[cam]}" if n_cam > 1 else f"m_{cam}_v"
+        cam_idx[cam] += 1
+        a_src = f"m_a_a_{audio_idx}" if n_a_a > 1 else "m_a_a"
+        audio_idx += 1
         parts.append(
-            f"[m_{cam}_v]trim={s:.3f}:{e:.3f},setpts=PTS-STARTPTS[seg_v_{i}]"
+            f"[{v_src}]trim={s:.3f}:{e:.3f},setpts=PTS-STARTPTS[seg_v_{i}]"
         )
         # 音訊永遠取 cam A（多鏡頭只切畫面，聲音來源固定）
         parts.append(
-            f"[m_a_a]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS[seg_a_{i}]"
+            f"[{a_src}]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS[seg_a_{i}]"
         )
     if n > 1:
         seg_labels = "".join(f"[seg_v_{i}][seg_a_{i}]" for i in range(n))
@@ -470,7 +547,7 @@ def build_filter_complex_reels_multicam(
     """
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
-    style_str = build_style_string(cfg["subtitle_style"])
+    style_str = build_style_string(cfg.get("subtitle_style_reels") or cfg["subtitle_style"])
     sr = enc["audio_sample_rate"]
     fmt = enc["pix_fmt"]
     fps = enc["framerate"]
@@ -623,7 +700,16 @@ def prepare_assembly(
     # filter_complex：subtitles filter 路徑要相對 cwd，subprocess cwd 設為 03_成品/
     cwd = ep.subdir("output")
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
-    srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
+
+    # 把 SRT 轉成有明確 PlayResX/Y 的 ASS，PlayResY 設為輸出 frame 高，避免
+    # libass 對 SRT 的預設 PlayResY=288 把 MarginV/FontSize 等比放大。
+    if output_kind == "yt":
+        ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
+    else:
+        ass_res_w, ass_res_h = 1080, 1920
+    ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
+    _write_ass_from_srt(srt, ass_path, ass_res_w, ass_res_h)
+    srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
     deletions = list(cfg.get("deletions") or [])
     head_trim = float(cfg.get("head_trim_sec") or 0)

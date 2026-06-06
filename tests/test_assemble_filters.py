@@ -258,8 +258,10 @@ def test_filter_complex_yt_multicam_audio_always_from_cam_a():
     fc = assemble.build_filter_complex_yt_multicam(
         BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # 兩段的 atrim 都從 [m_a_a]
-    assert fc.count("[m_a_a]atrim") == 2
+    # 多段時用 asplit 明確切分（避免 ffmpeg auto-split 在大量段時吃幀截斷）
+    assert "[m_a_a]asplit=2[m_a_a_0][m_a_a_1]" in fc
+    assert "[m_a_a_0]atrim=0.000:20.000" in fc
+    assert "[m_a_a_1]atrim=20.000:50.000" in fc
 
 
 def test_filter_complex_yt_multicam_cam_b_applies_sync_offset():
@@ -289,6 +291,26 @@ def test_filter_complex_yt_multicam_with_crop_applied_to_both_cams():
     assert fc.count("crop=1536:972:192:54") == 2
 
 
+def test_filter_complex_yt_multicam_same_cam_multi_segments_explicit_split():
+    """同一 cam 出現 N 段時必須用明確 split=N。
+    ffmpeg auto-split 在這種圖形下會吃幀 → 輸出只剩前 1-2 段（regression: 2026-06）。
+    """
+    segs = [
+        {"cam": "a", "start": 0.0, "end": 5.0},
+        {"cam": "a", "start": 5.0, "end": 10.0},
+        {"cam": "a", "start": 10.0, "end": 15.0},
+    ]
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=15.0, srt_rel="x.srt", segments=segs,
+    )
+    assert "[m_a_v]split=3[m_a_v_0][m_a_v_1][m_a_v_2]" in fc
+    assert "[m_a_a]asplit=3[m_a_a_0][m_a_a_1][m_a_a_2]" in fc
+    # 各段引用自己的 split 輸出
+    assert "[m_a_v_0]trim=0.000:5.000" in fc
+    assert "[m_a_v_1]trim=5.000:10.000" in fc
+    assert "[m_a_v_2]trim=10.000:15.000" in fc
+
+
 def test_filter_complex_reels_multicam_basic():
     """Reels multicam：1080×1920，無 intro/outro。"""
     fc = assemble.build_filter_complex_reels_multicam(
@@ -307,7 +329,99 @@ def test_filter_complex_reels_multicam_audio_from_cam_a():
     fc = assemble.build_filter_complex_reels_multicam(
         BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    assert fc.count("[m_a_a]atrim") == 2
+    assert "[m_a_a]asplit=2[m_a_a_0][m_a_a_1]" in fc
+    assert "[m_a_a_0]atrim=0.000:20.000" in fc
+    assert "[m_a_a_1]atrim=20.000:50.000" in fc
+
+
+# --- subtitle_style_reels：Reels 專用字幕風格分離 ---
+
+def test_filter_complex_reels_uses_reels_style_when_present():
+    """有 subtitle_style_reels 時，Reels 應該用 reels 那組（font_size / margin_v 不一樣）。"""
+    cfg = {**BASE_CFG, "subtitle_style_reels": {
+        "font_name": "F", "font_size": 80, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 3, "shadow": 1, "margin_v": 320,
+    }}
+    fc = assemble.build_filter_complex_reels(cfg, main_dur=50.0, srt_rel="x.srt")
+    # Reels 專用值出現
+    assert "FontSize=80" in fc
+    assert "MarginV=320" in fc
+    assert "Outline=3" in fc
+
+
+def test_filter_complex_reels_falls_back_to_subtitle_style_when_reels_missing():
+    """沒給 subtitle_style_reels → 回退到 subtitle_style（用 YT 那組值）。"""
+    # BASE_CFG 只有 subtitle_style（font_size=28, margin_v=60）
+    fc = assemble.build_filter_complex_reels(BASE_CFG, main_dur=50.0, srt_rel="x.srt")
+    assert "FontSize=28" in fc
+    assert "MarginV=60" in fc
+
+
+def test_filter_complex_yt_ignores_subtitle_style_reels():
+    """YT 分支不該被 subtitle_style_reels 污染。"""
+    cfg = {**BASE_CFG, "subtitle_style_reels": {
+        "font_name": "F", "font_size": 999, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 9, "shadow": 1, "margin_v": 999,
+    }}
+    fc = assemble.build_filter_complex_yt(cfg, main_dur=50.0, srt_rel="x.srt")
+    # YT 仍用 subtitle_style 的 font_size=28
+    assert "FontSize=28" in fc
+    assert "FontSize=999" not in fc
+
+
+def test_filter_complex_reels_multicam_uses_reels_style():
+    """雙鏡頭 reels 也要讀 subtitle_style_reels。"""
+    cfg = {**BASE_CFG, "subtitle_style_reels": {
+        "font_name": "F", "font_size": 80, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 3, "shadow": 1, "margin_v": 320,
+    }}
+    fc = assemble.build_filter_complex_reels_multicam(
+        cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "FontSize=80" in fc
+    assert "MarginV=320" in fc
+
+
+# --- alignment 欄位：選用 ASS Alignment（2/5/8） ---
+
+
+def test_build_style_string_omits_alignment_when_absent():
+    """沒給 alignment → style str 不含 Alignment=（向後相容預設 2）。"""
+    style = {
+        "font_name": "F", "font_size": 28, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 2, "shadow": 1, "margin_v": 60,
+    }
+    s = assemble.build_style_string(style)
+    assert "Alignment=" not in s
+
+
+def test_build_style_string_emits_alignment_when_present():
+    """alignment=5 → style str 含 Alignment=5（畫面正中央）。"""
+    style = {
+        "font_name": "F", "font_size": 80, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 3, "shadow": 1,
+        "margin_v": 0, "alignment": 5,
+    }
+    s = assemble.build_style_string(style)
+    assert "Alignment=5" in s
+    assert "MarginV=0" in s
+
+
+def test_filter_complex_reels_includes_alignment_when_set():
+    """subtitle_style_reels 設 alignment=5 → reels filter 字幕落在 alignment=5。"""
+    cfg = {**BASE_CFG, "subtitle_style_reels": {
+        "font_name": "F", "font_size": 80, "bold": 1,
+        "primary_colour": "&H00FFFFFF", "outline_colour": "&H00000000",
+        "border_style": 1, "outline": 3, "shadow": 1,
+        "margin_v": 0, "alignment": 5,
+    }}
+    fc = assemble.build_filter_complex_reels(cfg, main_dur=50.0, srt_rel="x.srt")
+    assert "Alignment=5" in fc
 
 
 # --- T23a Step 4c: prepare_assembly 雙鏡頭分流 ---

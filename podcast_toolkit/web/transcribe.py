@@ -19,6 +19,9 @@ from podcast_toolkit import srt_io
 GROK_STT_URL = "https://api.x.ai/v1/stt"
 # Gemini：用 google-genai SDK（Files API + generateContent）
 GEMINI_MODEL = "gemini-2.5-flash"
+# OpenAI Whisper-1：/v1/audio/transcriptions verbose_json + word timestamps；
+# prompt 欄接受 224 token 的詞庫提詞偏值（_build_whisper_prompt 串成頓號分隔字串）
+OPENAI_MODEL = "whisper-1"
 # 上傳前壓縮成 16kHz mp3，足夠 STT 用，能大幅縮短上傳時間
 COMPRESS_SAMPLE_RATE = "16000"
 COMPRESS_BITRATE = "64k"
@@ -180,10 +183,129 @@ def run_gemini_pipeline(
     return out_srt
 
 
+def run_openai_pipeline(
+    *,
+    api_key: str,
+    src_audio: Path,
+    out_srt: Path,
+    work_dir: Path,
+    progress=None,
+    typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,
+) -> Path:
+    """OpenAI STT pipeline：壓縮 → /v1/audio/transcriptions（whisper-1 word timestamps）→ s2tw → 寫 SRT。
+
+    用 whisper-1 而非 gpt-4o-audio-preview：後者是 chat audio I/O 模型（tier 限制 + 已從
+    public aliases 移除→ 404）。whisper-1 是 OpenAI 官方 STT 端點、全帳號可用，且
+    verbose_json + timestamp_granularities=["word"] 直接回傳逐字時間軸，符合 word→cards pipeline。
+    glossary 透過 prompt 參數做 vocabulary biasing（whisper prompt 上限 224 tokens，
+    只塞 canonical 列表 + 錯字字典 right 端，不放長篇指令）。
+    """
+    if not shutil.which("ffmpeg"):
+        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+    try:
+        from openai import OpenAI
+    except ImportError as e:
+        raise TranscribeError(
+            "缺少 openai SDK；請跑 `pip3 install --user openai`"
+        ) from e
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out_srt.parent.mkdir(parents=True, exist_ok=True)
+
+    if progress:
+        progress("compress", 0.0)
+    compressed = work_dir / f"_openai_stt_{src_audio.stem}.mp3"
+    _ffmpeg_compress(src_audio, compressed)
+    if progress:
+        progress("compress", 100.0)
+
+    if progress:
+        progress("upload", 0.0)
+    try:
+        client = OpenAI(api_key=api_key)
+        whisper_prompt = _build_whisper_prompt(typo_entries, glossary)
+        with compressed.open("rb") as fh:
+            kwargs = dict(
+                model=OPENAI_MODEL,
+                file=fh,
+                response_format="verbose_json",
+                timestamp_granularities=["word"],
+                language="zh",
+            )
+            if whisper_prompt:
+                kwargs["prompt"] = whisper_prompt
+            resp = client.audio.transcriptions.create(**kwargs)
+        # verbose_json 回傳物件含 .words = [{word, start, end}, ...]（SDK 物件需 .model_dump）
+        raw_words = getattr(resp, "words", None) or []
+        words = []
+        for w in raw_words:
+            if hasattr(w, "model_dump"):
+                w = w.model_dump()
+            elif not isinstance(w, dict):
+                w = {
+                    "word": getattr(w, "word", ""),
+                    "start": getattr(w, "start", 0.0),
+                    "end": getattr(w, "end", 0.0),
+                }
+            words.append({
+                "text": w.get("word") or w.get("text") or "",
+                "start": float(w.get("start", 0.0)),
+                "end": float(w.get("end", 0.0)),
+            })
+    except TranscribeError:
+        raise
+    except Exception as e:
+        raise TranscribeError(f"OpenAI STT 失敗：{e}") from e
+    if progress:
+        progress("upload", 100.0)
+
+    if not words:
+        raise TranscribeError("OpenAI 沒回傳任何字幕")
+    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
+    words = _dedup_overlapping_times(words)
+    cards = _words_to_cards(words)
+    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    return out_srt
+
+
+def _build_whisper_prompt(
+    typo_entries: list[dict] | None,
+    glossary: list[dict] | None,
+) -> str:
+    """組 whisper-1 prompt：vocabulary biasing hint（不是指令）。
+
+    whisper prompt 是「期望出現的詞彙」，會 bias decoder 用這些寫法。224 token 上限，
+    所以只塞 glossary canonical + typo_entries 的 right 端，頓號分隔。"""
+    hints: list[str] = []
+    if glossary:
+        for it in glossary:
+            if not isinstance(it, dict):
+                continue
+            c = it.get("canonical")
+            if c:
+                hints.append(str(c))
+    if typo_entries:
+        for e in typo_entries:
+            if not isinstance(e, dict):
+                continue
+            r = e.get("right")
+            if r:
+                hints.append(str(r))
+    seen = set()
+    uniq = []
+    for h in hints:
+        if h and h not in seen:
+            seen.add(h)
+            uniq.append(h)
+    return "、".join(uniq)
+
+
 # 供應商分流表：UI 切換靠這個（順序也是 UI 顯示順序）
 PROVIDERS: dict[str, callable] = {
     "xai": run_grok_pipeline,
     "gemini": run_gemini_pipeline,
+    "openai": run_openai_pipeline,
 }
 
 

@@ -108,177 +108,239 @@
     </header>
 
     <main class="body">
-      <section class="video-pane">
-        <div class="version-tabs" id="version-tabs">
-          <button class="version-tab active" data-version="yt" type="button">
-            YT 16:9 完整版
-          </button>
-          <button class="version-tab" data-version="reels" type="button">
-            Reels 9:16 短版
-          </button>
-        </div>
-        <div class="video-wrap">
-          <video id="video" src="/api/video" preload="metadata"></video>
-          <video id="video-camb" preload="auto" muted playsinline></video>
-          <audio id="external-audio" hidden preload="auto"></audio>
-          <div id="caption-overlay"></div>
-          <div class="crop-frame" id="crop-frame">
-            <div class="handle tl" data-edge="tl"></div>
-            <div class="handle tr" data-edge="tr"></div>
-            <div class="handle bl" data-edge="bl"></div>
-            <div class="handle br" data-edge="br"></div>
+      <div class="body-top">
+        <section class="video-pane">
+          <div class="version-tabs" id="version-tabs">
+            <button class="version-tab active" data-version="yt" type="button">
+              YT 16:9 完整版
+            </button>
+            <button class="version-tab" data-version="reels" type="button">
+              Reels 9:16 短版
+            </button>
           </div>
-        </div>
-        <div class="controls">
-          <button id="play-btn" type="button" class="btn btn-icon">
-            <span data-icon="play"></span>
-          </button>
-          <span id="time" class="time-readout">00:00 / 00:00</span>
-          <div class="seek-wrap">
-            <input type="range" id="seek" min="0" max="100" value="0" />
-            <div class="trim-band head" id="trim-band-head"></div>
-            <div class="trim-band tail" id="trim-band-tail"></div>
-            <div
-              class="trim-handle head"
-              id="trim-handle-head"
-              title="拖曳設定片頭"
-            ></div>
-            <div
-              class="trim-handle tail"
-              id="trim-handle-tail"
-              title="拖曳設定片尾"
-            ></div>
+          <div class="video-wrap">
+            <video id="video" src="/api/video" preload="metadata"></video>
+            <video id="video-camb" preload="auto" muted playsinline></video>
+            <audio id="external-audio" hidden preload="auto"></audio>
+            <div id="caption-overlay"></div>
+            <div class="crop-frame" id="crop-frame">
+              <div class="handle tl" data-edge="tl"></div>
+              <div class="handle tr" data-edge="tr"></div>
+              <div class="handle bl" data-edge="bl"></div>
+              <div class="handle br" data-edge="br"></div>
+            </div>
           </div>
-        </div>
-        <div class="trim-controls">
-          <button
-            id="trim-head-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="把目前播放位置設成新片頭"
-          >
-            <span data-icon="scissors"></span>
-            <span>設頭</span>
-            <span id="trim-head-val" class="kbd-val">0.0s</span>
-          </button>
-          <button
-            id="trim-tail-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="把目前播放位置設成新片尾"
-          >
-            <span data-icon="scissors"></span>
-            <span>設尾</span>
-            <span id="trim-tail-val" class="kbd-val">0.0s</span>
-          </button>
-          <button
-            id="trim-reset"
-            type="button"
-            class="btn btn-ghost"
-            title="清除頭尾裁切"
-          >
-            <span data-icon="rotate-ccw"></span>
-            <span>重設</span>
-          </button>
-          <button
-            id="trim-suggest-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="用 ffmpeg silencedetect 估開頭靜音"
-          >
-            <span data-icon="sparkles"></span>
-            <span>智慧建議</span>
-          </button>
-          <span id="trim-suggest-hint" class="trim-hint"></span>
-          <span id="trim-hint" class="trim-hint"></span>
-        </div>
-        <div class="crop-info">
-          <span id="crop-text">裁切框：未設定</span>
-          <div class="crop-ratios">
+          <div class="controls">
+            <button id="play-btn" type="button" class="btn btn-icon">
+              <span data-icon="play"></span>
+            </button>
+            <span id="time" class="time-readout">00:00 / 00:00</span>
+            <div class="seek-wrap">
+              <input type="range" id="seek" min="0" max="100" value="0" />
+              <div class="trim-band head" id="trim-band-head"></div>
+              <div class="trim-band tail" id="trim-band-tail"></div>
+              <div
+                class="trim-handle head"
+                id="trim-handle-head"
+                title="拖曳設定片頭"
+              ></div>
+              <div
+                class="trim-handle tail"
+                id="trim-handle-tail"
+                title="拖曳設定片尾"
+              ></div>
+            </div>
+          </div>
+          <div class="trim-controls">
             <button
-              class="btn btn-ghost ratio-btn"
-              data-ratio="4:5"
+              id="trim-head-btn"
               type="button"
+              class="btn btn-ghost"
+              title="把目前播放位置設成新片頭"
             >
-              4:5
+              <span data-icon="scissors"></span>
+              <span>設頭</span>
+              <span id="trim-head-val" class="kbd-val">0.0s</span>
             </button>
             <button
-              class="btn btn-ghost ratio-btn"
-              data-ratio="9:16"
+              id="trim-tail-btn"
               type="button"
+              class="btn btn-ghost"
+              title="把目前播放位置設成新片尾"
             >
-              9:16
+              <span data-icon="scissors"></span>
+              <span>設尾</span>
+              <span id="trim-tail-val" class="kbd-val">0.0s</span>
             </button>
             <button
-              class="btn btn-ghost ratio-btn"
-              data-ratio="16:9"
+              id="trim-reset"
               type="button"
+              class="btn btn-ghost"
+              title="清除頭尾裁切"
             >
-              16:9
-            </button>
-            <button id="crop-reset" type="button" class="btn btn-ghost">
               <span data-icon="rotate-ccw"></span>
               <span>重設</span>
             </button>
+            <button
+              id="trim-suggest-btn"
+              type="button"
+              class="btn btn-ghost"
+              title="用 ffmpeg silencedetect 估開頭靜音"
+            >
+              <span data-icon="sparkles"></span>
+              <span>智慧建議</span>
+            </button>
+            <span id="trim-suggest-hint" class="trim-hint"></span>
+            <span id="trim-hint" class="trim-hint"></span>
           </div>
-        </div>
+          <div class="crop-info">
+            <span id="crop-text">裁切框：未設定</span>
+            <div class="crop-ratios">
+              <button
+                class="btn btn-ghost ratio-btn"
+                data-ratio="4:5"
+                type="button"
+              >
+                4:5
+              </button>
+              <button
+                class="btn btn-ghost ratio-btn"
+                data-ratio="9:16"
+                type="button"
+              >
+                9:16
+              </button>
+              <button
+                class="btn btn-ghost ratio-btn"
+                data-ratio="16:9"
+                type="button"
+              >
+                16:9
+              </button>
+              <button id="crop-reset" type="button" class="btn btn-ghost">
+                <span data-icon="rotate-ccw"></span>
+                <span>重設</span>
+              </button>
+            </div>
+          </div>
+        </section>
 
-        <div class="files-pane" id="files-pane">
-          <h2 class="typo-head">
-            <span>專案檔案</span>
-            <span class="typo-sub" id="files-summary">載入中…</span>
-          </h2>
-          <div
-            id="files-upload-status"
-            class="files-upload-status"
-            hidden
-          ></div>
-          <div id="files-list" class="files-list"></div>
-          <div class="files-drop-overlay">
-            <span data-icon="inbox" data-icon-size="20"></span>
-            <span>放開以上傳到 01_母帶/</span>
+        <section class="cards-pane">
+          <div class="sus-toolbar hidden" id="sus-toolbar">
+            <span class="sus-count" id="sus-count">0</span>
+            <span class="sus-label">張可疑空拍卡</span>
+            <button id="sus-select-all" type="button" class="btn btn-ghost">
+              <span data-icon="square"></span>
+              <span>全選紅卡</span>
+            </button>
+            <button
+              id="sus-delete-checked"
+              type="button"
+              class="btn btn-ghost"
+              disabled
+            >
+              <span data-icon="trash-2"></span>
+              <span>刪除已勾</span>
+            </button>
+            <span class="spacer"></span>
+            <span id="sus-checked-count" class="sus-label">已勾 0</span>
           </div>
-        </div>
+          <div id="cards-list"></div>
+        </section>
+      </div>
 
-        <div class="typo-pane">
-          <div class="typo-section">
-            <h2 class="typo-head">
-              <span>全域字典</span>
-              <span class="typo-sub" id="typo-dict-summary">載入中…</span>
-            </h2>
-            <div id="typo-dict-list" class="typo-list"></div>
+      <section class="drawer" id="drawer">
+        <div class="drawer-header">
+          <div class="drawer-tabs" role="tablist" aria-label="抽屜分頁">
+            <button
+              type="button"
+              class="drawer-tab active"
+              data-drawer-tab="files"
+              role="tab"
+              id="drawer-tab-files"
+              aria-controls="drawer-pane-files"
+              aria-selected="true"
+              tabindex="0"
+            >
+              <span data-icon="folder"></span>
+              <span>專案檔案</span>
+              <span class="drawer-tab-count" id="drawer-count-files"></span>
+            </button>
+            <button
+              type="button"
+              class="drawer-tab"
+              data-drawer-tab="typo"
+              role="tab"
+              id="drawer-tab-typo"
+              aria-controls="drawer-pane-typo"
+              aria-selected="false"
+              tabindex="-1"
+            >
+              <span data-icon="book-open"></span>
+              <span>字典</span>
+              <span class="drawer-tab-count" id="drawer-count-typo"></span>
+            </button>
           </div>
-          <div class="typo-section">
-            <h2 class="typo-head">
-              <span>本集修改</span>
-              <span class="typo-sub" id="typo-overrides-summary">0 處</span>
-            </h2>
-            <div id="typo-overrides-list" class="typo-list"></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="cards-pane">
-        <div class="sus-toolbar hidden" id="sus-toolbar">
-          <span class="sus-count" id="sus-count">0</span>
-          <span class="sus-label">張可疑空拍卡</span>
-          <button id="sus-select-all" type="button" class="btn btn-ghost">
-            <span data-icon="square"></span>
-            <span>全選紅卡</span>
-          </button>
           <button
-            id="sus-delete-checked"
             type="button"
-            class="btn btn-ghost"
-            disabled
+            id="drawer-toggle"
+            class="btn btn-ghost drawer-toggle"
+            title="收合/展開"
+            aria-label="收合或展開"
           >
-            <span data-icon="trash-2"></span>
-            <span>刪除已勾</span>
+            <span data-icon="chevron-down" id="drawer-toggle-icon"></span>
           </button>
-          <span class="spacer"></span>
-          <span id="sus-checked-count" class="sus-label">已勾 0</span>
         </div>
-        <div id="cards-list"></div>
+        <div class="drawer-panes">
+          <div
+            class="drawer-pane"
+            id="drawer-pane-files"
+            data-drawer-pane="files"
+            role="tabpanel"
+            aria-labelledby="drawer-tab-files"
+            tabindex="0"
+          >
+            <div class="files-pane" id="files-pane">
+              <div class="files-summary" id="files-summary">載入中…</div>
+              <div
+                id="files-upload-status"
+                class="files-upload-status"
+                hidden
+              ></div>
+              <div id="files-list" class="files-list"></div>
+              <div class="files-drop-overlay">
+                <span data-icon="inbox" data-icon-size="20"></span>
+                <span>放開以上傳到 01_母帶/</span>
+              </div>
+            </div>
+          </div>
+          <div
+            class="drawer-pane"
+            id="drawer-pane-typo"
+            data-drawer-pane="typo"
+            role="tabpanel"
+            aria-labelledby="drawer-tab-typo"
+            tabindex="0"
+            hidden
+          >
+            <div class="typo-pane">
+              <div class="typo-section">
+                <h2 class="typo-head">
+                  <span>全域字典</span>
+                  <span class="typo-sub" id="typo-dict-summary">載入中…</span>
+                </h2>
+                <div id="typo-dict-list" class="typo-list"></div>
+              </div>
+              <div class="typo-section">
+                <h2 class="typo-head">
+                  <span>本集修改</span>
+                  <span class="typo-sub" id="typo-overrides-summary">0 處</span>
+                </h2>
+                <div id="typo-overrides-list" class="typo-list"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -306,6 +368,15 @@
                 id="settings-provider-gemini"
               />
               Google Gemini
+            </label>
+            <label class="modal-radio">
+              <input
+                type="radio"
+                name="settings-provider"
+                value="openai"
+                id="settings-provider-openai"
+              />
+              OpenAI（whisper-1）
             </label>
           </div>
 
@@ -358,6 +429,33 @@
               >aistudio.google.com/apikey</a
             >
             取得，存於 ~/.podcast-toolkit/config.json
+          </div>
+
+          <label class="modal-label modal-label-spaced">OpenAI API key</label>
+          <div class="modal-row">
+            <input
+              type="password"
+              id="settings-openai-key"
+              placeholder="sk-..."
+              autocomplete="off"
+            />
+            <button
+              id="settings-show-openai"
+              type="button"
+              class="btn btn-icon"
+              title="顯示/隱藏"
+              aria-label="顯示或隱藏"
+            >
+              <span data-icon="eye"></span>
+            </button>
+          </div>
+          <div class="modal-hint" id="settings-openai-status">尚未設定</div>
+          <div class="modal-hint">
+            從
+            <a href="https://platform.openai.com/api-keys" target="_blank"
+              >platform.openai.com/api-keys</a
+            >
+            取得（注意：不是 ChatGPT Plus 訂閱，API 另計費）
           </div>
         </div>
         <div class="modal-actions">

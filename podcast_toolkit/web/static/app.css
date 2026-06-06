@@ -210,17 +210,31 @@ h2 {
 }
 
 .body {
+  --drawer-h: 32vh;
+  --video-budget: calc(100vh - 220px - var(--drawer-h));
   display: grid;
-  grid-template-columns: 1fr 400px;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr;
   gap: 12px;
   flex: 1;
-  padding: 12px;
+  padding: 14px 16px;
+  overflow: hidden;
+  font-size: var(--text-lg);
+}
+/* drawer 收合 → 把高度還給上方；用 :has() 讓 video-wrap 即時跟著放大 */
+.body:has(.drawer.collapsed) {
+  --drawer-h: 42px;
+}
+.body-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 14px;
+  min-height: 0;
   overflow: hidden;
 }
 .video-pane {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   min-height: 0;
 }
 .video-wrap {
@@ -228,13 +242,15 @@ h2 {
   background: #000;
   aspect-ratio: 16 / 9;
   width: 100%;
-  /* 限制影片高度，避免在寬螢幕把下方檔案 / 字典面板擠出 viewport */
-  max-height: 50vh;
-  /* 高度被 max-height 卡住時，寬度同步縮以維持 16:9，不然 aspect-ratio 會失效 */
-  max-width: calc(50vh * 16 / 9);
+  /* 影片高度跟 drawer 連動：drawer 展開時 ~50vh，收合時可長到 ~80vh。
+     budget = viewport - topbar/padding/controls/drawer，寬度照 16:9 同步算 */
+  max-height: var(--video-budget);
+  max-width: calc(var(--video-budget) * 16 / 9);
   align-self: center;
-  /* 不被下方面板擠壓，否則 aspect-ratio 會被 flex shrink 覆蓋 */
   flex-shrink: 0;
+  transition:
+    max-height var(--duration-base) var(--ease-out),
+    max-width var(--duration-base) var(--ease-out);
   /* 限制裁切框 box-shadow 遮罩只到影片區內，不溢出蓋全頁 */
   overflow: hidden;
 }
@@ -429,16 +445,11 @@ h2 {
 }
 
 .typo-pane {
-  margin-top: 10px;
-  background: var(--surface-sunken);
-  border-radius: 4px;
-  padding: 8px 10px;
-  font-size: var(--text-sm);
+  /* 已搬進 drawer-pane，外層由 drawer 控高度，這裡只負責內部排版 */
+  font-size: var(--text-md);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 38vh;
-  overflow-y: auto;
+  gap: 10px;
 }
 .typo-section {
   display: flex;
@@ -537,19 +548,20 @@ h2 {
   padding: 4px 6px;
 }
 
-/* 專案檔案 panel */
+/* 專案檔案 panel — 已搬進 drawer-pane，這裡只管內部排版與 drop overlay 定位 */
 .files-pane {
-  margin-top: 10px;
-  background: var(--surface-sunken);
-  border-radius: 4px;
-  padding: 8px 10px;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 28vh;
-  overflow-y: auto;
+  gap: 8px;
   position: relative;
+  min-height: 100%;
+}
+.files-summary {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  padding: 2px 2px 6px;
+  border-bottom: 1px solid var(--border);
 }
 .files-pane.dragover {
   outline: 2px dashed var(--accent);
@@ -584,16 +596,16 @@ h2 {
 .files-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
 }
 .file-item {
   display: grid;
   grid-template-columns: 1fr auto auto auto auto;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
-  padding: 4px 6px;
+  padding: 8px 12px;
   background: var(--surface-raised);
-  border-radius: 3px;
+  border-radius: 4px;
 }
 .file-item.previewing {
   border-left: 2px solid var(--accent);
@@ -623,12 +635,12 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: var(--text-xs);
+  font-size: var(--text-sm);
 }
 .file-size {
   color: var(--text-dim);
-  font-size: var(--text-xs);
-  min-width: 56px;
+  font-size: var(--text-sm);
+  min-width: 64px;
   text-align: right;
 }
 .file-stt {
@@ -724,7 +736,7 @@ h2 {
   overflow-y: auto;
   background: var(--surface-sunken);
   border-radius: 4px;
-  padding: 8px;
+  padding: 12px;
 }
 
 /* 載入骨架：切集 / 首次載入時顯示 */
@@ -1491,8 +1503,15 @@ dialog.modal::backdrop {
   }
   .body {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
     overflow: visible;
     flex: none;
+    /* drawer 改為自動高度（內容撐開），避免手機上跟影片/卡片擠成一團 */
+    --drawer-h: auto;
+  }
+  .body-top {
+    grid-template-columns: 1fr;
+    overflow: visible;
   }
   .video-pane {
     overflow: visible;
@@ -1508,6 +1527,10 @@ dialog.modal::backdrop {
   }
   .cards-pane {
     overflow-y: auto;
+    max-height: 60vh;
+  }
+  .drawer {
+    height: auto;
     max-height: 60vh;
   }
 }
@@ -1707,4 +1730,112 @@ dialog.modal::backdrop {
   padding: 4px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
+}
+
+/* —— 底部 drawer：檔案 / 字典 tab 切換、可收合 —— */
+.drawer {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* 預設展開高度：佔視窗 1/3，使用者可以拖出更多檔案 */
+  height: 32vh;
+  transition:
+    height var(--duration-base) var(--ease-out),
+    padding var(--duration-base) var(--ease-out);
+  overflow: hidden;
+}
+.drawer.collapsed {
+  height: 42px;
+}
+/* drawer-header：tablist + toggle 並排；padding / border 從 .drawer-tabs 上移到這層，
+   讓 #drawer-toggle 可以離開 role=tablist 容器又維持原本視覺位置 */
+.drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px 0;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.drawer.collapsed .drawer-header {
+  border-bottom-color: transparent;
+  padding-bottom: 6px;
+}
+.drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.drawer-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: var(--text-md);
+  font-weight: 500;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.drawer-tab:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+.drawer-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.drawer-tab-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  padding: 1px 6px;
+  background: var(--surface-sunken);
+  border-radius: 999px;
+  min-width: 22px;
+  text-align: center;
+}
+.drawer-tab.active .drawer-tab-count {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+/* 0 / 空字串時不顯示，避免空狀態看到灰色「0」pill */
+.drawer-tab-count:empty {
+  display: none;
+}
+.drawer-toggle {
+  margin-left: auto;
+  padding: 4px 8px;
+}
+.drawer.collapsed #drawer-toggle-icon svg {
+  transform: rotate(180deg);
+  transition: transform var(--duration-base) var(--ease-out);
+}
+#drawer-toggle-icon svg {
+  transition: transform var(--duration-base) var(--ease-out);
+}
+.drawer-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.drawer-pane {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+.drawer-pane[hidden] {
+  display: none;
+}
+.drawer.collapsed .drawer-panes {
+  display: none;
 }

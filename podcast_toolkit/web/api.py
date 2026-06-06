@@ -538,6 +538,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
+            "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
         })
@@ -557,6 +558,12 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 cfg["gemini_api_key"] = key
             else:
                 cfg.pop("gemini_api_key", None)
+        if "openai_api_key" in payload:
+            key = (payload.get("openai_api_key") or "").strip()
+            if key:
+                cfg["openai_api_key"] = key
+            else:
+                cfg.pop("openai_api_key", None)
         if "provider" in payload:
             provider = (payload.get("provider") or "").strip()
             if provider not in transcribe.PROVIDERS:
@@ -576,6 +583,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
+            "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": out_provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
         })
@@ -606,8 +614,12 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             raise HTTPException(
                 status_code=400, detail=f"未知的 STT 供應商：{provider}"
             )
-        key_map = {"xai": "xai_api_key", "gemini": "gemini_api_key"}
-        label_map = {"xai": "xAI", "gemini": "Gemini"}
+        key_map = {
+            "xai": "xai_api_key",
+            "gemini": "gemini_api_key",
+            "openai": "openai_api_key",
+        }
+        label_map = {"xai": "xAI", "gemini": "Gemini", "openai": "OpenAI"}
         api_key = cfg.get(key_map[provider])
         if not api_key:
             raise HTTPException(

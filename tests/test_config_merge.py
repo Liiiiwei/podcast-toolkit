@@ -117,3 +117,64 @@ def test_merge_audio_preserved():
         "sync_ref": "a",
         "offset_sec": 0.0,
     }
+
+
+# --- subtitle_style_reels：Reels 專用字幕風格分離 ---
+
+
+def test_merge_subtitle_style_reels_falls_back_to_subtitle_style_when_missing():
+    """defaults 沒給 subtitle_style_reels → 回退到 subtitle_style 整組。"""
+    cfg = config.merge(DEFAULTS, {})
+    # DEFAULTS 只有 subtitle_style: {font_size: 28}
+    assert cfg["subtitle_style_reels"]["font_size"] == 28
+
+
+def test_merge_subtitle_style_reels_from_defaults_overrides_subtitle_style():
+    """defaults 有 subtitle_style_reels → reels 用該值；YT 仍用 subtitle_style。"""
+    defaults_with_reels = {
+        **DEFAULTS,
+        "subtitle_style_reels": {"font_size": 80, "margin_v": 320},
+    }
+    cfg = config.merge(defaults_with_reels, {})
+    assert cfg["subtitle_style"]["font_size"] == 28  # YT 不變
+    assert cfg["subtitle_style_reels"]["font_size"] == 80  # Reels 用新值
+    assert cfg["subtitle_style_reels"]["margin_v"] == 320
+
+
+def test_merge_subtitle_style_reels_episode_override_partial():
+    """episode 只覆蓋部分欄位（font_size），其它沿用 defaults.subtitle_style_reels。"""
+    defaults_with_reels = {
+        **DEFAULTS,
+        "subtitle_style_reels": {"font_size": 80, "margin_v": 320, "outline": 3},
+    }
+    cfg = config.merge(
+        defaults_with_reels,
+        {"subtitle_style_reels": {"font_size": 96}},
+    )
+    assert cfg["subtitle_style_reels"]["font_size"] == 96   # episode 覆寫
+    assert cfg["subtitle_style_reels"]["margin_v"] == 320   # 沿用 defaults
+    assert cfg["subtitle_style_reels"]["outline"] == 3      # 沿用 defaults
+
+
+def test_merge_subtitle_style_episode_override_propagates_to_reels():
+    """episode 改 subtitle_style.font_size → reels 也跟著（base 共用），
+    但 episode 若有 subtitle_style_reels 會贏。"""
+    cfg = config.merge(
+        DEFAULTS,
+        {"subtitle_style": {"font_size": 36}},
+    )
+    # 沒有獨立的 reels override，base 改了 reels 也跟著
+    assert cfg["subtitle_style_reels"]["font_size"] == 36
+
+
+def test_merge_subtitle_style_reels_wins_over_subtitle_style_in_episode():
+    """episode 同時改 subtitle_style 和 subtitle_style_reels → reels 取後者。"""
+    cfg = config.merge(
+        DEFAULTS,
+        {
+            "subtitle_style": {"font_size": 36},
+            "subtitle_style_reels": {"font_size": 96},
+        },
+    )
+    assert cfg["subtitle_style"]["font_size"] == 36
+    assert cfg["subtitle_style_reels"]["font_size"] == 96

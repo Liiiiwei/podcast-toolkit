@@ -26,7 +26,9 @@ def edit_client(tmp_episode_dir: Path):
 def test_get_root_serves_dashboard_when_no_ep(dashboard_client):
     r = dashboard_client.get("/")
     assert r.status_code == 200
-    assert "Dashboard" in r.text
+    # dashboard.html 標題已改成「Podcast Toolkit」（與 index.html 共用），
+    # 改用 dashboard.js script 作為唯一辨識 — index.html 載的是 app.js
+    assert "dashboard.js" in r.text
 
 
 def test_get_root_serves_edit_ui_when_ep(edit_client):
