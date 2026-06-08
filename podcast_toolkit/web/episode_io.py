@@ -163,6 +163,12 @@ def load_state(ep: Episode) -> dict[str, Any]:
             ep.cfg.get("suspicious_pause") or {},
             ep.cfg.get("resegment", {}).get("reaction_words") or [],
         )
+    # 空集（init 完但沒放母帶）main_video 解析後可能不存在；前端拿這個旗標決定要不要
+    # 顯示「請放檔案到 01_母帶/」的 empty banner，並跳過 <video> 自動 fetch。
+    try:
+        has_main_video = ep.main_video().is_file()
+    except Exception:
+        has_main_video = False
     return {
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
@@ -170,8 +176,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "deletions": list(ep.cfg.get("deletions") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
+        "reels_clips": list(ep.cfg.get("reels_clips") or []),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
+        "has_main_video": has_main_video,
         # T23a：雙鏡頭資訊（單機集 cameras 只有 a；前端要知道 b 在不在）
         "cameras": dict(ep.cfg.get("cameras") or {}),
         "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
@@ -188,6 +196,11 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "srt_path": srt_rel,
         # 字幕候選（_v2.srt + 原始轉錄 + 集根目錄 .srt）；前端 cam-modal 下拉用
         "srt_candidates": _list_srt_candidates(ep),
+        # 前端 caption preview 用：對齊 ffmpeg ASS 實際輸出字幕大小（font_size / output_height）
+        "subtitle_style": dict(ep.cfg.get("subtitle_style") or {}),
+        "subtitle_style_reels": dict(ep.cfg.get("subtitle_style_reels") or {}),
+        "output_resolution_yt": (ep.cfg.get("encode") or {}).get("resolution") or "1920x1080",
+        "output_resolution_reels": "1080x1920",
     }
 
 
@@ -235,6 +248,31 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data[key] = val
         else:
             data.pop(key, None)
+
+    # Reels 片段：list of {name, start_card, end_card}；空 list 清掉 key
+    if "reels_clips" in payload:
+        clips_raw = payload.get("reels_clips") or []
+        clips_out: list[dict[str, Any]] = []
+        for c in clips_raw:
+            if not isinstance(c, dict):
+                continue
+            name = (c.get("name") or "").strip()
+            if not name:
+                continue
+            try:
+                start_card = int(c.get("start_card"))
+                end_card = int(c.get("end_card"))
+            except (TypeError, ValueError):
+                continue
+            clips_out.append({
+                "name": name,
+                "start_card": start_card,
+                "end_card": end_card,
+            })
+        if clips_out:
+            data["reels_clips"] = clips_out
+        else:
+            data.pop("reels_clips", None)
 
     # cam A 路徑：前端「最終合成總覽」可換 cam A。同步寫 cameras.a + main_video（保留舊欄位讓 fallback 路徑也對）。
     if "cam_a_path" in payload:

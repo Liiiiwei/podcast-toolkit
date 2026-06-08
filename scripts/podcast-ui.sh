@@ -21,6 +21,10 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 
+# 先進專案目錄再做任何 python import：applet 雙擊啟動時 do shell script 的 CWD 是 /，
+# 而 podcast_toolkit 未 pip 安裝、只能靠 CWD 在 sys.path，故依賴檢查前必須先 cd
+cd "$PROJECT_DIR" || exit 1
+
 # ---- helpers ----------------------------------------------------------------
 
 # 從 lockfile 讀 port（line 2）；無檔或格式錯回空字串
@@ -75,7 +79,6 @@ fi
 
 # ---- 4. 背景啟動 + 死訊偵測 ---------------------------------------------------
 
-cd "$PROJECT_DIR" || exit 1
 : >"$LAUNCH_LOG"
 
 # 用 `-c` 形式避開 `cli ui` 背景化會立刻 exit 的 bug

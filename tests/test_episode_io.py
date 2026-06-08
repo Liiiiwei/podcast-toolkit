@@ -413,3 +413,103 @@ def test_load_state_cam_b_candidates_handles_uppercase_extension(tmp_episode_dir
     state = episode_io.load_state(ep)
     assert "01_母帶/DJI_001.MP4" in state["cam_b_candidates"]
     assert "01_母帶/DJI_002.Mp4" in state["cam_b_candidates"]
+
+
+# --- Reels 片段：load / save round-trip ---
+
+
+def test_load_state_returns_empty_reels_clips_default(tmp_episode_dir):
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["reels_clips"] == []
+
+
+def test_load_state_returns_reels_clips_from_yaml(tmp_episode_dir):
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "reels_clips:\n  - {name: hook1, start_card: 1, end_card: 3}\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["reels_clips"] == [
+        {"name": "hook1", "start_card": 1, "end_card": 3}
+    ]
+
+
+def test_save_state_writes_reels_clips(tmp_episode_dir):
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "reels_clips": [
+                {"name": "hook1", "start_card": 1, "end_card": 3},
+                {"name": "punch", "start_card": 5, "end_card": 8},
+            ],
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["reels_clips"] == [
+        {"name": "hook1", "start_card": 1, "end_card": 3},
+        {"name": "punch", "start_card": 5, "end_card": 8},
+    ]
+
+
+def test_save_state_removes_reels_clips_when_empty(tmp_episode_dir):
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "reels_clips:\n  - {name: hook1, start_card: 1, end_card: 3}\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "reels_clips": [],
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "reels_clips" not in data
+
+
+def test_save_state_filters_invalid_reels_clips(tmp_episode_dir):
+    """缺欄位 / 型別錯誤的 clip 直接過濾掉，不寫進 yaml。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "reels_clips": [
+                {"name": "ok", "start_card": 1, "end_card": 3},
+                {"name": "", "start_card": 2, "end_card": 4},          # 空 name
+                {"name": "no_start", "end_card": 5},                    # 缺 start_card
+                {"name": "bad_type", "start_card": "x", "end_card": 7}, # 型別錯
+                "not_a_dict",
+            ],
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["reels_clips"] == [{"name": "ok", "start_card": 1, "end_card": 3}]
+
+
+def test_save_state_no_reels_clips_key_preserves_yaml(tmp_episode_dir):
+    """payload 完全沒帶 reels_clips key → 不動原本 yaml。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "reels_clips:\n  - {name: existing, start_card: 2, end_card: 4}\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+        },
+    )
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert data["reels_clips"] == [{"name": "existing", "start_card": 2, "end_card": 4}]

@@ -167,6 +167,25 @@ def test_merge_subtitle_style_episode_override_propagates_to_reels():
     assert cfg["subtitle_style_reels"]["font_size"] == 36
 
 
+def test_merge_reels_clips_missing_returns_empty_list():
+    cfg = config.merge(DEFAULTS, {"name": "t"})
+    assert cfg["reels_clips"] == []
+
+
+def test_merge_reels_clips_preserved():
+    episode = {
+        "reels_clips": [
+            {"name": "hook1", "start_card": 5, "end_card": 12},
+            {"name": "punchline", "start_card": 80, "end_card": 95},
+        ]
+    }
+    cfg = config.merge(DEFAULTS, episode)
+    assert cfg["reels_clips"] == [
+        {"name": "hook1", "start_card": 5, "end_card": 12},
+        {"name": "punchline", "start_card": 80, "end_card": 95},
+    ]
+
+
 def test_merge_subtitle_style_reels_wins_over_subtitle_style_in_episode():
     """episode 同時改 subtitle_style 和 subtitle_style_reels → reels 取後者。"""
     cfg = config.merge(

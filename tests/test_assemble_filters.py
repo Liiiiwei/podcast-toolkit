@@ -38,16 +38,16 @@ def test_filter_complex_yt_no_crop_no_deletions(monkeypatch):
 def test_filter_complex_yt_with_crop_adds_crop_filter():
     cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
     fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
-    # 1920 * 0.8 = 1536, 1080 * 0.9 = 972, x=192, y=54
-    assert "crop=1536:972:192:54" in fc
+    # 用 iw/ih 源像素表達式（避免源 aspect 跟目標不同時先壓扁再裁）
+    assert "crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05" in fc
 
 
 def test_filter_complex_yt_with_crop_rescales_back_to_resolution():
     """crop 後必須 scale 回 1920x1080，否則 concat 會因尺寸不符失敗。"""
     cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
     fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
-    # crop 後緊接著 scale 回原解析度
-    assert "crop=1536:972:192:54,scale=1920:1080" in fc
+    # crop 後緊接著 scale 到目標解析度
+    assert "crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05,scale=1920:1080" in fc
 
 
 def test_filter_complex_yt_with_deletions_adds_select():
@@ -129,8 +129,8 @@ def test_prepare_assembly_reels_uses_crop_reels(tmp_episode_full):
     plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
-    # Reels 解析度 1080x1920，crop_reels width=0.4 → 432px
-    assert "crop=432:1920:324:0" in fc
+    # 用 iw/ih 源像素表達式：crop_reels width=0.4, x=0.3, height=1.0, y=0.0
+    assert "crop=iw*0.4:ih*1.0:iw*0.3:ih*0.0" in fc
 
 
 def test_prepare_assembly_reels_resolution_1080x1920(tmp_episode_full):
@@ -205,8 +205,8 @@ def test_prepare_assembly_reels_crop_rescales_back_to_1080x1920(tmp_episode_full
     plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
-    # crop=432:1920:324:0 後緊接 scale=1080:1920，標準 IG/TikTok 規格
-    assert "crop=432:1920:324:0,scale=1080:1920" in fc
+    # crop (源像素) 後緊接 scale=1080:1920，標準 IG/TikTok 規格
+    assert "crop=iw*0.4:ih*1.0:iw*0.3:ih*0.0,scale=1080:1920" in fc
 
 
 # --- T23a Step 4b: 雙鏡頭 multicam filter_complex ---
@@ -287,8 +287,8 @@ def test_filter_complex_yt_multicam_with_crop_applied_to_both_cams():
     fc = assemble.build_filter_complex_yt_multicam(
         cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # 1920 * 0.8 = 1536, 1080 * 0.9 = 972
-    assert fc.count("crop=1536:972:192:54") == 2
+    # iw/ih 源像素表達式，cam a 和 cam b 都套同一個 crop
+    assert fc.count("crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05") == 2
 
 
 def test_filter_complex_yt_multicam_same_cam_multi_segments_explicit_split():

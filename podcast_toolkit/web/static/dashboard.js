@@ -168,6 +168,49 @@ async function pickFolder() {
   });
 }
 
+const PROVIDER_LABEL = { xai: "xAI", gemini: "Gemini", openai: "OpenAI" };
+const ASSET_LABEL = {
+  intro: "intro",
+  outro_audio: "outro 音樂",
+  outro_image: "outro 卡片",
+  logo: "浮水印 logo（選用）",
+};
+
+function renderStatusPill(label, ok, hintTitle) {
+  const pill = document.createElement("span");
+  pill.className = `status-pill status-pill-${ok ? "ok" : "missing"}`;
+  if (hintTitle) pill.title = hintTitle;
+  pill.innerHTML = `<span class="status-dot" aria-hidden="true"></span><span class="status-label"></span><span class="status-mark">${ok ? "✓" : "✗"}</span>`;
+  pill.querySelector(".status-label").textContent = label;
+  return pill;
+}
+
+function renderConfigStatus(cfg) {
+  const keysBox = document.getElementById("config-status-keys");
+  const assetsBox = document.getElementById("config-status-assets");
+  if (!keysBox || !assetsBox) return;
+  keysBox.innerHTML = "";
+  assetsBox.innerHTML = "";
+
+  const keyFlags = [
+    ["xai", cfg.has_xai_api_key],
+    ["gemini", cfg.has_gemini_api_key],
+    ["openai", cfg.has_openai_api_key],
+  ];
+  for (const [k, ok] of keyFlags) {
+    keysBox.appendChild(renderStatusPill(PROVIDER_LABEL[k], ok));
+  }
+
+  const assets = cfg.assets || {};
+  for (const key of ["intro", "outro_audio", "outro_image", "logo"]) {
+    const info = assets[key];
+    if (!info) continue;
+    assetsBox.appendChild(
+      renderStatusPill(ASSET_LABEL[key], info.exists, info.path),
+    );
+  }
+}
+
 function openSettingsModal() {
   const modal = document.getElementById("settings-modal");
   const input = document.getElementById("roots-input");
@@ -175,6 +218,7 @@ function openSettingsModal() {
     .then((r) => r.json())
     .then((cfg) => {
       input.value = (cfg.episode_roots || []).join("\n");
+      renderConfigStatus(cfg);
       modal.showModal();
     });
 }

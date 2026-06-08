@@ -22,6 +22,7 @@ const state = {
   hasOpenAIKey: false,
   sttProvider: "xai", // "xai" | "gemini" | "openai"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
+  hasMainVideo: true, // false = 空集（01_母帶/ 還沒有檔），video player 換成 empty banner
   headTrimSec: 0, // 影片開頭要砍掉幾秒
   tailTrimSec: 0, // 影片結尾要砍掉幾秒
   // 雙鏡頭：cameras = {a, b?}（僅雙機集才有 b），用來判斷 UI 是否要顯示 A/B toggle
@@ -31,6 +32,14 @@ const state = {
   // T23a-followup：cam B UI 用，避免使用者手改 yaml
   camBCandidates: [], // 後端掃 01_母帶/*.mp4 排除 cam A
   camSyncOffsetB: 0, // 秒；cam B 相對 cam A 的對齊偏移
+  // Reels 片段：list of {name, start_card, end_card}（1-indexed card idx）
+  reelsClips: [],
+  // 字幕預覽用：對齊 ffmpeg ASS 實際輸出（font_size / output_height）
+  // 缺值時 fallback 到合理預設，避免換集瞬間預覽爆炸
+  subtitleStyleYt: null,
+  subtitleStyleReels: null,
+  outputResYt: { w: 1920, h: 1080 },
+  outputResReels: { w: 1080, h: 1920 },
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
   // 換集 / 儲存成功 → 一律清空兩 stacks（與 dirty 概念對齊）
   undoStack: [],
@@ -103,6 +112,7 @@ function snapshotEditState() {
     camerasMapping: new Map(state.camerasMapping),
     headTrimSec: state.headTrimSec,
     tailTrimSec: state.tailTrimSec,
+    reelsClips: state.reelsClips.map((c) => ({ ...c })),
   };
 }
 
@@ -118,6 +128,7 @@ function applyEditSnapshot(snap) {
   state.camerasMapping = new Map(snap.camerasMapping);
   state.headTrimSec = snap.headTrimSec;
   state.tailTrimSec = snap.tailTrimSec;
+  state.reelsClips = (snap.reelsClips || []).map((c) => ({ ...c }));
 }
 
 function pushUndo() {
@@ -138,6 +149,7 @@ function rerenderEditState() {
   renderTypo();
   renderCropInfo();
   renderTrimControls();
+  renderReelsClips();
   // crop ratio 按鈕在 setupCrop IIFE 內，沒 export → 這裡重算
   document.querySelectorAll(".ratio-btn").forEach((btn) => {
     btn.classList.toggle(
@@ -269,9 +281,47 @@ function renderTrimControls() {
   }
 }
 
+// 算 caption preview 字體 px：對齊 ffmpeg ASS 輸出（font_size / output_height）
+// 預覽字幕應該 ∝ 影片框實際高度 × crop 高度比 × (字級 / 輸出高度)
+// 這樣不管瀏覽器 zoom 多少、視窗縮多大，字幕跟畫面的比例都跟最終輸出一致
+function computeCaptionFontPx() {
+  const wrap = document.querySelector(".video-wrap");
+  if (!wrap) return null;
+  const wrapHeight = wrap.clientHeight;
+  if (!wrapHeight) return null;
+  const isReels = state.activeVersion === "reels";
+  const style = isReels
+    ? state.subtitleStyleReels || state.subtitleStyleYt
+    : state.subtitleStyleYt;
+  const res = isReels ? state.outputResReels : state.outputResYt;
+  // 缺資料就維持原 clamp 預設（loadEpisodeState 完成前）
+  if (!style || !res) return null;
+  const fontSize = Number(style.font_size);
+  const outH = Number(res.h);
+  if (!fontSize || !outH) return null;
+  const c = getActiveCrop();
+  // 有 crop：用 crop 區的渲染高（= wrap高 × crop.height）
+  // 無 crop：用整個 wrap 高（= 整個源 frame，YT 直接代表 1080 輸出）
+  const baseHeight = c ? wrapHeight * c.height : wrapHeight;
+  return baseHeight * (fontSize / outH);
+}
+
+function applyCaptionFontSize() {
+  const overlay = document.querySelector("#caption-overlay");
+  if (!overlay) return;
+  const px = computeCaptionFontPx();
+  overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
+}
+
 function renderCropInfo() {
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
+  // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
+  // margin_v 正值=從中心向下偏移（output px），預覽要同步換算成裁切框內比例
+  const isReels = state.activeVersion === "reels";
+  const reelsMarginV = Number(state.subtitleStyleReels?.margin_v ?? 0);
+  const reelsOutH = Number(state.outputResReels?.h ?? 1920) || 1920;
+  const reelsMarginFrac = reelsMarginV / reelsOutH;
   // 只有雙機集才顯示鏡頭徽章；單機集 cam B 一直沒值就略過徽章
   const hasCamB = !!(state.cameras && state.cameras.b);
   let camBadge = "";
@@ -286,11 +336,19 @@ function renderCropInfo() {
   if (!c) {
     $("#crop-text").textContent = `裁切框：${camBadge}未設定（整張畫面）`;
     $("#crop-frame").classList.add("hidden");
-    // 字幕回到整個影片區（清除 inline style 讓 CSS 預設生效）
+    // 字幕回到整個影片區
     overlay.style.left = "";
     overlay.style.right = "";
-    overlay.style.bottom = "";
-    overlay.style.fontSize = "";
+    if (isReels) {
+      overlay.style.bottom = "";
+      overlay.style.top = `${(50 + reelsMarginFrac * 100).toFixed(2)}%`;
+      overlay.style.transform = "translateY(-50%)";
+    } else {
+      overlay.style.top = "";
+      overlay.style.transform = "";
+      overlay.style.bottom = "";
+    }
+    applyCaptionFontSize();
     return;
   }
   const ratio = getActiveCropRatio() ? `${getActiveCropRatio()}` : "自訂";
@@ -303,15 +361,27 @@ function renderCropInfo() {
   frame.style.width = `${c.width * 100}%`;
   frame.style.height = `${c.height * 100}%`;
 
-  // 字幕鎖在裁切框內：左右各內縮 6% 裁切寬度、距框底 8% 裁切高度
+  // 字幕鎖在裁切框內：左右各內縮 6% 裁切寬度
   const padX = 0.06;
-  const padBottom = 0.08;
   overlay.style.left = `${((c.x + c.width * padX) * 100).toFixed(2)}%`;
   overlay.style.right = `${((1 - c.x - c.width + c.width * padX) * 100).toFixed(2)}%`;
-  overlay.style.bottom = `${((1 - c.y - c.height + c.height * padBottom) * 100).toFixed(2)}%`;
-  // 字體依裁切寬度比例縮放，最小 11px 保持可讀
-  const fontMax = Math.max(14, 22 * c.width);
-  overlay.style.fontSize = `clamp(11px, ${(2.2 * c.width).toFixed(2)}vw, ${fontMax.toFixed(1)}px)`;
+  if (isReels) {
+    // Reels：放在裁切框垂直中央 + margin_v 換算成裁切框內比例向下偏移
+    // 注意：libass 燒在最終 output frame 上，margin_v 是 output px；
+    // 預覽裁切框 = output frame，故偏移量 = margin_v/output_h × c.height
+    const cy = (c.y + c.height * (0.5 + reelsMarginFrac)) * 100;
+    overlay.style.bottom = "";
+    overlay.style.top = `${cy.toFixed(2)}%`;
+    overlay.style.transform = "translateY(-50%)";
+  } else {
+    // YT：距框底 8% 裁切高度
+    const padBottom = 0.08;
+    overlay.style.top = "";
+    overlay.style.transform = "";
+    overlay.style.bottom = `${((1 - c.y - c.height + c.height * padBottom) * 100).toFixed(2)}%`;
+  }
+  // 字幕大小對齊 ffmpeg ASS 實際輸出（font_size / output_height × 渲染高）
+  applyCaptionFontSize();
 }
 
 function activeCardAt(t) {
@@ -613,8 +683,21 @@ async function loadEpisodeState() {
   state.textOverrides = new Map();
   state.susChecked = new Set();
   state.needsTranscribe = !!data.needs_transcribe;
+  state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
   state.tailTrimSec = Number(data.tail_trim_sec) || 0;
+  // Reels 片段：來自 episode.yaml；list of {name, start_card, end_card}
+  state.reelsClips = Array.isArray(data.reels_clips)
+    ? data.reels_clips
+        .filter(
+          (c) => c && typeof c.name === "string" && c.start_card && c.end_card,
+        )
+        .map((c) => ({
+          name: String(c.name),
+          start_card: Number(c.start_card),
+          end_card: Number(c.end_card),
+        }))
+    : [];
   // 雙鏡頭 mapping：API 回傳 key 是字串（JSON 不支援 int key），這裡轉回 Number
   state.cameras = data.cameras || {};
   state.camerasMapping = new Map(
@@ -642,6 +725,26 @@ async function loadEpisodeState() {
   state.srtCandidates = Array.isArray(data.srt_candidates)
     ? data.srt_candidates
     : [];
+  // 字幕風格 + 輸出解析度：給 caption preview 用，讓預覽字體跟 ffmpeg 輸出等比
+  state.subtitleStyleYt = data.subtitle_style || null;
+  state.subtitleStyleReels =
+    data.subtitle_style_reels || data.subtitle_style || null;
+  const parseRes = (s) => {
+    const [w, h] = String(s || "")
+      .split("x")
+      .map(Number);
+    return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0
+      ? { w, h }
+      : null;
+  };
+  state.outputResYt = parseRes(data.output_resolution_yt) || {
+    w: 1920,
+    h: 1080,
+  };
+  state.outputResReels = parseRes(data.output_resolution_reels) || {
+    w: 1080,
+    h: 1920,
+  };
   // 字幕時間軸對齊：原始字幕是 cam A 時間軸；外接音檔比 cam A 慢 sync_offset 秒
   // → 字幕 start/end 都要往前推 -audioSyncOffset，讓字幕顯示時機跟外接音檔同步
   if (state.audioPath && state.audioSyncOffset) {
@@ -656,6 +759,32 @@ async function loadEpisodeState() {
   }
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
+  applyMainVideoMissingUI();
+}
+
+// 空集（01_母帶/ 沒檔，main_video 解析後不存在）→ 把 video 換成 empty banner，
+// 並把 <video src> 清掉避免無謂的 /api/video 404 request。
+function applyMainVideoMissingUI() {
+  const banner = document.getElementById("video-missing");
+  const wrap = document.querySelector(".video-wrap");
+  const v = document.getElementById("video");
+  if (!banner || !wrap || !v) return;
+  if (state.hasMainVideo) {
+    banner.hidden = true;
+    wrap.classList.remove("has-missing");
+    if (!v.getAttribute("src")) {
+      v.src = "/api/video";
+      v.load();
+    }
+  } else {
+    banner.hidden = false;
+    wrap.classList.add("has-missing");
+    if (v.getAttribute("src")) {
+      v.removeAttribute("src");
+      v.load();
+    }
+    if (window.Icons) window.Icons.inject(banner);
+  }
 }
 
 function setupSusToolbar() {
@@ -690,10 +819,21 @@ function setupSusToolbar() {
 async function loadFiles() {
   try {
     const r = await fetch("/api/files");
-    if (!r.ok) return;
+    if (!r.ok) {
+      console.warn(
+        "[loadFiles] HTTP",
+        r.status,
+        await r.text().catch(() => ""),
+      );
+      state.files = [];
+      return;
+    }
     const data = await r.json();
     state.files = data.files || [];
-  } catch (_) {}
+  } catch (e) {
+    console.error("[loadFiles] failed:", e);
+    state.files = [];
+  }
 }
 
 async function loadConfig() {
@@ -705,6 +845,7 @@ async function loadConfig() {
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
     state.sttProvider = data.provider || "xai";
+    state.assetsStatus = data.assets || {};
   } catch (_) {}
 }
 
@@ -723,6 +864,7 @@ async function load() {
   renderCaption();
   renderTypo();
   renderFiles();
+  renderReelsClips();
   setupExternalAudio();
   setupCamBOverlay();
 }
@@ -1485,6 +1627,7 @@ function setupVersionTabs() {
         b.classList.toggle("active", b.dataset.version === v);
       });
       renderCropInfo();
+      renderReelsClips();
       // 同步 ratio 按鈕到 active 版本的狀態
       document.querySelectorAll(".ratio-btn").forEach((b) => {
         b.classList.toggle(
@@ -1493,6 +1636,150 @@ function setupVersionTabs() {
         );
       });
     });
+  });
+}
+
+// === Reels 片段：sub-panel 渲染 + 表單/匯出 handler ===
+// 只在 activeVersion === "reels" 顯示；後端 /api/clip 從已合成的 Reels mp4 -c copy 切片
+function renderReelsClips() {
+  const panel = $("#reels-clips-panel");
+  if (!panel) return;
+  const isReels = state.activeVersion === "reels";
+  panel.classList.toggle("hidden", !isReels);
+  if (!isReels) return;
+
+  const list = $("#reels-clips-list");
+  const count = $("#reels-clips-count");
+  const exportBtn = $("#reels-clip-export-btn");
+  const clips = state.reelsClips || [];
+  count.textContent = String(clips.length);
+  exportBtn.disabled = clips.length === 0;
+
+  list.innerHTML = "";
+  if (clips.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "reels-clips-empty";
+    empty.textContent = "尚未加片段。下面輸入名稱 + 起卡 # + 迄卡 #。";
+    list.appendChild(empty);
+    return;
+  }
+  clips.forEach((clip, idx) => {
+    const row = document.createElement("div");
+    row.className = "reels-clip-item";
+    const label = document.createElement("span");
+    label.textContent = `${clip.name}`;
+    const range = document.createElement("span");
+    range.textContent = `#${clip.start_card}-${clip.end_card}`;
+    range.className = "reels-clip-range";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.title = "刪除這段";
+    del.innerHTML = window.Icons
+      ? window.Icons.get("trash-2", { size: 14 })
+      : "×";
+    del.addEventListener("click", () => {
+      pushUndo();
+      state.reelsClips.splice(idx, 1);
+      renderReelsClips();
+    });
+    row.appendChild(label);
+    row.appendChild(range);
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+}
+
+function setReelsClipStatus(text, tone) {
+  const el = $("#reels-clip-status");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.remove("tone-success", "tone-danger");
+  if (tone) el.classList.add(`tone-${tone}`);
+}
+
+function setupReelsClips() {
+  const form = $("#reels-clip-form");
+  const nameInput = $("#reels-clip-name");
+  const startInput = $("#reels-clip-start");
+  const endInput = $("#reels-clip-end");
+  const exportBtn = $("#reels-clip-export-btn");
+  if (!form || !exportBtn) return;
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    const startCard = Number(startInput.value);
+    const endCard = Number(endInput.value);
+    if (!name) {
+      setReelsClipStatus("片段名不能空", "danger");
+      return;
+    }
+    if (!Number.isInteger(startCard) || !Number.isInteger(endCard)) {
+      setReelsClipStatus("起卡 / 迄卡要是整數", "danger");
+      return;
+    }
+    if (startCard > endCard) {
+      setReelsClipStatus("起卡 # 不能大於迄卡 #", "danger");
+      return;
+    }
+    const idxSet = new Set(state.cards.map((c) => c.idx));
+    if (!idxSet.has(startCard) || !idxSet.has(endCard)) {
+      setReelsClipStatus(
+        `卡 #${startCard} 或 #${endCard} 不存在（或已被刪除）`,
+        "danger",
+      );
+      return;
+    }
+    if (state.reelsClips.some((c) => c.name === name)) {
+      setReelsClipStatus(`片段名「${name}」重複`, "danger");
+      return;
+    }
+    pushUndo();
+    state.reelsClips.push({
+      name,
+      start_card: startCard,
+      end_card: endCard,
+    });
+    nameInput.value = "";
+    startInput.value = "";
+    endInput.value = "";
+    setReelsClipStatus(`已加「${name}」（記得按完成並儲存）`, "success");
+    renderReelsClips();
+  });
+
+  exportBtn.addEventListener("click", async () => {
+    const clips = state.reelsClips || [];
+    if (clips.length === 0) return;
+    exportBtn.disabled = true;
+    const originalLabel = exportBtn.innerHTML;
+    exportBtn.innerHTML = window.Icons
+      ? `${window.Icons.get("loader", { size: 14 })}<span>切片中…</span>`
+      : "切片中…";
+    setReelsClipStatus("正在切片（每段 ffmpeg -c copy 約 1-3 秒）…", null);
+    try {
+      const r = await fetch("/api/clip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.ok) {
+        throw new Error(data.error || `HTTP ${r.status}`);
+      }
+      const outClips = data.clips || [];
+      const summary = outClips
+        .map((c) => `${c.name} (${c.duration.toFixed(1)}s)`)
+        .join(" / ");
+      setReelsClipStatus(
+        `✓ 已輸出 ${outClips.length} 段：${summary}`,
+        "success",
+      );
+    } catch (err) {
+      setReelsClipStatus(`✗ 切片失敗：${err.message}`, "danger");
+    } finally {
+      exportBtn.innerHTML = originalLabel;
+      exportBtn.disabled = state.reelsClips.length === 0;
+    }
   });
 }
 
@@ -1566,6 +1853,12 @@ $("#save-btn").addEventListener("click", async () => {
     })),
     // 只送 explicit 標記，carry-forward 推算結果不送；後端會 int(key) 還原
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
+    reels_clips: state.reelsClips.map((c) => ({
+      name: c.name,
+      start_card: c.start_card,
+      end_card: c.end_card,
+    })),
   };
   try {
     const r = await fetch("/api/save", {
@@ -2548,6 +2841,30 @@ function setupAssembleButtons() {
 }
 
 // === 設定 modal ===
+const ASSET_PILL_LABEL = {
+  intro: "intro",
+  outro_audio: "outro 音樂",
+  outro_image: "outro 卡片",
+  logo: "浮水印 logo（選用）",
+};
+
+function renderAssetsPills() {
+  const box = $("#settings-assets-pills");
+  if (!box) return;
+  box.innerHTML = "";
+  const assets = state.assetsStatus || {};
+  for (const key of ["intro", "outro_audio", "outro_image", "logo"]) {
+    const info = assets[key];
+    if (!info) continue;
+    const pill = document.createElement("span");
+    pill.className = `status-pill status-pill-${info.exists ? "ok" : "missing"}`;
+    pill.title = info.path;
+    pill.innerHTML = `<span class="status-dot" aria-hidden="true"></span><span class="status-label"></span><span class="status-mark">${info.exists ? "✓" : "✗"}</span>`;
+    pill.querySelector(".status-label").textContent = ASSET_PILL_LABEL[key];
+    box.appendChild(pill);
+  }
+}
+
 function openSettings() {
   $("#settings-xai-key").value = "";
   $("#settings-xai-key").type = "password";
@@ -2569,6 +2886,7 @@ function openSettings() {
     `input[name="settings-provider"][value="${provider}"]`,
   );
   if (radio) radio.checked = true;
+  renderAssetsPills();
   showModal("settings-modal");
 }
 
@@ -3388,12 +3706,27 @@ $("#cancel-btn").addEventListener("click", async () => {
 function showSwitchError(msg) {
   const err = $("#ep-switch-error");
   err.textContent = msg;
+  err.classList.remove("is-success");
   err.hidden = false;
+}
+
+function showSwitchSuccess(msg) {
+  const err = $("#ep-switch-error");
+  err.textContent = msg;
+  err.classList.add("is-success");
+  err.hidden = false;
+  clearTimeout(showSwitchSuccess._t);
+  showSwitchSuccess._t = setTimeout(() => {
+    err.hidden = true;
+    err.textContent = "";
+    err.classList.remove("is-success");
+  }, 3000);
 }
 
 function clearSwitchError() {
   const err = $("#ep-switch-error");
   err.textContent = "";
+  err.classList.remove("is-success");
   err.hidden = true;
 }
 
@@ -3569,6 +3902,28 @@ async function switchEpisode(newPath) {
     video.load();
     // 重新拉所有狀態（episode/dict/files/config）
     await load();
+    // 換集後強制把 drawer 展開並切到 files tab，避免 stale localStorage
+    // 讓使用者誤以為新集沒有檔案（實際只是 drawer collapsed 或停在 typo tab）
+    try {
+      const drawer = $("#drawer");
+      if (drawer) {
+        drawer.classList.remove("collapsed");
+        localStorage.setItem("edit.drawer.collapsed", "0");
+        const tabs = drawer.querySelectorAll(".drawer-tab");
+        const panes = drawer.querySelectorAll(".drawer-pane");
+        tabs.forEach((t) => {
+          const active = t.dataset.drawerTab === "files";
+          t.classList.toggle("active", active);
+          t.setAttribute("aria-selected", active ? "true" : "false");
+          t.setAttribute("tabindex", active ? "0" : "-1");
+        });
+        panes.forEach((p) => {
+          p.hidden = p.dataset.drawerPane !== "files";
+        });
+        localStorage.setItem("edit.drawer.tab", "files");
+      }
+    } catch (_) {}
+    showSwitchSuccess(`✓ 已切換到「${state.name || newPath}」`);
   } catch (e) {
     showSwitchError(`換集失敗：${e.message}`);
   } finally {
@@ -3701,8 +4056,18 @@ $("#new-ep-date").addEventListener("keydown", (e) => {
 });
 
 setupVersionTabs();
+setupReelsClips();
 setupAssembleButtons();
 setupSusToolbar();
 
 // 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
 if (window.Icons) window.Icons.inject();
+
+// 影片框尺寸變動就重算字幕 px（sidebar 收合、視窗縮放、瀏覽器 zoom 都會觸發）
+// 用 ResizeObserver 抓 .video-wrap 而不是 window.resize，因為 sidebar 收合不會觸發 resize
+(() => {
+  const wrap = document.querySelector(".video-wrap");
+  if (!wrap || typeof ResizeObserver === "undefined") return;
+  const ro = new ResizeObserver(() => applyCaptionFontSize());
+  ro.observe(wrap);
+})();

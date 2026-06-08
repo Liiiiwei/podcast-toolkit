@@ -115,6 +115,9 @@ h2 {
   max-width: 480px;
   flex-basis: 100%;
 }
+.ep-switch-error.is-success {
+  color: var(--success, #2e7d32);
+}
 /* —— 統一按鈕系統（與 dashboard.css 同源） —— */
 .btn {
   display: inline-flex;
@@ -265,6 +268,49 @@ h2 {
   position: absolute;
   inset: 0;
   pointer-events: none;
+  visibility: hidden;
+}
+
+/* 空集（沒放母帶）覆蓋 video-wrap 提示放檔位置；shown 時把 video 隱藏避免空黑畫面 */
+.video-missing {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-xl);
+  background: var(--surface-sunken);
+  color: var(--text-dim);
+  text-align: center;
+}
+.video-missing[hidden] {
+  display: none;
+}
+.video-missing-icon {
+  color: var(--text-faint);
+  margin-bottom: var(--space-sm);
+}
+.video-missing-title {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+.video-missing-hint {
+  font-size: var(--text-base);
+  line-height: 1.6;
+}
+.video-missing-hint code {
+  padding: 2px 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+}
+.video-wrap.has-missing video {
   visibility: hidden;
 }
 .video-wrap #video-camb.active {
@@ -442,6 +488,118 @@ h2 {
   color: var(--accent);
   border: none;
   cursor: pointer;
+}
+
+/* Reels 片段管理 sub-panel：只在 Reels tab active 時顯示 */
+.reels-clips-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-top: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: var(--text-sm);
+}
+.reels-clips-panel.hidden {
+  display: none;
+}
+.reels-clips-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-weight: 600;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.reels-clips-head .spacer {
+  flex: 1;
+}
+.reels-clips-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 9px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.reels-clips-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.reels-clips-empty {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  padding: 4px 6px;
+}
+.reels-clip-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 6px;
+  background: var(--surface);
+  border-radius: 3px;
+}
+.reels-clip-item .clip-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.reels-clip-item .clip-range {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.reels-clip-item button {
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.reels-clip-item button:hover {
+  color: var(--danger, #c0392b);
+  background: var(--danger-soft, rgba(192, 57, 43, 0.08));
+}
+.reels-clip-form {
+  display: grid;
+  grid-template-columns: 1fr 80px 80px auto;
+  gap: 6px;
+  align-items: center;
+}
+.reels-clip-form input {
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.reels-clip-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.reels-clip-status {
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  min-height: 16px;
+}
+.reels-clip-status.tone-success {
+  color: var(--accent);
+}
+.reels-clip-status.tone-danger {
+  color: var(--danger, #c0392b);
 }
 
 .typo-pane {
@@ -900,6 +1058,71 @@ dialog.modal::backdrop {
 .modal-hint-error,
 .modal-hint.error {
   color: var(--danger);
+}
+
+/* === Config status pills（settings modal first-run UX）=== */
+.config-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.config-status-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.config-status-title {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.config-status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.config-status-hint {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 999px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: default;
+}
+.status-pill .status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+.status-pill .status-mark {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+.status-pill-ok {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: rgba(0, 0, 0, 0);
+}
+.status-pill-missing {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: rgba(0, 0, 0, 0);
 }
 
 /* === 進階摺疊（cam modal 用）=== */

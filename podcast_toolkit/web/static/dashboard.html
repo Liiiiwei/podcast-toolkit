@@ -68,6 +68,23 @@
         </button>
       </div>
       <div class="modal-body">
+        <div class="config-status" id="config-status">
+          <div class="config-status-group">
+            <div class="config-status-title">
+              API key（至少需 1 個能轉字幕）
+            </div>
+            <div class="config-status-pills" id="config-status-keys"></div>
+          </div>
+          <div class="config-status-group">
+            <div class="config-status-title">共用資產（合成 YT 時需要）</div>
+            <div class="config-status-pills" id="config-status-assets"></div>
+            <div class="config-status-hint">
+              缺檔時把對應檔案放到 toolkit 安裝目錄下的相對路徑即可；浮水印 logo
+              為選用。
+            </div>
+          </div>
+        </div>
+
         <label class="modal-label" for="roots-input"
           >集數根目錄（每行一個路徑，預設 ~/Downloads）</label
         >

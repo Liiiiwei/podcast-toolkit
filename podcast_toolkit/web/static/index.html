@@ -129,6 +129,17 @@
               <div class="handle bl" data-edge="bl"></div>
               <div class="handle br" data-edge="br"></div>
             </div>
+            <div id="video-missing" class="video-missing" hidden>
+              <div
+                class="video-missing-icon"
+                data-icon="folder"
+                data-icon-size="32"
+              ></div>
+              <div class="video-missing-title">這集還沒有主影片</div>
+              <div class="video-missing-hint">
+                把錄音 / 母帶檔放到 <code>01_母帶/</code>，再回來轉字幕。
+              </div>
+            </div>
           </div>
           <div class="controls">
             <button id="play-btn" type="button" class="btn btn-icon">
@@ -222,6 +233,59 @@
                 <span>重設</span>
               </button>
             </div>
+          </div>
+          <div class="reels-clips-panel hidden" id="reels-clips-panel">
+            <div class="reels-clips-head">
+              <span data-icon="scissors" data-icon-size="14"></span>
+              <span>Reels 片段</span>
+              <span class="reels-clips-count" id="reels-clips-count">0</span>
+              <span class="spacer"></span>
+              <button
+                id="reels-clip-export-btn"
+                type="button"
+                class="btn btn-ghost"
+                title="從已合成 Reels mp4 切出片段（-c copy 快速無損）"
+                disabled
+              >
+                <span data-icon="scissors"></span>
+                <span>輸出片段</span>
+              </button>
+            </div>
+            <div id="reels-clips-list" class="reels-clips-list"></div>
+            <form id="reels-clip-form" class="reels-clip-form">
+              <input
+                type="text"
+                id="reels-clip-name"
+                placeholder="片段名（例：開場 / 重點1）"
+                required
+                maxlength="40"
+              />
+              <input
+                type="number"
+                id="reels-clip-start"
+                placeholder="起卡 #"
+                min="1"
+                step="1"
+                required
+              />
+              <input
+                type="number"
+                id="reels-clip-end"
+                placeholder="迄卡 #"
+                min="1"
+                step="1"
+                required
+              />
+              <button
+                type="submit"
+                class="btn btn-ghost"
+                id="reels-clip-add-btn"
+              >
+                <span data-icon="plus"></span>
+                <span>加</span>
+              </button>
+            </form>
+            <div id="reels-clip-status" class="reels-clip-status"></div>
           </div>
         </section>
 
@@ -349,6 +413,17 @@
       <div class="modal-head">設定</div>
       <form id="settings-form">
         <div class="modal-body">
+          <div class="config-status">
+            <div class="config-status-group">
+              <div class="config-status-title">共用資產（合成 YT 時需要）</div>
+              <div class="config-status-pills" id="settings-assets-pills"></div>
+              <div class="config-status-hint">
+                缺檔時把對應檔案放到 toolkit 安裝目錄下的相對路徑即可；浮水印
+                logo 為選用。
+              </div>
+            </div>
+          </div>
+
           <label class="modal-label">STT 供應商</label>
           <div class="modal-row modal-row-inline">
             <label class="modal-radio">

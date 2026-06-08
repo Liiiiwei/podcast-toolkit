@@ -196,17 +196,8 @@ def build_filter_complex_yt(
     intro_fade_out = cfg["assets"]["intro_fade_out"]
     style_str = build_style_string(cfg["subtitle_style"])
 
-    # main video 前處理 chain：選擇性加 crop_yt
-    crop = cfg.get("crop_yt")
-    crop_part = ""
-    if crop:
-        # crop 比例 → px：依最終 resolution 換算（影片 scale 後一致）
-        cw = int(int(res_w) * crop["width"])
-        ch = int(int(res_h) * crop["height"])
-        cx = int(int(res_w) * crop["x"])
-        cy = int(int(res_h) * crop["y"])
-        # crop 後 scale 回原解析度，否則和 intro/outro concat 時尺寸不符
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+    # main video 前處理 chain：crop_yt（源像素裁切）→ scale 到 1920×1080
+    prep_part = _crop_part_str(cfg.get("crop_yt"), res_w, res_h)
 
     # 刪除區間：select / aselect filter（跳過 deletion 時間段）
     select_v, select_a = "", ""
@@ -223,10 +214,10 @@ def build_filter_complex_yt(
         a_idx = 1
         align_a = ""
 
-    # 字幕必須燒在最終 res_w×res_h frame 上（在 scale+crop 之後），否則
+    # 字幕必須燒在最終 res_w×res_h frame 上（在 crop+scale 之後），否則
     # 字幕會以原片底部為基準算 MarginV，crop 後跟前端預覽（鎖在裁切框內）對不上。
     v1_pre = (
-        f"[1:v]scale={res_w}:{res_h},{crop_part}"
+        f"[1:v]{prep_part}"
         f"subtitles={srt_rel}:force_style='{style_str}',"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
@@ -275,15 +266,8 @@ def build_filter_complex_reels(
     res_w, res_h = 1080, 1920
     style_str = build_style_string(cfg.get("subtitle_style_reels") or cfg["subtitle_style"])
 
-    crop = cfg.get("crop_reels")
-    crop_part = ""
-    if crop:
-        cw = int(res_w * crop["width"])
-        ch = int(res_h * crop["height"])
-        cx = int(res_w * crop["x"])
-        cy = int(res_h * crop["y"])
-        # crop 後 scale 回 1080×1920，否則輸出尺寸會被 crop 縮成 432×1920 之類的怪比例
-        crop_part = f"crop={cw}:{ch}:{cx}:{cy},scale={res_w}:{res_h},"
+    # crop_reels 源像素裁切 → scale 到 1080×1920；無 crop 時純 scale
+    prep_part = _crop_part_str(cfg.get("crop_reels"), res_w, res_h)
 
     select_v, select_a = "", ""
     if deletion_intervals:
@@ -299,9 +283,9 @@ def build_filter_complex_reels(
         a_idx = 0
         align_a = ""
 
-    # 字幕燒在最終 1080×1920 frame 上（scale+crop 之後），對齊前端「字幕鎖在裁切框內」預覽。
+    # 字幕燒在最終 1080×1920 frame 上（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
     v_pre = (
-        f"[0:v]scale={res_w}:{res_h},{crop_part}"
+        f"[0:v]{prep_part}"
         f"subtitles={srt_rel}:force_style='{style_str}',"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
@@ -336,19 +320,20 @@ def _multicam_cam_prep(
     style_str: str,
     res_w: str | int,
     res_h: str | int,
-    crop_part: str,
+    prep_part: str,
     fps,
     fmt: str,
     setpts_prefix: str = "",
 ) -> str:
-    """組單一鏡頭的前處理 chain（PTS 對齊 → 字幕 → scale/crop → 規格化）。
+    """組單一鏡頭的前處理 chain（PTS 對齊 → crop/scale → 字幕 → 規格化）。
 
     cam_label='a' 或 'b'；輸出 label 為 [m_{cam_label}_v]。
     setpts_prefix 給 cam B 用來把 PTS 移到主時間軸（cam A 留空）。
+    prep_part 已包含 crop（源像素）+ scale 到目標解析度的完整 chain。
     """
-    # 字幕燒在最終裁切後 frame（scale+crop 之後），對齊前端「字幕鎖在裁切框內」預覽。
+    # 字幕燒在最終裁切後 frame（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
     return (
-        f"[{src_idx}:v]{setpts_prefix}scale={res_w}:{res_h},{crop_part}"
+        f"[{src_idx}:v]{setpts_prefix}{prep_part}"
         f"subtitles={srt_rel}:force_style='{style_str}',"
         f"setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
     )
@@ -407,27 +392,32 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
 
 
 def _crop_part_str(crop: dict | None, res_w, res_h) -> str:
-    """把 crop dict 轉成 ffmpeg crop+scale filter 片段；None / 空 dict → 空字串。
+    """把源視訊轉到目標解析度的 prep chain（含 trailing comma）。
 
-    res_w / res_h 可傳 str 或 int（YT 用 cfg 字串 split、Reels 是 int），統一 int() 處理。
+    crop 用 iw*W:ih*H:iw*X:ih*Y 表達式直接吃源像素，再 scale 到目標解析度。
+    比舊的 scale→crop→scale 三段穩 — 源 aspect 跟目標不同時（例如 1920×1080
+    源 + 1080×1920 Reels 目標）不會先被壓扁再裁。crop 不存在時只 scale。
+
+    res_w / res_h 可傳 str 或 int（YT 用 cfg 字串 split、Reels 是 int）。
     """
-    if not crop:
-        return ""
     rw, rh = int(res_w), int(res_h)
-    cw = int(rw * crop["width"])
-    ch = int(rh * crop["height"])
-    cx = int(rw * crop["x"])
-    cy = int(rh * crop["y"])
-    return f"crop={cw}:{ch}:{cx}:{cy},scale={rw}:{rh},"
+    if not crop:
+        return f"scale={rw}:{rh},"
+    return (
+        f"crop=iw*{crop['width']}:ih*{crop['height']}:"
+        f"iw*{crop['x']}:ih*{crop['y']},scale={rw}:{rh},"
+    )
 
 
 def _cam_crop_parts(base_crop: dict | None, res_w, res_h) -> tuple[str, str]:
-    """把 crop_yt / crop_reels 拆成 (crop_part_a, crop_part_b)。
+    """把 crop_yt / crop_reels 拆成 (prep_a, prep_b)：含 crop+scale 完整 prep chain。
 
     base_crop.b（optional dict）= cam B 獨立 crop；沒設就 fallback 用 base 給兩鏡頭。
+    無 base_crop 時兩鏡頭都只 scale 到目標解析度（不裁切）。
     """
     if not base_crop:
-        return "", ""
+        scale_only = _crop_part_str(None, res_w, res_h)
+        return scale_only, scale_only
     crop_b = base_crop.get("b") or base_crop
     return _crop_part_str(base_crop, res_w, res_h), _crop_part_str(crop_b, res_w, res_h)
 
@@ -937,6 +927,172 @@ def prepare_assembly(
         "total_dur": total_dur,
         "output_kind": output_kind,
     }
+
+
+def _original_to_mp4_time(t_src: float, deletion_intervals: list[tuple[float, float]]) -> float:
+    """source 時間軸 → rendered Reels mp4 時間軸（扣掉前面被刪掉的總長度）。
+
+    rendered mp4 是把 deletion_intervals（含 head_trim/tail_trim）從 source 拿掉後 concat，
+    所以 mp4 t = source_t - sum(被 source_t 之前刪掉的長度)。
+    若 t_src 落在某段 deletion 內部 → 視為剛好在該段結尾，回傳 deletion 起點對應的 mp4 t。
+    """
+    deleted_before = 0.0
+    for a, b in deletion_intervals:
+        if b <= t_src:
+            deleted_before += b - a
+        elif a < t_src < b:
+            deleted_before += t_src - a
+            break
+        else:
+            break
+    return max(0.0, t_src - deleted_before)
+
+
+def extract_reels_clips(
+    episode_dir: Path,
+    clip_names: list[str] | None = None,
+    force: bool = False,
+) -> list[dict]:
+    """從已合成的 Reels mp4 用 ffmpeg -c copy 切出 reels_clips 定義的片段。
+
+    episode.yaml `reels_clips` 是 list of {name, start_card, end_card}；
+    start/end_card 是 1-indexed 字幕卡編號（含頭含尾）。
+
+    時間軸：rendered Reels mp4 已扣掉 deletions + head_trim + tail_trim，
+    所以 clip 起訖時間要把原 SRT 時間換算到 mp4 時間軸（_original_to_mp4_time）。
+
+    clip_names=None → 跑全部；給 list → 只跑指定 name。
+    輸出寫到 03_成品/clips/{episode_name}_{clip_name}.mp4。
+
+    multicam（cameras.b 有設）暫不支援：segment_plan 時間軸更複雜，
+    需另寫換算邏輯，先保險 raise。
+    """
+    from podcast_toolkit import srt_io
+
+    if not shutil.which("ffmpeg"):
+        raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
+
+    ep = Episode(episode_dir)
+    cfg = ep.cfg
+
+    reels_clips = list(cfg.get("reels_clips") or [])
+    if not reels_clips:
+        raise AssembleError("episode.yaml 沒設 reels_clips；無片段可截取", exit_code=1)
+
+    if (cfg.get("cameras") or {}).get("b"):
+        raise AssembleError(
+            "multicam 模式暫不支援 reels_clips（segment_plan 時間軸換算尚未實作）",
+            exit_code=1,
+        )
+
+    reels_mp4 = ep.output_reels_video()
+    if not reels_mp4.exists():
+        raise AssembleError(
+            f"找不到 Reels 母片：{reels_mp4}（請先跑 podcast assemble --kind reels）",
+            exit_code=3,
+        )
+
+    srt_path = ep.active_srt()
+    if not srt_path.exists():
+        srt_path = ep.output_v2_srt()
+        if not srt_path.exists():
+            raise AssembleError("找不到字幕用以對應 card 時間", exit_code=3)
+
+    cards = srt_io.parse(srt_path.read_text(encoding="utf-8"))
+    by_idx = {c["idx"]: c for c in cards}
+
+    deletions = list(cfg.get("deletions") or [])
+    head_trim = float(cfg.get("head_trim_sec") or 0)
+    tail_trim = float(cfg.get("tail_trim_sec") or 0)
+
+    main_video = ep.main_video()
+    if not main_video.exists():
+        raise AssembleError(f"找不到正片以量總時長：{main_video}", exit_code=3)
+    main_dur = ffprobe_duration(main_video)
+
+    deletion_intervals = build_deletion_intervals(srt_path, deletions) if deletions else []
+    if head_trim > 0:
+        deletion_intervals.append((0.0, head_trim))
+    if tail_trim > 0:
+        deletion_intervals.append((main_dur - tail_trim, main_dur))
+    deletion_intervals = sorted(deletion_intervals)
+
+    if clip_names is not None:
+        wanted = set(clip_names)
+        existing = {c.get("name") for c in reels_clips}
+        missing = wanted - existing
+        if missing:
+            raise AssembleError(f"找不到指定 clip：{sorted(missing)}", exit_code=1)
+        to_run = [c for c in reels_clips if c.get("name") in wanted]
+    else:
+        to_run = reels_clips
+
+    clips_dir = ep.subdir("output") / "clips"
+    clips_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[dict] = []
+    for clip in to_run:
+        name = clip.get("name")
+        if not name:
+            raise AssembleError(f"clip 缺 name：{clip}", exit_code=1)
+        start_card = int(clip.get("start_card", 0))
+        end_card = int(clip.get("end_card", 0))
+        start_c = by_idx.get(start_card)
+        end_c = by_idx.get(end_card)
+        if start_c is None:
+            raise AssembleError(f"clip '{name}' start_card={start_card} 在 SRT 找不到", exit_code=1)
+        if end_c is None:
+            raise AssembleError(f"clip '{name}' end_card={end_card} 在 SRT 找不到", exit_code=1)
+        if end_c["end"] <= start_c["start"]:
+            raise AssembleError(
+                f"clip '{name}' end_card 時間早於 start_card（{end_c['end']:.2f} <= {start_c['start']:.2f}）",
+                exit_code=1,
+            )
+
+        t_mp4_start = _original_to_mp4_time(start_c["start"], deletion_intervals)
+        t_mp4_end = _original_to_mp4_time(end_c["end"], deletion_intervals)
+
+        out_path = clips_dir / f"{ep.name}_{name}.mp4"
+        if out_path.exists() and not force:
+            raise AssembleError(f"片段已存在：{out_path}（加 --force 覆寫）", exit_code=1)
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", f"{t_mp4_start:.3f}",
+            "-to", f"{t_mp4_end:.3f}",
+            "-i", str(reels_mp4),
+            "-c", "copy",
+            "-movflags", "+faststart",
+            str(out_path),
+        ]
+        print(f"→ 截 clip '{name}'：mp4 {t_mp4_start:.2f}s–{t_mp4_end:.2f}s → {out_path}")
+        subprocess.run(cmd, check=True)
+
+        results.append({
+            "name": name,
+            "start_sec": t_mp4_start,
+            "end_sec": t_mp4_end,
+            "duration": t_mp4_end - t_mp4_start,
+            "path": str(out_path),
+        })
+
+    return results
+
+
+def run_clips(episode_dir: Path, clip_names: list[str] | None = None, force: bool = False) -> int:
+    """CLI entry：podcast clip。clip_names=None → 跑全部。"""
+    try:
+        results = extract_reels_clips(episode_dir, clip_names=clip_names, force=force)
+    except AssembleError as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return e.exit_code
+    except subprocess.CalledProcessError as e:
+        print(f"✗ ffmpeg 失敗：exit {e.returncode}", file=sys.stderr)
+        return 4
+
+    for r in results:
+        print(f"✅ {r['name']}：{r['duration']:.2f}s → {r['path']}")
+    return 0
 
 
 def run(episode_dir: Path, dry_run: bool = False, force: bool = False,

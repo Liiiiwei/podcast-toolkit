@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from podcast_toolkit import audio_align
+from podcast_toolkit import config as pt_config
 from podcast_toolkit import init as ep_init
 from podcast_toolkit.assemble import AssembleError
 from podcast_toolkit.episode import Episode
@@ -164,6 +165,25 @@ def _save_config(data: dict) -> None:
     )
 
 
+def _check_assets_status() -> dict:
+    """檢查 defaults.yaml 指向的共用資產檔案是否存在。
+    給前端 settings 顯示 ✓/✗ 用，避免第一次合成才發現缺檔。
+    """
+    try:
+        defaults = pt_config.load_defaults()
+    except Exception:
+        return {}
+    root = pt_config.toolkit_root()
+    out: dict[str, dict] = {}
+    for key in ("intro", "outro_audio", "outro_image", "logo"):
+        rel = (defaults.get("assets") or {}).get(key)
+        if not rel:
+            continue
+        p = (root / rel).resolve()
+        out[key] = {"path": rel, "exists": p.is_file()}
+    return out
+
+
 def _list_episode_files(root: Path) -> list[dict]:
     """遞迴列出集資料夾內所有檔案，標註 kind / 字幕角色。"""
     files: list[dict] = []
@@ -286,10 +306,14 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     def pick_episode():
         ep = holder["ep"]
         default_dir = str(ep.dir.parent) if ep else str(Path.home() / "Downloads")
+        # `activate` 把 osascript 自己拉到最前面，否則 background 起的 server
+        # 跳 choose folder 對話框會被 Chrome / VSCode 蓋住，使用者誤以為失敗
         script = (
+            'tell me to activate\n'
             f'POSIX path of (choose folder with prompt "選擇集資料夾" '
             f'default location POSIX file "{default_dir}")'
         )
+        print(f"[pick] default_dir={default_dir!r}", flush=True)
         try:
             result = subprocess.run(
                 ["osascript", "-e", script],
@@ -298,11 +322,18 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 timeout=300,
             )
         except FileNotFoundError:
+            print("[pick] osascript not found", flush=True)
             raise HTTPException(status_code=500, detail="找不到 osascript（需 macOS）")
         except subprocess.TimeoutExpired:
+            print("[pick] osascript timeout (300s)", flush=True)
             return JSONResponse({"path": None, "cancelled": True})
+        print(
+            f"[pick] rc={result.returncode} stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}",
+            flush=True,
+        )
         if result.returncode != 0:
-            # 使用者取消或其他失敗
+            # 使用者取消（rc=1，stderr 含 "User canceled"）或其他錯誤
             return JSONResponse({"path": None, "cancelled": True})
         picked = result.stdout.strip().rstrip("/")
         if not picked:
@@ -313,10 +344,12 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     def preview_episode(payload: dict):
         """預覽資料夾內容（給沒 episode.yaml 的資料夾用）。"""
         raw = (payload.get("path") or "").strip()
+        print(f"[preview] raw={raw!r}", flush=True)
         if not raw:
             raise HTTPException(status_code=400, detail="缺少 path")
         target = Path(os.path.expanduser(raw)).resolve()
         if not target.is_dir():
+            print(f"[preview] not a dir: {target}", flush=True)
             raise HTTPException(status_code=400, detail=f"資料夾不存在：{target}")
         entries: list[dict] = []
         try:
@@ -330,10 +363,16 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         except PermissionError:
             raise HTTPException(status_code=403, detail=f"沒有權限讀取：{target}")
         date, name = ep_init.parse_folder_name(target)
+        has_yaml = (target / "episode.yaml").is_file()
+        print(
+            f"[preview] target={target} has_yaml={has_yaml} "
+            f"date={date!r} name={name!r} entries={len(entries)}",
+            flush=True,
+        )
         return JSONResponse({
             "path": str(target),
             "folder_name": target.name,
-            "has_episode_yaml": (target / "episode.yaml").is_file(),
+            "has_episode_yaml": has_yaml,
             "matches_convention": bool(date),
             "parsed_date": date or "",
             "parsed_name": name or "",
@@ -416,12 +455,15 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/episode/switch")
     def switch_episode(payload: dict):
         raw = (payload.get("path") or "").strip()
+        print(f"[switch] raw={raw!r}", flush=True)
         if not raw:
             raise HTTPException(status_code=400, detail="缺少 path")
         new_dir = Path(os.path.expanduser(raw)).resolve()
         if not new_dir.is_dir():
+            print(f"[switch] not a dir: {new_dir}", flush=True)
             raise HTTPException(status_code=400, detail=f"資料夾不存在：{new_dir}")
         if not (new_dir / "episode.yaml").is_file():
+            print(f"[switch] no episode.yaml in: {new_dir}", flush=True)
             raise HTTPException(
                 status_code=400,
                 detail=f"不是 episode 資料夾（缺 episode.yaml）：{new_dir}",
@@ -429,8 +471,10 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         try:
             new_ep = Episode(new_dir)
         except Exception as e:
+            print(f"[switch] Episode() failed: {e!r}", flush=True)
             raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}")
         holder["ep"] = new_ep
+        print(f"[switch] ok → name={new_ep.name!r} dir={new_ep.dir}", flush=True)
         return JSONResponse({
             "ok": True,
             "name": new_ep.name,
@@ -443,6 +487,10 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         # path 為空 → main_video；否則必須在 ep.dir 內且可預覽
         if not path:
             target = ep.main_video()
+            # 空集（init 完但 01_母帶/ 沒檔）main_video 解析後不存在 → 回 404
+            # 不要讓 range_response 的 path.stat() 直接拋 FileNotFoundError 變成 500 噪音
+            if not target.is_file():
+                raise HTTPException(status_code=404, detail="這集還沒有主影片")
         else:
             target = (ep.dir / path).resolve()
             try:
@@ -541,6 +589,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
+            "assets": _check_assets_status(),
         })
 
     @app.post("/api/config")
@@ -586,6 +635,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": out_provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
+            "assets": _check_assets_status(),
         })
 
     @app.post("/api/transcribe")
@@ -698,6 +748,45 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/assemble/status")
     def get_assemble_status():
         return JSONResponse(assemble_job.get_status())
+
+    @app.post("/api/clip")
+    def post_clip(payload: dict):
+        """同步切 Reels 片段（-c copy 很快，沒必要 background job）。
+        payload: { names?: list[str], force?: bool }
+        names 省略 = 跑全部；給 list = 只跑指定 name。"""
+        from podcast_toolkit.assemble import extract_reels_clips
+
+        ep = _require_ep()
+        names = payload.get("names")
+        if names is not None and not isinstance(names, list):
+            raise HTTPException(status_code=400, detail="names 必須是 list 或省略")
+        force = bool(payload.get("force"))
+        try:
+            results = extract_reels_clips(
+                ep.dir,
+                clip_names=list(names) if names else None,
+                force=force,
+            )
+        except AssembleError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"ffmpeg 失敗：exit {e.returncode}")
+        # 路徑轉相對 ep.dir 給前端 reveal/preview
+        out = []
+        for r in results:
+            rel = Path(r["path"])
+            try:
+                rel = rel.relative_to(ep.dir)
+            except ValueError:
+                pass
+            out.append({
+                "name": r["name"],
+                "duration": round(float(r["duration"]), 2),
+                "start_sec": round(float(r["start_sec"]), 2),
+                "end_sec": round(float(r["end_sec"]), 2),
+                "path": str(rel),
+            })
+        return JSONResponse({"ok": True, "clips": out})
 
     @app.post("/api/reveal")
     def post_reveal(payload: dict):

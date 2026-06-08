@@ -125,6 +125,9 @@ def merge(defaults: dict, episode: dict) -> dict:
         "deletions": list(episode.get("deletions") or []),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
+        # Reels 片段截取：list of {name, start_card, end_card}
+        # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
+        "reels_clips": list(episode.get("reels_clips") or []),
     }
     # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
     if cfg["crop_yt"] is None and episode.get("crop") is not None:
