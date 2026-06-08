@@ -11,7 +11,8 @@
 # 故意不開 set -u；macOS 預設 bash 3.2 在 set -u + $() 空字串時會誤報 unbound
 # （所有變數仍會顯式初始化，可讀性不受影響）
 
-PROJECT_DIR="$HOME/Desktop/vibe-coding playground/podcast-toolkit"
+# 由腳本自身位置推導 repo 根目錄（scripts/ 的上一層），不寫死絕對路徑 → 可攜到任何機器/路徑
+PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOCK_PATH="$HOME/.podcast-toolkit/.server.lock"
 LAUNCH_LOG="$HOME/.podcast-toolkit/launcher.log"
 DEATH_MARKER="[podcast-ui.sh] SERVER_EXITED"

@@ -12,7 +12,7 @@ cd podcast-toolkit
 podcast --help
 ```
 
-`install.sh` 自動檢查 Python 3.9+、Homebrew、裝 ffmpeg、裝 pyyaml、建 `podcast` symlink。
+`install.sh` 自動檢查 Python 3.9+、Homebrew、裝 ffmpeg、裝 pyyaml 等套件、建 `podcast` symlink，並**本機生成雙擊啟動 app 到 `/Applications/Podcast.app`**（本機生成 → 無 quarantine、不會被 Gatekeeper 攔），裝完直接雙擊開介面。
 
 選裝：本機 whisper 轉錄字幕（模型約 3GB）
 
@@ -25,12 +25,10 @@ pip3 install --user openai-whisper
 
 ## GUI 模式（推薦）
 
-```bash
-python3 setup_app.py py2app -A
-open dist/Podcast.app
-```
+`install.sh` 已自動生成 `/Applications/Podcast.app`，直接雙擊（或 Spotlight 搜「Podcast」）即可在瀏覽器 dashboard 選集、新建集、設定集數根目錄。CLI 仍保留，供腳本化使用。
 
-雙擊 `Podcast.app` 後在瀏覽器 dashboard 選集、新建集、設定集數根目錄。CLI 仍保留，供腳本化使用。
+> 若搬移了 repo 位置，重跑一次 `./install.sh` 讓 app 指向新路徑即可。
+> 沒有 app 時也可用 `podcast ui` 開同一個介面。
 
 ## 工作流
 
