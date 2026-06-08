@@ -3342,6 +3342,7 @@ $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
 // T23b: 自動對齊（音訊互相關）。前端只負責叫 endpoint + 把結果填回 input；
 // 寫 yaml 仍走「儲存」按鈕，避免 race + 跟現有設計一致。
 $("#cam-auto-align").addEventListener("click", async () => {
+  const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   if (!camBPath) {
     alert("請先選 cam B 來源");
@@ -3354,7 +3355,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
     const r = await fetch("/api/auto-align", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cam_b_path: camBPath }),
+      body: JSON.stringify({ cam_a_path: camAPath, cam_b_path: camBPath }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));
@@ -3404,6 +3405,7 @@ function _buildCamModalSavePayload() {
 // 一鍵全部對齊：並行打兩次 /api/auto-align（cam B + 音檔），各自填回對應 input。
 // 只選一邊就只跑那邊；都沒選 → 提示。完成後自動 /api/save，預覽立即跟上。
 $("#align-all").addEventListener("click", async () => {
+  const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
   if (!camBPath && !audioPath) {
@@ -3421,7 +3423,7 @@ $("#align-all").addEventListener("click", async () => {
         fetch("/api/auto-align", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cam_b_path: camBPath }),
+          body: JSON.stringify({ cam_a_path: camAPath, cam_b_path: camBPath }),
         }).then(async (r) => {
           if (!r.ok) {
             const err = await r
@@ -3439,7 +3441,7 @@ $("#align-all").addEventListener("click", async () => {
         fetch("/api/auto-align", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ audio_path: audioPath }),
+          body: JSON.stringify({ cam_a_path: camAPath, audio_path: audioPath }),
         }).then(async (r) => {
           if (!r.ok) {
             const err = await r
@@ -3499,6 +3501,7 @@ $("#align-all").addEventListener("click", async () => {
 
 // 外接音檔自動對齊（cam A vs audio file 互相關），跟 cam B 走同一條 /api/auto-align
 $("#audio-auto-align").addEventListener("click", async () => {
+  const camAPath = $("#cam-a-select").value || "";
   const audioPath = $("#audio-select").value || "";
   if (!audioPath) {
     alert("請先選音檔來源");
@@ -3511,7 +3514,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
     const r = await fetch("/api/auto-align", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio_path: audioPath }),
+      body: JSON.stringify({ cam_a_path: camAPath, audio_path: audioPath }),
     });
     if (!r.ok) {
       const err = await r.json().catch(() => ({ detail: `HTTP ${r.status}` }));

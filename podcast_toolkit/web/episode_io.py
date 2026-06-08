@@ -334,18 +334,24 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     )
 
     # _v2.srt 覆寫前先留一份滾動備份，避免誤存後找不回原稿
+    # 還沒跑過 STT 的集會沒有 _v2.srt — 若同時也沒文字 override 就 no-op，
+    # 讓使用者可以只先存「鏡頭/音檔/裁切」這類非字幕設定。
     v2 = ep.output_v2_srt()
-    original = v2.read_text(encoding="utf-8")
-    backup = v2.with_suffix(v2.suffix + ".bak")
-    backup.write_text(original, encoding="utf-8")
-
-    cards = srt_io.parse(original)
     overrides = {
         int(c["idx"]): c["text"]
         for c in (payload.get("cards") or [])
         if c.get("text")
     }
-    v2.write_text(srt_io.serialize(cards, overrides=overrides), encoding="utf-8")
+    if v2.exists():
+        original = v2.read_text(encoding="utf-8")
+        backup = v2.with_suffix(v2.suffix + ".bak")
+        backup.write_text(original, encoding="utf-8")
+        cards = srt_io.parse(original)
+        v2.write_text(srt_io.serialize(cards, overrides=overrides), encoding="utf-8")
+    elif overrides:
+        raise FileNotFoundError(
+            f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
+        )
 
     # T23a：字幕卡 → 鏡頭對應表 sidecar；前端傳回只含 explicit 標記的 mapping
     cameras_mapping = {

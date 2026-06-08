@@ -823,16 +823,23 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         - {"audio_path": "..."}：對「外接音檔 vs cam A」算偏移
         - 否則：對「cam B vs cam A」；cam B 優先讀 payload['cam_b_path']，
           沒給才 fallback 讀 yaml 裡已存的 cameras.b
+
+        cam A 也走同樣的「payload 優先」邏輯（payload['cam_a_path']），
+        讓使用者在 modal 改 cam A 後不必先按儲存就能對齊。
         """
         ep = _require_ep()
         payload = payload or {}
         cameras = ep.cfg.get("cameras") or {}
-        cam_a_rel = cameras.get("a") or ep.cfg.get("main_video")
+        cam_a_rel = (payload.get("cam_a_path") or "").strip() \
+            or cameras.get("a") or ep.cfg.get("main_video")
         if not cam_a_rel:
             raise HTTPException(status_code=400, detail="缺 cam A，無法對齊")
         cam_a = ep.resolve_episode_path(cam_a_rel)
         if not cam_a.is_file():
-            raise HTTPException(status_code=404, detail=f"找不到 cam A 檔案：{cam_a_rel}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"找不到 cam A 檔案：{cam_a_rel}（解析後：{cam_a}）",
+            )
 
         audio_path = (payload.get("audio_path") or "").strip()
         if audio_path:
