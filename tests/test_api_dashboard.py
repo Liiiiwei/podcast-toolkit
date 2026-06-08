@@ -89,9 +89,9 @@ def test_post_close_clears_ep(edit_client):
     r = edit_client.post("/api/episodes/close")
     assert r.status_code == 200
     assert r.json() == {"ok": True}
-    # 之後 GET / 應該回 dashboard
+    # 之後 GET / 應該回 dashboard（與 index.html 共用 "Podcast Toolkit" 標題，靠 dash-topbar 區分）
     r2 = edit_client.get("/")
-    assert "Dashboard" in r2.text
+    assert "dash-topbar" in r2.text
 
 
 def test_config_includes_episode_roots(dashboard_client, monkeypatch, tmp_path):

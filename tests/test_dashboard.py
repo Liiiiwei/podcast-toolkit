@@ -121,13 +121,13 @@ def test_list_episodes_from_root(tmp_path: Path):
     root.mkdir()
     ep1 = _make_initialized_episode(root, "20260601 第一集")
     (ep1 / "01_母帶" / "第一集.mp4").write_bytes(b"X")  # needs_transcribe
-    ep2 = _make_initialized_episode(root, "20260608 第二集")  # empty → 不列
+    ep2 = _make_initialized_episode(root, "20260608 第二集")  # empty 也列出
 
     result = dashboard.list_episodes(roots=[str(root)], recent=[])
     assert result["warnings"] == []
     paths = [e["path"] for e in result["episodes"]]
     assert str(ep1) in paths
-    assert str(ep2) not in paths  # empty 不列
+    assert str(ep2) in paths  # commit 0b5b962 起 empty 集也列出，讓使用者能進去補母帶
 
 
 def test_list_episodes_skips_non_episode_folders(tmp_path: Path):

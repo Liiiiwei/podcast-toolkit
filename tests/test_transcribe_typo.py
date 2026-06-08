@@ -93,7 +93,7 @@ def test_build_gemini_prompt_without_typo_entries_omits_list_header():
 def test_run_pipeline_passes_typo_entries_to_provider(tmp_path, monkeypatch):
     captured = {}
 
-    def fake_provider(*, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None):
+    def fake_provider(*, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None, glossary=None):
         captured["typo_entries"] = typo_entries
         return out_srt
 
@@ -119,7 +119,7 @@ def test_run_pipeline_typo_entries_defaults_to_none(tmp_path, monkeypatch):
     """沒給 typo_entries 也能正常分流（向後相容）。"""
     captured = {}
 
-    def fake_provider(*, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None):
+    def fake_provider(*, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None, glossary=None):
         captured["typo_entries"] = typo_entries
         return out_srt
 
@@ -136,7 +136,9 @@ def test_run_pipeline_typo_entries_defaults_to_none(tmp_path, monkeypatch):
         out_srt=out,
         work_dir=tmp_path,
     )
-    assert captured["typo_entries"] is None
+    # glossary 落地後 run_pipeline 會把 typo_entries normalize 成 list（合併 glossary→typo），
+    # None 不會直透到 provider；沒給就是空 list，不是 None。
+    assert not captured["typo_entries"]
 
 
 # ---------- transcribe_job 多帶 typo_entries ----------
@@ -157,7 +159,7 @@ def test_start_job_passes_typo_entries_to_pipeline(monkeypatch, tmp_episode_dir)
     transcribe_job._reset()
     captured = {}
 
-    def fake_dispatch(*, provider, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None):
+    def fake_dispatch(*, provider, api_key, src_audio, out_srt, work_dir, progress=None, typo_entries=None, glossary=None):
         captured["typo_entries"] = typo_entries
         out_srt.parent.mkdir(parents=True, exist_ok=True)
         out_srt.write_text("", encoding="utf-8")
@@ -204,7 +206,7 @@ def test_post_transcribe_loads_typo_dict_and_passes_to_start_job(
 
     captured = {}
 
-    def fake_start(ep, *, src_rel, provider, api_key, typo_entries=None):
+    def fake_start(ep, *, src_rel, provider, api_key, typo_entries=None, glossary=None):
         captured["typo_entries"] = typo_entries
         return {"src_path": src_rel}
 
