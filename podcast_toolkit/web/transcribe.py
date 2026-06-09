@@ -366,7 +366,13 @@ def _merge_glossary_into_typo(
 
 
 def _ffmpeg_compress(src: Path, dst: Path) -> None:
-    """壓成 16kHz mono mp3。失敗丟 TranscribeError。"""
+    """壓成 16kHz mono mp3。失敗丟 TranscribeError。
+
+    已存在且不比 src 舊就跳過（換 provider / 重跑同 provider 不必重壓）。
+    換母帶後 src.mtime 會比 dst.mtime 新，會強制重壓。
+    """
+    if dst.exists() and dst.stat().st_mtime >= src.stat().st_mtime:
+        return
     cmd = [
         "ffmpeg", "-y",
         "-i", str(src),
