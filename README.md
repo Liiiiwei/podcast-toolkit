@@ -23,12 +23,31 @@ pip3 install --user openai-whisper
 
 其他系統請手動跟著上面四步走（pip3 install pyyaml、brew/apt install ffmpeg、`ln -s "$(pwd)/bin/podcast" /usr/local/bin/podcast`）。
 
-## GUI 模式（推薦）
+## 怎麼打開來用
 
-`install.sh` 已自動生成 `/Applications/Podcast.app`，直接雙擊（或 Spotlight 搜「Podcast」）即可在瀏覽器 dashboard 選集、新建集、設定集數根目錄。CLI 仍保留，供腳本化使用。
+> 第一次拿到電腦的人，請先跑過一次上面的「安裝」。裝完之後，以後每次要用，照下面做就好。
 
-> 若搬移了 repo 位置，重跑一次 `./install.sh` 讓 app 指向新路徑即可。
-> 沒有 app 時也可用 `podcast ui` 開同一個介面。
+**最簡單的方法：**
+
+1. 按鍵盤左下角的 `⌘`（command）鍵不放，再按一下空白鍵 → 螢幕中間會跳出一個搜尋框。
+2. 在框裡打「Podcast」這幾個字。
+3. 看到 Podcast 的圖示後，按一下鍵盤的 Enter（換行鍵）。
+4. 等一下下（大概 2～5 秒），瀏覽器會自己打開，就可以開始用了。
+
+**也可以這樣（喜歡用滑鼠的話）：**
+
+1. 點螢幕下方工具列最左邊的「Finder」（藍白笑臉圖示）。
+2. 左邊欄位點「應用程式」。
+3. 在裡面找到 **Podcast**，連點兩下。
+
+**遇到狀況怎麼辦：**
+
+- **等了一下瀏覽器沒跳出來？** 再打開一次 Podcast 就好（重複上面的步驟），它會自己接上、幫你打開瀏覽器。
+- **想之後更快打開？** 第一次打開後，工具列（Dock）上會出現 Podcast 圖示，在它上面按右鍵 →「選項」→ 點「在 Dock 中保留」。以後點工具列那顆圖示就能開。
+- **用完要關？** 直接把瀏覽器分頁關掉就好；不想讓它一直在背景跑的話，在工具列的 Podcast 圖示按右鍵 →「結束」。
+
+> 進階使用者：也可以在「終端機」輸入 `podcast ui` 開同一個畫面；其他指令（`podcast init / resegment / assemble …`）一樣保留。
+> 如果之後把專案資料夾搬到別的位置，重跑一次 `./install.sh` 就會修好。
 
 ## 工作流
 
