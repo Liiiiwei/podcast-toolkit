@@ -63,14 +63,26 @@ def test_serialize_splits_card_into_two_with_renumber():
     assert lines == ["1", "2", "3"]
 
 
-def test_serialize_splits_time_proportional_to_text_length():
-    """原卡 4.2 → 12.0（dur=7.8），文字「今天聊乳牛」5 字切成 「今天聊」(3) + 「乳牛」(2)。
-    新 2 起點 = 4.2、終點 = 4.2 + 7.8 * 3/5 = 8.88；新 3 起點 = 8.88、終點 = 12.0。
+def test_serialize_splits_packs_tight_when_card_has_trailing_silence():
+    """原卡 4.2 → 12.0（dur=7.8），但「今天聊乳牛」5 字 × 0.3s/字 = 1.5s budget；
+    dur 遠大於 budget → sub-cards 從 t0 緊湊排、尾段不分配字幕。
+    「今天聊」(3 字) = 0.9s → 4.2 → 5.1；「乳牛」(2 字) = 0.6s → 5.1 → 5.7。
+    剩 5.7→12.0 (6.3s) 不指派字幕，避免 sub-card 1 被推進靜音裡。
     """
     cards = srt_io.parse(SAMPLE)
     out = srt_io.serialize(cards, splits={2: ["今天聊", "乳牛"]})
-    assert "00:00:04,200 --> 00:00:08,880" in out
-    assert "00:00:08,880 --> 00:00:12,000" in out
+    assert "00:00:04,200 --> 00:00:05,100" in out
+    assert "00:00:05,100 --> 00:00:05,700" in out
+
+
+def test_serialize_splits_falls_back_to_proportional_when_tight():
+    """原卡很短（5 字裝在 1s 內），budget 1.5s > dur 1.0s → 退回比例分配貼滿整段。"""
+    text = "1\n00:00:00,000 --> 00:00:01,000\n今天聊乳牛\n"
+    cards = srt_io.parse(text)
+    out = srt_io.serialize(cards, splits={1: ["今天聊", "乳牛"]})
+    # 3/5 與 2/5
+    assert "00:00:00,000 --> 00:00:00,600" in out
+    assert "00:00:00,600 --> 00:00:01,000" in out
 
 
 def test_serialize_splits_ignores_single_segment():

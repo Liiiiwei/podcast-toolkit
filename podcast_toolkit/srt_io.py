@@ -3,6 +3,35 @@ from __future__ import annotations
 from typing import Iterable
 
 
+# 中文 podcast 對話約 3-5 字/秒；用 0.3s/字當「合理語速」上界。
+# 切卡時若原卡 dur 比 sum(chars)*RATE 還大（trailing silence），
+# sub-cards 從 t0 緊湊排，尾段不指派字幕；避免 sub-card 1 被推進靜音裡。
+SPLIT_SEC_PER_CHAR = 0.3
+
+
+def allocate_split_times(
+    t0: float, t1: float, parts: list[str]
+) -> list[tuple[float, float]]:
+    """把 [t0, t1] 依 parts 字數切成 N 段時間。
+
+    若原卡夠長能容納「字數 × 合理語速」→ 從 t0 緊湊排，剩餘 trailing silence 不分配；
+    若原卡比語速 budget 還短 → 退回比例分配，貼滿整段。
+    """
+    lengths = [max(len(p), 1) for p in parts]
+    total = sum(lengths)
+    dur = t1 - t0
+    budget = total * SPLIT_SEC_PER_CHAR
+    rate = SPLIT_SEC_PER_CHAR if budget <= dur else dur / total
+    out: list[tuple[float, float]] = []
+    cum = 0.0
+    for ln in lengths:
+        start = t0 + cum
+        cum += ln * rate
+        end = min(t0 + cum, t1)
+        out.append((start, end))
+    return out
+
+
 def _ts2s(ts: str) -> float:
     h, m, rest = ts.split(":")
     s, ms = rest.split(",")
@@ -79,15 +108,8 @@ def serialize_with_map(
         base_text = overrides.get(oid, c["text"])
         parts = splits.get(oid)
         if parts and len(parts) > 1:
-            lengths = [max(len(p), 1) for p in parts]
-            total = sum(lengths)
-            t0 = c["start"]
-            dur = c["end"] - c["start"]
-            cum = 0
-            for i, part in enumerate(parts):
-                p_start = t0 + dur * cum / total
-                cum += lengths[i]
-                p_end = t0 + dur * cum / total
+            times = allocate_split_times(c["start"], c["end"], parts)
+            for i, (part, (p_start, p_end)) in enumerate(zip(parts, times)):
                 out.append(
                     f"{new_idx}\n{_s2ts(p_start)} --> {_s2ts(p_end)}\n{part}\n"
                 )

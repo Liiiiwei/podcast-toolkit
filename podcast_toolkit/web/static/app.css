@@ -214,7 +214,9 @@ h2 {
 
 .body {
   --drawer-h: 32vh;
-  --video-budget: calc(100vh - 220px - var(--drawer-h));
+  /* 270 = topbar + body padding + version-tabs + controls + trim-controls + crop-info + gaps；
+     早期 220 沒算到 crop-info 那行（後來加的），導致裁切比例按鈕在矮螢幕被 overflow:hidden 切掉 */
+  --video-budget: calc(100vh - 270px - var(--drawer-h));
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-columns: 1fr;

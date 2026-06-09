@@ -403,25 +403,34 @@ function activeCardAt(t) {
   return null;
 }
 
-// Enter 切完之後 re-render 並把 caret 移到指定 sub-card 開頭，讓使用者接著編輯
-function focusSplitTarget(parentIdx, targetPart) {
+// Enter 切完／Backspace 合併完之後 re-render，把 caret 移到指定 card / sub-card 的指定 offset
+// dataIdx：未切卡傳 int c.idx；sub-card 傳 "<idx>:<part>" 字串
+// offset：caret 字元位置（Enter 預設 0；Backspace 合併要落在交界處）
+function focusCardAt(dataIdx, offset = 0) {
   renderTopbar();
   renderCards();
   renderCaption();
   renderTypo();
   setTimeout(() => {
     const next = document.querySelector(
-      `#cards-list .card[data-idx="${parentIdx}:${targetPart}"] .card-text`,
+      `#cards-list .card[data-idx="${dataIdx}"] .card-text`,
     );
     if (!next) return;
     next.focus();
     const sel = window.getSelection();
     const range = document.createRange();
-    range.setStart(next.firstChild || next, 0);
+    const node = next.firstChild || next;
+    const max = node.nodeType === 3 ? node.textContent.length : 0;
+    const safe = Math.min(Math.max(offset, 0), max);
+    range.setStart(node, safe);
     range.collapse(true);
     sel.removeAllRanges();
     sel.addRange(range);
   }, 0);
+}
+
+function focusSplitTarget(parentIdx, targetPart) {
+  focusCardAt(`${parentIdx}:${targetPart}`, 0);
 }
 
 // 算 contentEditable 內 caret 距離元素開頭的字元數（用於 Enter 切卡判斷游標位置）
@@ -441,6 +450,11 @@ function getCursorOffset(el) {
 //        text: 顯示文字, start: 顯示開始秒, end: 顯示結束秒}
 // 未切的卡 key 是 int c.idx（向後相容既有 state.deletions int 鍵）；
 // 切過的卡 key 是 "<idx>:<partIdx>"（後端 _parse_composite_id 兩種都吃）。
+// 切卡時 sub-card 時間分配規則：
+//   原卡 dur > 字數 * SEC_PER_CHAR → 從 t0 緊湊排，尾段 trailing silence 不分配（overlay 顯示空）
+//   原卡 dur 比 budget 還小 → 比例分配貼滿整段
+// 對應後端 srt_io.allocate_split_times，兩邊規則必須一致避免存檔前後 UI 跳動。
+const SPLIT_SEC_PER_CHAR = 0.3;
 function expandedCards() {
   const out = [];
   for (const c of state.cards) {
@@ -449,12 +463,15 @@ function expandedCards() {
       const lengths = parts.map((p) => Math.max((p || "").length, 1));
       const total = lengths.reduce((a, b) => a + b, 0);
       const t0 = c.start;
-      const dur = c.end - c.start;
+      const t1 = c.end;
+      const dur = t1 - t0;
+      const budget = total * SPLIT_SEC_PER_CHAR;
+      const rate = budget <= dur ? SPLIT_SEC_PER_CHAR : dur / total;
       let cum = 0;
       for (let i = 0; i < parts.length; i++) {
-        const start = t0 + (dur * cum) / total;
-        cum += lengths[i];
-        const end = t0 + (dur * cum) / total;
+        const start = t0 + cum;
+        cum += lengths[i] * rate;
+        const end = Math.min(t0 + cum, t1);
         out.push({
           c,
           partIdx: i,
@@ -590,7 +607,11 @@ function renderCards() {
       const v = text.textContent.trim();
       if (isSub) {
         // 改 sub-card 文字 → 更新 cardSplits 對應 partIdx；空字串就還原原始 part 值（避免存空白卡）
-        const parts = (state.cardSplits.get(c.idx) || []).slice();
+        // Backspace 合併把 cardSplits[c.idx] 刪掉後，舊 sub-card DOM 被 re-render 摘掉會觸發 blur；
+        // 此時不能再寫回 cardSplits，否則會把已合併的卡復活成有 undefined 段的拼接狀態。
+        if (!state.cardSplits.has(c.idx)) return;
+        const parts = state.cardSplits.get(c.idx).slice();
+        if (parts.length <= partIdx) return;
         if (!parts[partIdx] && !v) return;
         if (parts[partIdx] === v) return;
         pushUndo();
@@ -627,6 +648,76 @@ function renderCards() {
     // Shift+Enter 保留原生換行 escape hatch
     // 注意 IME 組字中（如注音、拼音選字）不能攔 Enter，會吃掉候選確認
     text.addEventListener("keydown", (e) => {
+      // Backspace at offset 0 on sub-card with partIdx > 0 → 把這段併回前一段
+      // 修飾鍵不攔（讓 cmd+Backspace 刪整行還能用）；IME 組字中也不攔
+      if (
+        e.key === "Backspace" &&
+        !e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.isComposing &&
+        isSub &&
+        partIdx > 0 &&
+        getCursorOffset(text) === 0
+      ) {
+        e.preventDefault();
+        pushUndo();
+        const oldParts = (state.cardSplits.get(c.idx) || []).slice();
+        const leftText = oldParts[partIdx - 1] || "";
+        const rightText = oldParts[partIdx] || "";
+        const mergedText = leftText + rightText;
+        const leftKey = `${c.idx}:${partIdx - 1}`;
+        const thisKey = `${c.idx}:${partIdx}`;
+        // 合併刪除狀態：只要其一被標刪，合併結果就是刪
+        const mergedDeleted =
+          state.deletions.has(leftKey) || state.deletions.has(thisKey);
+        state.deletions.delete(thisKey);
+        state.camerasMapping.delete(thisKey);
+        // 後面的 sub-card composite key 從低往高 shift -1，避免覆寫
+        for (let i = partIdx + 1; i < oldParts.length; i++) {
+          const oldKey = `${c.idx}:${i}`;
+          const newKey = `${c.idx}:${i - 1}`;
+          if (state.deletions.has(oldKey)) {
+            state.deletions.delete(oldKey);
+            state.deletions.add(newKey);
+          }
+          if (state.camerasMapping.has(oldKey)) {
+            const cam = state.camerasMapping.get(oldKey);
+            state.camerasMapping.delete(oldKey);
+            state.camerasMapping.set(newKey, cam);
+          }
+        }
+        const newParts = oldParts
+          .slice(0, partIdx - 1)
+          .concat([mergedText], oldParts.slice(partIdx + 1));
+        state.deletions.delete(leftKey);
+        if (mergedDeleted) state.deletions.add(leftKey);
+        if (newParts.length === 1) {
+          // 只剩 1 段 → 收回未切狀態：composite "<idx>:0" 鍵搬回 int idx
+          const finalText = newParts[0];
+          state.cardSplits.delete(c.idx);
+          if (state.deletions.has(`${c.idx}:0`)) {
+            state.deletions.delete(`${c.idx}:0`);
+            state.deletions.add(c.idx);
+          }
+          if (state.camerasMapping.has(`${c.idx}:0`)) {
+            const cam = state.camerasMapping.get(`${c.idx}:0`);
+            state.camerasMapping.delete(`${c.idx}:0`);
+            state.camerasMapping.set(c.idx, cam);
+          }
+          if (finalText && finalText !== c.text) {
+            state.textOverrides.set(c.idx, finalText);
+          } else {
+            state.textOverrides.delete(c.idx);
+          }
+          focusCardAt(c.idx, leftText.length);
+        } else {
+          state.cardSplits.set(c.idx, newParts);
+          focusCardAt(`${c.idx}:${partIdx - 1}`, leftText.length);
+        }
+        return;
+      }
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
       e.preventDefault();
       const cursorPos = getCursorOffset(text);
@@ -1243,8 +1334,44 @@ function autoPauseAtTailTrim() {
   }
 }
 
+// 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
+// 相鄰區間（gap < 0.05s）合併，避免 seek 完馬上又被踢一次。
+function deletionIntervals() {
+  const raw = [];
+  for (const r of expandedCards()) {
+    if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
+  }
+  raw.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [s, e] of raw) {
+    const last = merged[merged.length - 1];
+    if (last && s <= last[1] + 0.05) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}
+
+// 把 t 算到下一個 keep 區間的起點：在 deleted 區間內 → 跳到區間末端；
+// 不在則回 t 本身。用於 play / timeupdate 時把預覽對齊到最終輸出時間軸。
+function nextKeepTime(t) {
+  for (const [s, e] of deletionIntervals()) {
+    if (t >= s && t < e) return e;
+  }
+  return t;
+}
+
+// 播放中若 currentTime 進入刪除區間 → 直接跳到區間末端，跟最終輸出體感一致。
+// 暫停 / 拖 seek 時不踢，讓使用者還能進到刪除卡裡 inspect / 反悔復原。
+function autoSkipDeletedSegments() {
+  const v = $("#video");
+  if (v.paused) return;
+  const jumped = nextKeepTime(v.currentTime);
+  if (jumped > v.currentTime + 0.01) v.currentTime = jumped;
+}
+
 $("#video").addEventListener("timeupdate", () => {
   autoPauseAtTailTrim();
+  autoSkipDeletedSegments();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
   $("#time").textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
@@ -1286,6 +1413,9 @@ $("#video").addEventListener("play", () => {
   const v = $("#video");
   const head = state.headTrimSec || 0;
   if (head > 0 && v.currentTime < head) v.currentTime = head;
+  // 按 play 時若停在刪除卡上 → 直接跳到區間末端，跟最終輸出一致
+  const jumped = nextKeepTime(v.currentTime);
+  if (jumped > v.currentTime + 0.01) v.currentTime = jumped;
 });
 $("#video").addEventListener("pause", () => {
   setPlayIcon("play");
