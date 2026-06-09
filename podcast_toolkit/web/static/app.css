@@ -1583,6 +1583,22 @@ dialog.modal::backdrop {
   line-height: 1.4;
   cursor: pointer;
 }
+/* sub-card 的時長提示：「2.3s」掛在兩個時間戳下方 */
+.card-split-dur {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+/* 斷句尾段空窗警告：紅色 chip 提示斷句配速太快留下大段沒字幕的區段 */
+.card-split-warn {
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  cursor: help;
+}
 .card-text {
   color: var(--text);
   line-height: 1.5;

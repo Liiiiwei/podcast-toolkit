@@ -61,8 +61,13 @@ def _set(**kwargs) -> None:
         _STATE.update(kwargs)
 
 
-def start_job(ep: Episode, targets: list[str], force: bool = False) -> dict[str, Any]:
-    """開新 job；targets 例如 ['yt', 'reels']。"""
+def start_job(
+    ep: Episode,
+    targets: list[str],
+    force: bool = False,
+    preview_sec: int | None = None,
+) -> dict[str, Any]:
+    """開新 job；targets 例如 ['yt', 'reels']。preview_sec 非 None → 走預覽模式（截斷 + .preview 檔名）。"""
     if not targets:
         raise ValueError("targets 不能為空")
     for t in targets:
@@ -76,7 +81,9 @@ def start_job(ep: Episode, targets: list[str], force: bool = False) -> dict[str,
     # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）
     plans = []
     for t in targets:
-        plans.append(prepare_assembly(ep.dir, output_kind=t, force=force))
+        plans.append(prepare_assembly(
+            ep.dir, output_kind=t, force=force, preview_sec=preview_sec,
+        ))
 
     _reset(
         state="running",

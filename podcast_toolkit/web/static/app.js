@@ -596,6 +596,27 @@ function renderCards() {
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
+    // sub-card 加 duration 提示：直接看到「這段切了多少秒」+ 尾段空窗警告
+    // 防的是放牛班式 bug：斷句配速太快導致大段時間沒分配字幕
+    if (isSub) {
+      const parts = state.cardSplits.get(c.idx) || [];
+      const partDur = r.end - r.start;
+      const durLine = document.createElement("div");
+      durLine.className = "card-split-dur";
+      durLine.textContent = `${partDur.toFixed(1)}s`;
+      time.appendChild(durLine);
+      // 最後一段才檢查尾段空窗（tight-pack 模式下 partDur 之和會 < 原 cue dur）
+      if (partIdx === parts.length - 1) {
+        const trailing = c.end - r.end;
+        if (trailing > 3) {
+          const warn = document.createElement("div");
+          warn.className = "card-split-warn";
+          warn.textContent = `⚠ ${trailing.toFixed(1)}s`;
+          warn.title = `斷句後尾段空窗 ${trailing.toFixed(1)} 秒沒分配字幕，可能漏字或斷句配速太快`;
+          time.appendChild(warn);
+        }
+      }
+    }
 
     const text = document.createElement("div");
     text.className = "card-text";
@@ -2872,9 +2893,10 @@ async function finishTranscribe({ ok, out_srt, error }) {
 //      → done/error 各自渲染收尾畫面
 // 400「輸出已存在」會 confirm 後自動以 force=true 重打
 let _assemblePollTimer = null;
-// 記住上次合成的 targets / title，給「重試」按鈕用
+// 記住上次合成的 targets / title / previewSec，給「重試」按鈕用
 let _lastAssembleTargets = null;
 let _lastAssembleTitle = null;
+let _lastAssemblePreviewSec = null;
 
 function fmtEta(s) {
   if (s == null) return "估算中…";
@@ -2981,32 +3003,41 @@ function showAssembleErrorState(message) {
     retry.onclick = () => {
       resetAssembleModal();
       $("#assemble-title").textContent = _lastAssembleTitle || "合成中…";
-      startAssemble(_lastAssembleTargets);
+      startAssemble(_lastAssembleTargets, {
+        previewSec: _lastAssemblePreviewSec,
+      });
     };
   }
 }
 
-// 由「合成 YT」/「合成 Reels」按鈕呼叫，targets 是單一字串陣列
-async function startAssemble(targets, { force = false } = {}) {
+// 由「合成 YT」/「合成 Reels」/「5 分鐘預覽」按鈕呼叫，targets 是單一字串陣列
+// previewSec：若給正整數 → 截斷輸出長度 + 檔名加 .preview；預覽模式預設 force=true 方便反覆驗證
+async function startAssemble(
+  targets,
+  { force = false, previewSec = null } = {},
+) {
   _lastAssembleTargets = targets;
+  _lastAssemblePreviewSec = previewSec;
   $("#assemble-title").textContent = "合成中…";
   setAssemblePill("running", "合成中");
   $("#assemble-current-label").textContent =
     "ffmpeg 啟動中（片頭 + 正片 + 片尾）";
 
   try {
+    const body = { targets, force };
+    if (previewSec) body.preview_sec = previewSec;
     const r = await fetch("/api/assemble", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targets, force }),
+      body: JSON.stringify(body),
     });
     if (!r.ok) {
-      const body = await r.json().catch(() => ({}));
-      const msg = body.detail || `HTTP ${r.status}`;
+      const respBody = await r.json().catch(() => ({}));
+      const msg = respBody.detail || `HTTP ${r.status}`;
       // 400「輸出已存在」→ 提供覆寫選項，使用者同意就以 force=true 重打
       if (r.status === 400 && /輸出已存在|--force/.test(msg) && !force) {
         if (confirm(`${msg}\n\n要覆寫並重新合成嗎？`)) {
-          return startAssemble(targets, { force: true });
+          return startAssemble(targets, { force: true, previewSec });
         }
         hideModal("assemble-modal");
         return;
@@ -3115,7 +3146,7 @@ async function pollAssemble() {
 
 // 集中綁定 assemble 相關 listener，啟動時呼叫一次
 function setupAssembleButtons() {
-  const launch = (targets, title) => {
+  const launch = (targets, title, { previewSec = null } = {}) => {
     const dirty =
       state.deletions.size > 0 ||
       state.textOverrides.size > 0 ||
@@ -3135,7 +3166,11 @@ function setupAssembleButtons() {
     resetAssembleModal();
     $("#assemble-title").textContent = title;
     showModal("assemble-modal");
-    startAssemble(targets);
+    // 預覽模式預設 force=true，方便反覆驗證 bitrate / 畫質不被「輸出已存在」擋下
+    startAssemble(targets, {
+      previewSec,
+      force: previewSec ? true : false,
+    });
   };
 
   $("#assemble-yt-btn").addEventListener("click", () => {
@@ -3143,6 +3178,9 @@ function setupAssembleButtons() {
   });
   $("#assemble-reels-btn").addEventListener("click", () => {
     launch(["reels"], "合成 Reels 9:16 短版");
+  });
+  $("#assemble-preview-btn").addEventListener("click", () => {
+    launch(["yt"], "合成 YT 前 5 分鐘預覽", { previewSec: 300 });
   });
 
   $("#assemble-cancel").addEventListener("click", () => {

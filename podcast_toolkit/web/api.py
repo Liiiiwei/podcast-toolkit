@@ -733,8 +733,19 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         if not targets or not isinstance(targets, list):
             raise HTTPException(status_code=400, detail="缺少 targets（list，例如 ['yt', 'reels']）")
         force = bool(payload.get("force"))
+        preview_sec_raw = payload.get("preview_sec")
+        preview_sec: int | None = None
+        if preview_sec_raw is not None:
+            try:
+                preview_sec = int(preview_sec_raw)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="preview_sec 必須是正整數")
+            if preview_sec <= 0:
+                preview_sec = None
         try:
-            info = assemble_job.start_job(ep, targets=targets, force=force)
+            info = assemble_job.start_job(
+                ep, targets=targets, force=force, preview_sec=preview_sec,
+            )
         except AssembleError as e:
             # 資產缺失 / 輸出存在 / 找不到 ffmpeg
             # 注意：AssembleError 繼承 RuntimeError，必須先攔

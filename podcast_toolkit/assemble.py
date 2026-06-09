@@ -599,12 +599,16 @@ def prepare_assembly(
     episode_dir: Path,
     output_kind: str = "yt",
     force: bool = False,
+    preview_sec: int | None = None,
 ) -> dict:
     """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
 
     output_kind = 'yt' 或 'reels'：
       - yt：1920x1080，含 intro + outro card，用 crop_yt
-      - reels：1080x1920，只含主影片，用 crop_reels
+      - reels：1080x1920,只含主影片，用 crop_reels
+
+    preview_sec：若為正整數，ffmpeg 加 -t 截斷輸出長度（含 intro/正片/outro 全鏈路前 N 秒）；
+    輸出檔名插入 .preview 避免覆蓋正式成品。
 
     tmp_out 寫在 04_工作檔/.{out.name}.tmp，呼叫端跑完 ffmpeg 後負責 rename 到 03_成品/。
     回傳 dict：cmd / cwd / out / tmp_out / main_dur / total_dur / output_kind。
@@ -667,6 +671,10 @@ def prepare_assembly(
         out = ep.output_yt_video()
     else:
         out = ep.output_reels_video()
+
+    # preview 模式：檔名插 .preview 避免覆蓋正式成品（驗證 bitrate 用，反覆跑不影響交付檔）
+    if preview_sec and preview_sec > 0:
+        out = out.with_name(f"{out.stem}.preview{out.suffix}")
 
     if out.exists() and not force:
         raise AssembleError(f"輸出已存在：{out}（加 --force 覆寫）", exit_code=1)
@@ -925,6 +933,12 @@ def prepare_assembly(
                 tmp_out_rel,
             ]
         total_dur = main_dur
+
+    # preview 模式：在 -movflags 前插 -t，截斷整段輸出（含 intro+正片+outro 全鏈路）為前 N 秒
+    if preview_sec and preview_sec > 0:
+        insert_at = cmd.index("-movflags")
+        cmd[insert_at:insert_at] = ["-t", str(preview_sec)]
+        total_dur = min(total_dur, float(preview_sec))
 
     return {
         "cmd": cmd,
