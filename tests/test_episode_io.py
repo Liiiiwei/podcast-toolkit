@@ -496,6 +496,114 @@ def test_save_state_filters_invalid_reels_clips(tmp_episode_dir):
     assert data["reels_clips"] == [{"name": "ok", "start_card": 1, "end_card": 3}]
 
 
+# --- 前端 Enter 切卡：splits payload + 翻譯 deletions / cameras_mapping / textOverrides ---
+
+
+def test_save_state_applies_splits_to_v2_srt(tmp_episode_dir):
+    """splits payload 切第 2 卡 → _v2.srt 從 4 段變 5 段、idx 重編。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "splits": {"2": ["今天要聊的是", "過嗨乳牛這個議題"]},
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    # 原 4 段 → 切後 5 段
+    lines = [l for l in v2.strip().split("\n") if l.strip().isdigit()]
+    assert lines == ["1", "2", "3", "4", "5"]
+    assert "今天要聊的是" in v2
+    assert "過嗨乳牛這個議題" in v2
+
+
+def test_save_state_translates_deletions_via_composite_id(tmp_episode_dir):
+    """切第 2 卡 + 刪「sub-card 1」 → 翻譯成新 idx 3 寫進 yaml.deletions。
+    第 3 卡（原本後面）會被擠到新 idx 4，也要驗證後面卡的 deletion 跟著挪。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "cards": [],
+            "splits": {"2": ["前段", "後段"]},
+            # 原 2 卡的第 1 半（part 1）→ 新 idx 3；原 3 卡（未切）→ 新 idx 4
+            "deletions": ["2:1", 3],
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert sorted(data["deletions"]) == [3, 4]
+
+
+def test_save_state_translates_cameras_mapping_via_composite_id(tmp_episode_dir):
+    """切第 2 卡 + cameras_mapping 標 "2:0"=a + "2:1"=b + 4=b → 寫進 sidecar 為新 idx 2/3/5。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "splits": {"2": ["前", "後"]},
+            "cameras_mapping": {"2:0": "a", "2:1": "b", 4: "b"},
+        },
+    )
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
+    import json
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    # 新 idx：原 1 → 1；原 2:0 → 2；原 2:1 → 3；原 3 → 4；原 4 → 5
+    assert data == {"2": "a", "3": "b", "5": "b"}
+
+
+def test_save_state_splits_with_text_overrides_on_other_card(tmp_episode_dir):
+    """splits[2] + cards[3] (text override on un-split card) 兩個都生效。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [],
+            "cards": [{"idx": 3, "text": "嗯"}],
+            "splits": {"2": ["前段文字", "後段文字"]},
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    assert "前段文字" in v2 and "後段文字" in v2
+    # 原 3 卡（被切後變新 4）文字被改成「嗯」
+    assert "\n4\n" in v2
+    assert "嗯" in v2
+    assert "呃那個" not in v2
+
+
+def test_save_state_splits_drop_invalid_payload_keys(tmp_episode_dir):
+    """splits 非 list / 1 段以下 / key 非 int → 忽略，不算切。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "splits": {
+                "2": ["只給一段"],     # 1 段不算切
+                "x": ["a", "b"],       # key 非 int
+                "3": "not a list",     # 不是 list
+            },
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    lines = [l for l in v2.strip().split("\n") if l.strip().isdigit()]
+    assert lines == ["1", "2", "3", "4"]  # 4 段不變
+
+
+def test_save_state_drops_deletion_pointing_to_missing_sub_card(tmp_episode_dir):
+    """未切的卡來 composite id "2:1" 找不到對應 sub-card → 過濾掉（避免殘影）。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "cards": [],
+            "deletions": ["1:1", 2],  # "1:1" 沒切過 → 應跳過；2 正常翻譯
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["deletions"] == [2]
+
+
 def test_save_state_no_reels_clips_key_preserves_yaml(tmp_episode_dir):
     """payload 完全沒帶 reels_clips key → 不動原本 yaml。"""
     yaml_path = tmp_episode_dir / "episode.yaml"

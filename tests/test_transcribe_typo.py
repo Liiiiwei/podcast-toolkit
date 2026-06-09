@@ -198,8 +198,8 @@ def test_post_transcribe_loads_typo_dict_and_passes_to_start_job(
     main_video.write_bytes(b"FAKE")
 
     monkeypatch.setattr(api_mod, "_load_config", lambda: {
-        "xai_api_key": "K",
-        "transcribe": {"provider": "xai"},
+        "gemini_api_key": "K",
+        "transcribe": {"provider": "gemini"},
     })
     entries = [{"wrong": "舊", "right": "新", "note": ""}]
     monkeypatch.setattr(api_mod, "_load_typo_dict", lambda: entries)

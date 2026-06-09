@@ -292,8 +292,8 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     main_video = tmp_episode_dir / "01_母帶" / "測試集.mp4"
     main_video.write_bytes(b"FAKE" * 1000)
 
-    # 不要動到真實 ~/.podcast-toolkit/config.json
-    monkeypatch.setattr(api_mod, "_load_config", lambda: {"xai_api_key": "fake"})
+    # 不要動到真實 ~/.podcast-toolkit/config.json（預設 provider 已改 gemini）
+    monkeypatch.setattr(api_mod, "_load_config", lambda: {"gemini_api_key": "fake"})
 
     # 模擬 Grok：一個字一張 card 寫到 out_srt（看起來像現在線上 bug）
     def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):

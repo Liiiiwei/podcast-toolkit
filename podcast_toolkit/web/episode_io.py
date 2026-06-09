@@ -204,8 +204,23 @@ def load_state(ep: Episode) -> dict[str, Any]:
     }
 
 
+def _parse_composite_id(key: Any) -> tuple[int, int]:
+    """前端 cameras_mapping / deletions / splits 的 key 可能是純 int '3' 或 split 後子卡 '5:1'。
+    一律解成 (old_srt_idx, part_idx)；未切的卡 part_idx 固定 0。
+    """
+    s = str(key)
+    if ":" in s:
+        oid_s, part_s = s.split(":", 1)
+        return int(oid_s), int(part_s)
+    return int(s), 0
+
+
 def save_state(ep: Episode, payload: dict[str, Any]) -> None:
-    """把前端 payload 寫回：episode.yaml 的 crop_yt / crop_reels / deletions、覆寫 _v2.srt。"""
+    """把前端 payload 寫回：episode.yaml 的 crop_yt / crop_reels / deletions、覆寫 _v2.srt。
+
+    splits payload：{"5": ["前半文字", "後半文字"]} → save 時把第 5 卡切成兩張、整份 SRT 重編號。
+    cameras_mapping / deletions 的 key 可帶 ":part" 指向子卡（如 "5:1"），save 時一併翻譯成新編號。
+    """
     yaml_path = ep.dir / "episode.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
 
@@ -234,12 +249,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop(key, None)
 
-    # deletions
-    deletions = list(payload.get("deletions") or [])
-    if deletions:
-        data["deletions"] = [int(i) for i in deletions]
-    else:
-        data.pop("deletions", None)
+    # deletions：先收原始 composite IDs，等 SRT 重編號完再翻譯成新 int idx
+    raw_deletions = list(payload.get("deletions") or [])
 
     # head / tail trim：> 0 才寫，否則清掉避免噪音
     for key in ("head_trim_sec", "tail_trim_sec"):
@@ -328,13 +339,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop("audio", None)
 
-    yaml_path.write_text(
-        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-
     # _v2.srt 覆寫前先留一份滾動備份，避免誤存後找不回原稿
-    # 還沒跑過 STT 的集會沒有 _v2.srt — 若同時也沒文字 override 就 no-op，
+    # 還沒跑過 STT 的集會沒有 _v2.srt — 若同時也沒文字 override / splits 就 no-op，
     # 讓使用者可以只先存「鏡頭/音檔/裁切」這類非字幕設定。
     v2 = ep.output_v2_srt()
     overrides = {
@@ -342,21 +348,73 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         for c in (payload.get("cards") or [])
         if c.get("text")
     }
+    # splits payload key 是 str(old_idx)，至少 2 段才算真的切；< 2 段忽略
+    raw_splits = payload.get("splits") or {}
+    splits: dict[int, list[str]] = {}
+    for k, v in raw_splits.items():
+        if not isinstance(v, list) or len(v) < 2:
+            continue
+        try:
+            splits[int(k)] = [str(p) for p in v]
+        except (TypeError, ValueError):
+            continue
+
+    # 預設 lookup：未切 + 未改的卡，old idx == new idx；遇到 v2.srt 不存在但又有狀態要存時也能 fallback
+    idx_lookup: dict[tuple[int, int], int] = {}
     if v2.exists():
         original = v2.read_text(encoding="utf-8")
         backup = v2.with_suffix(v2.suffix + ".bak")
         backup.write_text(original, encoding="utf-8")
         cards = srt_io.parse(original)
-        v2.write_text(srt_io.serialize(cards, overrides=overrides), encoding="utf-8")
-    elif overrides:
+        new_text, idx_map = srt_io.serialize_with_map(
+            cards, overrides=overrides, splits=splits
+        )
+        v2.write_text(new_text, encoding="utf-8")
+        for i, key in enumerate(idx_map):
+            idx_lookup[key] = i + 1
+    elif overrides or splits:
         raise FileNotFoundError(
             f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
         )
 
+    def _translate(key: Any) -> int | None:
+        """composite id → 新 1-based idx；找不到（卡已不存在 / lookup 為空）回 None。
+        v2.srt 不存在時 lookup 為空 → 直接用原 int（向後相容沒字幕也能存 deletions/cameras_mapping）。
+        """
+        oid, part = _parse_composite_id(key)
+        if idx_lookup:
+            return idx_lookup.get((oid, part))
+        return oid if part == 0 else None
+
+    # deletions 翻譯（過濾 None，避免被切掉的舊卡留殘影）
+    new_deletions: list[int] = []
+    for k in raw_deletions:
+        try:
+            nid = _translate(k)
+        except (TypeError, ValueError):
+            continue
+        if nid is not None:
+            new_deletions.append(nid)
+    if new_deletions:
+        data["deletions"] = new_deletions
+    else:
+        data.pop("deletions", None)
+
+    # yaml 在 SRT 寫完 + deletions 翻完後才落地，避免中途崩潰留下不一致狀態
+    yaml_path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+
     # T23a：字幕卡 → 鏡頭對應表 sidecar；前端傳回只含 explicit 標記的 mapping
-    cameras_mapping = {
-        int(k): str(v)
-        for k, v in (payload.get("cameras_mapping") or {}).items()
-        if v in ("a", "b")
-    }
-    cameras_io.save(ep.output_v2_cameras_json(), cameras_mapping)
+    new_cameras_mapping: dict[int, str] = {}
+    for k, v in (payload.get("cameras_mapping") or {}).items():
+        if v not in ("a", "b"):
+            continue
+        try:
+            nid = _translate(k)
+        except (TypeError, ValueError):
+            continue
+        if nid is not None:
+            new_cameras_mapping[nid] = str(v)
+    cameras_io.save(ep.output_v2_cameras_json(), new_cameras_mapping)

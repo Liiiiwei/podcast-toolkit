@@ -1569,6 +1569,11 @@ dialog.modal::backdrop {
   text-decoration: line-through;
   color: var(--text-faint);
 }
+/* 切過的子卡：縮排 + 左邊框淡化，提示「這張是手動切出來的，不是 STT 原句」 */
+.card.card-sub {
+  margin-left: 12px;
+  border-left: 2px dashed var(--text-faint);
+}
 .card-time {
   color: var(--text-dim);
   font-family: var(--font-mono);

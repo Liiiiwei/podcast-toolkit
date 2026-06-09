@@ -44,13 +44,59 @@ def parse(text: str) -> list[dict]:
     return cards
 
 
-def serialize(cards: Iterable[dict], overrides: dict[int, str] | None = None) -> str:
-    """把 cards 寫回 srt 字串。overrides[idx] 會覆寫對應 card 的文字。"""
+def serialize(
+    cards: Iterable[dict],
+    overrides: dict[int, str] | None = None,
+    splits: dict[int, list[str]] | None = None,
+) -> str:
+    """把 cards 寫回 srt 字串。
+
+    overrides[idx]：覆寫對應 card 的文字（在 split 之前先 apply）
+    splits[idx]：把該卡切成 N 段文字，時間依文字長度比例分配；
+                 切完所有 idx 一律重編序號。
+    """
+    text, _ = serialize_with_map(cards, overrides=overrides, splits=splits)
+    return text
+
+
+def serialize_with_map(
+    cards: Iterable[dict],
+    overrides: dict[int, str] | None = None,
+    splits: dict[int, list[str]] | None = None,
+) -> tuple[str, list[tuple[int, int]]]:
+    """同 serialize，但額外回傳 idx_map：
+    new_idx (1-based) → (original_idx, part_idx)
+    part_idx：未切的卡固定 0；切的卡 0..N-1。
+    給 caller 翻譯 cameras_mapping / deletions / textOverrides 用。
+    """
     overrides = overrides or {}
+    splits = splits or {}
     out: list[str] = []
+    idx_map: list[tuple[int, int]] = []
+    new_idx = 1
     for c in cards:
-        text = overrides.get(c["idx"], c["text"])
-        out.append(
-            f"{c['idx']}\n{_s2ts(c['start'])} --> {_s2ts(c['end'])}\n{text}\n"
-        )
-    return "\n".join(out)
+        oid = c["idx"]
+        base_text = overrides.get(oid, c["text"])
+        parts = splits.get(oid)
+        if parts and len(parts) > 1:
+            lengths = [max(len(p), 1) for p in parts]
+            total = sum(lengths)
+            t0 = c["start"]
+            dur = c["end"] - c["start"]
+            cum = 0
+            for i, part in enumerate(parts):
+                p_start = t0 + dur * cum / total
+                cum += lengths[i]
+                p_end = t0 + dur * cum / total
+                out.append(
+                    f"{new_idx}\n{_s2ts(p_start)} --> {_s2ts(p_end)}\n{part}\n"
+                )
+                idx_map.append((oid, i))
+                new_idx += 1
+        else:
+            out.append(
+                f"{new_idx}\n{_s2ts(c['start'])} --> {_s2ts(c['end'])}\n{base_text}\n"
+            )
+            idx_map.append((oid, 0))
+            new_idx += 1
+    return "\n".join(out), idx_map

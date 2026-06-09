@@ -193,7 +193,6 @@ function renderConfigStatus(cfg) {
   assetsBox.innerHTML = "";
 
   const keyFlags = [
-    ["xai", cfg.has_xai_api_key],
     ["gemini", cfg.has_gemini_api_key],
     ["openai", cfg.has_openai_api_key],
   ];

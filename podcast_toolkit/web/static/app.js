@@ -14,13 +14,17 @@ const state = {
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   cards: [],
   textOverrides: new Map(), // idx -> text
+  // 在 UI 上按 Enter 切句：oldIdx -> [part0_text, part1_text, ...]；存檔時翻譯成
+  // SRT 新編號，並把 deletions / camerasMapping 從 "5" 散成 "5:0" / "5:1"。
+  // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
+  // 第一版限制：sub-card 上再按 Enter 只跳卡，不支援連鎖切分（要再切請先存檔重抓）。
+  cardSplits: new Map(),
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
-  hasApiKey: false,
   hasGeminiKey: false,
   hasOpenAIKey: false,
-  sttProvider: "xai", // "xai" | "gemini" | "openai"
+  sttProvider: "gemini", // "gemini" | "openai"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   hasMainVideo: true, // false = 空集（01_母帶/ 還沒有檔），video player 換成 empty banner
   headTrimSec: 0, // 影片開頭要砍掉幾秒
@@ -113,6 +117,7 @@ function snapshotEditState() {
     headTrimSec: state.headTrimSec,
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
+    cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
   };
 }
 
@@ -129,6 +134,9 @@ function applyEditSnapshot(snap) {
   state.headTrimSec = snap.headTrimSec;
   state.tailTrimSec = snap.tailTrimSec;
   state.reelsClips = (snap.reelsClips || []).map((c) => ({ ...c }));
+  state.cardSplits = new Map(
+    [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
+  );
 }
 
 function pushUndo() {
@@ -222,9 +230,11 @@ function renderTopbar() {
   const total = state.cards.length;
   const deleted = state.deletions.size;
   const dirty = state.textOverrides.size;
+  const split = state.cardSplits.size;
   const head = state.headTrimSec || 0;
   const tail = state.tailTrimSec || 0;
   let line = `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
+  if (split > 0) line += ` · 已切 ${split}`;
   if (head > 0 || tail > 0) {
     line += ` · 頭 ${head.toFixed(1)}s / 尾 ${tail.toFixed(1)}s`;
   }
@@ -391,13 +401,69 @@ function activeCardAt(t) {
   return null;
 }
 
+// 算 contentEditable 內 caret 距離元素開頭的字元數（用於 Enter 切卡判斷游標位置）
+function getCursorOffset(el) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return 0;
+  const range = sel.getRangeAt(0);
+  if (!el.contains(range.startContainer)) return 0;
+  const pre = range.cloneRange();
+  pre.selectNodeContents(el);
+  pre.setEnd(range.startContainer, range.startOffset);
+  return pre.toString().length;
+}
+
+// 把 state.cards 展開成 render 用的扁平清單；切過的卡會展開成多張 sub-card。
+// 每筆：{c: 原 card, partIdx: 0..N-1 or null, key: deletions/camerasMapping 用的 id,
+//        text: 顯示文字, start: 顯示開始秒, end: 顯示結束秒}
+// 未切的卡 key 是 int c.idx（向後相容既有 state.deletions int 鍵）；
+// 切過的卡 key 是 "<idx>:<partIdx>"（後端 _parse_composite_id 兩種都吃）。
+function expandedCards() {
+  const out = [];
+  for (const c of state.cards) {
+    const parts = state.cardSplits.get(c.idx);
+    if (parts && parts.length > 1) {
+      const lengths = parts.map((p) => Math.max((p || "").length, 1));
+      const total = lengths.reduce((a, b) => a + b, 0);
+      const t0 = c.start;
+      const dur = c.end - c.start;
+      let cum = 0;
+      for (let i = 0; i < parts.length; i++) {
+        const start = t0 + (dur * cum) / total;
+        cum += lengths[i];
+        const end = t0 + (dur * cum) / total;
+        out.push({
+          c,
+          partIdx: i,
+          key: `${c.idx}:${i}`,
+          text: parts[i],
+          start,
+          end,
+        });
+      }
+    } else {
+      out.push({
+        c,
+        partIdx: null,
+        key: c.idx,
+        text: state.textOverrides.get(c.idx) ?? c.text,
+        start: c.start,
+        end: c.end,
+      });
+    }
+  }
+  return out;
+}
+
 // 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
-// 注意：carry-forward 是依 state.cards 的順序，不是 idx 大小（idx 不一定連續）
-function computeEffectiveCamera(idx) {
-  const pos = state.cards.findIndex((c) => c.idx === idx);
+// 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
+// 而且切過的卡會 carry 到自己的後續 sub-card）。
+function computeEffectiveCamera(key) {
+  const rendered = expandedCards();
+  const pos = rendered.findIndex((r) => r.key === key);
   if (pos < 0) return "a";
   for (let i = pos; i >= 0; i--) {
-    const v = state.camerasMapping.get(state.cards[i].idx);
+    const v = state.camerasMapping.get(rendered[i].key);
     if (v === "a" || v === "b") return v;
   }
   return "a";
@@ -442,15 +508,21 @@ function renderCards() {
     return;
   }
   const hasCamB = !!state.cameras && !!state.cameras.b;
-  for (const c of state.cards) {
+  const rendered = expandedCards();
+  for (const r of rendered) {
+    const c = r.c;
+    const partIdx = r.partIdx; // null = 未切；0..N-1 = sub-card
+    const key = r.key; // int (未切) 或 "<idx>:<part>"（切過）；deletions / cameras 都用這個
+    const isSub = partIdx != null;
     const div = document.createElement("div");
     div.className = "card";
-    div.dataset.idx = c.idx;
-    if (state.deletions.has(c.idx)) div.classList.add("deleted");
-    if (c.suspicious_pause) div.classList.add("suspicious");
+    div.dataset.idx = String(key);
+    if (isSub) div.classList.add("card-sub");
+    if (state.deletions.has(key)) div.classList.add("deleted");
+    if (c.suspicious_pause && !isSub) div.classList.add("suspicious");
     // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
     if (hasCamB) {
-      const eff = computeEffectiveCamera(c.idx);
+      const eff = computeEffectiveCamera(key);
       div.classList.add(eff === "b" ? "cam-b" : "cam-a");
       div.classList.add("card-has-cam");
     }
@@ -458,13 +530,16 @@ function renderCards() {
     const susBox = document.createElement("input");
     susBox.type = "checkbox";
     susBox.className = "card-sus-check";
-    if (!c.suspicious_pause) susBox.classList.add("hidden");
-    susBox.checked = state.susChecked.has(c.idx);
-    susBox.title = c.suspicious_pause
-      ? `可疑原因：${(c.suspicious_reasons || []).join(", ")}`
-      : "";
+    // sub-card 不算可疑卡（可疑判定走原始整卡）；藏起來但保留版面位
+    if (!c.suspicious_pause || isSub) susBox.classList.add("hidden");
+    susBox.checked = !isSub && state.susChecked.has(c.idx);
+    susBox.title =
+      c.suspicious_pause && !isSub
+        ? `可疑原因：${(c.suspicious_reasons || []).join(", ")}`
+        : "";
     susBox.addEventListener("click", (e) => e.stopPropagation());
     susBox.addEventListener("change", () => {
+      if (isSub) return;
       if (susBox.checked) {
         state.susChecked.add(c.idx);
       } else {
@@ -475,19 +550,33 @@ function renderCards() {
 
     const time = document.createElement("div");
     time.className = "card-time";
-    time.textContent = `${fmtTime(c.start)}\n${fmtTime(c.end)}`;
+    time.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
     time.style.whiteSpace = "pre";
     time.addEventListener("click", () => {
-      $("#video").currentTime = c.start;
+      $("#video").currentTime = r.start;
     });
 
     const text = document.createElement("div");
     text.className = "card-text";
     text.contentEditable = "true";
-    text.textContent = state.textOverrides.get(c.idx) ?? c.text;
-    if (state.textOverrides.has(c.idx)) text.classList.add("dirty");
+    text.textContent = r.text;
+    if (!isSub && state.textOverrides.has(c.idx)) text.classList.add("dirty");
+    if (isSub) text.classList.add("dirty"); // sub-card 本來就是改過的內容
     text.addEventListener("blur", () => {
       const v = text.textContent.trim();
+      if (isSub) {
+        // 改 sub-card 文字 → 更新 cardSplits 對應 partIdx；空字串就還原原始 part 值（避免存空白卡）
+        const parts = (state.cardSplits.get(c.idx) || []).slice();
+        if (!parts[partIdx] && !v) return;
+        if (parts[partIdx] === v) return;
+        pushUndo();
+        parts[partIdx] = v || parts[partIdx];
+        state.cardSplits.set(c.idx, parts);
+        renderTopbar();
+        renderCaption();
+        renderTypo();
+        return;
+      }
       const original = c.text;
       const willSet = !!v && v !== original;
       const nextValue = willSet ? v : null;
@@ -510,11 +599,60 @@ function renderCards() {
       renderCaption();
       renderTypo();
     });
-    // Enter = 提交 + 跳下一卡編輯；Shift+Enter 保留原生換行 escape hatch
+    // Enter：游標在文字中段 → 切成兩張子卡；在頭/尾 → 維持原本「跳下一卡」行為
+    // Shift+Enter 保留原生換行 escape hatch
     // 注意 IME 組字中（如注音、拼音選字）不能攔 Enter，會吃掉候選確認
     text.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
       e.preventDefault();
+      // 第一版不支援 sub-card 再切：直接跳下一張
+      if (!isSub) {
+        const cursorPos = getCursorOffset(text);
+        const full = text.textContent;
+        if (cursorPos > 0 && cursorPos < full.length) {
+          const before = full.slice(0, cursorPos).replace(/\s+$/, "");
+          const after = full.slice(cursorPos).replace(/^\s+/, "");
+          if (before && after) {
+            pushUndo();
+            // 從 int 鍵搬到 composite，避免存檔時 backend 翻譯遺漏
+            if (state.deletions.has(c.idx)) {
+              state.deletions.delete(c.idx);
+              state.deletions.add(`${c.idx}:0`);
+              state.deletions.add(`${c.idx}:1`);
+            }
+            if (state.camerasMapping.has(c.idx)) {
+              const cam = state.camerasMapping.get(c.idx);
+              state.camerasMapping.delete(c.idx);
+              state.camerasMapping.set(`${c.idx}:0`, cam);
+              // 第二張靠 carry-forward 從第一張拿值，不顯式標
+            }
+            state.textOverrides.delete(c.idx); // splits 內容才是真相
+            state.cardSplits.set(c.idx, [before, after]);
+            renderTopbar();
+            renderCards();
+            renderCaption();
+            renderTypo();
+            // 切完後讓第二張子卡進入編輯狀態
+            setTimeout(() => {
+              const next = document.querySelector(
+                `#cards-list .card[data-idx="${c.idx}:1"] .card-text`,
+              );
+              if (next) {
+                next.focus();
+                // 游標放到開頭
+                const sel = window.getSelection();
+                const range = document.createRange();
+                range.setStart(next.firstChild || next, 0);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+              }
+            }, 0);
+            return;
+          }
+        }
+      }
+      // fallback：跳下一張可編輯卡
       text.blur();
       const cards = Array.from(document.querySelectorAll("#cards-list .card"));
       const here = cards.indexOf(div);
@@ -529,23 +667,20 @@ function renderCards() {
 
     const del = document.createElement("button");
     del.className = "card-del";
-    del.setAttribute(
-      "aria-label",
-      state.deletions.has(c.idx) ? "復原" : "刪除",
-    );
+    del.setAttribute("aria-label", state.deletions.has(key) ? "復原" : "刪除");
     del.innerHTML = window.Icons
-      ? window.Icons.get(state.deletions.has(c.idx) ? "rotate-ccw" : "x", {
+      ? window.Icons.get(state.deletions.has(key) ? "rotate-ccw" : "x", {
           size: 14,
         })
-      : state.deletions.has(c.idx)
+      : state.deletions.has(key)
         ? "↺"
         : "✕";
     del.addEventListener("click", () => {
       pushUndo();
-      if (state.deletions.has(c.idx)) {
-        state.deletions.delete(c.idx);
+      if (state.deletions.has(key)) {
+        state.deletions.delete(key);
       } else {
-        state.deletions.add(c.idx);
+        state.deletions.add(key);
       }
       renderCards();
       renderTopbar();
@@ -556,24 +691,24 @@ function renderCards() {
     // 雙機集才有 A/B 膠囊；已刪除卡淡化但保留位置避免格線跳
     let camPill = null;
     if (hasCamB) {
-      const eff = computeEffectiveCamera(c.idx);
+      const eff = computeEffectiveCamera(key);
       camPill = document.createElement("div");
       camPill.className = "card-cam";
-      if (state.deletions.has(c.idx)) camPill.classList.add("muted");
+      if (state.deletions.has(key)) camPill.classList.add("muted");
 
       const aBtn = document.createElement("button");
       aBtn.type = "button";
       aBtn.className = "cam-btn cam-a-btn" + (eff === "a" ? " active" : "");
       aBtn.textContent = "A";
-      aBtn.title = state.camerasMapping.get(c.idx)
+      aBtn.title = state.camerasMapping.get(key)
         ? "目前鏡頭（已 explicit 標記）"
         : "目前鏡頭（沿用前一張）";
       aBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         // 已經 explicit 標 a → 不入 stack 也不重畫
-        if (state.camerasMapping.get(c.idx) === "a") return;
+        if (state.camerasMapping.get(key) === "a") return;
         pushUndo();
-        state.camerasMapping.set(c.idx, "a");
+        state.camerasMapping.set(key, "a");
         renderCards();
         // 暫停時 timeupdate 不會 fire，手動 refresh 一次 overlay 才會收掉
         refreshCamBOverlay();
@@ -583,14 +718,14 @@ function renderCards() {
       bBtn.type = "button";
       bBtn.className = "cam-btn cam-b-btn" + (eff === "b" ? " active" : "");
       bBtn.textContent = "B";
-      bBtn.title = state.camerasMapping.get(c.idx)
+      bBtn.title = state.camerasMapping.get(key)
         ? "切到 B 鏡頭（已 explicit 標記）"
         : "切到 B 鏡頭";
       bBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (state.camerasMapping.get(c.idx) === "b") return;
+        if (state.camerasMapping.get(key) === "b") return;
         pushUndo();
-        state.camerasMapping.set(c.idx, "b");
+        state.camerasMapping.set(key, "b");
         renderCards();
         // 暫停時也要立刻把 cam B overlay 疊上來
         refreshCamBOverlay();
@@ -610,8 +745,8 @@ function renderCards() {
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
-  list.dataset.cardCount = String(state.cards.length);
-  if (state.cards.length > 500 && _dur > 50) {
+  list.dataset.cardCount = String(rendered.length);
+  if (rendered.length > 500 && _dur > 50) {
     console.warn(
       `[T60] renderCards 慢：${state.cards.length} 卡 / ${_dur.toFixed(1)}ms` +
         `（如果常態 > 50ms 就該導入 windowing）`,
@@ -622,9 +757,12 @@ function renderCards() {
 // 紅卡 toolbar：總可疑數 / 已勾數 / 全選 / 刪除已勾
 function renderSusToolbar() {
   const bar = $("#sus-toolbar");
-  // 還沒刪除的可疑卡才算數
+  // 還沒刪除、也還沒切過的卡才算數（切過的卡 sus 旗標屬於原句長度，已不適用）
   const susCards = state.cards.filter(
-    (c) => c.suspicious_pause && !state.deletions.has(c.idx),
+    (c) =>
+      c.suspicious_pause &&
+      !state.deletions.has(c.idx) &&
+      !state.cardSplits.has(c.idx),
   );
   if (susCards.length === 0) {
     bar.classList.add("hidden");
@@ -790,7 +928,10 @@ function applyMainVideoMissingUI() {
 function setupSusToolbar() {
   $("#sus-select-all").addEventListener("click", () => {
     const susCards = state.cards.filter(
-      (c) => c.suspicious_pause && !state.deletions.has(c.idx),
+      (c) =>
+        c.suspicious_pause &&
+        !state.deletions.has(c.idx) &&
+        !state.cardSplits.has(c.idx),
     );
     const allChecked =
       susCards.length > 0 && state.susChecked.size === susCards.length;
@@ -841,10 +982,10 @@ async function loadConfig() {
     const r = await fetch("/api/config");
     if (!r.ok) return;
     const data = await r.json();
-    state.hasApiKey = !!data.has_xai_api_key;
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    state.sttProvider = data.provider || "xai";
+    // xai 已下架；舊 config 殘留 "xai" 一律當 gemini
+    state.sttProvider = data.provider === "openai" ? "openai" : "gemini";
     state.assetsStatus = data.assets || {};
   } catch (_) {}
 }
@@ -872,8 +1013,11 @@ async function load() {
 // === 錯字表 ===
 
 // 取得卡片「當前文字」（含 textOverrides）並排除已刪除卡
+// 切過的卡 → 回 null 跳過：split 後文字屬於使用者手動編輯範圍，
+// 全域字典批次替換不應該動到，避免覆蓋手切過的內容。
 function currentCardText(c) {
   if (state.deletions.has(c.idx)) return null;
+  if (state.cardSplits.has(c.idx)) return null;
   return state.textOverrides.get(c.idx) ?? c.text;
 }
 
@@ -1844,15 +1988,18 @@ $("#save-btn").addEventListener("click", async () => {
   const payload = {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions].sort((a, b) => a - b),
+    // deletions / cameras_mapping key 可能是 int（未切卡）或 "<idx>:<part>"（子卡）→ 不能用 int sort
+    deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
       idx,
       text,
     })),
-    // 只送 explicit 標記，carry-forward 推算結果不送；後端會 int(key) 還原
+    // 只送 explicit 標記，carry-forward 推算結果不送；後端會 _parse_composite_id 解 "5:1" 或 5
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
+    splits: Object.fromEntries(state.cardSplits),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
     reels_clips: state.reelsClips.map((c) => ({
       name: c.name,
@@ -2349,15 +2496,11 @@ function hideModal(id) {
 
 // 供應商 label + state key 對照表（避免散落 ternary）
 function providerLabelOf(p) {
-  return (
-    { xai: "xAI Grok", gemini: "Gemini", openai: "OpenAI whisper-1" }[p] ||
-    "xAI Grok"
-  );
+  return { gemini: "Gemini", openai: "OpenAI whisper-1" }[p] || "Gemini";
 }
 function hasKeyForProvider(p) {
-  if (p === "gemini") return state.hasGeminiKey;
   if (p === "openai") return state.hasOpenAIKey;
-  return state.hasApiKey;
+  return state.hasGeminiKey;
 }
 
 // === 轉字幕流程 ===
@@ -2809,6 +2952,7 @@ function setupAssembleButtons() {
     const dirty =
       state.deletions.size > 0 ||
       state.textOverrides.size > 0 ||
+      state.cardSplits.size > 0 ||
       state.cropYt != null ||
       state.cropReels != null;
     if (dirty) {
@@ -2866,22 +3010,17 @@ function renderAssetsPills() {
 }
 
 function openSettings() {
-  $("#settings-xai-key").value = "";
-  $("#settings-xai-key").type = "password";
   $("#settings-gemini-key").value = "";
   $("#settings-gemini-key").type = "password";
   $("#settings-openai-key").value = "";
   $("#settings-openai-key").type = "password";
-  $("#settings-xai-status").textContent = state.hasApiKey
-    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
-    : "尚未設定";
   $("#settings-gemini-status").textContent = state.hasGeminiKey
     ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
   $("#settings-openai-status").textContent = state.hasOpenAIKey
     ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
-  const provider = state.sttProvider || "xai";
+  const provider = state.sttProvider || "gemini";
   const radio = document.querySelector(
     `input[name="settings-provider"][value="${provider}"]`,
   );
@@ -2896,11 +3035,6 @@ $("#settings-cancel").addEventListener("click", () =>
   hideModal("settings-modal"),
 );
 
-$("#settings-show").addEventListener("click", () => {
-  const input = $("#settings-xai-key");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
 $("#settings-show-gemini").addEventListener("click", () => {
   const input = $("#settings-gemini-key");
   input.type = input.type === "password" ? "text" : "password";
@@ -2913,14 +3047,12 @@ $("#settings-show-openai").addEventListener("click", () => {
 
 $("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const xaiKey = $("#settings-xai-key").value.trim();
   const geminiKey = $("#settings-gemini-key").value.trim();
   const openaiKey = $("#settings-openai-key").value.trim();
   const provider =
     document.querySelector('input[name="settings-provider"]:checked')?.value ||
-    "xai";
+    "gemini";
   const payload = { provider };
-  if (xaiKey) payload.xai_api_key = xaiKey;
   if (geminiKey) payload.gemini_api_key = geminiKey;
   if (openaiKey) payload.openai_api_key = openaiKey;
   const btn = $("#settings-save");
@@ -2937,10 +3069,9 @@ $("#settings-form").addEventListener("submit", async (e) => {
       throw new Error(`HTTP ${r.status}：${body}`);
     }
     const data = await r.json();
-    state.hasApiKey = !!data.has_xai_api_key;
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    state.sttProvider = data.provider || "xai";
+    state.sttProvider = data.provider === "openai" ? "openai" : "gemini";
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {
@@ -3383,7 +3514,7 @@ function _buildCamModalSavePayload() {
   return {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions].sort((a, b) => a - b),
+    deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
@@ -3391,6 +3522,7 @@ function _buildCamModalSavePayload() {
       text,
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    splits: Object.fromEntries(state.cardSplits),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
@@ -3651,7 +3783,7 @@ $("#cam-save").addEventListener("click", async () => {
   const payload = {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions].sort((a, b) => a - b),
+    deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
@@ -3659,6 +3791,7 @@ $("#cam-save").addEventListener("click", async () => {
       text,
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    splits: Object.fromEntries(state.cardSplits),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: offset,
@@ -3693,6 +3826,7 @@ $("#cancel-btn").addEventListener("click", async () => {
   const dirty =
     state.deletions.size > 0 ||
     state.textOverrides.size > 0 ||
+    state.cardSplits.size > 0 ||
     state.cropYt != null ||
     state.cropReels != null;
   if (dirty && !confirm("未儲存的修改會丟失，確定取消？")) return;
@@ -3735,7 +3869,10 @@ function clearSwitchError() {
 
 async function pickEpisodeFolder() {
   const btn = $("#ep-switch-btn");
-  const dirty = state.deletions.size > 0 || state.textOverrides.size > 0;
+  const dirty =
+    state.deletions.size > 0 ||
+    state.textOverrides.size > 0 ||
+    state.cardSplits.size > 0;
   if (dirty && !confirm("有未儲存的修改，換集後會丟失，繼續？")) return;
 
   clearSwitchError();
@@ -3972,7 +4109,10 @@ function updateNewEpPreview() {
 }
 
 function openNewEpModal() {
-  const dirty = state.deletions.size > 0 || state.textOverrides.size > 0;
+  const dirty =
+    state.deletions.size > 0 ||
+    state.textOverrides.size > 0 ||
+    state.cardSplits.size > 0;
   if (dirty && !confirm("有未儲存的修改，新建集後會丟失，繼續？")) return;
   $("#new-ep-date").value = todayYmd();
   $("#new-ep-name").value = "";

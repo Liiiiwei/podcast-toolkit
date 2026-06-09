@@ -160,13 +160,14 @@ def test_get_config_returns_both_keys_and_provider(monkeypatch, app_client):
     assert body["provider"] == "gemini"
 
 
-def test_get_config_provider_defaults_to_xai(monkeypatch, app_client):
+def test_get_config_provider_defaults_to_gemini(monkeypatch, app_client):
+    # xai 已從設定面板下架；空 config 預設 provider 回退 gemini
     from podcast_toolkit.web import api as api_mod
     monkeypatch.setattr(api_mod, "_load_config", lambda: {})
     body = app_client.get("/api/config").json()
     assert body["has_xai_api_key"] is False
     assert body["has_gemini_api_key"] is False
-    assert body["provider"] == "xai"
+    assert body["provider"] == "gemini"
 
 
 def test_post_config_saves_gemini_key_and_provider(monkeypatch, app_client):

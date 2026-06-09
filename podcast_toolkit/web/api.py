@@ -580,9 +580,10 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/config")
     def get_config():
         cfg = _load_config()
-        provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
-        if provider not in transcribe.PROVIDERS:
-            provider = "xai"
+        # xai 已從設定面板下架；舊 config 殘留 "xai" 一律回退 gemini
+        provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
+        if provider not in transcribe.PROVIDERS or provider == "xai":
+            provider = "gemini"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
@@ -628,7 +629,9 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
                 raise HTTPException(status_code=400, detail="episode_roots 必須是字串陣列")
             cfg["episode_roots"] = [r.strip() for r in roots if r.strip()]
         _save_config(cfg)
-        out_provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
+        out_provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
+        if out_provider == "xai":
+            out_provider = "gemini"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
@@ -659,7 +662,9 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             raise HTTPException(status_code=400, detail="不支援的副檔名")
 
         cfg = _load_config()
-        provider = (cfg.get("transcribe") or {}).get("provider") or "xai"
+        provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
+        if provider == "xai":
+            provider = "gemini"
         if provider not in transcribe.PROVIDERS:
             raise HTTPException(
                 status_code=400, detail=f"未知的 STT 供應商：{provider}"
