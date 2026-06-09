@@ -17,7 +17,7 @@ const state = {
   // 在 UI 上按 Enter 切句：oldIdx -> [part0_text, part1_text, ...]；存檔時翻譯成
   // SRT 新編號，並把 deletions / camerasMapping 從 "5" 散成 "5:0" / "5:1"。
   // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
-  // 第一版限制：sub-card 上再按 Enter 只跳卡，不支援連鎖切分（要再切請先存檔重抓）。
+  // sub-card 上按 Enter 可連鎖切：把該 part 拆兩半、後面 composite key 全部 +1。
   cardSplits: new Map(),
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
@@ -394,11 +394,34 @@ function renderCropInfo() {
   applyCaptionFontSize();
 }
 
+// 回傳 expandedCards() 中包住 t 的那筆 — 切過的卡會在這裡命中對應 sub-card，
+// 預覽/highlight/cam-B 切換都靠這個吃 composite key 與切後時間。
 function activeCardAt(t) {
-  for (const c of state.cards) {
-    if (t >= c.start && t < c.end) return c;
+  for (const r of expandedCards()) {
+    if (t >= r.start && t < r.end) return r;
   }
   return null;
+}
+
+// Enter 切完之後 re-render 並把 caret 移到指定 sub-card 開頭，讓使用者接著編輯
+function focusSplitTarget(parentIdx, targetPart) {
+  renderTopbar();
+  renderCards();
+  renderCaption();
+  renderTypo();
+  setTimeout(() => {
+    const next = document.querySelector(
+      `#cards-list .card[data-idx="${parentIdx}:${targetPart}"] .card-text`,
+    );
+    if (!next) return;
+    next.focus();
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.setStart(next.firstChild || next, 0);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }, 0);
 }
 
 // 算 contentEditable 內 caret 距離元素開頭的字元數（用於 Enter 切卡判斷游標位置）
@@ -470,13 +493,14 @@ function computeEffectiveCamera(key) {
 }
 
 function renderCaption() {
-  const c = activeCardAt($("#video").currentTime);
+  const r = activeCardAt($("#video").currentTime);
   const overlay = $("#caption-overlay");
-  if (!c || state.deletions.has(c.idx)) {
+  if (!r || state.deletions.has(r.key)) {
     overlay.textContent = "";
     return;
   }
-  overlay.textContent = state.textOverrides.get(c.idx) ?? c.text;
+  // r.text 已由 expandedCards 處理：切過的拿 sub-part；未切的拿 textOverrides ?? 原文
+  overlay.textContent = r.text;
 }
 
 function renderCardSkeletons(n = 8) {
@@ -599,58 +623,69 @@ function renderCards() {
       renderCaption();
       renderTypo();
     });
-    // Enter：游標在文字中段 → 切成兩張子卡；在頭/尾 → 維持原本「跳下一卡」行為
+    // Enter：游標在文字中段 → 切成兩張子卡（sub-card 上可連鎖切）；在頭/尾 → 跳下一卡
     // Shift+Enter 保留原生換行 escape hatch
     // 注意 IME 組字中（如注音、拼音選字）不能攔 Enter，會吃掉候選確認
     text.addEventListener("keydown", (e) => {
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
       e.preventDefault();
-      // 第一版不支援 sub-card 再切：直接跳下一張
-      if (!isSub) {
-        const cursorPos = getCursorOffset(text);
-        const full = text.textContent;
-        if (cursorPos > 0 && cursorPos < full.length) {
-          const before = full.slice(0, cursorPos).replace(/\s+$/, "");
-          const after = full.slice(cursorPos).replace(/^\s+/, "");
-          if (before && after) {
-            pushUndo();
-            // 從 int 鍵搬到 composite，避免存檔時 backend 翻譯遺漏
-            if (state.deletions.has(c.idx)) {
-              state.deletions.delete(c.idx);
-              state.deletions.add(`${c.idx}:0`);
-              state.deletions.add(`${c.idx}:1`);
-            }
-            if (state.camerasMapping.has(c.idx)) {
-              const cam = state.camerasMapping.get(c.idx);
-              state.camerasMapping.delete(c.idx);
-              state.camerasMapping.set(`${c.idx}:0`, cam);
-              // 第二張靠 carry-forward 從第一張拿值，不顯式標
-            }
-            state.textOverrides.delete(c.idx); // splits 內容才是真相
-            state.cardSplits.set(c.idx, [before, after]);
-            renderTopbar();
-            renderCards();
-            renderCaption();
-            renderTypo();
-            // 切完後讓第二張子卡進入編輯狀態
-            setTimeout(() => {
-              const next = document.querySelector(
-                `#cards-list .card[data-idx="${c.idx}:1"] .card-text`,
-              );
-              if (next) {
-                next.focus();
-                // 游標放到開頭
-                const sel = window.getSelection();
-                const range = document.createRange();
-                range.setStart(next.firstChild || next, 0);
-                range.collapse(true);
-                sel.removeAllRanges();
-                sel.addRange(range);
-              }
-            }, 0);
-            return;
+      const cursorPos = getCursorOffset(text);
+      const full = text.textContent;
+      const before = full.slice(0, cursorPos).replace(/\s+$/, "");
+      const after = full.slice(cursorPos).replace(/^\s+/, "");
+      const canSplit =
+        cursorPos > 0 && cursorPos < full.length && before && after;
+      if (canSplit && !isSub) {
+        // 未切的卡：第一次切，建立 2 段；int 鍵搬到 composite 避免存檔翻譯遺漏
+        pushUndo();
+        if (state.deletions.has(c.idx)) {
+          state.deletions.delete(c.idx);
+          state.deletions.add(`${c.idx}:0`);
+          state.deletions.add(`${c.idx}:1`);
+        }
+        if (state.camerasMapping.has(c.idx)) {
+          const cam = state.camerasMapping.get(c.idx);
+          state.camerasMapping.delete(c.idx);
+          state.camerasMapping.set(`${c.idx}:0`, cam);
+          // 第二張靠 carry-forward 從第一張拿值，不顯式標
+        }
+        state.textOverrides.delete(c.idx); // splits 內容才是真相
+        state.cardSplits.set(c.idx, [before, after]);
+        focusSplitTarget(c.idx, 1);
+        return;
+      }
+      if (canSplit && isSub) {
+        // 已切過的 sub-card：把 parts[partIdx] 拆 left/right、後面 composite key +1
+        // 同人同句不會跨 sub-card 換鏡頭，cam 走 carry-forward 不必額外處理
+        pushUndo();
+        // 先把 DOM 文字同步到新的左半，re-render 時舊元素的 blur handler 才不會
+        // 拿原本的全段文字蓋回 parts[partIdx]（sub-card blur 會比對 parts[partIdx] vs v）
+        text.textContent = before;
+        const oldParts = (state.cardSplits.get(c.idx) || []).slice();
+        const newParts = oldParts
+          .slice(0, partIdx)
+          .concat([before, after], oldParts.slice(partIdx + 1));
+        // 後面的 sub-card composite key 從高往低 shift +1，避免覆寫
+        for (let i = oldParts.length - 1; i > partIdx; i--) {
+          const oldKey = `${c.idx}:${i}`;
+          const newKey = `${c.idx}:${i + 1}`;
+          if (state.deletions.has(oldKey)) {
+            state.deletions.delete(oldKey);
+            state.deletions.add(newKey);
+          }
+          if (state.camerasMapping.has(oldKey)) {
+            const cam = state.camerasMapping.get(oldKey);
+            state.camerasMapping.delete(oldKey);
+            state.camerasMapping.set(newKey, cam);
           }
         }
+        // 被切的子卡若是 deleted，右半繼承（這段音壞了 → 兩半都刪）
+        if (state.deletions.has(`${c.idx}:${partIdx}`)) {
+          state.deletions.add(`${c.idx}:${partIdx + 1}`);
+        }
+        state.cardSplits.set(c.idx, newParts);
+        focusSplitTarget(c.idx, partIdx + 1);
+        return;
       }
       // fallback：跳下一張可編輯卡
       text.blur();
@@ -820,6 +855,8 @@ async function loadEpisodeState() {
   state.cards = data.cards || [];
   state.textOverrides = new Map();
   state.susChecked = new Set();
+  // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
+  state.cardSplits = new Map();
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
@@ -1214,12 +1251,12 @@ $("#video").addEventListener("timeupdate", () => {
   $("#seek").value = dur ? (t / dur) * 100 : 0;
 
   const activeCard = activeCardAt(t);
-  const active = activeCard ? activeCard.idx : null;
+  const activeKey = activeCard ? String(activeCard.key) : null;
   document
     .querySelectorAll(".card.playing")
     .forEach((el) => el.classList.remove("playing"));
-  if (active != null) {
-    const el = document.querySelector(`.card[data-idx="${active}"]`);
+  if (activeKey != null) {
+    const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
     if (el) {
       el.classList.add("playing");
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -2326,7 +2363,7 @@ function refreshCamBOverlay() {
   }
   const card = activeCardAt(main.currentTime);
   if (!card) return;
-  const eff = computeEffectiveCamera(card.idx);
+  const eff = computeEffectiveCamera(card.key);
   const shouldBeActive = eff === "b";
   const isActive = camb.classList.contains("active");
   if (shouldBeActive === isActive) return;
