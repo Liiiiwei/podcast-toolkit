@@ -813,7 +813,9 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-c:v", enc["video_codec"],
+                "-b:v", enc["video_bitrate"],
+                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
                 "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
@@ -846,7 +848,9 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-c:v", enc["video_codec"],
+                "-b:v", enc["video_bitrate"],
+                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
                 "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
@@ -879,7 +883,9 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-c:v", enc["video_codec"],
+                "-b:v", enc["video_bitrate"],
+                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
                 "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
@@ -909,7 +915,9 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"], "-crf", str(enc["crf"]),
+                "-c:v", enc["video_codec"],
+                "-b:v", enc["video_bitrate"],
+                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
                 "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
