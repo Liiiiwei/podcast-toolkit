@@ -8,12 +8,29 @@ Phase 順序：compress → upload → resegment → done
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import transcribe as _transcribe
+
+
+def _backup_existing_srts(ep: Episode) -> list[str]:
+    """重轉字幕前把現有 _v2.srt / main_srt 備份成 .<timestamp>.bak.srt，避免覆蓋丟掉原稿。
+    回傳實際備份的相對路徑清單（前端可顯示）；不存在的檔案略過。
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backed_up: list[str] = []
+    for src in (ep.output_v2_srt(), ep.main_srt()):
+        if not src.exists():
+            continue
+        # foo_v2.srt → foo_v2.20260610-143000.bak.srt
+        dst = src.with_name(f"{src.stem}.{stamp}.bak{src.suffix}")
+        dst.write_bytes(src.read_bytes())
+        backed_up.append(str(dst.relative_to(ep.dir)))
+    return backed_up
 
 
 _LOCK = threading.Lock()
@@ -23,6 +40,7 @@ _STATE: dict[str, Any] = {
     "percent": 0.0,        # 該 phase 內 0-100
     "src_path": None,      # 來源檔（相對 ep.dir）
     "out_srt": None,       # _v2.srt 相對 ep.dir，成功才會塞
+    "backups": None,       # 重轉前備份的舊 SRT 路徑（相對 ep.dir）
     "error": None,
     "started_at": None,
 }
@@ -41,6 +59,7 @@ def _reset(**kwargs) -> None:
             "percent": 0.0,
             "src_path": None,
             "out_srt": None,
+            "backups": None,
             "error": None,
             "started_at": None,
         })
@@ -104,6 +123,15 @@ def _run(
     """背景 worker：跑 pipeline → resegment → done / error。"""
     def progress(phase: str, percent: float) -> None:
         _set(phase=phase, percent=float(percent))
+
+    # 重轉前把現有 SRT 備份成時間戳檔（不覆蓋原本）
+    try:
+        backed = _backup_existing_srts(ep)
+        if backed:
+            _set(backups=backed)
+    except Exception as e:
+        _set(state="error", error=f"備份原 SRT 失敗：{e}")
+        return
 
     try:
         _transcribe.run_pipeline(

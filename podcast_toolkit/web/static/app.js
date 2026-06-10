@@ -431,9 +431,19 @@ function renderCropInfo() {
 
 // 回傳 expandedCards() 中包住 t 的那筆 — 切過的卡會在這裡命中對應 sub-card，
 // 預覽/highlight/cam-B 切換都靠這個吃 composite key 與切後時間。
+// tight-pack 模式下 sub-cards 尾段沒分到字幕（trailing silence），
+// 若 t 落在原 cue 範圍內但沒命中 sub-card → 回傳該 cue 的最後一張 sub-card，
+// 避免 highlight 在原 cue 中段突然消失，看起來「對不上 / 亂跳」。
 function activeCardAt(t) {
-  for (const r of expandedCards()) {
+  const exp = expandedCards();
+  for (const r of exp) {
     if (t >= r.start && t < r.end) return r;
+  }
+  // fallback：t 落在某個原 cue 的尾段空窗（partDur 之和 < 原 cue dur）→ 找最後一張 sub-card
+  for (let i = exp.length - 1; i >= 0; i--) {
+    const r = exp[i];
+    if (r.partIdx == null) continue;
+    if (t >= r.c.start && t < r.c.end) return r;
   }
   return null;
 }
@@ -724,9 +734,10 @@ function renderCards() {
       const pct = Math.round((textLen / maxChars) * 100);
       const pace = document.createElement("div");
       pace.className = "card-split-pace";
-      if (pct > 100) pace.classList.add("over");
+      // 預留 20% 緩衝再轉紅：理論上限 100% 不代表真的讀不完，>120% 才算明顯吃緊
+      if (pct > 120) pace.classList.add("over");
       pace.textContent = `${textLen}/${maxChars} 字 · ${pct}%`;
-      pace.title = `這段 ${partDur.toFixed(1)} 秒最多放 ${maxChars} 字（每字 ${SPLIT_SEC_PER_CHAR}s），實際 ${textLen} 字`;
+      pace.title = `這段 ${partDur.toFixed(1)} 秒最多放 ${maxChars} 字（每字 ${SPLIT_SEC_PER_CHAR}s），實際 ${textLen} 字；>120% 才轉紅`;
       time.appendChild(pace);
       // 最後一段才檢查尾段空窗（tight-pack 模式下 partDur 之和會 < 原 cue dur）
       if (partIdx === parts.length - 1) {
@@ -1514,6 +1525,9 @@ function autoSkipDeletedSegments() {
   if (jumped > v.currentTime + 0.01) v.currentTime = jumped;
 }
 
+// 上一次 highlight 的 card key — 只有真的換卡才動 .playing class 和 scrollIntoView，
+// 避免 timeupdate（4-30Hz）一直疊 smooth scroll 動畫互打架造成卡片列表「亂跳」。
+let _lastActiveKey = null;
 $("#video").addEventListener("timeupdate", () => {
   autoPauseAtTailTrim();
   autoSkipDeletedSegments();
@@ -1524,15 +1538,18 @@ $("#video").addEventListener("timeupdate", () => {
 
   const activeCard = activeCardAt(t);
   const activeKey = activeCard ? String(activeCard.key) : null;
-  document
-    .querySelectorAll(".card.playing")
-    .forEach((el) => el.classList.remove("playing"));
-  if (activeKey != null) {
-    const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
-    if (el) {
-      el.classList.add("playing");
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+  if (activeKey !== _lastActiveKey) {
+    document
+      .querySelectorAll(".card.playing")
+      .forEach((el) => el.classList.remove("playing"));
+    if (activeKey != null) {
+      const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
+      if (el) {
+        el.classList.add("playing");
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
     }
+    _lastActiveKey = activeKey;
   }
   renderCaption();
 });
