@@ -70,7 +70,18 @@ def merge(defaults: dict, episode: dict) -> dict:
         (1) 留在 cfg["glossary"] 給 Gemini prompt 用
         (2) 展開 sounds_like → canonical 疊到 cfg["fixes"] 尾端，給 resegment 保險用
     - 其他 list：episode 覆寫 defaults
+    - crop_yt / crop_reels：YT 16:9 與 Reels 9:16 兩種裁切設定；
+      舊 episode.yaml 只有 crop 時自動視為 crop_yt（一次性遷移）。
+    - cameras：雙機資料 {a, b}；舊 episode.yaml 只有 main_video 時
+      自動視為 cameras.a（單機模式）。
+    - audio：獨立 stereo-mix 音檔 + 對齊參考（不設則沿用鏡頭原音）。
     """
+    # cameras：episode["cameras"] 優先；否則 fallback main_video → cameras.a
+    cameras = episode.get("cameras")
+    if cameras is None:
+        main_video = episode.get("main_video")
+        cameras = {"a": main_video} if main_video else {}
+
     glossary = normalize_glossary(
         list(defaults.get("common_glossary") or []) + list(episode.get("glossary") or [])
     )
@@ -79,7 +90,19 @@ def merge(defaults: dict, episode: dict) -> dict:
 
     cfg = {
         "resegment": {**defaults["resegment"], **(episode.get("resegment") or {})},
+        "suspicious_pause": {
+            **defaults.get("suspicious_pause", {}),
+            **(episode.get("suspicious_pause") or {}),
+        },
         "subtitle_style": {**defaults["subtitle_style"], **(episode.get("subtitle_style") or {})},
+        # Reels 專用字幕風格：defaults > subtitle_style_reels > subtitle_style（base） > episode override
+        # 缺欄位時自動回退到 subtitle_style，讓只想微調幾欄的 episode 不用整段重抄
+        "subtitle_style_reels": {
+            **defaults["subtitle_style"],
+            **(defaults.get("subtitle_style_reels") or {}),
+            **(episode.get("subtitle_style") or {}),
+            **(episode.get("subtitle_style_reels") or {}),
+        },
         "gemini": {**(defaults.get("gemini") or {}), **(episode.get("gemini") or {})},
         "assets": dict(defaults["assets"]),
         "encode": dict(defaults["encode"]),
@@ -92,9 +115,23 @@ def merge(defaults: dict, episode: dict) -> dict:
         "name": episode.get("name"),
         "main_video": episode.get("main_video"),
         "main_srt": episode.get("main_srt"),
+        "cameras": dict(cameras),
+        "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
+        "audio": episode.get("audio"),
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),
+        "crop_yt": episode.get("crop_yt"),
+        "crop_reels": episode.get("crop_reels"),
+        "deletions": list(episode.get("deletions") or []),
+        "head_trim_sec": float(episode.get("head_trim_sec") or 0),
+        "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
+        # Reels 片段截取：list of {name, start_card, end_card}
+        # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
+        "reels_clips": list(episode.get("reels_clips") or []),
     }
+    # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
+    if cfg["crop_yt"] is None and episode.get("crop") is not None:
+        cfg["crop_yt"] = episode["crop"]
     return cfg
 
 

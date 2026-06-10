@@ -6,7 +6,6 @@ from podcast_toolkit import config
 class Episode:
     SUBDIRS = {
         "master": "01_母帶",
-        "intro_outro": "02_片頭片尾",
         "output": "03_成品",
         "work": "04_工作檔",
     }
@@ -58,8 +57,25 @@ class Episode:
     def output_v2_srt(self) -> Path:
         return self.subdir("output") / f"{self.name}_final_v2.srt"
 
+    def active_srt(self) -> Path:
+        """字幕下游（assemble / api / 前端顯示）統一入口。
+        yaml srt_path override 有設 → 用它；否則 fallback _v2.srt。
+        回傳路徑不保證存在，呼叫端自行檢查。
+        """
+        override = (self.cfg.get("srt_path") or "").strip()
+        if override:
+            return self.resolve_episode_path(override)
+        return self.output_v2_srt()
+
+    def output_v2_cameras_json(self) -> Path:
+        """雙鏡頭 sidecar：字幕卡 idx → "a"|"b" 對應表。"""
+        return self.subdir("output") / f"{self.name}_final_v2.cameras.json"
+
     def output_yt_video(self) -> Path:
         return self.subdir("output") / f"{self.name}_YT完整版.mp4"
+
+    def output_reels_video(self) -> Path:
+        return self.subdir("output") / f"{self.name}_Reels.mp4"
 
     def review_file(self) -> Path:
         return self.subdir("work") / "_resegment_review.txt"

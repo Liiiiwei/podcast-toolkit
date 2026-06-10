@@ -1,16 +1,10 @@
-"""podcast init：在現有集資料夾建立子目錄結構 + symlink + 範本。"""
+"""podcast init：在現有集資料夾建立子目錄結構 + 範本。"""
 import re
 import sys
 from pathlib import Path
 from podcast_toolkit import config
 
-SUBDIRS = ["01_母帶", "02_片頭片尾", "03_成品", "04_工作檔"]
-ASSET_SYMLINKS = {
-    "intro.mp4": "assets/intro.mp4",
-    "intro_music.m4a": "assets/intro_music.m4a",
-    "outro.mp3": "assets/outro.mp3",
-    "subscribe_card.png": "assets/subscribe_card.png",
-}
+SUBDIRS = ["01_母帶", "03_成品", "04_工作檔"]
 
 
 def parse_folder_name(folder: Path):
@@ -40,16 +34,7 @@ def run(episode_dir: Path) -> int:
         (episode_dir / sub).mkdir(exist_ok=True)
     print(f"✓ 建立 / 確認子資料夾：{', '.join(SUBDIRS)}")
 
-    # 建 symlink
-    intro_outro = episode_dir / "02_片頭片尾"
     toolkit = config.toolkit_root()
-    for link_name, rel_target in ASSET_SYMLINKS.items():
-        link_path = intro_outro / link_name
-        target = toolkit / rel_target
-        if link_path.exists() or link_path.is_symlink():
-            link_path.unlink()
-        link_path.symlink_to(target)
-    print(f"✓ 建立 symlink → toolkit/assets/")
 
     # 複製 episode.yaml 範本（不覆蓋）
     ep_yaml = episode_dir / "episode.yaml"

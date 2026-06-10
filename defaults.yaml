@@ -12,6 +12,13 @@ resegment:
   whisper_guard:
     char_loop_min_repeats: 4
 
+# 編輯介面標紅「可疑空拍卡」的門檻。三條 OR，命中任一條就標紅。
+# reaction_words 沿用 resegment.reaction_words。
+suspicious_pause:
+  short_long_max_chars: 3      # 文字 < N 字
+  short_long_min_dur_sec: 2.0  # 但持續 > N 秒 → 短句拖很久
+  big_gap_min_sec: 1.5         # 距離前一張卡 > N 秒 → 前面有大靜默
+
 common_fixes: []
 
 # Gemini 轉字幕設定（podcast subtitle 用）
@@ -35,14 +42,42 @@ common_glossary: []
 
 subtitle_style:
   font_name: "Hiragino Sans GB"
-  font_size: 24
+  font_size: 48
   bold: 1
   primary_colour: "&H00FFFFFF"
   outline_colour: "&H00000000"
   border_style: 1
   outline: 2
   shadow: 1
-  margin_v: 48
+  margin_v: 100
+
+# Reels 9:16 專用字幕風格（手機豎屏 + IG/TikTok 底部動作列遮擋）
+# 缺欄位時自動回退到上面的 subtitle_style；episode.yaml 可整段覆寫
+# alignment: SSA v3（ffmpeg subtitles filter 內部用 v3 編碼）
+#   2=底部置中、6=頂部置中、10=畫面正中央
+#   ⚠️ 不是 ASS v4+ numpad — 5 在 v3 是「左上角」會把字推到角落
+subtitle_style_reels:
+  font_name: "Hiragino Sans GB"
+  font_size: 96               # 比 YT +100%，手機小螢幕看得清（user requested 更大）
+  bold: 1
+  primary_colour: "&H00FFFFFF"
+  outline_colour: "&H00000000"
+  border_style: 1
+  outline: 3                  # 描邊 +1px，避免在動態畫面糊掉
+  shadow: 1
+  alignment: 10               # SSA v3 mid-center（畫面正中央）
+  margin_v: 480               # alignment=10 時 MarginV 正值=從中心向下偏移；480/1920 = 25%（中心向下 25%，落在 75% 線、避開臉部、留下方動作列空間）
+
+# 影片浮水印（assemble 階段 ffmpeg overlay 燒上去）
+# enabled=false 時整段 no-op；要啟用先放 logo 檔到 assets.logo 指向的路徑
+# 座標都是相對最終輸出 frame（crop+scale 後的 1920×1080 / 1080×1920）
+watermark:
+  enabled: false
+  position: "top-right"        # top-right | top-left | bottom-right | bottom-left
+  width_pct: 0.11              # logo 寬佔 frame 寬比例（1920 → ~211px）
+  margin_top_pct: 0.03         # 距上/下邊距比例
+  margin_right_pct: 0.03       # 距右/左邊距比例
+  opacity: 1.0                 # 0.0-1.0，先預留欄位（目前 overlay 直接用原 alpha）
 
 assets:
   intro: "assets/intro.mp4"
@@ -51,11 +86,19 @@ assets:
   outro_audio: "assets/outro.mp3"
   outro_image: "assets/subscribe_card.png"
   outro_duration: 20.453333
+  # 浮水印 logo 檔（PNG 建議透明背景）；不存在時 watermark 段會被跳過
+  logo: "assets/logo.png"
 
 encode:
   video_codec: "libx264"
-  crf: 18
-  preset: "medium"
+  # VBR 比 CRF 18 給的 ~3.75 Mbps 高一個量級；對齊 DJI 母帶常見 32-35 Mbps
+  # 不走 CRF 是因為 CRF 對對話畫面（動態少）會省到剩 3-4 Mbps，肉眼比母帶軟
+  # maxrate / bufsize 給 1.2× / 1.8× 的緩衝，讓快速場景可短暫衝高不爆炸
+  # preset slow：同碼率畫質保留更好，編碼時間約 medium 的 1.8-2×
+  video_bitrate: "33M"
+  video_maxrate: "40M"
+  video_bufsize: "60M"
+  preset: "slow"
   pix_fmt: "yuv420p"
   audio_codec: "aac"
   audio_bitrate: "192k"
