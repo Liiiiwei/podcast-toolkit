@@ -220,11 +220,35 @@ function fmtTime(sec) {
   return `${m}:${s}`;
 }
 
+// 集中判斷「有沒有未儲存變動」，topbar chip / beforeunload / cancel / 換集 / 合成都用這個
+// 包含：刪除 / 改字 / 切句 / 裁切框。trim / cam mapping 走別的儲存通道不算進來
+function hasUnsavedChanges() {
+  return (
+    state.deletions.size > 0 ||
+    state.textOverrides.size > 0 ||
+    state.cardSplits.size > 0 ||
+    state.cropYt != null ||
+    state.cropReels != null
+  );
+}
+
+function unsavedCount() {
+  return (
+    state.deletions.size +
+    state.textOverrides.size +
+    state.cardSplits.size +
+    (state.cropYt != null ? 1 : 0) +
+    (state.cropReels != null ? 1 : 0)
+  );
+}
+
 function renderTopbar() {
   $("#title").textContent = state.name;
+  const badge = $("#unsaved-badge");
   if (state.needsTranscribe) {
-    $("#status").textContent = "尚未轉字幕（從左側檔案列點「轉字幕」開始）";
+    $("#status").textContent = "尚未轉字幕";
     $("#save-btn").disabled = true;
+    if (badge) badge.classList.add("hidden");
     return;
   }
   const total = state.cards.length;
@@ -241,6 +265,17 @@ function renderTopbar() {
   $("#status").textContent = line;
   const allDeleted = total > 0 && deleted === total;
   $("#save-btn").disabled = allDeleted;
+
+  // 未儲存 chip：有變更才亮，數字顯示總變動筆數
+  if (badge) {
+    const n = unsavedCount();
+    if (n > 0) {
+      badge.classList.remove("hidden");
+      $("#unsaved-count").textContent = String(n);
+    } else {
+      badge.classList.add("hidden");
+    }
+  }
 }
 
 function renderTrimControls() {
@@ -509,6 +544,58 @@ function computeEffectiveCamera(key) {
   return "a";
 }
 
+// 整集 A/B 分布 ruler：依 expandedCards + carry-forward 染色，按時長比例算寬度
+// 沒 cam B 時整條藏掉；hover 段落看時間範圍
+function renderCamRuler() {
+  const ruler = $("#cam-ruler");
+  if (!ruler) return;
+  const hasCamB = !!(state.cameras && state.cameras.b);
+  if (!hasCamB || !state.cards.length) {
+    ruler.hidden = true;
+    ruler.innerHTML = "";
+    return;
+  }
+  const rendered = expandedCards().filter((r) => !state.deletions.has(r.key));
+  if (!rendered.length) {
+    ruler.hidden = true;
+    ruler.innerHTML = "";
+    return;
+  }
+  const t0 = rendered[0].start;
+  const t1 = rendered[rendered.length - 1].end;
+  const total = Math.max(t1 - t0, 0.001);
+  // 合併連續同色段：避免一張卡一塊 DOM，幾百張卡也只剩個位數段
+  const segs = [];
+  let curCam = null;
+  let curStart = t0;
+  let curEnd = t0;
+  for (const r of rendered) {
+    const cam = computeEffectiveCamera(r.key);
+    if (cam === curCam) {
+      curEnd = r.end;
+    } else {
+      if (curCam) segs.push({ cam: curCam, start: curStart, end: curEnd });
+      curCam = cam;
+      curStart = r.start;
+      curEnd = r.end;
+    }
+  }
+  if (curCam) segs.push({ cam: curCam, start: curStart, end: curEnd });
+  ruler.innerHTML = "";
+  for (const s of segs) {
+    const seg = document.createElement("div");
+    seg.className = `cam-ruler-seg cam-ruler-${s.cam}`;
+    const w = ((s.end - s.start) / total) * 100;
+    seg.style.width = `${w}%`;
+    seg.title = `${s.cam.toUpperCase()} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
+    seg.addEventListener("click", () => {
+      $("#video").currentTime = s.start;
+    });
+    ruler.appendChild(seg);
+  }
+  ruler.hidden = false;
+}
+
 function renderCaption() {
   const r = activeCardAt($("#video").currentTime);
   const overlay = $("#caption-overlay");
@@ -539,13 +626,25 @@ function renderCards() {
   list.innerHTML = "";
   if (state.needsTranscribe) {
     const empty = document.createElement("div");
-    empty.className = "typo-empty";
-    empty.style.padding = "24px 12px";
-    empty.style.lineHeight = "1.6";
+    empty.className = "cards-empty";
     empty.innerHTML =
-      '<div style="font-size:14px;margin-bottom:8px">這一集還沒轉字幕</div>' +
-      '<div style="color:var(--text-dim);font-size:12px">到左側「檔案」面板找一軌主檔（通常是 Mic / Stereo Mix），點「轉字幕」開始。轉完會自動回到這裡。</div>';
+      '<div class="cards-empty-line">這一集還沒轉字幕</div>' +
+      '<button type="button" class="btn btn-primary cards-empty-cta" id="cards-empty-cta">前往「檔案」轉字幕</button>';
     list.appendChild(empty);
+    const cta = $("#cards-empty-cta");
+    if (cta) {
+      cta.addEventListener("click", () => {
+        const drawer = $("#drawer");
+        if (drawer) {
+          drawer.classList.remove("collapsed");
+          try {
+            localStorage.setItem("edit.drawer.collapsed", "0");
+          } catch (_) {}
+        }
+        const filesTab = $('[data-drawer-tab="files"]');
+        if (filesTab) filesTab.click();
+      });
+    }
     return;
   }
   const hasCamB = !!state.cameras && !!state.cameras.b;
@@ -558,7 +657,20 @@ function renderCards() {
     const div = document.createElement("div");
     div.className = "card";
     div.dataset.idx = String(key);
-    if (isSub) div.classList.add("card-sub");
+    if (isSub) {
+      div.classList.add("card-sub");
+      const parts = state.cardSplits.get(c.idx) || [];
+      if (partIdx === 0) {
+        div.classList.add("card-sub-first");
+        // 群組標頭：第一張 sub-card 上方掛「切自 #idx（原 X.Xs）」灰標
+        // 讓讀者一眼看出這串卡是從哪張 STT 原句切出來的
+        const origin = document.createElement("div");
+        origin.className = "card-sub-origin";
+        origin.textContent = `切自 #${c.idx}（原 ${(c.end - c.start).toFixed(1)}s ÷ ${parts.length} 段）`;
+        list.appendChild(origin);
+      }
+      if (partIdx === parts.length - 1) div.classList.add("card-sub-last");
+    }
     if (state.deletions.has(key)) div.classList.add("deleted");
     if (c.suspicious_pause && !isSub) div.classList.add("suspicious");
     // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
@@ -605,6 +717,17 @@ function renderCards() {
       durLine.className = "card-split-dur";
       durLine.textContent = `${partDur.toFixed(1)}s`;
       time.appendChild(durLine);
+      // 配速進度：實際字數 / 這段時間最多能放幾字（以 SPLIT_SEC_PER_CHAR=0.3 為上限）
+      // 超過 100% = 跟著字幕跑會喘；告訴使用者「這段切太短或字塞太多」
+      const textLen = (parts[partIdx] || "").length;
+      const maxChars = Math.max(Math.floor(partDur / SPLIT_SEC_PER_CHAR), 1);
+      const pct = Math.round((textLen / maxChars) * 100);
+      const pace = document.createElement("div");
+      pace.className = "card-split-pace";
+      if (pct > 100) pace.classList.add("over");
+      pace.textContent = `${textLen}/${maxChars} 字 · ${pct}%`;
+      pace.title = `這段 ${partDur.toFixed(1)} 秒最多放 ${maxChars} 字（每字 ${SPLIT_SEC_PER_CHAR}s），實際 ${textLen} 字`;
+      time.appendChild(pace);
       // 最後一段才檢查尾段空窗（tight-pack 模式下 partDur 之和會 < 原 cue dur）
       if (partIdx === parts.length - 1) {
         const trailing = c.end - r.end;
@@ -889,6 +1012,7 @@ function renderCards() {
     list.appendChild(div);
   }
   renderSusToolbar();
+  renderCamRuler();
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
@@ -3147,13 +3271,7 @@ async function pollAssemble() {
 // 集中綁定 assemble 相關 listener，啟動時呼叫一次
 function setupAssembleButtons() {
   const launch = (targets, title, { previewSec = null } = {}) => {
-    const dirty =
-      state.deletions.size > 0 ||
-      state.textOverrides.size > 0 ||
-      state.cardSplits.size > 0 ||
-      state.cropYt != null ||
-      state.cropReels != null;
-    if (dirty) {
+    if (hasUnsavedChanges()) {
       if (
         !confirm(
           "有未儲存的修改，建議先按「完成並儲存」再合成。\n仍要直接合成嗎？（會用磁碟上的 _v2.srt）",
@@ -4027,14 +4145,15 @@ $("#cam-save").addEventListener("click", async () => {
   }
 });
 
+// 離開頁面（重整 / 關分頁 / 上一頁）攔截；瀏覽器只允許 generic 提示文字
+window.addEventListener("beforeunload", (e) => {
+  if (!hasUnsavedChanges()) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
+
 $("#cancel-btn").addEventListener("click", async () => {
-  const dirty =
-    state.deletions.size > 0 ||
-    state.textOverrides.size > 0 ||
-    state.cardSplits.size > 0 ||
-    state.cropYt != null ||
-    state.cropReels != null;
-  if (dirty && !confirm("未儲存的修改會丟失，確定取消？")) return;
+  if (hasUnsavedChanges() && !confirm("未儲存的修改會丟失，確定取消？")) return;
   try {
     await fetch("/api/shutdown", { method: "POST" });
   } catch (_) {}
@@ -4074,11 +4193,8 @@ function clearSwitchError() {
 
 async function pickEpisodeFolder() {
   const btn = $("#ep-switch-btn");
-  const dirty =
-    state.deletions.size > 0 ||
-    state.textOverrides.size > 0 ||
-    state.cardSplits.size > 0;
-  if (dirty && !confirm("有未儲存的修改，換集後會丟失，繼續？")) return;
+  if (hasUnsavedChanges() && !confirm("有未儲存的修改，換集後會丟失，繼續？"))
+    return;
 
   clearSwitchError();
   const origLabel = btn.textContent;
@@ -4314,11 +4430,8 @@ function updateNewEpPreview() {
 }
 
 function openNewEpModal() {
-  const dirty =
-    state.deletions.size > 0 ||
-    state.textOverrides.size > 0 ||
-    state.cardSplits.size > 0;
-  if (dirty && !confirm("有未儲存的修改，新建集後會丟失，繼續？")) return;
+  if (hasUnsavedChanges() && !confirm("有未儲存的修改，新建集後會丟失，繼續？"))
+    return;
   $("#new-ep-date").value = todayYmd();
   $("#new-ep-name").value = "";
   $("#new-ep-error").hidden = true;

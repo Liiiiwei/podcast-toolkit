@@ -101,11 +101,32 @@ h2 {
 .status {
   font-size: var(--text-xs);
   color: var(--text-dim);
-  margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+}
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  max-width: 100%;
+}
+.unsaved-badge {
+  font-size: var(--text-xs);
+  color: var(--danger);
+  font-weight: 600;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+  cursor: help;
+  line-height: 1.4;
+}
+.unsaved-badge.hidden {
+  display: none;
 }
 .ep-switch-error {
   font-size: var(--text-xs);
@@ -1571,10 +1592,25 @@ dialog.modal::backdrop {
   text-decoration: line-through;
   color: var(--text-faint);
 }
-/* 切過的子卡：縮排 + 左邊框淡化，提示「這張是手動切出來的，不是 STT 原句」 */
+/* 切過的子卡：縮排 + 左邊框；同源群組用實線連續邊框讓視覺凝聚成一束 */
 .card.card-sub {
   margin-left: 12px;
-  border-left: 2px dashed var(--text-faint);
+  border-left: 2px solid var(--text-faint);
+  border-radius: 0;
+}
+.card.card-sub-first {
+  border-top-left-radius: var(--radius-md, 6px);
+}
+.card.card-sub-last {
+  border-bottom-left-radius: var(--radius-md, 6px);
+}
+/* 群組標頭：「切自 #42（原 5.3s ÷ 3 段）」掛在第一張 sub-card 上方 */
+.card-sub-origin {
+  margin: 8px 0 -4px 12px;
+  padding: 2px 8px;
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
 }
 .card-time {
   color: var(--text-dim);
@@ -1598,6 +1634,59 @@ dialog.modal::backdrop {
   margin-top: 1px;
   font-family: var(--font-mono);
   cursor: help;
+}
+.card-split-pace {
+  color: var(--text-faint);
+  font-size: 10px;
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  cursor: help;
+  white-space: nowrap;
+}
+.card-split-pace.over {
+  color: var(--danger);
+  font-weight: 600;
+}
+.cards-empty {
+  padding: 48px 16px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.cards-empty-line {
+  font-size: 15px;
+  color: var(--text-main);
+}
+.cards-empty-cta {
+  font-size: 14px;
+  padding: 10px 20px;
+}
+/* 整集 A/B 鏡頭分布條：細條掛在 video 上方，A=藍/B=粉，點段可跳轉 */
+.cam-ruler {
+  display: flex;
+  height: 5px;
+  width: 100%;
+  margin: 0 0 4px 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-2, #eee);
+}
+.cam-ruler-seg {
+  height: 100%;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  min-width: 1px;
+}
+.cam-ruler-seg:hover {
+  opacity: 0.7;
+}
+.cam-ruler-a {
+  background: var(--cam-a-color, #4a90e2);
+}
+.cam-ruler-b {
+  background: var(--cam-b-color, #e24a8a);
 }
 .card-text {
   color: var(--text);

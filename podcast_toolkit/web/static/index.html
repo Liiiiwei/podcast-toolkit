@@ -63,7 +63,15 @@
       </div>
       <div class="topbar-center">
         <h1 class="title" id="title">載入中…</h1>
-        <div class="status" id="status"></div>
+        <div class="status-row">
+          <span
+            id="unsaved-badge"
+            class="unsaved-badge hidden"
+            title="有變更還沒按「完成並儲存」"
+            >● 未儲存 <span id="unsaved-count">0</span></span
+          >
+          <div class="status" id="status"></div>
+        </div>
       </div>
       <div class="topbar-right">
         <div class="topbar-group">
@@ -127,6 +135,12 @@
               Reels 9:16 短版
             </button>
           </div>
+          <div
+            id="cam-ruler"
+            class="cam-ruler"
+            hidden
+            title="整集 A/B 鏡頭分布；hover 看段落時間"
+          ></div>
           <div class="video-wrap">
             <video id="video" src="/api/video" preload="metadata"></video>
             <video id="video-camb" preload="auto" muted playsinline></video>
