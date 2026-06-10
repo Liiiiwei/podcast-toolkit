@@ -159,6 +159,118 @@ def test_pipeline_error_sets_error_state(monkeypatch, tmp_episode_dir):
     assert "Grok 回 401" in (status["error"] or "")
 
 
+def test_existing_srts_backed_up_before_overwrite(monkeypatch, tmp_episode_dir):
+    """重轉字幕前要把現有 _v2.srt / main_srt 備份成 .<timestamp>.bak.srt，
+    不能直接被新的 pipeline / resegment 結果蓋掉。"""
+    from podcast_toolkit.web import transcribe as transcribe_mod
+    from podcast_toolkit import resegment
+
+    # 預先放好「舊」main_srt（_v2.srt 已在 fixture 寫入 SAMPLE_SRT）
+    main_srt = tmp_episode_dir / "01_母帶" / "測試集.srt"
+    main_srt.write_text("OLD_MAIN_SRT", encoding="utf-8")
+    v2_srt = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    old_v2_bytes = v2_srt.read_bytes()
+
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
+        out_srt.write_text("NEW_MAIN_SRT", encoding="utf-8")
+        return out_srt
+
+    def fake_resegment(_ep_dir, force=False):
+        v2_srt.write_text("NEW_V2_SRT", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: fake_pipeline(**kw),
+    )
+    monkeypatch.setattr(resegment, "run", fake_resegment)
+
+    src = tmp_episode_dir / "01_母帶" / "測試集.mp4"
+    src.write_bytes(b"FAKE")
+
+    ep = Episode(tmp_episode_dir)
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/測試集.mp4", provider="xai", api_key="fake"
+    )
+    done = _wait_until_state("done")
+
+    # 1. 新檔已寫入（pipeline / resegment 結果）
+    assert main_srt.read_text(encoding="utf-8") == "NEW_MAIN_SRT"
+    assert v2_srt.read_text(encoding="utf-8") == "NEW_V2_SRT"
+
+    # 2. backups 欄位回 2 個相對路徑
+    backups = done["backups"]
+    assert backups is not None and len(backups) == 2
+
+    # 3. 備份檔實體存在且內容是「舊」內容
+    backup_paths = [tmp_episode_dir / b for b in backups]
+    for p in backup_paths:
+        assert p.exists(), f"備份檔不存在：{p}"
+        # 命名：foo.YYYYMMDD-HHMMSS.bak.srt
+        assert ".bak" in p.name
+        assert p.suffix == ".srt"
+
+    # 內容比對：找回 _v2 備份和 main 備份各驗一次
+    v2_bak = next(p for p in backup_paths if "_v2" in p.name)
+    main_bak = next(p for p in backup_paths if "_v2" not in p.name)
+    assert v2_bak.read_bytes() == old_v2_bytes
+    assert main_bak.read_text(encoding="utf-8") == "OLD_MAIN_SRT"
+
+
+def test_backup_skips_when_no_existing_srt(monkeypatch, tmp_path):
+    """乾淨資料夾（沒有 _v2.srt / main_srt）→ 備份不應該爆，backups 維持 None / 空。"""
+    # 自建一個沒有 _v2.srt 的 episode（不用 tmp_episode_dir fixture）
+    import yaml
+    ep_dir = tmp_path / "20260601 空集"
+    ep_dir.mkdir()
+    for sub in ("01_母帶", "03_成品", "04_工作檔"):
+        (ep_dir / sub).mkdir()
+    (ep_dir / "episode.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "date": 20260601,
+                "name": "空集",
+                "main_video": "01_母帶/{name}.mp4",
+                "main_srt": "01_母帶/{name}.srt",
+                "fixes": [],
+                "card_fixes": [],
+                "force_break": [],
+                "force_join": [],
+            },
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    (ep_dir / "01_母帶" / "空集.mp4").write_bytes(b"FAKE")
+
+    from podcast_toolkit.web import transcribe as transcribe_mod
+    from podcast_toolkit import resegment
+
+    def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):
+        out_srt.write_text("NEW", encoding="utf-8")
+        return out_srt
+
+    def fake_resegment(_ep_dir, force=False):
+        (ep_dir / "03_成品" / "空集_final_v2.srt").write_text("NEW_V2", encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(
+        transcribe_mod, "run_pipeline",
+        lambda *, provider, **kw: fake_pipeline(**kw),
+    )
+    monkeypatch.setattr(resegment, "run", fake_resegment)
+
+    ep = Episode(ep_dir)
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/空集.mp4", provider="xai", api_key="fake"
+    )
+    done = _wait_until_state("done")
+
+    # 沒有舊檔可備份 → backups 不應該塞東西
+    assert not done.get("backups")
+
+
 def test_progress_callback_advances_phase(monkeypatch, tmp_episode_dir):
     """pipeline 回報 phase=compress → upload，job state 同步更新；
     用 Event 讓 worker 在每階段卡住等 test 觀察，避免 timing race。"""
