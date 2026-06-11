@@ -134,7 +134,7 @@ def test_start_job_with_two_targets_queues_both(monkeypatch, tmp_episode_full):
     # 確保 state 是 idle
     assemble_job._STATE["state"] = "idle"
 
-    info = assemble_job.start_job(ep, targets=["yt", "reels"], force=True)
+    assemble_job.start_job(ep, targets=["yt", "reels"], force=True)
 
     state = assemble_job.get_status()
     assert state["queue"] == ["yt", "reels"]

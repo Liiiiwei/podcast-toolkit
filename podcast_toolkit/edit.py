@@ -3,7 +3,6 @@ from __future__ import annotations
 import socket
 import sys
 import threading
-import time
 import webbrowser
 from pathlib import Path
 

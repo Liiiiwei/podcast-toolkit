@@ -17,10 +17,13 @@ def ts2s(ts: str) -> float:
 
 
 def s2ts(t: float) -> str:
-    h = int(t // 3600); m = int((t % 3600) // 60); s = int(t % 60)
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = int(t % 60)
     ms = int(round((t - int(t)) * 1000))
     if ms == 1000:
-        s += 1; ms = 0
+        s += 1
+        ms = 0
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
@@ -34,7 +37,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
         print(f"✗ 找不到字幕：{src}", file=sys.stderr)
         srt_list = list(ep.subdir("output").glob("*.srt"))
         if srt_list:
-            print(f"  03_成品/ 內現有 srt：", file=sys.stderr)
+            print("  03_成品/ 內現有 srt：", file=sys.stderr)
             for p in srt_list:
                 print(f"    {p.name}", file=sys.stderr)
         return 3
@@ -44,7 +47,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
 
     if out.exists() and not force:
         print(f"✗ 輸出已存在：{out}", file=sys.stderr)
-        print(f"  加 --force 覆寫", file=sys.stderr)
+        print("  加 --force 覆寫", file=sys.stderr)
         return 1
 
     # whisper-guard

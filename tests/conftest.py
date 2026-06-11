@@ -1,5 +1,4 @@
 """pytest fixtures：建臨時 episode 資料夾。"""
-import shutil
 from pathlib import Path
 
 import pytest

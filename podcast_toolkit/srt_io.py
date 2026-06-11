@@ -1,7 +1,7 @@
 """SRT 解析與序列化。共用給 web/episode_io.py。"""
 from __future__ import annotations
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 
 _UNIT_RE = re.compile(r"(\d+)\s*(ms|h|m|s)", re.IGNORECASE)

@@ -1,7 +1,6 @@
 """dashboard.py 純函式測試。"""
 from pathlib import Path
 
-import pytest
 
 from podcast_toolkit.web import dashboard
 

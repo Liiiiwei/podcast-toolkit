@@ -2,7 +2,6 @@
 import os
 from pathlib import Path
 
-import pytest
 
 from podcast_toolkit import server_lock
 

@@ -11,7 +11,7 @@ from subprocess import PIPE, Popen
 from time import monotonic
 from typing import Any
 
-from podcast_toolkit.assemble import AssembleError, prepare_assembly
+from podcast_toolkit.assemble import prepare_assembly
 from podcast_toolkit.episode import Episode
 
 

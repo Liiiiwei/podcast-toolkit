@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode

@@ -1,6 +1,5 @@
 """silencedetect 解析器 + 執行器測試。"""
 import subprocess
-from pathlib import Path
 
 import pytest
 

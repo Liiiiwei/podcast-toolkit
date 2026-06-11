@@ -1,6 +1,5 @@
 """把 Episode 物件 + _v2.srt 組成前端要的 JSON state，並負責寫回。"""
 from __future__ import annotations
-from pathlib import Path
 from typing import Any
 
 import yaml

@@ -121,7 +121,6 @@ def gate_samples(
         speech, frame_samples=frame_samples, sample_rate=sample_rate, pad_sec=pad_sec
     )
     # 還原到 sample-level：每個 True frame 對應 frame_samples 個樣本
-    n_frames = len(speech)
     sample_mask = np.repeat(speech, frame_samples)
     # 尾巴不完整 frame 一律壓成 0（沒判定過就保守處理）
     out = np.zeros(len(samples), dtype=np.int16)

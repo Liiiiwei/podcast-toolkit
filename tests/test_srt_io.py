@@ -1,5 +1,4 @@
 """srt_io：解析 srt 為 cards、序列化 cards 為 srt。"""
-import pytest
 from podcast_toolkit import srt_io
 
 

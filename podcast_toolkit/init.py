@@ -24,7 +24,7 @@ def run(episode_dir: Path) -> int:
     date, name = parse_folder_name(episode_dir)
     if not date:
         print(f"⚠ 資料夾名不符合 'YYYYMMDD 集名' 慣例：{episode_dir.name}")
-        print(f"  episode.yaml 的 date / name 會留空，請手動填入")
+        print("  episode.yaml 的 date / name 會留空，請手動填入")
         date, name = "", ""
     else:
         print(f"✓ 解析資料夾名 → date={date}, name={name}")
@@ -39,7 +39,7 @@ def run(episode_dir: Path) -> int:
     # 複製 episode.yaml 範本（不覆蓋）
     ep_yaml = episode_dir / "episode.yaml"
     if ep_yaml.exists():
-        print(f"⚠ episode.yaml 已存在，不覆蓋")
+        print("⚠ episode.yaml 已存在，不覆蓋")
     else:
         template = (toolkit / "templates" / "episode.yaml").read_text(encoding="utf-8")
         # 用展開後的 name 改 'YYYYMMDD' / '集名' 預留位
@@ -49,12 +49,12 @@ def run(episode_dir: Path) -> int:
         if name:
             rendered = rendered.replace("集名", name)
         ep_yaml.write_text(rendered, encoding="utf-8")
-        print(f"✓ 產生 episode.yaml")
+        print("✓ 產生 episode.yaml")
 
     # 複製 TODO.md（不覆蓋）
     todo = episode_dir / "TODO.md"
     if todo.exists():
-        print(f"⚠ TODO.md 已存在，不覆蓋")
+        print("⚠ TODO.md 已存在，不覆蓋")
     else:
         template = (toolkit / "templates" / "TODO.md").read_text(encoding="utf-8")
         rendered = template
@@ -63,7 +63,7 @@ def run(episode_dir: Path) -> int:
         if name:
             rendered = rendered.replace("{name}", name)
         todo.write_text(rendered, encoding="utf-8")
-        print(f"✓ 產生 TODO.md")
+        print("✓ 產生 TODO.md")
 
     print()
     print("完成。下一步：")
