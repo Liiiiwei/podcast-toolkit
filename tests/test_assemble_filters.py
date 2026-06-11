@@ -502,3 +502,34 @@ def test_prepare_assembly_yt_multicam_missing_cam_b_file_raises(tmp_episode_full
     with pytest.raises(AssembleError) as exc:
         prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
     assert exc.value.exit_code == 3
+
+
+# --- escape_filter_path：subtitles= 路徑脫逸 ---
+
+def test_escape_filter_path_plain_unchanged():
+    assert assemble.escape_filter_path("work/_v2.srt") == "work/_v2.srt"
+
+
+def test_escape_filter_path_special_chars():
+    # 逗號/分號/中括號是 filtergraph 層特殊字元，脫逸一次
+    assert assemble.escape_filter_path("a,b.srt") == "a\\,b.srt"
+    assert assemble.escape_filter_path("a;b.srt") == "a\;b.srt"
+    assert assemble.escape_filter_path("[EP1] x.srt") == "\\[EP1\\] x.srt"
+    # 冒號是參數層特殊字元：參數層補一個 \，filtergraph 層再脫逸該 \ → \\:
+    assert assemble.escape_filter_path("a:b.srt") == "a\\\\:b.srt"
+    # 單引號兩層都特殊：' → \' → \\\'
+    assert assemble.escape_filter_path("EP's.srt") == "EP\\\\\\'s.srt"
+
+
+def test_filter_complex_yt_escapes_srt_path():
+    fc = assemble.build_filter_complex_yt(
+        BASE_CFG, main_dur=100.0, srt_rel="EP12 [訪談], part1/_v2.srt"
+    )
+    assert "subtitles=EP12 \\[訪談\\]\\, part1/_v2.srt:force_style=" in fc
+
+
+def test_filter_complex_reels_escapes_srt_path():
+    fc = assemble.build_filter_complex_reels(
+        BASE_CFG, main_dur=100.0, srt_rel="a,b/_v2.srt"
+    )
+    assert "subtitles=a\\,b/_v2.srt:force_style=" in fc

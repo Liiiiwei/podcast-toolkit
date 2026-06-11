@@ -21,6 +21,20 @@ def ffprobe_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
+def escape_filter_path(path: str) -> str:
+    """脫逸要嵌進 filter_complex 的檔案路徑（如 subtitles= 的檔名）。
+
+    ffmpeg 解析分兩層：先 filtergraph 層（' \\ [ ] , ; 是特殊字元），
+    再 filter 參數層（: ' \\ 是特殊字元），所以特殊字元要脫逸兩次。
+    集名含空格、引號、逗號、中括號時，沒脫逸會直接破壞整條 filter。
+    """
+    s = str(path)
+    # 參數層：\ ' : 先各補一個反斜線
+    s = s.replace("\\", "\\\\").replace("'", "\\'").replace(":", "\\:")
+    # filtergraph 層：對上一層結果再脫逸一次
+    return "".join("\\" + ch if ch in "\\'[],;" else ch for ch in s)
+
+
 def build_style_string(style: dict) -> str:
     """組 ffmpeg subtitles filter 的 force_style 字串。
     alignment 為選用：ASS numpad 對應（2=底部置中預設、5=畫面正中、8=頂部置中）。"""
@@ -220,7 +234,7 @@ def build_filter_complex_yt(
     # 字幕會以原片底部為基準算 MarginV，crop 後跟前端預覽（鎖在裁切框內）對不上。
     v1_pre = (
         f"[1:v]{prep_part}"
-        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
     v1_fade = (
@@ -288,7 +302,7 @@ def build_filter_complex_reels(
     # 字幕燒在最終 1080×1920 frame 上（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
     v_pre = (
         f"[0:v]{prep_part}"
-        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
     v_fade = (
@@ -336,7 +350,7 @@ def _multicam_cam_prep(
     # 字幕燒在最終裁切後 frame（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
     return (
         f"[{src_idx}:v]{setpts_prefix}{prep_part}"
-        f"subtitles={srt_rel}:force_style='{style_str}',"
+        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
         f"setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
     )
 
