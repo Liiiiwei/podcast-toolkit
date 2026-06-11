@@ -2,6 +2,8 @@
 
 從現有 assemble.sh 改造，邏輯不變，ffmpeg 用 Python subprocess 呼叫。
 """
+from __future__ import annotations
+
 import shutil
 import subprocess
 import sys

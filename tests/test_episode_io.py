@@ -287,6 +287,106 @@ def test_save_state_filters_invalid_camera_values(tmp_episode_dir):
     assert data == {"1": "a", "3": "b"}
 
 
+# --- 分軌 speaker mapping：UI 端要拿到 mics + speakers_mapping ---
+
+
+def _add_mics_to_yaml(tmp_episode_dir, mic_keys=("a", "b")):
+    """工具：在 episode.yaml 補一段 mics 設定，模擬分軌集情境。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    block = "mics:\n"
+    for k in mic_keys:
+        block += f"  {k}: 01_母帶/{{name}}_mic{k.upper()}.wav\n"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + block,
+        encoding="utf-8",
+    )
+
+
+def test_load_state_returns_empty_mics_when_not_set(tmp_episode_dir):
+    """沒設 mics → state.mics 是空 dict（前端據此判斷是不是分軌集）。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["mics"] == {}
+
+
+def test_load_state_returns_mics_dict_when_set(tmp_episode_dir):
+    """yaml.mics → state.mics 帶原始相對路徑（前端只看 keys 就夠了，路徑備用）。"""
+    _add_mics_to_yaml(tmp_episode_dir, ("a", "b"))
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert set(state["mics"].keys()) == {"a", "b"}
+
+
+def test_load_state_returns_empty_speakers_mapping_when_no_sidecar(tmp_episode_dir):
+    """sidecar 不存在 → speakers_mapping 是空 dict。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["speakers_mapping"] == {}
+
+
+def test_load_state_returns_speakers_mapping_from_sidecar(tmp_episode_dir):
+    """sidecar 存在 → speakers_mapping 從 JSON 讀出來（int key、shape 同 cameras）。"""
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    sidecar.write_text('{"1": "a", "2": "b", "3": "a"}', encoding="utf-8")
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["speakers_mapping"] == {1: "a", 2: "b", 3: "a"}
+
+
+def test_save_state_writes_speakers_mapping_sidecar(tmp_episode_dir):
+    """前端改完 speaker tag → speakers_mapping 寫進 sidecar JSON。"""
+    _add_mics_to_yaml(tmp_episode_dir, ("a", "b"))
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None,
+            "crop_reels": None,
+            "deletions": [],
+            "cards": [],
+            "speakers_mapping": {1: "a", 2: "b"},
+        },
+    )
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    assert sidecar.exists()
+    import json
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data == {"1": "a", "2": "b"}
+
+
+def test_save_state_empty_speakers_mapping_removes_sidecar(tmp_episode_dir):
+    """空 mapping → 舊 sidecar 應被刪掉（避免殘留亂值）。"""
+    _add_mics_to_yaml(tmp_episode_dir, ("a", "b"))
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    sidecar.write_text('{"1": "a"}', encoding="utf-8")
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "speakers_mapping": {},
+        },
+    )
+    assert not sidecar.exists()
+
+
+def test_save_state_filters_speakers_not_in_mics(tmp_episode_dir):
+    """mics 只有 a / b → 前端送來 c 或 None 要被濾掉，sidecar 不能寫入垃圾值。"""
+    _add_mics_to_yaml(tmp_episode_dir, ("a", "b"))
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "speakers_mapping": {1: "a", 2: "c", 3: "b", 4: None},
+        },
+    )
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    import json
+    data = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert data == {"1": "a", "3": "b"}
+
+
 # --- T23a-followup：cam B 設定 UI（消除手改 yaml）---
 
 
@@ -621,3 +721,68 @@ def test_save_state_no_reels_clips_key_preserves_yaml(tmp_episode_dir):
     )
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert data["reels_clips"] == [{"name": "existing", "start_card": 2, "end_card": 4}]
+
+
+# --- T31a：分軌轉錄 mics / speakers sidecar ---
+
+
+def test_mic_paths_empty_when_mics_not_set(tmp_episode_dir):
+    """沒設 mics → 空 dict，呼叫端 fallback 走混音軌路線。"""
+    ep = Episode(tmp_episode_dir)
+    assert ep.mic_paths() == {}
+
+
+def test_mic_paths_resolves_per_speaker_to_absolute(tmp_episode_dir):
+    """mics 設了三路 → speaker key → 絕對路徑，{name} placeholder 自動展開。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "mics:\n"
+        + "  a: 01_母帶/{name}_micA.wav\n"
+        + "  b: 01_母帶/{name}_micB.wav\n"
+        + "  c: 01_母帶/{name}_micC.wav\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    paths = ep.mic_paths()
+    assert set(paths.keys()) == {"a", "b", "c"}
+    assert paths["a"] == tmp_episode_dir / "01_母帶" / "測試集_micA.wav"
+    assert paths["b"] == tmp_episode_dir / "01_母帶" / "測試集_micB.wav"
+    assert paths["c"] == tmp_episode_dir / "01_母帶" / "測試集_micC.wav"
+
+
+def test_mic_paths_skips_empty_values(tmp_episode_dir):
+    """mics 裡空字串 / None 不該透出（避免下游拿到無效路徑）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "mics:\n  a: 01_母帶/{name}_micA.wav\n  b: ''\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    paths = ep.mic_paths()
+    assert list(paths.keys()) == ["a"]
+
+
+def test_output_v2_speakers_json_path(tmp_episode_dir):
+    """speakers sidecar 命名與 cameras.json 同形狀（_final_v2.speakers.json）。"""
+    ep = Episode(tmp_episode_dir)
+    out = ep.output_v2_speakers_json()
+    assert out.name == "測試集_final_v2.speakers.json"
+    assert out.parent.name == "03_成品"
+
+
+def test_per_mic_gated_wav_path(tmp_episode_dir):
+    """gated wav 落在 04_工作檔/，命名帶 speaker key 區分多路。"""
+    ep = Episode(tmp_episode_dir)
+    out = ep.per_mic_gated_wav("a")
+    assert out.name == "測試集_micgate_a.wav"
+    assert out.parent.name == "04_工作檔"
+
+
+def test_per_mic_srt_path(tmp_episode_dir):
+    """單路 mic 轉錄 SRT 落在 04_工作檔/，待 srt_merge 合併。"""
+    ep = Episode(tmp_episode_dir)
+    out = ep.per_mic_srt("b")
+    assert out.name == "測試集_mic_b.srt"
+    assert out.parent.name == "04_工作檔"

@@ -358,6 +358,24 @@ h2 {
 #caption-overlay:empty {
   display: none;
 }
+/* 分軌集兩行字幕：當 multi-speaker class 在 overlay 上 → 上下兩行各帶 speaker 顏色 */
+#caption-overlay .caption-line {
+  display: block;
+  margin: 2px 0;
+}
+#caption-overlay .caption-line.speaker-a {
+  color: var(--speaker-a-color, #fbbf24);
+}
+#caption-overlay .caption-line.speaker-b {
+  color: var(--speaker-b-color, #38bdf8);
+}
+#caption-overlay .caption-line.speaker-c {
+  color: var(--speaker-c-color, #34d399);
+}
+#caption-overlay.multi-speaker {
+  /* 兩行重疊時稍微縮小避免擠破 video frame */
+  font-size: clamp(13px, 2vw, 20px);
+}
 .crop-frame {
   position: absolute;
   border: 2px solid var(--accent);
@@ -1435,6 +1453,153 @@ dialog.modal::backdrop {
   border-color: var(--success);
   color: var(--success);
 }
+
+/* === 分軌轉錄 modal === */
+.per-mic-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0;
+}
+.per-mic-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--duration-base) var(--ease-out);
+}
+.per-mic-row:hover {
+  background: var(--surface);
+  border-color: var(--accent);
+}
+.per-mic-row input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+.per-mic-row-key {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text);
+  min-width: 60px;
+}
+.per-mic-row-path {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  word-break: break-all;
+}
+.per-mic-row-status {
+  font-size: var(--text-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+}
+.per-mic-row-status.existing {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: var(--success);
+}
+.per-mic-actions-row {
+  display: flex;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+.per-mic-progress-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: var(--space-sm) 0;
+}
+.per-mic-progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 7px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.per-mic-progress-row .mic-tag {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  min-width: 60px;
+  color: var(--text);
+}
+.per-mic-progress-row .mic-phase {
+  flex: 1;
+  color: var(--text-dim);
+}
+.per-mic-progress-row.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.per-mic-progress-row.active .mic-phase {
+  color: var(--accent);
+}
+.per-mic-progress-row.done {
+  background: var(--success-soft);
+  border-color: var(--success);
+}
+.per-mic-progress-row.done .mic-phase {
+  color: var(--success);
+}
+.per-mic-progress-row.error {
+  background: var(--danger-soft, #fee);
+  border-color: var(--danger, #c00);
+}
+.per-mic-progress-row.error .mic-phase {
+  color: var(--danger, #c00);
+}
+
+/* === 分軌設定 modal === */
+.mic-setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0;
+}
+.mic-setup-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 8px 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.mic-setup-row-key {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--text);
+  min-width: 40px;
+}
+.mic-setup-row-select {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mic-setup-row-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.mic-setup-row.conflict {
+  border-color: var(--danger, #c00);
+  background: var(--danger-soft, #fee);
+}
+
 .init-block {
   margin-bottom: 12px;
 }
@@ -1688,6 +1853,44 @@ dialog.modal::backdrop {
 .cam-ruler-b {
   background: var(--cam-b-color, #e24a8a);
 }
+/* 整集 speaker 分布條：跟 cam-ruler 同形狀；speaker 色用 oklch 漸層保持 a/b 視覺對比 */
+.speaker-ruler {
+  display: flex;
+  height: 5px;
+  width: 100%;
+  margin: 0 0 4px 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface-2, #eee);
+}
+.speaker-ruler-seg {
+  height: 100%;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+  min-width: 1px;
+}
+.speaker-ruler-seg:hover {
+  opacity: 0.7;
+}
+/* speaker 色：a = 暖橘 / b = 冷青；c 以上輪播保留位給未來三人集 */
+.speaker-ruler-seg.speaker-a {
+  background: var(--speaker-a-color, #f59e0b);
+}
+.speaker-ruler-seg.speaker-b {
+  background: var(--speaker-b-color, #0ea5e9);
+}
+.speaker-ruler-seg.speaker-c {
+  background: var(--speaker-c-color, #10b981);
+}
+.speaker-ruler-gap {
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(120, 120, 120, 0.25),
+    rgba(120, 120, 120, 0.25) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
 .card-text {
   color: var(--text);
   line-height: 1.5;
@@ -1789,6 +1992,42 @@ dialog.modal::backdrop {
 /* deleted 卡優先級最高：灰色左邊框蓋過鏡頭色 */
 .card.deleted.cam-a,
 .card.deleted.cam-b {
+  border-left-color: var(--text-faint);
+}
+/* === 分軌 speaker tag（僅分軌集顯示）=== */
+/* tag 直接掛在 card-time 內，read-only — 講者來自 srt_merge sidecar，UI 不 toggle */
+.card-speaker-tag {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 8px;
+  color: #fff;
+  letter-spacing: 0.5px;
+  background: var(--text-faint);
+}
+.card-speaker-tag.speaker-a {
+  background: var(--speaker-a-color, #f59e0b);
+}
+.card-speaker-tag.speaker-b {
+  background: var(--speaker-b-color, #0ea5e9);
+}
+.card-speaker-tag.speaker-c {
+  background: var(--speaker-c-color, #10b981);
+}
+/* 卡左邊框：分軌集用 speaker 色（同 cam，但兩個邏輯互斥：cam-b 雙機集，speaker 分軌集；
+   理論上同集不會兩個都成立，但若都有 speaker 優先：講者比鏡頭視覺辨識更重要） */
+.card.card-has-speaker.speaker-a {
+  border-left: 3px solid var(--speaker-a-color, #f59e0b);
+}
+.card.card-has-speaker.speaker-b {
+  border-left: 3px solid var(--speaker-b-color, #0ea5e9);
+}
+.card.card-has-speaker.speaker-c {
+  border-left: 3px solid var(--speaker-c-color, #10b981);
+}
+.card.deleted.card-has-speaker {
   border-left-color: var(--text-faint);
 }
 .card-cam {

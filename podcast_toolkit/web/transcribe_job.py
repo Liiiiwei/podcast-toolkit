@@ -17,6 +17,19 @@ from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import transcribe as _transcribe
 
 
+def _backup_existing_per_mic_outputs(ep: Episode) -> list[str]:
+    """重跑分軌前把 _final_v2.srt + .speakers.json 備份成時間戳檔，避免覆蓋手動編輯版本。"""
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backed_up: list[str] = []
+    for src in (ep.output_v2_srt(), ep.output_v2_speakers_json()):
+        if not src.exists():
+            continue
+        dst = src.with_name(f"{src.stem}.{stamp}.bak{src.suffix}")
+        dst.write_bytes(src.read_bytes())
+        backed_up.append(str(dst.relative_to(ep.dir)))
+    return backed_up
+
+
 def _backup_existing_srts(ep: Episode) -> list[str]:
     """重轉字幕前把現有 _v2.srt / main_srt 備份成 .<timestamp>.bak.srt，避免覆蓋丟掉原稿。
     回傳實際備份的相對路徑清單（前端可顯示）；不存在的檔案略過。
@@ -36,11 +49,14 @@ def _backup_existing_srts(ep: Episode) -> list[str]:
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {
     "state": "idle",       # idle | running | done | error
-    "phase": None,         # None | compress | upload | resegment
-    "percent": 0.0,        # 該 phase 內 0-100
+    "mode": "single",      # single | per-mic
+    "phase": None,         # single: None | compress | upload | resegment
+                           # per-mic: None | per-mic-transcribe | srt-merge | resegment
+    "percent": 0.0,        # 該 phase 內 0-100（per-mic 用 done軌/總軌 換算）
     "src_path": None,      # 來源檔（相對 ep.dir）
     "out_srt": None,       # _v2.srt 相對 ep.dir，成功才會塞
     "backups": None,       # 重轉前備份的舊 SRT 路徑（相對 ep.dir）
+    "mics_progress": None, # per-mic only：{a: "vad", b: "gemini", c: "done"} 等
     "error": None,
     "started_at": None,
 }
@@ -55,11 +71,13 @@ def _reset(**kwargs) -> None:
     with _LOCK:
         _STATE.update({
             "state": "idle",
+            "mode": "single",
             "phase": None,
             "percent": 0.0,
             "src_path": None,
             "out_srt": None,
             "backups": None,
+            "mics_progress": None,
             "error": None,
             "started_at": None,
         })
@@ -166,3 +184,94 @@ def _run(
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
     _set(state="done", phase="resegment", percent=100.0, out_srt=out_srt_rel)
+
+
+def start_per_mic_job(
+    ep: Episode,
+    *,
+    speakers: list[str],
+    force: bool = True,
+) -> dict[str, Any]:
+    """開新分軌轉錄 job；speakers 是要跑的軌（episode.yaml.mics 的 key 子集）。
+
+    force 預設 True 因為前端要重轉就是要覆寫；舊檔已備份。
+    """
+    with _LOCK:
+        if _STATE["state"] == "running":
+            raise RuntimeError("已有轉字幕正在進行中")
+
+    mics = ep.mic_paths()
+    if not mics:
+        raise RuntimeError("episode.yaml 沒設 mics — 無法分軌轉錄")
+    unknown = [s for s in speakers if s not in mics]
+    if unknown:
+        raise RuntimeError(f"speakers 含未知軌 {unknown}，episode.yaml mics 只有 {sorted(mics)}")
+    if not speakers:
+        raise RuntimeError("speakers 不能是空清單")
+
+    init_progress = {sp: "queued" for sp in sorted(speakers)}
+    _reset(
+        state="running",
+        mode="per-mic",
+        phase="per-mic-transcribe",
+        percent=0.0,
+        mics_progress=init_progress,
+        started_at=monotonic(),
+    )
+
+    worker = threading.Thread(
+        target=_run_per_mic,
+        args=(ep, sorted(speakers), force),
+        daemon=True,
+    )
+    worker.start()
+    return {"speakers": sorted(speakers)}
+
+
+def _run_per_mic(ep: Episode, speakers: list[str], force: bool) -> None:
+    """背景 worker：分軌轉錄 → srt_merge → done / error。"""
+    from podcast_toolkit import gemini_subtitle, srt_merge
+
+    try:
+        backed = _backup_existing_per_mic_outputs(ep)
+        if backed:
+            _set(backups=backed)
+    except Exception as e:
+        _set(state="error", error=f"備份 _final_v2 失敗：{e}")
+        return
+
+    def on_mic_progress(speaker: str, phase: str) -> None:
+        """從 gemini_subtitle._emit 進來：更新 mics_progress[speaker] = phase。"""
+        with _LOCK:
+            progress = dict(_STATE.get("mics_progress") or {})
+            progress[speaker] = phase
+            done_count = sum(1 for p in progress.values() if p in ("done", "skipped"))
+            _STATE["mics_progress"] = progress
+            if speakers:
+                _STATE["percent"] = round(done_count / len(speakers) * 100.0, 1)
+
+    try:
+        gemini_subtitle.transcribe_per_mic(
+            ep,
+            speakers=speakers,
+            force=force,
+            parallel=True,
+            progress=on_mic_progress,
+        )
+    except Exception as e:
+        _set(state="error", error=f"分軌轉錄失敗：{e}")
+        return
+
+    # 合併三路 SRT → _final_v2.srt + .speakers.json
+    _set(phase="srt-merge", percent=0.0)
+    try:
+        rc = srt_merge.run(ep, force=True)
+    except Exception as e:
+        _set(state="error", error=f"srt_merge 失敗：{e}")
+        return
+    if rc != 0:
+        _set(state="error", error=f"srt_merge 失敗 (rc={rc})")
+        return
+
+    out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
+    _set(state="done", phase="srt-merge", percent=100.0, out_srt=out_srt_rel)

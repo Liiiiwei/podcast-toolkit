@@ -1,6 +1,11 @@
 """SRT 解析與序列化。共用給 web/episode_io.py。"""
 from __future__ import annotations
+import re
 from typing import Iterable
+
+
+_UNIT_RE = re.compile(r"(\d+)\s*(ms|h|m|s)", re.IGNORECASE)
+_UNIT_MULT = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 
 
 # 中文 podcast 對話約 3-5 字/秒；用 0.3s/字當「合理語速」上界。
@@ -33,9 +38,31 @@ def allocate_split_times(
 
 
 def _ts2s(ts: str) -> float:
-    h, m, rest = ts.split(":")
-    s, ms = rest.split(",")
-    return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+    # Gemini 不總是遵守 prompt 的 hh:mm:ss,ms 格式，實測會出現：
+    #   - mm:ss,ms （省略小時段）
+    #   - hh:mm:ss.ms （用 . 取代 , 分隔毫秒）
+    #   - hh:mm:ss（完全省略毫秒）
+    #   - 26m3s766ms（口語化單位寫法，完全沒冒號）
+    # 寬容處理；無法分段才拋錯。
+    cleaned = ts.strip()
+    if ":" in cleaned:
+        c = cleaned.replace(".", ",", 1)
+        if "," in c:
+            clock, ms_str = c.rsplit(",", 1)
+        else:
+            clock, ms_str = c, "0"
+        bits = clock.split(":")
+        if len(bits) == 2:
+            h, m, s = "0", bits[0], bits[1]
+        elif len(bits) == 3:
+            h, m, s = bits
+        else:
+            raise ValueError(f"無法解析 srt 時間碼：{ts!r}")
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms_str) / 1000
+    matches = _UNIT_RE.findall(cleaned)
+    if matches:
+        return sum(int(n) * _UNIT_MULT[u.lower()] for n, u in matches)
+    raise ValueError(f"無法解析 srt 時間碼：{ts!r}")
 
 
 def _s2ts(t: float) -> str:
@@ -49,27 +76,68 @@ def _s2ts(t: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+_ARROW_RE = re.compile(r"^\s*\S+\s*-->\s*\S+\s*$")
+
+
 def parse(text: str) -> list[dict]:
-    """解析 srt 字串 → list of {idx, start, end, text}。idx 為 srt 原本的 1-based 序號。"""
+    """解析 srt 字串 → list of {idx, start, end, text}。idx 為 srt 原本的 1-based 序號。
+
+    Gemini 偶爾會省略 cue 之間的空行（實測 mic_b 87 cues 0 空行）。
+    這時 `split("\\n\\n")` 會把整個檔案吃成 1 個 block。
+    所以無論空行有沒有，都用「掃描行」方式：尋找「純數字 idx → time arrow」這個 pattern
+    當成新 cue 的起點，中間其他行歸給上一個 cue 的 text。
+    """
+    cleaned = text.replace("\r\n", "\n").strip()
+    lines = cleaned.split("\n")
     cards: list[dict] = []
-    blocks = [b for b in text.replace("\r\n", "\n").strip().split("\n\n") if b.strip()]
-    for block in blocks:
-        lines = block.strip().split("\n")
-        if len(lines) < 3:
+    i = 0
+    n = len(lines)
+    while i < n:
+        # 跳過空白
+        if not lines[i].strip():
+            i += 1
             continue
-        try:
-            idx = int(lines[0].strip())
-        except ValueError:
-            continue
-        start_str, _, end_str = lines[1].partition(" --> ")
-        cards.append(
-            {
-                "idx": idx,
-                "start": _ts2s(start_str.strip()),
-                "end": _ts2s(end_str.strip()),
-                "text": "\n".join(lines[2:]),
-            }
-        )
+        # 找 idx + time arrow 模式
+        if i + 1 < n and lines[i].strip().isdigit() and _ARROW_RE.match(lines[i + 1]):
+            try:
+                idx = int(lines[i].strip())
+            except ValueError:
+                i += 1
+                continue
+            start_str, _, end_str = lines[i + 1].partition(" --> ")
+            try:
+                start = _ts2s(start_str.strip())
+                end = _ts2s(end_str.strip())
+            except ValueError:
+                i += 2
+                continue
+            text_lines: list[str] = []
+            j = i + 2
+            while j < n:
+                # 下一個 cue 起點：純數字 + 緊接 time arrow → 停
+                if (
+                    lines[j].strip().isdigit()
+                    and j + 1 < n
+                    and _ARROW_RE.match(lines[j + 1])
+                ):
+                    break
+                # 空行：當段落結束（若已是空行 + 下一行又空 → 仍可繼續，但實務上空行通常就是 cue 邊界）
+                if not lines[j].strip() and text_lines:
+                    j += 1
+                    break
+                text_lines.append(lines[j])
+                j += 1
+            cards.append(
+                {
+                    "idx": idx,
+                    "start": start,
+                    "end": end,
+                    "text": "\n".join(text_lines).rstrip(),
+                }
+            )
+            i = j
+        else:
+            i += 1
     return cards
 
 

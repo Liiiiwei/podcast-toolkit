@@ -8,6 +8,7 @@ DEFAULTS = {
     "assets": {"intro": "x"},
     "encode": {"crf": 23},
     "common_fixes": [],
+    "per_mic": {"vad_threshold": 0.02, "vad_min_speech_sec": 0.3, "vad_pad_sec": 0.15},
 }
 
 
@@ -197,3 +198,45 @@ def test_merge_subtitle_style_reels_wins_over_subtitle_style_in_episode():
     )
     assert cfg["subtitle_style"]["font_size"] == 36
     assert cfg["subtitle_style_reels"]["font_size"] == 96
+
+
+# --- T31a：mics / per_mic schema（分軌轉錄）---
+
+
+def test_merge_mics_missing_returns_empty_dict():
+    """沒設 mics → 空 dict，呼叫端 fallback 走混音軌路線（向後相容）。"""
+    cfg = config.merge(DEFAULTS, {})
+    assert cfg["mics"] == {}
+
+
+def test_merge_mics_preserved_as_dict():
+    """設了 mics 要原樣保留兩支或三支 mic 的路徑。"""
+    episode = {
+        "mics": {
+            "a": "01_母帶/{name}_micA.wav",
+            "b": "01_母帶/{name}_micB.wav",
+            "c": "01_母帶/{name}_micC.wav",
+        }
+    }
+    cfg = config.merge(DEFAULTS, episode)
+    assert cfg["mics"] == {
+        "a": "01_母帶/{name}_micA.wav",
+        "b": "01_母帶/{name}_micB.wav",
+        "c": "01_母帶/{name}_micC.wav",
+    }
+
+
+def test_merge_per_mic_defaults_used_when_episode_missing():
+    """per_mic 沒設時走 defaults 預設值。"""
+    cfg = config.merge(DEFAULTS, {})
+    assert cfg["per_mic"]["vad_threshold"] == 0.02
+    assert cfg["per_mic"]["vad_min_speech_sec"] == 0.3
+    assert cfg["per_mic"]["vad_pad_sec"] == 0.15
+
+
+def test_merge_per_mic_episode_overrides_defaults_per_key():
+    """episode 只覆寫部分 per_mic 欄位 → 其餘走 defaults。"""
+    cfg = config.merge(DEFAULTS, {"per_mic": {"vad_threshold": 0.05}})
+    assert cfg["per_mic"]["vad_threshold"] == 0.05  # overridden
+    assert cfg["per_mic"]["vad_min_speech_sec"] == 0.3  # default
+    assert cfg["per_mic"]["vad_pad_sec"] == 0.15  # default

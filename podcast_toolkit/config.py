@@ -75,6 +75,9 @@ def merge(defaults: dict, episode: dict) -> dict:
     - cameras：雙機資料 {a, b}；舊 episode.yaml 只有 main_video 時
       自動視為 cameras.a（單機模式）。
     - audio：獨立 stereo-mix 音檔 + 對齊參考（不設則沿用鏡頭原音）。
+    - mics：分軌轉錄用的單人 mic 檔 {a, b, c, ...}；key 對齊 cameras key，
+      不設 → 空 dict → 走原本的混音軌 Gemini 轉錄路線（向後相容）。
+    - per_mic：分軌轉錄參數（VAD 閘門等），defaults + episode 逐 key 合併。
     """
     # cameras：episode["cameras"] 優先；否則 fallback main_video → cameras.a
     cameras = episode.get("cameras")
@@ -118,6 +121,8 @@ def merge(defaults: dict, episode: dict) -> dict:
         "cameras": dict(cameras),
         "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
         "audio": episode.get("audio"),
+        "mics": dict(episode.get("mics") or {}),
+        "per_mic": {**(defaults.get("per_mic") or {}), **(episode.get("per_mic") or {})},
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),
         "crop_yt": episode.get("crop_yt"),

@@ -141,6 +141,12 @@
             hidden
             title="整集 A/B 鏡頭分布；hover 看段落時間"
           ></div>
+          <div
+            id="speaker-ruler"
+            class="speaker-ruler"
+            hidden
+            title="整集講者分布（分軌集）；hover 看段落時間"
+          ></div>
           <div class="video-wrap">
             <video id="video" src="/api/video" preload="metadata"></video>
             <video id="video-camb" preload="auto" muted playsinline></video>
@@ -467,6 +473,21 @@
               />
               OpenAI（whisper-1）
             </label>
+            <label class="modal-radio">
+              <input
+                type="radio"
+                name="settings-provider"
+                value="whisper_mlx"
+                id="settings-provider-whisper-mlx"
+              />
+              本地 Whisper（mlx）
+            </label>
+          </div>
+          <div class="modal-hint">
+            本地 Whisper 用 Apple Silicon 跑
+            mlx-community/whisper-large-v3-turbo， 免 API key、不打雲端，但 25
+            分鐘 podcast 大約跑 15-25 分鐘。 需先
+            <code>pip3 install --user mlx-whisper</code>。
           </div>
 
           <label class="modal-label">Gemini API key</label>
@@ -925,6 +946,32 @@
       <div class="modal-head" id="transcribe-title">準備轉字幕</div>
       <div class="modal-body">
         <div id="transcribe-msg">…</div>
+        <details id="transcribe-advanced" class="modal-advanced" hidden>
+          <summary>進階：分軌轉錄</summary>
+          <div class="modal-body-text">
+            分軌轉錄會對每支麥克風獨立跑
+            STT，理想狀況下能標出每張字卡的講者。<br />
+            <strong>⚠ 但三支麥克風之間容易串音</strong>， Whisper
+            可能把鄰桌講者的話辨識成自己，造成字卡內容誤判。<br />
+            預設用混音檔轉錄，比較穩定。
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            id="transcribe-per-mic-btn"
+            hidden
+          >
+            改用分軌轉錄
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            id="transcribe-mic-setup-btn"
+            hidden
+          >
+            設定並啟用分軌轉錄
+          </button>
+        </details>
         <div id="transcribe-progress" hidden>
           <div class="phase-pills">
             <div class="phase-pill" data-phase="compress">
@@ -955,6 +1002,86 @@
         </button>
         <button id="transcribe-go" type="button" class="btn btn-primary">
           開始
+        </button>
+      </div>
+    </dialog>
+
+    <!-- 分軌轉錄 modal：episode.yaml.mics 有設時走這條 -->
+    <dialog class="modal" id="per-mic-modal">
+      <div class="modal-head" id="per-mic-title">分軌轉錄</div>
+      <div class="modal-body">
+        <!-- 視圖 1：勾選列 -->
+        <div id="per-mic-pick">
+          <div class="modal-body-text">
+            選擇要轉的軌；已轉過的預設不勾，避免誤覆寫。
+          </div>
+          <div id="per-mic-list" class="per-mic-list"></div>
+          <div class="per-mic-actions-row">
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              id="per-mic-select-all"
+            >
+              全選
+            </button>
+            <button
+              type="button"
+              class="btn btn-ghost btn-sm"
+              id="per-mic-select-unconverted"
+            >
+              只選未轉
+            </button>
+          </div>
+          <div class="modal-hint" id="per-mic-overwrite-hint" hidden>
+            ⚠ 已轉過的 SRT 將會被覆寫（舊版會自動備份成時間戳檔）。
+          </div>
+        </div>
+        <!-- 視圖 2：跑進度 -->
+        <div id="per-mic-progress" hidden>
+          <div class="modal-body-text" id="per-mic-progress-msg">
+            分軌轉錄中…請保留分頁。
+          </div>
+          <div id="per-mic-progress-grid" class="per-mic-progress-grid"></div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="per-mic-fill"></div>
+          </div>
+          <div class="progress-meta">
+            <span id="per-mic-phase-label">啟動中…</span>
+            <span id="per-mic-percent">0%</span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="per-mic-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="per-mic-go" type="button" class="btn btn-primary">
+          開始
+        </button>
+      </div>
+    </dialog>
+
+    <!-- 分軌設定 modal：episode.yaml 沒設 mics 但偵測到多軌音檔時跳 -->
+    <dialog class="modal" id="mic-setup-modal">
+      <div class="modal-head" id="mic-setup-title">設定分軌</div>
+      <div class="modal-body">
+        <div class="modal-body-text">
+          偵測到
+          <code id="mic-setup-detected-count">0</code>
+          個音檔；分配每軌對應哪個檔，再開始轉字幕。設定會寫進 episode.yaml 的
+          <code>mics:</code>。
+        </div>
+        <div id="mic-setup-list" class="mic-setup-list"></div>
+        <div class="modal-hint" id="mic-setup-warn" hidden>
+          ⚠ 同一個檔被指派到多軌，請調整。
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="mic-setup-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="mic-setup-go" type="button" class="btn btn-primary">
+          儲存並開始
         </button>
       </div>
     </dialog>

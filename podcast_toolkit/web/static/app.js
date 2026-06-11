@@ -36,6 +36,11 @@ const state = {
   // T23a-followup：cam B UI 用，避免使用者手改 yaml
   camBCandidates: [], // 後端掃 01_母帶/*.mp4 排除 cam A
   camSyncOffsetB: 0, // 秒；cam B 相對 cam A 的對齊偏移
+  // 分軌 mic：mics = {a, b, ...}（單軌集為空 dict）；前端據此判斷要不要渲染 speaker UI
+  mics: {},
+  // 字幕卡 idx -> speaker key（"a" / "b" / ...），來自 srt_merge 產出的 speakers.json sidecar
+  // 同 camerasMapping 形狀，但 speaker 不做 carry-forward（每張卡都有明確 speaker）
+  speakersMapping: new Map(),
   // Reels 片段：list of {name, start_card, end_card}（1-indexed card idx）
   reelsClips: [],
   // 字幕預覽用：對齊 ffmpeg ASS 實際輸出（font_size / output_height）
@@ -114,6 +119,7 @@ function snapshotEditState() {
     cropRatioYt: state.cropRatioYt,
     cropRatioReels: state.cropRatioReels,
     camerasMapping: new Map(state.camerasMapping),
+    speakersMapping: new Map(state.speakersMapping),
     headTrimSec: state.headTrimSec,
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
@@ -131,6 +137,7 @@ function applyEditSnapshot(snap) {
   state.cropRatioYt = snap.cropRatioYt;
   state.cropRatioReels = snap.cropRatioReels;
   state.camerasMapping = new Map(snap.camerasMapping);
+  state.speakersMapping = new Map(snap.speakersMapping || []);
   state.headTrimSec = snap.headTrimSec;
   state.tailTrimSec = snap.tailTrimSec;
   state.reelsClips = (snap.reelsClips || []).map((c) => ({ ...c }));
@@ -448,6 +455,21 @@ function activeCardAt(t) {
   return null;
 }
 
+// 分軌版：拿出 t 當下所有 active 卡（可能不只一張：兩人同時講話 → 兩張不同 speaker 的卡同時在跑）。
+// 單軌集 / 沒重疊 → 回 [activeCardAt] 退化結果，給 renderCaption 統一邏輯用。
+function activeCardsAt(t) {
+  const exp = expandedCards();
+  const hits = exp.filter((r) => t >= r.start && t < r.end);
+  if (hits.length) return hits;
+  // fallback 同 activeCardAt：尾段空窗找最後一張 sub-card
+  for (let i = exp.length - 1; i >= 0; i--) {
+    const r = exp[i];
+    if (r.partIdx == null) continue;
+    if (t >= r.c.start && t < r.c.end) return [r];
+  }
+  return [];
+}
+
 // Enter 切完／Backspace 合併完之後 re-render，把 caret 移到指定 card / sub-card 的指定 offset
 // dataIdx：未切卡傳 int c.idx；sub-card 傳 "<idx>:<part>" 字串
 // offset：caret 字元位置（Enter 預設 0；Backspace 合併要落在交界處）
@@ -540,6 +562,21 @@ function expandedCards() {
   return out;
 }
 
+// 算這張卡實際生效的 speaker：speakers sidecar 是每張卡都有明確值
+// （由 srt_merge 從 N 路 mic SRT merge 出來），不需要 carry-forward。
+// 沒值 = 單軌集或 sidecar 缺漏 → 回 null，UI 隱藏 speaker tag / ruler。
+// 切過的卡：sub-card 都繼承原卡的 speaker（切句不會切換講者）。
+function computeEffectiveSpeaker(key) {
+  if (!state.speakersMapping || state.speakersMapping.size === 0) return null;
+  // sub-card key 是 "<parentIdx>:<partIdx>"；speaker sidecar 用 parent int key
+  const parentIdx =
+    typeof key === "string" && key.includes(":")
+      ? Number(key.split(":", 1)[0])
+      : Number(key);
+  const v = state.speakersMapping.get(parentIdx);
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
 // 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
 // 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
 // 而且切過的卡會 carry 到自己的後續 sub-card）。
@@ -606,15 +643,103 @@ function renderCamRuler() {
   ruler.hidden = false;
 }
 
-function renderCaption() {
-  const r = activeCardAt($("#video").currentTime);
-  const overlay = $("#caption-overlay");
-  if (!r || state.deletions.has(r.key)) {
-    overlay.textContent = "";
+// 分軌集講者分布 ruler：同 cam-ruler，但用 speakers sidecar 染色（每 speaker 一色）
+// 跟 cam ruler 的差異：speaker 沒 carry-forward；沒掛 speaker 的段不畫（避免被誤解成「預設講者」）
+function renderSpeakerRuler() {
+  const ruler = $("#speaker-ruler");
+  if (!ruler) return;
+  const hasMics = state.mics && Object.keys(state.mics).length > 0;
+  if (!hasMics || !state.cards.length) {
+    ruler.hidden = true;
+    ruler.innerHTML = "";
     return;
   }
-  // r.text 已由 expandedCards 處理：切過的拿 sub-part；未切的拿 textOverrides ?? 原文
-  overlay.textContent = r.text;
+  const rendered = expandedCards().filter((r) => !state.deletions.has(r.key));
+  if (!rendered.length) {
+    ruler.hidden = true;
+    ruler.innerHTML = "";
+    return;
+  }
+  const t0 = rendered[0].start;
+  const t1 = rendered[rendered.length - 1].end;
+  const total = Math.max(t1 - t0, 0.001);
+  // 合併連續同 speaker 段；沒 speaker 的段（sidecar 缺漏）以 null 段保留位、用 .speaker-ruler-gap 染灰
+  const segs = [];
+  let curSp = "__init__";
+  let curStart = t0;
+  let curEnd = t0;
+  for (const r of rendered) {
+    const sp = computeEffectiveSpeaker(r.key);
+    if (sp === curSp) {
+      curEnd = r.end;
+    } else {
+      if (curSp !== "__init__") {
+        segs.push({ sp: curSp, start: curStart, end: curEnd });
+      }
+      curSp = sp;
+      curStart = r.start;
+      curEnd = r.end;
+    }
+  }
+  if (curSp !== "__init__")
+    segs.push({ sp: curSp, start: curStart, end: curEnd });
+  ruler.innerHTML = "";
+  for (const s of segs) {
+    const seg = document.createElement("div");
+    seg.className = s.sp
+      ? `speaker-ruler-seg speaker-${s.sp}`
+      : "speaker-ruler-seg speaker-ruler-gap";
+    const w = ((s.end - s.start) / total) * 100;
+    seg.style.width = `${w}%`;
+    const label = s.sp ? s.sp.toUpperCase() : "（無 speaker）";
+    seg.title = `${label} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
+    seg.addEventListener("click", () => {
+      $("#video").currentTime = s.start;
+    });
+    ruler.appendChild(seg);
+  }
+  ruler.hidden = false;
+}
+
+function renderCaption() {
+  const overlay = $("#caption-overlay");
+  const t = $("#video").currentTime;
+  // 分軌啟用 → 找所有 active 卡分行（兩人同時講話 → 上下兩行 + speaker 著色）
+  // 單軌集 → 退回單張卡的純文字（舊行為）
+  const hasMics = state.mics && Object.keys(state.mics).length > 0;
+  if (!hasMics) {
+    const r = activeCardAt(t);
+    if (!r || state.deletions.has(r.key)) {
+      overlay.textContent = "";
+      overlay.classList.remove("multi-speaker");
+      return;
+    }
+    overlay.textContent = r.text;
+    overlay.classList.remove("multi-speaker");
+    return;
+  }
+  const rows = activeCardsAt(t).filter((r) => !state.deletions.has(r.key));
+  if (rows.length === 0) {
+    overlay.textContent = "";
+    overlay.classList.remove("multi-speaker");
+    return;
+  }
+  // 依 speaker key 字典序排（同 srt_merge），保證重疊時上下行順序穩定
+  rows.sort((a, b) => {
+    const sa = computeEffectiveSpeaker(a.key) || "";
+    const sb = computeEffectiveSpeaker(b.key) || "";
+    return sa.localeCompare(sb);
+  });
+  overlay.innerHTML = "";
+  for (const r of rows) {
+    const sp = computeEffectiveSpeaker(r.key);
+    const line = document.createElement("div");
+    line.className = "caption-line";
+    if (sp) line.classList.add(`speaker-${sp}`);
+    line.textContent = r.text;
+    overlay.appendChild(line);
+  }
+  overlay.classList.toggle("multi-speaker", rows.length > 1);
 }
 
 function renderCardSkeletons(n = 8) {
@@ -718,6 +843,17 @@ function renderCards() {
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
+    // 分軌集才掛 speaker tag：值來自 srt_merge sidecar（read-only）
+    // 要改 speaker → 走 _final_v2.speakers.json 手改或重跑 srt_merge，不在 UI 上 toggle
+    const sp = computeEffectiveSpeaker(key);
+    if (sp) {
+      div.classList.add("card-has-speaker", `speaker-${sp}`);
+      const tag = document.createElement("div");
+      tag.className = `card-speaker-tag speaker-${sp}`;
+      tag.textContent = sp.toUpperCase();
+      tag.title = `講者：${sp.toUpperCase()}（來自分軌 SRT，要改去 sidecar）`;
+      time.appendChild(tag);
+    }
     // sub-card 加 duration 提示：直接看到「這段切了多少秒」+ 尾段空窗警告
     // 防的是放牛班式 bug：斷句配速太快導致大段時間沒分配字幕
     if (isSub) {
@@ -1024,6 +1160,7 @@ function renderCards() {
   }
   renderSusToolbar();
   renderCamRuler();
+  renderSpeakerRuler();
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
@@ -1126,6 +1263,15 @@ async function loadEpisodeState() {
     Object.entries(data.cameras_mapping || {})
       .map(([k, v]) => [Number(k), v])
       .filter(([_, v]) => v === "a" || v === "b"),
+  );
+  // 分軌 speaker mapping：mics 同 cameras 形狀；speaker 不做 carry-forward（每張卡都明確標記）
+  // 合法 speaker = mics 的 key set；mics 為空（單軌集）→ 不收任何 mapping
+  state.mics = data.mics || {};
+  const validSpeakers = new Set(Object.keys(state.mics));
+  state.speakersMapping = new Map(
+    Object.entries(data.speakers_mapping || {})
+      .map(([k, v]) => [Number(k), v])
+      .filter(([_, v]) => typeof v === "string" && validSpeakers.has(v)),
   );
   // T23a-followup：cam B 候選 + 同步 offset（給 modal 用）
   state.camBCandidates = Array.isArray(data.cam_b_candidates)
@@ -1269,7 +1415,9 @@ async function loadConfig() {
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
     // xai 已下架；舊 config 殘留 "xai" 一律當 gemini
-    state.sttProvider = data.provider === "openai" ? "openai" : "gemini";
+    state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
+      ? data.provider
+      : "gemini";
     state.assetsStatus = data.assets || {};
   } catch (_) {}
 }
@@ -1292,6 +1440,7 @@ async function load() {
   renderReelsClips();
   setupExternalAudio();
   setupCamBOverlay();
+  resumeTranscribeIfRunning();
 }
 
 // === 錯字表 ===
@@ -2327,6 +2476,8 @@ $("#save-btn").addEventListener("click", async () => {
     })),
     // 只送 explicit 標記，carry-forward 推算結果不送；後端會 _parse_composite_id 解 "5:1" 或 5
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    // 分軌 speaker mapping：同 cameras_mapping 形狀；後端會用 mics keys 驗證 + composite id 翻譯
+    speakers_mapping: Object.fromEntries(state.speakersMapping),
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
@@ -2825,15 +2976,46 @@ function hideModal(id) {
 
 // 供應商 label + state key 對照表（避免散落 ternary）
 function providerLabelOf(p) {
-  return { gemini: "Gemini", openai: "OpenAI whisper-1" }[p] || "Gemini";
+  return (
+    {
+      gemini: "Gemini",
+      openai: "OpenAI whisper-1",
+      whisper_mlx: "本地 Whisper（mlx）",
+    }[p] || "Gemini"
+  );
 }
 function hasKeyForProvider(p) {
+  // 本地 provider 不需 key，視同永遠就緒
+  if (p === "whisper_mlx") return true;
   if (p === "openai") return state.hasOpenAIKey;
   return state.hasGeminiKey;
 }
 
 // === 轉字幕流程 ===
 function requestTranscribe(file) {
+  // 預設一律走 mix 路徑（單一檔案 STT）。分軌轉錄串音問題明顯，改成進階手動開關。
+  // 視情況顯示「改用分軌轉錄」or「設定並啟用分軌轉錄」按鈕在進階區塊。
+  const hasMics = state.mics && Object.keys(state.mics).length > 0;
+  const candidates = state.audioCandidates || [];
+  const canSetupMics = !hasMics && candidates.length >= 2;
+  const advanced = $("#transcribe-advanced");
+  const perMicBtn = $("#transcribe-per-mic-btn");
+  const micSetupBtn = $("#transcribe-mic-setup-btn");
+  if (advanced) advanced.hidden = !(hasMics || canSetupMics);
+  if (perMicBtn) {
+    perMicBtn.hidden = !hasMics;
+    perMicBtn.onclick = () => {
+      hideModal("transcribe-modal");
+      openPerMicTranscribe();
+    };
+  }
+  if (micSetupBtn) {
+    micSetupBtn.hidden = !canSetupMics;
+    micSetupBtn.onclick = () => {
+      hideModal("transcribe-modal");
+      openMicSetup();
+    };
+  }
   const providerLabel = providerLabelOf(state.sttProvider);
   const hasSelectedKey = hasKeyForProvider(state.sttProvider);
   // 重置上次跑剩的進度條 + 兩顆按鈕（避免 success 殘留把 #transcribe-go 藏起來）
@@ -2927,6 +3109,7 @@ async function runTranscribe(file) {
   $("#transcribe-msg").innerHTML =
     `處理中：<code>${file.path}</code><br>` +
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
+  $("#transcribe-advanced").hidden = true;
   $("#transcribe-progress").hidden = false;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
@@ -2954,6 +3137,65 @@ async function runTranscribe(file) {
   }
 
   _transcribePollTimer = setInterval(pollTranscribe, 500);
+}
+
+// 頁面載入時偵測背景中還在跑的 transcribe job：
+// 自動把對應 modal 打開 + 啟 polling，避免使用者重整後以為沒在跑、
+// 又從別的入口按一次而踩到 server 409「已有轉字幕正在進行中」。
+async function resumeTranscribeIfRunning() {
+  let s;
+  try {
+    const r = await fetch("/api/transcribe/status");
+    if (!r.ok) return;
+    s = await r.json();
+  } catch (_) {
+    return;
+  }
+  if (s.state !== "running") return;
+
+  if (s.mode === "per-mic") {
+    setModalStatusTitle("per-mic-title", null, "分軌轉錄中…", "");
+    $("#per-mic-pick").hidden = true;
+    $("#per-mic-progress").hidden = false;
+    $("#per-mic-fill").style.width = "0%";
+    $("#per-mic-percent").textContent = "0%";
+    $("#per-mic-phase-label").textContent = "啟動中…";
+    const speakers = Object.keys(s.mics_progress || {});
+    if (speakers.length) renderPerMicProgressGrid(speakers);
+    const go = $("#per-mic-go");
+    const cancel = $("#per-mic-cancel");
+    if (go) {
+      go.hidden = true;
+      go.disabled = true;
+    }
+    if (cancel) cancel.disabled = true;
+    showModal("per-mic-modal");
+    if (!_perMicPollTimer) {
+      _perMicPollTimer = setInterval(pollPerMic, 500);
+    }
+    return;
+  }
+
+  // single mode（混音檔 STT）
+  $("#transcribe-title").textContent = "轉字幕中…";
+  $("#transcribe-msg").innerHTML =
+    `處理中：<code>${s.src_path || ""}</code><br>` +
+    `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
+  const adv = $("#transcribe-advanced");
+  if (adv) adv.hidden = true;
+  $("#transcribe-progress").hidden = false;
+  $("#transcribe-fill").style.width = "0%";
+  $("#transcribe-percent").textContent = "0%";
+  $("#transcribe-phase-label").textContent = "啟動中…";
+  renderTranscribePhasePills(s.phase || null, "running");
+  const goBtn = $("#transcribe-go");
+  const cancelBtn = $("#transcribe-cancel");
+  if (goBtn) goBtn.disabled = true;
+  if (cancelBtn) cancelBtn.disabled = true;
+  showModal("transcribe-modal");
+  if (!_transcribePollTimer) {
+    _transcribePollTimer = setInterval(pollTranscribe, 500);
+  }
 }
 
 async function pollTranscribe() {
@@ -3025,6 +3267,419 @@ async function finishTranscribe({ ok, out_srt, error }) {
     cancel.textContent = "取消";
     go.hidden = false;
     $("#transcribe-progress").hidden = true;
+  };
+}
+
+// === 分軌設定 modal（yaml 沒設 mics 但有多軌音檔時跳這條） ===
+// 流程：列出 audioCandidates → 三個 dropdown 對應 a/b/c → 預設用 Track*.wav 順序自動配
+//   → 儲存 → POST /api/episode/mics → 重載 episode → 進分軌轉錄 modal
+const MIC_SETUP_SPEAKERS = ["a", "b", "c"];
+
+function guessMicAssignment(candidates) {
+  // 嘗試從檔名抓 Track[1-3] / Mic[1-3] / Track 1 / Track-1 數字，依序配 a/b/c
+  // 抓不到順序就照 candidates 原順序前 3 個配 a/b/c
+  const numbered = [];
+  for (const path of candidates) {
+    const name = path.split("/").pop() || path;
+    const m = name.match(/Track[\s_-]?(\d+)|Mic[\s_-]?(\d+)/i);
+    if (m) {
+      const n = parseInt(m[1] || m[2], 10);
+      if (n >= 1 && n <= 3) numbered.push({ n, path });
+    }
+  }
+  const result = { a: "", b: "", c: "" };
+  if (numbered.length >= 2) {
+    // 用 Track 編號配對
+    numbered.sort((x, y) => x.n - y.n);
+    const slots = ["a", "b", "c"];
+    for (let i = 0; i < numbered.length && i < 3; i++) {
+      result[slots[numbered[i].n - 1] || slots[i]] = numbered[i].path;
+    }
+  } else {
+    // fallback：前 3 個檔依序給 a/b/c
+    for (let i = 0; i < Math.min(3, candidates.length); i++) {
+      result[MIC_SETUP_SPEAKERS[i]] = candidates[i];
+    }
+  }
+  return result;
+}
+
+function renderMicSetupList(candidates, assignment) {
+  const list = $("#mic-setup-list");
+  list.innerHTML = "";
+  for (const sp of MIC_SETUP_SPEAKERS) {
+    const row = document.createElement("div");
+    row.className = "mic-setup-row";
+    row.dataset.speaker = sp;
+    const options = ['<option value="">— 不設定 —</option>'];
+    for (const path of candidates) {
+      const selected = assignment[sp] === path ? " selected" : "";
+      // path 可能含 " 等需要 escape
+      const safe = path
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+      options.push(`<option value="${safe}"${selected}>${safe}</option>`);
+    }
+    row.innerHTML = `
+      <span class="mic-setup-row-key">軌 ${sp}</span>
+      <select class="mic-setup-row-select" data-speaker="${sp}">${options.join("")}</select>
+    `;
+    list.appendChild(row);
+  }
+  list.querySelectorAll(".mic-setup-row-select").forEach((sel) => {
+    sel.addEventListener("change", updateMicSetupConflicts);
+  });
+  updateMicSetupConflicts();
+}
+
+function collectMicSetupAssignment() {
+  const out = {};
+  document.querySelectorAll(".mic-setup-row-select").forEach((sel) => {
+    const sp = sel.dataset.speaker;
+    const val = sel.value;
+    if (val) out[sp] = val;
+  });
+  return out;
+}
+
+function updateMicSetupConflicts() {
+  const assignment = collectMicSetupAssignment();
+  const counts = {};
+  for (const p of Object.values(assignment)) {
+    counts[p] = (counts[p] || 0) + 1;
+  }
+  let hasConflict = false;
+  document.querySelectorAll(".mic-setup-row").forEach((row) => {
+    const sp = row.dataset.speaker;
+    const val = assignment[sp];
+    if (val && counts[val] > 1) {
+      row.classList.add("conflict");
+      hasConflict = true;
+    } else {
+      row.classList.remove("conflict");
+    }
+  });
+  $("#mic-setup-warn").hidden = !hasConflict;
+  // 至少要有一軌才能開始
+  const anyPicked = Object.keys(assignment).length > 0;
+  $("#mic-setup-go").disabled = hasConflict || !anyPicked;
+}
+
+function openMicSetup() {
+  setModalStatusTitle("mic-setup-title", null, "設定分軌", null);
+  const candidates = state.audioCandidates || [];
+  $("#mic-setup-detected-count").textContent = String(candidates.length);
+  const assignment = guessMicAssignment(candidates);
+  renderMicSetupList(candidates, assignment);
+
+  const go = $("#mic-setup-go");
+  const cancel = $("#mic-setup-cancel");
+  go.textContent = "儲存並開始";
+  go.disabled = false;
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+  go.onclick = saveMicSetup;
+  cancel.onclick = () => hideModal("mic-setup-modal");
+
+  showModal("mic-setup-modal");
+}
+
+async function saveMicSetup() {
+  const mics = collectMicSetupAssignment();
+  if (!Object.keys(mics).length) {
+    alert("至少要設定一軌");
+    return;
+  }
+  const go = $("#mic-setup-go");
+  const cancel = $("#mic-setup-cancel");
+  go.disabled = true;
+  cancel.disabled = true;
+  go.textContent = "儲存中…";
+
+  try {
+    const r = await fetch("/api/episode/mics", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mics }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    setModalStatusTitle(
+      "mic-setup-title",
+      "circle-alert",
+      "儲存失敗",
+      "danger",
+    );
+    $("#mic-setup-warn").textContent = `儲存失敗：${e.message}`;
+    $("#mic-setup-warn").hidden = false;
+    go.disabled = false;
+    cancel.disabled = false;
+    go.textContent = "重試";
+    return;
+  }
+
+  // 重載 episode state → state.mics 才有值 → 接著開分軌轉錄 modal
+  await loadEpisodeState();
+  renderTopbar();
+  renderCards();
+  hideModal("mic-setup-modal");
+  openPerMicTranscribe();
+}
+
+// === 分軌轉錄流程（episode.yaml.mics 有設時走這條） ===
+// 流程：點轉字幕 → 開 modal 列 mics → 預設只勾「未轉過」的軌
+//   → 按開始 → POST /api/transcribe/per-mic {speakers}
+//   → 切到 progress 視圖 → 每軌 phase pill 即時更新（queued/vad/gemini/done/skipped/error）
+//   → 全部 done 後跑 srt-merge → 完成 → 重載 episode 狀態
+const PER_MIC_PHASE_LABELS = {
+  queued: "等待中",
+  vad: "VAD 切軌",
+  gemini: "Gemini 轉錄",
+  done: "完成",
+  skipped: "已跳過",
+  error: "失敗",
+};
+const PER_MIC_TOP_PHASE_LABELS = {
+  "per-mic-transcribe": "分軌轉錄中",
+  "srt-merge": "合併字幕",
+};
+let _perMicPollTimer = null;
+
+function stopPerMicPoll() {
+  if (_perMicPollTimer) {
+    clearInterval(_perMicPollTimer);
+    _perMicPollTimer = null;
+  }
+}
+
+function renderPerMicList() {
+  const list = $("#per-mic-list");
+  const mics = state.mics || {};
+  const existing = new Set(state.mic_srt_existing || []);
+  const keys = Object.keys(mics).sort();
+  if (!keys.length) {
+    list.innerHTML = `<div class="modal-body-text">episode.yaml 沒有 mics 設定。</div>`;
+    return;
+  }
+  list.innerHTML = "";
+  for (const sp of keys) {
+    const hasSrt = existing.has(sp);
+    const path = mics[sp] || "";
+    const row = document.createElement("label");
+    row.className = "per-mic-row";
+    row.innerHTML = `
+      <input type="checkbox" class="per-mic-check" data-speaker="${sp}" ${hasSrt ? "" : "checked"}>
+      <span class="per-mic-row-key">${sp}</span>
+      <span class="per-mic-row-path">${path}</span>
+      <span class="per-mic-row-status${hasSrt ? " existing" : ""}">${hasSrt ? "已轉過" : "未轉"}</span>
+    `;
+    list.appendChild(row);
+  }
+  list.querySelectorAll(".per-mic-check").forEach((cb) => {
+    cb.addEventListener("change", updatePerMicOverwriteHint);
+  });
+  updatePerMicOverwriteHint();
+}
+
+function updatePerMicOverwriteHint() {
+  const existing = new Set(state.mic_srt_existing || []);
+  const checked = Array.from(
+    document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
+  ).map((cb) => cb.dataset.speaker);
+  const overwriting = checked.some((sp) => existing.has(sp));
+  $("#per-mic-overwrite-hint").hidden = !overwriting;
+}
+
+function openPerMicTranscribe() {
+  // reset 視圖
+  setModalStatusTitle("per-mic-title", null, "分軌轉錄", null);
+  $("#per-mic-pick").hidden = false;
+  $("#per-mic-progress").hidden = true;
+  $("#per-mic-progress-grid").innerHTML = "";
+  $("#per-mic-fill").style.width = "0%";
+  $("#per-mic-percent").textContent = "0%";
+  $("#per-mic-phase-label").textContent = "啟動中…";
+
+  renderPerMicList();
+
+  const go = $("#per-mic-go");
+  const cancel = $("#per-mic-cancel");
+  go.hidden = false;
+  go.disabled = false;
+  go.textContent = "開始";
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+  go.onclick = runPerMicTranscribe;
+  cancel.onclick = () => hideModal("per-mic-modal");
+
+  $("#per-mic-select-all").onclick = () => {
+    document
+      .querySelectorAll("#per-mic-list .per-mic-check")
+      .forEach((cb) => (cb.checked = true));
+    updatePerMicOverwriteHint();
+  };
+  $("#per-mic-select-unconverted").onclick = () => {
+    const existing = new Set(state.mic_srt_existing || []);
+    document.querySelectorAll("#per-mic-list .per-mic-check").forEach((cb) => {
+      cb.checked = !existing.has(cb.dataset.speaker);
+    });
+    updatePerMicOverwriteHint();
+  };
+
+  showModal("per-mic-modal");
+}
+
+function renderPerMicProgressGrid(speakers) {
+  const grid = $("#per-mic-progress-grid");
+  grid.innerHTML = "";
+  for (const sp of speakers) {
+    const row = document.createElement("div");
+    row.className = "per-mic-progress-row";
+    row.dataset.speaker = sp;
+    row.innerHTML = `
+      <span class="mic-tag">${sp}</span>
+      <span class="mic-phase">等待中</span>
+    `;
+    grid.appendChild(row);
+  }
+}
+
+function updatePerMicProgressGrid(micsProgress) {
+  if (!micsProgress) return;
+  for (const [sp, phase] of Object.entries(micsProgress)) {
+    const row = document.querySelector(
+      `#per-mic-progress-grid .per-mic-progress-row[data-speaker="${sp}"]`,
+    );
+    if (!row) continue;
+    row.classList.remove("active", "done", "error");
+    if (phase === "done" || phase === "skipped") {
+      row.classList.add("done");
+    } else if (phase === "error") {
+      row.classList.add("error");
+    } else if (phase === "vad" || phase === "gemini") {
+      row.classList.add("active");
+    }
+    const ph = row.querySelector(".mic-phase");
+    if (ph) ph.textContent = PER_MIC_PHASE_LABELS[phase] || phase;
+  }
+}
+
+async function runPerMicTranscribe() {
+  const speakers = Array.from(
+    document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
+  ).map((cb) => cb.dataset.speaker);
+  if (!speakers.length) {
+    alert("至少要選一軌");
+    return;
+  }
+
+  $("#per-mic-pick").hidden = true;
+  $("#per-mic-progress").hidden = false;
+  renderPerMicProgressGrid(speakers);
+  $("#per-mic-fill").style.width = "0%";
+  $("#per-mic-percent").textContent = "0%";
+  $("#per-mic-phase-label").textContent = "啟動中…";
+
+  const go = $("#per-mic-go");
+  const cancel = $("#per-mic-cancel");
+  go.disabled = true;
+  cancel.disabled = true;
+
+  try {
+    const r = await fetch("/api/transcribe/per-mic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speakers }),
+    });
+    if (!r.ok && r.status !== 202) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    finishPerMic({ ok: false, error: e.message });
+    return;
+  }
+
+  _perMicPollTimer = setInterval(pollPerMic, 500);
+}
+
+async function pollPerMic() {
+  let s;
+  try {
+    const r = await fetch("/api/transcribe/status");
+    s = await r.json();
+  } catch (e) {
+    return;
+  }
+
+  if (s.state === "idle") return;
+
+  if (s.state === "running") {
+    updatePerMicProgressGrid(s.mics_progress || {});
+    const pct = Math.max(0, Math.min(100, s.percent || 0));
+    const phase = s.phase || "per-mic-transcribe";
+    // 整體進度條：分軌階段 0-90%，srt-merge 階段 90-100%
+    let overall;
+    if (phase === "srt-merge") {
+      overall = 90 + pct * 0.1;
+    } else {
+      overall = pct * 0.9;
+    }
+    $("#per-mic-fill").style.width = `${overall.toFixed(1)}%`;
+    $("#per-mic-percent").textContent = `${overall.toFixed(0)}%`;
+    $("#per-mic-phase-label").textContent =
+      PER_MIC_TOP_PHASE_LABELS[phase] || phase;
+    return;
+  }
+
+  if (s.state === "done") {
+    stopPerMicPoll();
+    updatePerMicProgressGrid(s.mics_progress || {});
+    finishPerMic({ ok: true, out_srt: s.out_srt });
+    return;
+  }
+
+  if (s.state === "error") {
+    stopPerMicPoll();
+    updatePerMicProgressGrid(s.mics_progress || {});
+    finishPerMic({ ok: false, error: s.error || "未知錯誤" });
+    return;
+  }
+}
+
+async function finishPerMic({ ok, out_srt, error }) {
+  const cancel = $("#per-mic-cancel");
+  const go = $("#per-mic-go");
+  if (ok) {
+    $("#per-mic-fill").style.width = "100%";
+    $("#per-mic-percent").textContent = "100%";
+    $("#per-mic-phase-label").textContent = "完成";
+    setModalStatusTitle("per-mic-title", "circle-check", "完成", "success");
+    $("#per-mic-progress-msg").innerHTML =
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入。`;
+
+    await loadEpisodeState();
+    renderTopbar();
+    renderCards();
+    renderCaption();
+    renderTypo();
+  } else {
+    setModalStatusTitle("per-mic-title", "circle-alert", "失敗", "danger");
+    $("#per-mic-progress-msg").innerHTML =
+      `<div class="modal-error-text">${error}</div>`;
+  }
+  go.hidden = true;
+  cancel.disabled = false;
+  cancel.textContent = ok ? "繼續編輯" : "關閉";
+  cancel.onclick = () => {
+    hideModal("per-mic-modal");
+    cancel.textContent = "取消";
+    go.hidden = false;
   };
 }
 
@@ -3411,7 +4066,9 @@ $("#settings-form").addEventListener("submit", async (e) => {
     const data = await r.json();
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    state.sttProvider = data.provider === "openai" ? "openai" : "gemini";
+    state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
+      ? data.provider
+      : "gemini";
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {
@@ -3862,6 +4519,7 @@ function _buildCamModalSavePayload() {
       text,
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    speakers_mapping: Object.fromEntries(state.speakersMapping),
     splits: Object.fromEntries(state.cardSplits),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
@@ -4131,6 +4789,7 @@ $("#cam-save").addEventListener("click", async () => {
       text,
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
+    speakers_mapping: Object.fromEntries(state.speakersMapping),
     splits: Object.fromEntries(state.cardSplits),
     cam_a_path: camAPath,
     cam_b_path: camBPath,

@@ -530,6 +530,36 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
         holder["ep"] = Episode(ep.dir)
         return {"ok": True}
 
+    @app.post("/api/episode/mics")
+    def post_episode_mics(payload: dict):
+        """寫 mics 設定到 episode.yaml。前端在開分軌轉錄前發現 yaml 沒設 mics 時呼叫。
+
+        payload: {"mics": {"a": "01_母帶/Track1.wav", "b": "...", "c": "..."}}
+        - speaker key 必須是 a/b/c
+        - path 是相對 episode 根的相對路徑（用既有 audio_candidates 同款格式）
+        - 檔案必須存在，且要落在 episode 資料夾內（防 ../ 逸出）
+        """
+        ep = _require_ep()
+        mics = payload.get("mics") or {}
+        if not isinstance(mics, dict) or not mics:
+            raise HTTPException(status_code=400, detail="mics 必須是 {speaker: path} 物件")
+        allowed = {"a", "b", "c"}
+        for sp, path in mics.items():
+            if sp not in allowed:
+                raise HTTPException(status_code=400, detail=f"speaker {sp!r} 不在允許範圍 {sorted(allowed)}")
+            if not isinstance(path, str) or not path.strip():
+                raise HTTPException(status_code=400, detail=f"{sp} 的路徑不能空")
+            target = (ep.dir / path).resolve()
+            try:
+                target.relative_to(ep.dir.resolve())
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"{sp} 路徑必須在集資料夾內")
+            if not target.is_file():
+                raise HTTPException(status_code=404, detail=f"{sp} 找不到檔案：{path}")
+        episode_io.save_mics_config(ep, mics)
+        holder["ep"] = Episode(ep.dir)
+        return {"ok": True, "mics": dict(sorted(mics.items()))}
+
     @app.post("/api/shutdown")
     def cancel():
         threading.Timer(0.3, shutdown).start()
@@ -674,9 +704,15 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
             "gemini": "gemini_api_key",
             "openai": "openai_api_key",
         }
-        label_map = {"xai": "xAI", "gemini": "Gemini", "openai": "OpenAI"}
-        api_key = cfg.get(key_map[provider])
-        if not api_key:
+        label_map = {
+            "xai": "xAI",
+            "gemini": "Gemini",
+            "openai": "OpenAI",
+            "whisper_mlx": "本地 Whisper",
+        }
+        # 本地 provider 不需 key；雲端 provider 缺 key 直接擋
+        api_key = cfg.get(key_map.get(provider, ""), "") or ""
+        if provider in key_map and not api_key:
             raise HTTPException(
                 status_code=400,
                 detail=f"尚未設定 {label_map[provider]} API key",
@@ -703,6 +739,37 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
 
         return JSONResponse(
             {"ok": True, "src_path": info["src_path"]},
+            status_code=202,
+        )
+
+    @app.post("/api/transcribe/per-mic")
+    def post_transcribe_per_mic(payload: dict):
+        """分軌轉錄：背景跑 N 路 Gemini 同步 → srt_merge → _final_v2.srt + speakers.json。
+
+        payload: {"speakers": ["a", "b", "c"]} — 必填，要跑的軌子集。
+        """
+        ep = _require_ep()
+        speakers = payload.get("speakers") or []
+        if not isinstance(speakers, list) or not all(isinstance(s, str) for s in speakers):
+            raise HTTPException(status_code=400, detail="speakers 必須是字串陣列")
+        if not speakers:
+            raise HTTPException(status_code=400, detail="speakers 不能是空清單")
+
+        cfg = _load_config()
+        api_key = cfg.get("gemini_api_key")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="尚未設定 Gemini API key")
+        # transcribe_per_mic 直接讀 env 變數
+        os.environ["GEMINI_API_KEY"] = api_key
+
+        try:
+            info = transcribe_job.start_per_mic_job(ep, speakers=speakers, force=True)
+        except RuntimeError as e:
+            # 已有 job 在跑 / 不認得的 speaker / mics 沒設
+            raise HTTPException(status_code=409, detail=str(e))
+
+        return JSONResponse(
+            {"ok": True, "speakers": info["speakers"]},
             status_code=202,
         )
 

@@ -301,11 +301,227 @@ def _build_whisper_prompt(
     return "、".join(uniq)
 
 
+def run_whisper_mlx_pipeline(
+    *,
+    api_key: str,  # 介面相容用，本地 provider 不需要 key
+    src_audio: Path,
+    out_srt: Path,
+    work_dir: Path,
+    progress=None,
+    typo_entries: list[dict] | None = None,
+    glossary: list[dict] | None = None,
+) -> Path:
+    """本地 mlx_whisper（Apple Silicon）+ VAD trim-and-stitch pipeline。
+
+    不打雲端 API、不需要 key。流程：
+    1. ffmpeg 解碼成 16kHz mono PCM
+    2. VAD 找 speech segments（避開 30s window 級 drift）
+    3. 每段獨立餵 mlx-community/whisper-large-v3-turbo
+    4. segment-local 時間軸還原回全局時間軸
+    5. 過濾 char-loop / phrase / 非中文幻覺 + s2twp 簡轉繁 + glossary 兜底
+
+    glossary canonical 串成 initial_prompt 給 Whisper 做 vocabulary biasing。
+    typo_entries 走文字後處理（_convert_word）。
+    """
+    del api_key  # 介面相容
+    if not shutil.which("ffmpeg"):
+        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+    try:
+        import numpy as np
+    except ImportError as e:
+        raise TranscribeError("缺少 numpy；請跑 `pip3 install --user numpy`") from e
+    try:
+        import mlx_whisper  # noqa: F401
+    except ImportError as e:
+        raise TranscribeError(
+            "缺少 mlx-whisper；請跑 `pip3 install --user mlx-whisper`"
+        ) from e
+    try:
+        from podcast_toolkit.vad_gate import (
+            INT16_MAX,
+            VAD_SAMPLE_RATE,
+            _read_pcm_mono,
+            apply_min_duration,
+            apply_pad,
+            detect_speech_frames,
+        )
+    except ImportError as e:
+        raise TranscribeError(f"載入 vad_gate 失敗：{e}") from e
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out_srt.parent.mkdir(parents=True, exist_ok=True)
+
+    # 1. 讀 PCM（_read_pcm_mono 內部用 ffmpeg 解碼到 16kHz mono int16）
+    if progress:
+        progress("decode", 0.0)
+    samples = _read_pcm_mono(src_audio, VAD_SAMPLE_RATE)
+    if progress:
+        progress("decode", 100.0)
+
+    # 2. VAD 找 speech segments + 切過長段（>25s 強制切半，避開 Whisper 30s window）
+    if progress:
+        progress("vad", 0.0)
+    frame_ms = 20
+    frame_samples = int(VAD_SAMPLE_RATE * frame_ms / 1000)
+    threshold = 0.02
+    min_speech_sec = 0.3
+    pad_sec = 0.15
+    max_segment_sec = 25.0
+
+    speech_mask = detect_speech_frames(
+        samples, VAD_SAMPLE_RATE, frame_ms=frame_ms, threshold=threshold
+    )
+    speech_mask = apply_min_duration(
+        speech_mask,
+        frame_samples=frame_samples,
+        sample_rate=VAD_SAMPLE_RATE,
+        min_speech_sec=min_speech_sec,
+    )
+    speech_mask = apply_pad(
+        speech_mask,
+        frame_samples=frame_samples,
+        sample_rate=VAD_SAMPLE_RATE,
+        pad_sec=pad_sec,
+    )
+    padded = np.concatenate([[False], speech_mask, [False]])
+    diff = np.diff(padded.astype(np.int8))
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    segs: list[tuple[float, float]] = []
+    for s, e in zip(starts, ends):
+        s_sec = float(s * frame_samples / VAD_SAMPLE_RATE)
+        e_sec = float(e * frame_samples / VAD_SAMPLE_RATE)
+        if e_sec - s_sec <= max_segment_sec:
+            segs.append((s_sec, e_sec))
+        else:
+            cur = s_sec
+            while cur < e_sec:
+                segs.append((cur, min(cur + max_segment_sec, e_sec)))
+                cur += max_segment_sec
+    if progress:
+        progress("vad", 100.0)
+    if not segs:
+        raise TranscribeError("VAD 找不到任何講話段，無法轉字幕")
+
+    # 3. 逐段 mlx_whisper
+    import mlx_whisper
+
+    model_path = "mlx-community/whisper-large-v3-turbo"
+    initial_prompt_parts = ["以下是繁體中文 podcast 對話"]
+    glossary_hint = _build_whisper_prompt(typo_entries, glossary)
+    if glossary_hint:
+        initial_prompt_parts.append(glossary_hint)
+    initial_prompt = "、".join(initial_prompt_parts)
+
+    if progress:
+        progress("stt", 0.0)
+    # warm-up：避免第一段卡很久
+    warmup = np.zeros(int(VAD_SAMPLE_RATE * 0.5), dtype=np.float32)
+    try:
+        _ = mlx_whisper.transcribe(
+            warmup, path_or_hf_repo=model_path, language="zh", verbose=None
+        )
+    except Exception as e:
+        raise TranscribeError(f"載入 mlx_whisper 模型失敗：{e}") from e
+
+    raw_cues: list[dict] = []
+    for i, (s_sec, e_sec) in enumerate(segs):
+        s_idx = int(s_sec * VAD_SAMPLE_RATE)
+        e_idx = int(e_sec * VAD_SAMPLE_RATE)
+        seg_pcm = samples[s_idx:e_idx].astype(np.float32) / INT16_MAX
+        if len(seg_pcm) < int(VAD_SAMPLE_RATE * 0.2):
+            continue
+        try:
+            result = mlx_whisper.transcribe(
+                seg_pcm,
+                path_or_hf_repo=model_path,
+                language="zh",
+                word_timestamps=False,
+                condition_on_previous_text=False,
+                no_speech_threshold=0.6,
+                initial_prompt=initial_prompt,
+                verbose=None,
+            )
+        except Exception:
+            continue
+        for seg in result.get("segments", []):
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            g_start = s_sec + float(seg["start"])
+            g_end = min(s_sec + float(seg["end"]), e_sec)
+            if g_end <= g_start:
+                continue
+            raw_cues.append({"text": text, "start": g_start, "end": g_end})
+        if progress and (i + 1) % 5 == 0:
+            progress("stt", (i + 1) / len(segs) * 100)
+    if progress:
+        progress("stt", 100.0)
+
+    if not raw_cues:
+        raise TranscribeError("mlx_whisper 沒回傳任何字幕")
+
+    # 4. s2twp + 套錯字字典 + 過濾幻覺
+    words = [_convert_word(c, typo_entries=typo_entries) for c in raw_cues]
+    words = _filter_whisper_hallucinations(words)
+    if not words:
+        raise TranscribeError("過濾完所有幻覺後沒剩字幕；可能 VAD threshold 太鬆")
+    words = _dedup_overlapping_times(words)
+    cards = _words_to_cards(words)
+    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    return out_srt
+
+
+# Whisper 常見訓練資料污染（中國平台結語、字幕組署名）；命中即丟。
+_WHISPER_HALLUCINATION_PHRASES = (
+    "請不吝", "不吝點贊", "訂閱 轉發", "明鏡與點點", "明鏡欄目",
+    "请不吝", "字幕由", "Amara.org",
+    "詞曲 李宗盛", "詞曲 曲 李宗盛", "李宗盛詞曲",
+    "字幕志愿者",
+)
+# CJK 統一表意文字 block；不含 CJK 又夾雜 Cyrillic = 100% 噪訊幻覺。
+import re as _re  # noqa: E402
+
+_CJK_RE = _re.compile(r"[一-鿿]")
+_CYRILLIC_RE = _re.compile(r"[А-я]")
+
+
+def _is_char_loop(text: str, min_len: int = 30, min_unique_ratio: float = 0.15) -> bool:
+    s = _re.sub(r"\s+", "", text)
+    return len(s) >= min_len and len(set(s)) / len(s) < min_unique_ratio
+
+
+def _filter_whisper_hallucinations(words: list[dict]) -> list[dict]:
+    """過濾 char-loop / 中國平台 phrase / 純非中文 / Cyrillic 殘留 + 同字 5s 內重複。"""
+    out: list[dict] = []
+    seen_last: dict[str, float] = {}
+    for w in words:
+        text = (w.get("text") or "").strip()
+        if not text:
+            continue
+        if _is_char_loop(text):
+            continue
+        if any(p in text for p in _WHISPER_HALLUCINATION_PHRASES):
+            continue
+        if _CJK_RE.search(text) is None:
+            continue
+        if _CYRILLIC_RE.search(text) is not None:
+            continue
+        start = float(w.get("start", 0.0))
+        prev = seen_last.get(text)
+        if prev is not None and start - prev < 5.0:
+            continue
+        seen_last[text] = start
+        out.append({**w, "text": text, "start": start})
+    return out
+
+
 # 供應商分流表：UI 切換靠這個（順序也是 UI 顯示順序）
 PROVIDERS: dict[str, callable] = {
     "xai": run_grok_pipeline,
     "gemini": run_gemini_pipeline,
     "openai": run_openai_pipeline,
+    "whisper_mlx": run_whisper_mlx_pipeline,
 }
 
 

@@ -71,6 +71,26 @@ class Episode:
         """雙鏡頭 sidecar：字幕卡 idx → "a"|"b" 對應表。"""
         return self.subdir("output") / f"{self.name}_final_v2.cameras.json"
 
+    def mic_paths(self) -> dict:
+        """分軌 mic：speaker key (a/b/c/...) → 絕對路徑 dict。
+        沒設 mics → 回空 dict，呼叫端 fallback 走混音軌路線。
+        key 對齊 cameras key（mic a ↔ cam a），方便下游同步切鏡。
+        """
+        mics = self.cfg.get("mics") or {}
+        return {k: self.resolve_episode_path(v) for k, v in mics.items() if v}
+
+    def output_v2_speakers_json(self) -> Path:
+        """分軌 speaker sidecar：字幕卡 idx → speaker key 對應表。"""
+        return self.subdir("output") / f"{self.name}_final_v2.speakers.json"
+
+    def per_mic_gated_wav(self, speaker: str) -> Path:
+        """VAD gate 後的單路 mic wav，落在 04_工作檔/，給 Gemini 上傳用。"""
+        return self.subdir("work") / f"{self.name}_micgate_{speaker}.wav"
+
+    def per_mic_srt(self, speaker: str) -> Path:
+        """單路 mic Gemini 轉錄結果，落在 04_工作檔/，待 srt_merge 合併。"""
+        return self.subdir("work") / f"{self.name}_mic_{speaker}.srt"
+
     def output_yt_video(self) -> Path:
         return self.subdir("output") / f"{self.name}_YT完整版.mp4"
 

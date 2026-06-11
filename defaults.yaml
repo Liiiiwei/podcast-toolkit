@@ -21,13 +21,22 @@ suspicious_pause:
 
 common_fixes: []
 
+# 分軌轉錄設定（per-mic transcribe 用）
+# 每路 mic 先過 VAD 閘掉串音（RMS < threshold 視為靜音餵給 Gemini），
+# Gemini 就不會幫你「轉錄別人講的話」。三路 SRT merge 時自帶 speaker label。
+per_mic:
+  vad_threshold: 0.02         # RMS 門檻；< threshold 的 frame 壓成靜音
+  vad_min_speech_sec: 0.3     # 連續說話最短時長（過濾爆音 / 咳嗽 / 桌面碰撞）
+  vad_pad_sec: 0.15           # 說話段前後保留 pad，避免切掉氣口
+
 # Gemini 轉字幕設定（podcast subtitle 用）
 gemini:
   model: "gemini-2.5-flash"
   # 字幕格式規則（會注入 prompt）
   max_chars_per_line: 17
+  min_chars_per_card: 8          # 切句下限；除純反應詞外，1 ~ N-1 字的短卡要求 Gemini 合併
   max_lines_per_card: 1
-  punctuation: "half_width"      # half_width | full_width
+  punctuation: "none"            # none | half_width | full_width；none 同時開啟後處理移除殘留標點
   allow_ellipsis: false
   # 自訂規則（list of str，每行一條，會逐條附在 prompt 末段）
   extra_rules: []

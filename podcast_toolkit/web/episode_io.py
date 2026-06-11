@@ -186,6 +186,15 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "audio": ep.cfg.get("audio"),
         # 字幕卡 → 鏡頭對應表（只含 explicit 標過的；前端用 carry-forward 補其他卡）
         "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
+        # 分軌 mic 設定（前端拿來決定要不要渲染 speaker tag / ruler；空 dict = 單軌集）
+        "mics": dict(ep.cfg.get("mics") or {}),
+        # 已存在的分軌 SRT（04_工作檔/{name}_mic_{speaker}.srt）— UI 勾選 modal 用來顯示「已轉/未轉」
+        "mic_srt_existing": sorted(
+            sp for sp in (ep.cfg.get("mics") or {})
+            if ep.per_mic_srt(sp).exists()
+        ),
+        # 字幕卡 → speaker 對應表（sidecar 由 srt_merge 產出；shape 同 cameras_mapping）
+        "speakers_mapping": cameras_io.load(ep.output_v2_speakers_json()),
         # T23a-followup：cam B 候選清單（前端下拉用，避免使用者手改 yaml）
         "cam_b_candidates": _list_cam_b_candidates(ep),
         # 外接音檔候選（.wav/.mp3/.m4a/...，掃 01_母帶 + 02_素材）
@@ -213,6 +222,21 @@ def _parse_composite_id(key: Any) -> tuple[int, int]:
         oid_s, part_s = s.split(":", 1)
         return int(oid_s), int(part_s)
     return int(s), 0
+
+
+def save_mics_config(ep: Episode, mics: dict[str, str]) -> None:
+    """把 mics 設定（speaker → path）寫進 episode.yaml 的 mics: 區塊。
+
+    只動 mics 欄位，其他欄位保持原樣（safe_load → 改 → safe_dump）。
+    不檢查路徑是否存在 — 那是呼叫端的責任（api 層先檢過了）。
+    """
+    yaml_path = ep.dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    data["mics"] = {sp: mics[sp] for sp in sorted(mics)}
+    yaml_path.write_text(
+        yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def save_state(ep: Episode, payload: dict[str, Any]) -> None:
@@ -418,3 +442,20 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         if nid is not None:
             new_cameras_mapping[nid] = str(v)
     cameras_io.save(ep.output_v2_cameras_json(), new_cameras_mapping)
+
+    # 分軌 speaker sidecar：使用者在前端手動改 speaker tag 後一併存回。
+    # valid speaker keys 由 episode.yaml.mics 決定（不是寫死 a/b），保留三人以上集的擴充空間。
+    valid_speakers = set((ep.cfg.get("mics") or {}).keys())
+    new_speakers_mapping: dict[int, str] = {}
+    for k, v in (payload.get("speakers_mapping") or {}).items():
+        if valid_speakers and v not in valid_speakers:
+            continue
+        if not valid_speakers and not isinstance(v, str):
+            continue
+        try:
+            nid = _translate(k)
+        except (TypeError, ValueError):
+            continue
+        if nid is not None:
+            new_speakers_mapping[nid] = str(v)
+    cameras_io.save(ep.output_v2_speakers_json(), new_speakers_mapping)
