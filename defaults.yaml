@@ -99,11 +99,17 @@ assets:
   logo: "assets/logo.png"
 
 encode:
-  video_codec: "libx264"
+  # h264_videotoolbox = Apple Silicon 硬體編碼。實測（M3、37 分雙機集、燒字幕）：
+  # libx264 medium 57 分 vs videotoolbox 10.7 分（5.4×），SSIM 0.995 肉眼無差。
+  # vt 的碼率控制較鬆（33M 目標實得 ~26 Mbps），仍遠超 YouTube 1080p 建議值。
+  # 換非 Apple 機器跑時改回 "libx264"（preset 只對 libx264 生效，vt 會自動略過）。
+  video_codec: "h264_videotoolbox"
+  # hwaccel: 影片輸入用硬體解碼（兩路 4K 母帶收益最大）；libx264 fallback 時可拿掉
+  hwaccel: "videotoolbox"
   # VBR 比 CRF 18 給的 ~3.75 Mbps 高一個量級；對齊 DJI 母帶常見 32-35 Mbps
   # 不走 CRF 是因為 CRF 對對話畫面（動態少）會省到剩 3-4 Mbps，肉眼比母帶軟
   # maxrate / bufsize 給 1.2× / 1.8× 的緩衝，讓快速場景可短暫衝高不爆炸
-  # preset slow：同碼率畫質保留更好，編碼時間約 medium 的 1.8-2×
+  # preset slow：同碼率畫質保留更好，編碼時間約 medium 的 1.8-2×（僅 libx264 用）
   video_bitrate: "33M"
   video_maxrate: "40M"
   video_bufsize: "60M"

@@ -192,6 +192,26 @@ def _build_audio_align_filter(sync_offset: float) -> str:
     return f"adelay=delays={delay_ms}:all=1,"
 
 
+def _video_encode_args(enc: dict) -> list[str]:
+    """組視訊編碼參數。-preset 是 libx264 專屬；videotoolbox 硬體編碼器帶了會直接報錯。"""
+    args = [
+        "-c:v", enc["video_codec"],
+        "-b:v", enc["video_bitrate"],
+        "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
+    ]
+    if "videotoolbox" not in enc["video_codec"]:
+        args += ["-preset", enc["preset"]]
+    args += ["-pix_fmt", enc["pix_fmt"]]
+    return args
+
+
+def _hwaccel_args(enc: dict) -> list[str]:
+    """影片輸入前的硬體解碼參數（-hwaccel 只作用於緊接的下一個 -i）。
+    不帶 -hwaccel_output_format → 解碼後自動下載回系統記憶體，與 CPU 濾鏡（subtitles/crop）相容。"""
+    hw = enc.get("hwaccel")
+    return ["-hwaccel", str(hw)] if hw else []
+
+
 def build_filter_complex_yt(
     cfg: dict,
     main_dur: float,
@@ -475,21 +495,29 @@ def build_filter_complex_yt_multicam(
         a_idx_main = 1
         align_a = ""
 
+    # 只為實際出現在 segment plan 的鏡頭加影片 prep chain；
+    # 若某鏡頭完全沒有 segment（如全程都是另一側），就不產生 [m_x_v]，
+    # 避免 format filter 輸出懸空 → ffmpeg EINVAL。
+    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
+    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
+
     parts: list[str] = []
     # Cam A：不需 PTS 位移（主時間軸就是它的時間軸）
-    parts.append(
-        _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-    )
+    if n_a_v_segs > 0:
+        parts.append(
+            _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
+        )
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
     # Cam B：先把 PTS 移到主時間軸，subtitles 之後讀到的時間才會對
-    parts.append(
-        _multicam_cam_prep(
-            2, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-            setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+    if n_b_v_segs > 0:
+        parts.append(
+            _multicam_cam_prep(
+                2, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
+                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+            )
         )
-    )
 
     seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
     parts.extend(seg_parts)
@@ -568,19 +596,24 @@ def build_filter_complex_reels_multicam(
         a_idx_main = 0
         align_a = ""
 
+    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
+    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
+
     parts: list[str] = []
-    parts.append(
-        _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-    )
+    if n_a_v_segs > 0:
+        parts.append(
+            _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
+        )
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
-    parts.append(
-        _multicam_cam_prep(
-            1, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-            setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+    if n_b_v_segs > 0:
+        parts.append(
+            _multicam_cam_prep(
+                1, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
+                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
+            )
         )
-    )
 
     seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
     parts.extend(seg_parts)
@@ -822,11 +855,12 @@ def prepare_assembly(
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
             )
+            hw = _hwaccel_args(enc)
             cmd = [
                 "ffmpeg", "-y",
-                "-i", str(intro),
-                "-i", main_rel,
-                "-i", cam_b_rel_str,
+                *hw, "-i", str(intro),
+                *hw, "-i", main_rel,
+                *hw, "-i", cam_b_rel_str,
                 "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
                 "-i", str(outro_audio),
             ]
@@ -837,10 +871,7 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"],
-                "-b:v", enc["video_bitrate"],
-                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
-                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
                 "-movflags", "+faststart",
@@ -858,10 +889,11 @@ def prepare_assembly(
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
             )
+            hw = _hwaccel_args(enc)
             cmd = [
                 "ffmpeg", "-y",
-                "-i", str(intro),
-                "-i", main_rel,
+                *hw, "-i", str(intro),
+                *hw, "-i", main_rel,
                 "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
                 "-i", str(outro_audio),
             ]
@@ -872,10 +904,7 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"],
-                "-b:v", enc["video_bitrate"],
-                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
-                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
                 "-movflags", "+faststart",
@@ -895,10 +924,11 @@ def prepare_assembly(
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
             )
+            hw = _hwaccel_args(enc)
             cmd = [
                 "ffmpeg", "-y",
-                "-i", main_rel,
-                "-i", cam_b_rel_str,
+                *hw, "-i", main_rel,
+                *hw, "-i", cam_b_rel_str,
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
@@ -907,10 +937,7 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"],
-                "-b:v", enc["video_bitrate"],
-                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
-                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
                 "-movflags", "+faststart",
@@ -928,9 +955,10 @@ def prepare_assembly(
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
             )
+            hw = _hwaccel_args(enc)
             cmd = [
                 "ffmpeg", "-y",
-                "-i", main_rel,
+                *hw, "-i", main_rel,
             ]
             if audio_rel_str:
                 cmd += ["-i", audio_rel_str]
@@ -939,10 +967,7 @@ def prepare_assembly(
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
-                "-c:v", enc["video_codec"],
-                "-b:v", enc["video_bitrate"],
-                "-maxrate", enc["video_maxrate"], "-bufsize", enc["video_bufsize"],
-                "-preset", enc["preset"], "-pix_fmt", enc["pix_fmt"],
+                *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
                 "-movflags", "+faststart",

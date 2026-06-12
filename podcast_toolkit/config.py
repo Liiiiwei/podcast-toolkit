@@ -108,7 +108,8 @@ def merge(defaults: dict, episode: dict) -> dict:
         },
         "gemini": {**(defaults.get("gemini") or {}), **(episode.get("gemini") or {})},
         "assets": dict(defaults["assets"]),
-        "encode": dict(defaults["encode"]),
+        # encode 可被 episode.yaml 局部覆寫（例：趕時間時 preset: medium 加速）
+        "encode": {**defaults["encode"], **(episode.get("encode") or {})},
         # 使用者 fixes 在前（純錯字），glossary 展開的在後（保險絲）
         "fixes": user_fixes + auto_fixes,
         "glossary": glossary,
