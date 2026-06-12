@@ -108,3 +108,43 @@ def test_serialize_splits_with_overrides_on_other_card():
     )
     assert "改過的第一句" in out
     assert "\n2\n" in out and "\n3\n" in out
+
+
+def test_split_does_not_shift_later_cards_times():
+    """使用者的核心擔憂：切卡 2 之後，卡 3/4/5 的時間必須一毫秒都不動，
+    子卡時間必須關在原卡 [start, end] 內、單調且不重疊，整份 SRT 時間全域不回頭。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 5.0, "text": "第一卡"},
+        {"idx": 2, "start": 5.0, "end": 12.0, "text": "這張要被切成三段的長卡內容"},
+        {"idx": 3, "start": 12.0, "end": 18.0, "text": "第三卡"},
+        {"idx": 4, "start": 18.0, "end": 26.0, "text": "第四卡"},
+        {"idx": 5, "start": 26.0, "end": 32.0, "text": "第五卡"},
+    ]
+    text, idx_map = srt_io.serialize_with_map(
+        cards, splits={2: ["這張要被切", "成三段的", "長卡內容"]}
+    )
+    out = srt_io.parse(text)
+    assert len(out) == 7  # 5 - 1 + 3
+
+    # (1) 切卡後面的卡：時間逐位元不變（只有序號重編）
+    by_new = {c["idx"]: c for c in out}
+    assert (by_new[5]["start"], by_new[5]["end"]) == (12.0, 18.0)
+    assert (by_new[6]["start"], by_new[6]["end"]) == (18.0, 26.0)
+    assert (by_new[7]["start"], by_new[7]["end"]) == (26.0, 32.0)
+    # 前面的卡也不動
+    assert (by_new[1]["start"], by_new[1]["end"]) == (0.0, 5.0)
+
+    # (2) 子卡時間關在原卡 [5.0, 12.0] 內、單調、不重疊
+    subs = [by_new[2], by_new[3], by_new[4]]
+    for s in subs:
+        assert 5.0 <= s["start"] <= s["end"] <= 12.0
+    for a, b in zip(subs, subs[1:]):
+        assert a["end"] <= b["start"] + 1e-9
+
+    # (3) 整份 SRT 時間全域單調不回頭
+    for a, b in zip(out, out[1:]):
+        assert a["start"] <= b["start"] + 1e-9
+
+    # (4) idx_map 翻譯正確：新卡 5 對應原卡 3（deletions/鏡頭標記靠這個搬家）
+    assert idx_map[4] == (3, 0)
+    assert idx_map[1] == (2, 0) and idx_map[3] == (2, 2)
