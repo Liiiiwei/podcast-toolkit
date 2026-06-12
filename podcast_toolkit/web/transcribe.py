@@ -140,7 +140,15 @@ def run_gemini_pipeline(
             "缺少 google-genai；請跑 `pip3 install --user google-genai`"
         ) from e
 
+    # 給 post_words 的幻覺 cue 過濾用；ffprobe 失敗就不過濾（None）
+    probed = {"duration": None}
+
     def _gemini_transcribe(compressed: Path) -> list[dict]:
+        try:
+            from podcast_toolkit.assemble import ffprobe_duration
+            probed["duration"] = ffprobe_duration(compressed)
+        except Exception:
+            probed["duration"] = None
         try:
             client = genai.Client(api_key=api_key)
             uploaded = client.files.upload(file=str(compressed))
@@ -161,6 +169,8 @@ def run_gemini_pipeline(
                 # 字幕陣列會被截斷 → json.loads 壞在尾段（症狀：頭看似正常的 JSON）
                 config=genai_types.GenerateContentConfig(
                     response_mime_type="application/json",
+                    # schema 約束 [{start,end,text}]，從源頭消滅格式錯誤
+                    response_schema=_GEMINI_WORDS_SCHEMA,
                     max_output_tokens=65536,
                 ),
             )
@@ -187,11 +197,13 @@ def run_gemini_pipeline(
         words = _unwrap_mod60_times(words)
         # Gemini 也常把一句話拆成多條 entry 但給相同 start/end → 預覽時
         # activeCardAt(t) 永遠只回第一條，後面的卡片不顯示。把同時段平均切分。
-        return _dedup_overlapping_times(words)
+        words = _dedup_overlapping_times(words)
+        # 殘留標點 → 空格 + 幻覺 cue 過濾（對齊 per-mic 的 post_clean_srt 防線）
+        return _clean_gemini_words(words, duration_sec=probed["duration"])
 
     return _run_cloud_stt_pipeline(
         transcribe_fn=_gemini_transcribe,
-        compressed_name=f"_gemini_stt_{src_audio.stem}.mp3",
+        compressed_name=f"_gemini_stt_{_ascii_safe_stem(src_audio.stem)}.mp3",
         empty_msg="Gemini 沒回傳任何字幕",
         src_audio=src_audio,
         out_srt=out_srt,
@@ -200,6 +212,61 @@ def run_gemini_pipeline(
         typo_entries=typo_entries,
         post_words=_gemini_post_words,
     )
+
+
+def _ascii_safe_stem(stem: str) -> str:
+    """壓縮檔名給 Gemini Files API 用時必須 ASCII：
+    google-genai 把 basename 塞進 X-Goog-Upload-File-Name header，httpx header
+    走 ascii encode，CJK 檔名（中文集名）會 UnicodeEncodeError。
+    （per-mic 路徑在 gemini_subtitle 用 symlink 解；這裡檔名是內部產物，直接轉短碼。）
+    """
+    if stem.isascii():
+        return stem
+    import hashlib
+    return hashlib.md5(stem.encode("utf-8")).hexdigest()[:10]
+
+
+def _clean_gemini_words(
+    words: list[dict],
+    duration_sec: float | None = None,
+) -> list[dict]:
+    """單軌 Gemini 的兜底清理（對齊 per-mic 的 post_clean_srt 防線）：
+
+    - 殘留標點 → 半形空格（Gemini 不一定服從 prompt 禁標點；prompt 規則本來就是
+      「逗號處放空格」，這裡只是把漏網標點補成同樣形狀；resegment 會再把空格收掉）
+    - 清掉變成空字串的 word
+    - duration_sec 給定時，過濾 start > 1.05 × duration 的幻覺 cue
+      （實測尾段靜音時 Gemini 會幻覺出數倍音檔長度的字幕）
+    """
+    from podcast_toolkit.gemini_subtitle import _PUNCT_PATTERN
+
+    cutoff = duration_sec * 1.05 if duration_sec else float("inf")
+    out: list[dict] = []
+    for w in words:
+        if float(w.get("start", 0.0)) > cutoff:
+            continue
+        text = _PUNCT_PATTERN.sub(" ", w.get("text") or "")
+        text = _re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        out.append({**w, "text": text})
+    return out
+
+
+# Gemini JSON mode 的結構約束：強制回傳 [{start, end, text}]，
+# 從源頭消滅「回傳不是 JSON / 欄位缺漏」這類解析失敗。
+_GEMINI_WORDS_SCHEMA = {
+    "type": "ARRAY",
+    "items": {
+        "type": "OBJECT",
+        "properties": {
+            "start": {"type": "NUMBER"},
+            "end": {"type": "NUMBER"},
+            "text": {"type": "STRING"},
+        },
+        "required": ["start", "end", "text"],
+    },
+}
 
 
 def run_openai_pipeline(
@@ -705,21 +772,9 @@ def build_gemini_prompt(
     )
 
     if glossary:
-        lines = []
-        for it in glossary:
-            if not isinstance(it, dict):
-                continue
-            canonical = it.get("canonical")
-            if not canonical:
-                continue
-            sounds = it.get("sounds_like") or []
-            note = it.get("note") or ""
-            line = f"- 必須寫成「{canonical}」"
-            if sounds:
-                line += "（聽到類似「" + "」「".join(sounds) + "」也都寫成此正確版）"
-            if note:
-                line += f" — {note}"
-            lines.append(line)
+        from podcast_toolkit.gemini_subtitle import format_glossary_lines
+
+        lines = format_glossary_lines(glossary)
         if lines:
             base += (
                 "\n\n本集專有名詞詞庫（來賓姓名 / 品牌 / 術語，最優先套用）：\n"

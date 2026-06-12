@@ -301,3 +301,37 @@ def test_cloud_pipeline_skeleton_applies_post_words_and_writes_srt(tmp_path, mon
     assert "哈囉" in body
     assert "丟掉我" not in body
     assert ("compress", 0.0) in phases and ("upload", 100.0) in phases
+
+
+# ---------- 單軌 Gemini 兜底清理 ----------
+
+def test_clean_gemini_words_strips_punct_and_hallucination():
+    from podcast_toolkit.web.transcribe import _clean_gemini_words
+
+    words = [
+        {"start": 0.0, "end": 2.0, "text": "大家好，歡迎收聽！"},
+        {"start": 2.0, "end": 4.0, "text": "。。。"},          # 全標點 → 變空 → 丟掉
+        {"start": 100.0, "end": 102.0, "text": "幻覺尾巴"},     # 超過 60s*1.05
+    ]
+    out = _clean_gemini_words(words, duration_sec=60.0)
+    assert len(out) == 1
+    assert out[0]["text"] == "大家好 歡迎收聽"  # 標點→空格、收斂、去頭尾
+
+
+def test_clean_gemini_words_no_duration_keeps_tail():
+    from podcast_toolkit.web.transcribe import _clean_gemini_words
+
+    words = [{"start": 9999.0, "end": 10000.0, "text": "尾巴"}]
+    assert _clean_gemini_words(words, duration_sec=None) == words
+
+
+def test_glossary_lines_shared_between_prompts():
+    """單軌與分軌 prompt 的詞庫條列必須同一份渲染。"""
+    from podcast_toolkit.gemini_subtitle import build_prompt, format_glossary_lines
+    from podcast_toolkit.web.transcribe import build_gemini_prompt
+
+    glossary = [{"canonical": "立崴", "sounds_like": ["立偉"], "note": "主持人"}]
+    line = format_glossary_lines(glossary)[0]
+    assert "必須寫成「立崴」" in line and "立偉" in line
+    assert line in build_gemini_prompt(None, glossary=glossary)
+    assert line in build_prompt({}, glossary)

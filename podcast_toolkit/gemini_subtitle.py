@@ -31,13 +31,16 @@ _PUNCT_PATTERN = re.compile(
 )
 
 
-def _format_glossary_block(items: list) -> str:
-    """把詞庫渲染成 prompt 可讀的條列文字。"""
-    if not items:
-        return "（本集無專有名詞詞庫）"
-    lines = []
-    for it in items:
-        canonical = it["canonical"]
+def format_glossary_lines(items: list) -> list[str]:
+    """把詞庫渲染成 prompt 條列（單軌與分軌 prompt 共用，格式只此一份）。
+    防禦性略過非 dict / 缺 canonical 的條目。"""
+    lines: list[str] = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        canonical = it.get("canonical")
+        if not canonical:
+            continue
         sounds = it.get("sounds_like") or []
         note = it.get("note") or ""
         line = f"- 必須寫成「{canonical}」"
@@ -46,6 +49,14 @@ def _format_glossary_block(items: list) -> str:
         if note:
             line += f" — {note}"
         lines.append(line)
+    return lines
+
+
+def _format_glossary_block(items: list) -> str:
+    """把詞庫渲染成 prompt 可讀的條列文字。"""
+    lines = format_glossary_lines(items)
+    if not lines:
+        return "（本集無專有名詞詞庫）"
     return "\n".join(lines)
 
 

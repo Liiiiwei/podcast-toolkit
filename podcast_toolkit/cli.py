@@ -111,3 +111,7 @@ def main():
     except FileNotFoundError as e:
         print(f"✗ 檔案缺失：{e}", file=sys.stderr)
         sys.exit(3)
+
+
+if __name__ == "__main__":
+    main()
