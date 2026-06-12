@@ -15,6 +15,9 @@ from podcast_toolkit.assemble import prepare_assembly
 from podcast_toolkit.episode import Episode
 
 
+# ffmpeg -progress 正常每秒都有輸出；超過這個秒數沒動靜視為卡死，強制終止
+FFMPEG_STALL_TIMEOUT_S = 120
+
 # 模組級 state，build_app 每次都拿同一個 dict
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {
@@ -126,30 +129,45 @@ def _run_queue(plans: list[dict]) -> None:
                      text=True, bufsize=1)
         _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
 
-        # _pump_progress 內部會 set state=done 或 error
+        # _pump_progress 失敗會 set state=error；成功只更新 percent，
+        # 最終 done 由這裡統一設——否則多 target 間隙會被前端 poll 到假的 done。
         with _LOCK:
-            cur_state = _STATE["state"]
-        if cur_state == "error":
-            return  # 中止後續
-        # 把成功的輸出加進 output_files
-        with _LOCK:
+            if _STATE["state"] == "error":
+                return  # 中止後續
             _STATE["output_files"].append(str(plan["out"]))
-            if i < len(plans) - 1:
-                # 還有下一個 → 維持 running
-                _STATE["state"] = "running"
     # 全部跑完
     _set(state="done", percent=100.0, eta_s=0)
 
 
 def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
                    tmp_out: Path) -> None:
-    """讀 ffmpeg -progress pipe:1，算 percent + ETA；成功 rename，失敗清 tmp。"""
+    """讀 ffmpeg -progress pipe:1，算 percent + ETA；成功 rename，失敗清 tmp。
+
+    watchdog：-progress 太久沒輸出（pipe 卡住/ffmpeg 死鎖）就 kill 掉，
+    讓 stdout 收到 EOF、走正常的失敗路徑，前端才不會永遠 poll 到 running。
+    """
     started = monotonic()
     last_out_time_us = 0
+    heartbeat = [monotonic()]
+    stalled = [False]
+    wd_stop = threading.Event()
+
+    def _watchdog() -> None:
+        while not wd_stop.wait(5.0):
+            if monotonic() - heartbeat[0] > FFMPEG_STALL_TIMEOUT_S:
+                stalled[0] = True
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                return
+
+    threading.Thread(target=_watchdog, daemon=True).start()
 
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
+            heartbeat[0] = monotonic()
             line = line.strip()
             if not line or "=" not in line:
                 continue
@@ -171,6 +189,8 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
                 _set(percent=100.0, eta_s=0)
     except Exception as e:
         _set(error=f"讀取進度失敗：{e}")
+    finally:
+        wd_stop.set()
 
     stderr_tail = ""
     try:
@@ -181,9 +201,9 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
 
     returncode = proc.wait()
     if returncode == 0 and tmp_out.exists():
-        # 成功才覆寫舊輸出
+        # 成功才覆寫舊輸出；最終 state=done 由 _run_queue 統一設
         tmp_out.replace(out_path)
-        _set(state="done", percent=100.0, eta_s=0)
+        _set(percent=100.0, eta_s=0)
     else:
         # 失敗清 tmp，保留舊 out
         try:
@@ -191,8 +211,9 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
                 tmp_out.unlink()
         except OSError:
             pass
-        tail = "\n".join((stderr_tail or "").strip().splitlines()[-5:])
-        _set(
-            state="error",
-            error=f"ffmpeg 結束碼 {returncode}：{tail}" if tail else f"ffmpeg 結束碼 {returncode}",
-        )
+        if stalled[0]:
+            msg = f"ffmpeg 超過 {FFMPEG_STALL_TIMEOUT_S}s 沒有進度輸出，已強制終止（疑似卡死）"
+        else:
+            tail = "\n".join((stderr_tail or "").strip().splitlines()[-5:])
+            msg = f"ffmpeg 結束碼 {returncode}：{tail}" if tail else f"ffmpeg 結束碼 {returncode}"
+        _set(state="error", error=msg)

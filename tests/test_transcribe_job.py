@@ -322,3 +322,67 @@ def test_progress_callback_advances_phase(monkeypatch, tmp_episode_dir):
 
     done = _wait_until_state("done")
     assert done["phase"] == "resegment"
+
+
+# --- watchdog / job 世代 ---
+
+def test_get_status_flips_to_error_when_stalled(monkeypatch, tmp_episode_dir):
+    """running 但超過 STALL_TIMEOUT_S 沒有進度更新 → get_status 翻成 error。"""
+    import threading
+
+    src = tmp_episode_dir / "01_母帶" / "卡死集.mp4"
+    src.write_bytes(b"FAKE")
+
+    release = threading.Event()
+    from podcast_toolkit.web import transcribe as transcribe_mod
+
+    def hung_pipeline(**_):
+        release.wait(timeout=5.0)
+
+    monkeypatch.setattr(transcribe_mod, "run_pipeline", hung_pipeline)
+
+    ep = Episode(tmp_episode_dir)
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/卡死集.mp4", provider="xai", api_key="k"
+    )
+    assert transcribe_job.get_status()["state"] == "running"
+
+    # 把心跳撥回過去，模擬長時間無更新
+    transcribe_job._HEARTBEAT = time.monotonic() - transcribe_job.STALL_TIMEOUT_S - 1
+
+    status = transcribe_job.get_status()
+    assert status["state"] == "error"
+    assert "逾時" in status["error"]
+    release.set()
+
+
+def test_stale_worker_write_is_ignored_after_timeout(monkeypatch, tmp_episode_dir):
+    """被 timeout 廢棄的舊 worker 甦醒後寫 done → 不能污染狀態。"""
+    import threading
+
+    src = tmp_episode_dir / "01_母帶" / "卡死集.mp4"
+    src.write_bytes(b"FAKE")
+
+    release = threading.Event()
+    from podcast_toolkit.web import transcribe as transcribe_mod
+
+    def hung_pipeline(*, out_srt, **_):
+        release.wait(timeout=5.0)
+        out_srt.parent.mkdir(parents=True, exist_ok=True)
+        out_srt.write_text("1\n00:00:00,000 --> 00:00:01,000\nhi\n")
+
+    monkeypatch.setattr(transcribe_mod, "run_pipeline", hung_pipeline)
+    from podcast_toolkit import resegment
+    monkeypatch.setattr(resegment, "run", lambda *a, **k: 0)
+
+    ep = Episode(tmp_episode_dir)
+    transcribe_job.start_job(
+        ep, src_rel="01_母帶/卡死集.mp4", provider="xai", api_key="k"
+    )
+    transcribe_job._HEARTBEAT = time.monotonic() - transcribe_job.STALL_TIMEOUT_S - 1
+    assert transcribe_job.get_status()["state"] == "error"
+
+    # 放行舊 worker → 它跑完想寫 done，但世代已不符
+    release.set()
+    time.sleep(0.3)
+    assert transcribe_job.get_status()["state"] == "error"

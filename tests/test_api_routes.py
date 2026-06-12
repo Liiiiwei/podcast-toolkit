@@ -557,3 +557,27 @@ def test_build_app_with_none_ep_does_not_crash():
     r = client.get("/api/episode")
     assert r.status_code == 409
     assert "尚未選集" in r.json()["detail"]
+
+
+def test_pump_progress_success_does_not_set_done(tmp_path):
+    """成功時 _pump_progress 只更新 percent；最終 done 由 _run_queue 統一設，
+    否則多 target 間隙會被前端 poll 到假的 done。"""
+    from podcast_toolkit.web import assemble_job
+
+    tmp_out = tmp_path / ".final.mp4.tmp"
+    tmp_out.write_bytes(b"fake video bytes")
+    out = tmp_path / "final.mp4"
+
+    class FakeProc:
+        stdout = iter(["progress=end\n"])
+        stderr = type("S", (), {"read": lambda self: ""})()
+        def wait(self): return 0
+
+    assemble_job._STATE["state"] = "running"
+    try:
+        assemble_job._pump_progress(FakeProc(), total_dur=10.0,
+                                    out_path=out, tmp_out=tmp_out)
+        assert assemble_job.get_status()["state"] == "running"
+        assert out.exists()
+    finally:
+        assemble_job._reset()
