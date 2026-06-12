@@ -176,6 +176,24 @@ function rerenderEditState() {
   if (typeof refreshCamBOverlay === "function") refreshCamBOverlay();
 }
 
+// 切卡/合併這類操作要同步搬 deletions / camerasMapping / textOverrides /
+// cardSplits 多個結構的 key，中途丟例外會留下孤兒 key（字卡錯位，undo 也救不回，
+// 因為半套狀態已經蓋掉工作區）。包成 transaction：先 pushUndo 再跑 fn；
+// 失敗就還原快照、撤掉剛 push 的 undo 紀錄、整體重繪。
+function mutateEditStateAtomic(fn) {
+  pushUndo();
+  const snap = snapshotEditState();
+  try {
+    fn();
+  } catch (err) {
+    applyEditSnapshot(snap);
+    state.undoStack.pop(); // 這筆 transaction 沒成立，撤掉剛 push 的紀錄
+    rerenderEditState();
+    console.error("編輯操作失敗，狀態已還原：", err);
+    throw err;
+  }
+}
+
 function undo() {
   if (state.undoStack.length === 0) return;
   state.redoStack.push(snapshotEditState());
@@ -953,60 +971,61 @@ function renderCards() {
         getCursorOffset(text) === 0
       ) {
         e.preventDefault();
-        pushUndo();
-        const oldParts = (state.cardSplits.get(c.idx) || []).slice();
-        const leftText = oldParts[partIdx - 1] || "";
-        const rightText = oldParts[partIdx] || "";
-        const mergedText = leftText + rightText;
-        const leftKey = `${c.idx}:${partIdx - 1}`;
-        const thisKey = `${c.idx}:${partIdx}`;
-        // 合併刪除狀態：只要其一被標刪，合併結果就是刪
-        const mergedDeleted =
-          state.deletions.has(leftKey) || state.deletions.has(thisKey);
-        state.deletions.delete(thisKey);
-        state.camerasMapping.delete(thisKey);
-        // 後面的 sub-card composite key 從低往高 shift -1，避免覆寫
-        for (let i = partIdx + 1; i < oldParts.length; i++) {
-          const oldKey = `${c.idx}:${i}`;
-          const newKey = `${c.idx}:${i - 1}`;
-          if (state.deletions.has(oldKey)) {
-            state.deletions.delete(oldKey);
-            state.deletions.add(newKey);
+        mutateEditStateAtomic(() => {
+          const oldParts = (state.cardSplits.get(c.idx) || []).slice();
+          const leftText = oldParts[partIdx - 1] || "";
+          const rightText = oldParts[partIdx] || "";
+          const mergedText = leftText + rightText;
+          const leftKey = `${c.idx}:${partIdx - 1}`;
+          const thisKey = `${c.idx}:${partIdx}`;
+          // 合併刪除狀態：只要其一被標刪，合併結果就是刪
+          const mergedDeleted =
+            state.deletions.has(leftKey) || state.deletions.has(thisKey);
+          state.deletions.delete(thisKey);
+          state.camerasMapping.delete(thisKey);
+          // 後面的 sub-card composite key 從低往高 shift -1，避免覆寫
+          for (let i = partIdx + 1; i < oldParts.length; i++) {
+            const oldKey = `${c.idx}:${i}`;
+            const newKey = `${c.idx}:${i - 1}`;
+            if (state.deletions.has(oldKey)) {
+              state.deletions.delete(oldKey);
+              state.deletions.add(newKey);
+            }
+            if (state.camerasMapping.has(oldKey)) {
+              const cam = state.camerasMapping.get(oldKey);
+              state.camerasMapping.delete(oldKey);
+              state.camerasMapping.set(newKey, cam);
+            }
           }
-          if (state.camerasMapping.has(oldKey)) {
-            const cam = state.camerasMapping.get(oldKey);
-            state.camerasMapping.delete(oldKey);
-            state.camerasMapping.set(newKey, cam);
-          }
-        }
-        const newParts = oldParts
-          .slice(0, partIdx - 1)
-          .concat([mergedText], oldParts.slice(partIdx + 1));
-        state.deletions.delete(leftKey);
-        if (mergedDeleted) state.deletions.add(leftKey);
-        if (newParts.length === 1) {
-          // 只剩 1 段 → 收回未切狀態：composite "<idx>:0" 鍵搬回 int idx
-          const finalText = newParts[0];
-          state.cardSplits.delete(c.idx);
-          if (state.deletions.has(`${c.idx}:0`)) {
-            state.deletions.delete(`${c.idx}:0`);
-            state.deletions.add(c.idx);
-          }
-          if (state.camerasMapping.has(`${c.idx}:0`)) {
-            const cam = state.camerasMapping.get(`${c.idx}:0`);
-            state.camerasMapping.delete(`${c.idx}:0`);
-            state.camerasMapping.set(c.idx, cam);
-          }
-          if (finalText && finalText !== c.text) {
-            state.textOverrides.set(c.idx, finalText);
+          const newParts = oldParts
+            .slice(0, partIdx - 1)
+            .concat([mergedText], oldParts.slice(partIdx + 1));
+          state.deletions.delete(leftKey);
+          if (mergedDeleted) state.deletions.add(leftKey);
+          if (newParts.length === 1) {
+            // 只剩 1 段 → 收回未切狀態：composite "<idx>:0" 鍵搬回 int idx
+            const finalText = newParts[0];
+            state.cardSplits.delete(c.idx);
+            if (state.deletions.has(`${c.idx}:0`)) {
+              state.deletions.delete(`${c.idx}:0`);
+              state.deletions.add(c.idx);
+            }
+            if (state.camerasMapping.has(`${c.idx}:0`)) {
+              const cam = state.camerasMapping.get(`${c.idx}:0`);
+              state.camerasMapping.delete(`${c.idx}:0`);
+              state.camerasMapping.set(c.idx, cam);
+            }
+            if (finalText && finalText !== c.text) {
+              state.textOverrides.set(c.idx, finalText);
+            } else {
+              state.textOverrides.delete(c.idx);
+            }
+            focusCardAt(c.idx, leftText.length);
           } else {
-            state.textOverrides.delete(c.idx);
+            state.cardSplits.set(c.idx, newParts);
+            focusCardAt(`${c.idx}:${partIdx - 1}`, leftText.length);
           }
-          focusCardAt(c.idx, leftText.length);
-        } else {
-          state.cardSplits.set(c.idx, newParts);
-          focusCardAt(`${c.idx}:${partIdx - 1}`, leftText.length);
-        }
+        });
         return;
       }
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
@@ -1019,54 +1038,56 @@ function renderCards() {
         cursorPos > 0 && cursorPos < full.length && before && after;
       if (canSplit && !isSub) {
         // 未切的卡：第一次切，建立 2 段；int 鍵搬到 composite 避免存檔翻譯遺漏
-        pushUndo();
-        if (state.deletions.has(c.idx)) {
-          state.deletions.delete(c.idx);
-          state.deletions.add(`${c.idx}:0`);
-          state.deletions.add(`${c.idx}:1`);
-        }
-        if (state.camerasMapping.has(c.idx)) {
-          const cam = state.camerasMapping.get(c.idx);
-          state.camerasMapping.delete(c.idx);
-          state.camerasMapping.set(`${c.idx}:0`, cam);
-          // 第二張靠 carry-forward 從第一張拿值，不顯式標
-        }
-        state.textOverrides.delete(c.idx); // splits 內容才是真相
-        state.cardSplits.set(c.idx, [before, after]);
-        focusSplitTarget(c.idx, 1);
+        mutateEditStateAtomic(() => {
+          if (state.deletions.has(c.idx)) {
+            state.deletions.delete(c.idx);
+            state.deletions.add(`${c.idx}:0`);
+            state.deletions.add(`${c.idx}:1`);
+          }
+          if (state.camerasMapping.has(c.idx)) {
+            const cam = state.camerasMapping.get(c.idx);
+            state.camerasMapping.delete(c.idx);
+            state.camerasMapping.set(`${c.idx}:0`, cam);
+            // 第二張靠 carry-forward 從第一張拿值，不顯式標
+          }
+          state.textOverrides.delete(c.idx); // splits 內容才是真相
+          state.cardSplits.set(c.idx, [before, after]);
+          focusSplitTarget(c.idx, 1);
+        });
         return;
       }
       if (canSplit && isSub) {
         // 已切過的 sub-card：把 parts[partIdx] 拆 left/right、後面 composite key +1
         // 同人同句不會跨 sub-card 換鏡頭，cam 走 carry-forward 不必額外處理
-        pushUndo();
-        // 先把 DOM 文字同步到新的左半，re-render 時舊元素的 blur handler 才不會
-        // 拿原本的全段文字蓋回 parts[partIdx]（sub-card blur 會比對 parts[partIdx] vs v）
-        text.textContent = before;
-        const oldParts = (state.cardSplits.get(c.idx) || []).slice();
-        const newParts = oldParts
-          .slice(0, partIdx)
-          .concat([before, after], oldParts.slice(partIdx + 1));
-        // 後面的 sub-card composite key 從高往低 shift +1，避免覆寫
-        for (let i = oldParts.length - 1; i > partIdx; i--) {
-          const oldKey = `${c.idx}:${i}`;
-          const newKey = `${c.idx}:${i + 1}`;
-          if (state.deletions.has(oldKey)) {
-            state.deletions.delete(oldKey);
-            state.deletions.add(newKey);
+        mutateEditStateAtomic(() => {
+          // 先把 DOM 文字同步到新的左半，re-render 時舊元素的 blur handler 才不會
+          // 拿原本的全段文字蓋回 parts[partIdx]（sub-card blur 會比對 parts[partIdx] vs v）
+          text.textContent = before;
+          const oldParts = (state.cardSplits.get(c.idx) || []).slice();
+          const newParts = oldParts
+            .slice(0, partIdx)
+            .concat([before, after], oldParts.slice(partIdx + 1));
+          // 後面的 sub-card composite key 從高往低 shift +1，避免覆寫
+          for (let i = oldParts.length - 1; i > partIdx; i--) {
+            const oldKey = `${c.idx}:${i}`;
+            const newKey = `${c.idx}:${i + 1}`;
+            if (state.deletions.has(oldKey)) {
+              state.deletions.delete(oldKey);
+              state.deletions.add(newKey);
+            }
+            if (state.camerasMapping.has(oldKey)) {
+              const cam = state.camerasMapping.get(oldKey);
+              state.camerasMapping.delete(oldKey);
+              state.camerasMapping.set(newKey, cam);
+            }
           }
-          if (state.camerasMapping.has(oldKey)) {
-            const cam = state.camerasMapping.get(oldKey);
-            state.camerasMapping.delete(oldKey);
-            state.camerasMapping.set(newKey, cam);
+          // 被切的子卡若是 deleted，右半繼承（這段音壞了 → 兩半都刪）
+          if (state.deletions.has(`${c.idx}:${partIdx}`)) {
+            state.deletions.add(`${c.idx}:${partIdx + 1}`);
           }
-        }
-        // 被切的子卡若是 deleted，右半繼承（這段音壞了 → 兩半都刪）
-        if (state.deletions.has(`${c.idx}:${partIdx}`)) {
-          state.deletions.add(`${c.idx}:${partIdx + 1}`);
-        }
-        state.cardSplits.set(c.idx, newParts);
-        focusSplitTarget(c.idx, partIdx + 1);
+          state.cardSplits.set(c.idx, newParts);
+          focusSplitTarget(c.idx, partIdx + 1);
+        });
         return;
       }
       // fallback：跳下一張可編輯卡
