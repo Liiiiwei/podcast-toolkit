@@ -2406,6 +2406,25 @@ function setupReelsClips() {
 }
 
 // === 儲存 / 取消 ===
+// 所有 /api/save 共用的序列化通道：主儲存鈕、cam modal 儲存、一鍵對齊 auto-save
+// 三條路徑可能並發；不序列化的話兩個 POST 交錯，後發先回會互蓋 episode.yaml。
+let _saveChain = Promise.resolve();
+function postSave(payload) {
+  const run = async () => {
+    const r = await fetch("/api/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r;
+  };
+  // 不管前一發成敗都接著跑；回傳的 promise 保留各呼叫端自己的錯誤處理
+  const p = _saveChain.then(run, run);
+  _saveChain = p.catch(() => {});
+  return p;
+}
+
 function setSaveBtnLabel(iconName, text) {
   const btn = $("#save-btn");
   btn.innerHTML = window.Icons
@@ -2488,12 +2507,7 @@ $("#save-btn").addEventListener("click", async () => {
     })),
   };
   try {
-    const r = await fetch("/api/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await postSave(payload);
     setSaveBtnLabel("check", "已儲存");
     // 儲存成功後既有的 undo 紀錄已落地，視為起點 → 清空 stacks
     clearUndoStacks();
@@ -3198,7 +3212,19 @@ async function resumeTranscribeIfRunning() {
   }
 }
 
+// in-flight 防護：回應慢時 setInterval 會堆疊請求，亂序回來的舊回應會蓋掉新進度
+let _pollTranscribeBusy = false;
 async function pollTranscribe() {
+  if (_pollTranscribeBusy) return;
+  _pollTranscribeBusy = true;
+  try {
+    await _pollTranscribeOnce();
+  } finally {
+    _pollTranscribeBusy = false;
+  }
+}
+
+async function _pollTranscribeOnce() {
   let s;
   try {
     const r = await fetch("/api/transcribe/status");
@@ -3608,7 +3634,19 @@ async function runPerMicTranscribe() {
   _perMicPollTimer = setInterval(pollPerMic, 500);
 }
 
+// in-flight 防護：同 pollTranscribe
+let _pollPerMicBusy = false;
 async function pollPerMic() {
+  if (_pollPerMicBusy) return;
+  _pollPerMicBusy = true;
+  try {
+    await _pollPerMicOnce();
+  } finally {
+    _pollPerMicBusy = false;
+  }
+}
+
+async function _pollPerMicOnce() {
   let s;
   try {
     const r = await fetch("/api/transcribe/status");
@@ -3855,7 +3893,19 @@ async function startAssemble(
   _assemblePollTimer = setInterval(pollAssemble, 1000);
 }
 
+// in-flight 防護：同 pollTranscribe
+let _pollAssembleBusy = false;
 async function pollAssemble() {
+  if (_pollAssembleBusy) return;
+  _pollAssembleBusy = true;
+  try {
+    await _pollAssembleOnce();
+  } finally {
+    _pollAssembleBusy = false;
+  }
+}
+
+async function _pollAssembleOnce() {
   let s;
   try {
     const r = await fetch("/api/assemble/status");
@@ -4601,12 +4651,7 @@ $("#align-all").addEventListener("click", async () => {
     stopSpin();
     stopSpin = startBtnSpinner(btn, "儲存中");
     const payload = _buildCamModalSavePayload();
-    const r = await fetch("/api/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(`/api/save HTTP ${r.status}`);
+    await postSave(payload);
     await loadEpisodeState();
     renderTopbar();
     renderCards();
@@ -4797,12 +4842,7 @@ $("#cam-save").addEventListener("click", async () => {
     audio: { path: audioPath, sync_offset: audioOffset },
   };
   try {
-    const r = await fetch("/api/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
     await loadEpisodeState();
     renderTopbar();
