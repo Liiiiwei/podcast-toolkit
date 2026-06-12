@@ -581,3 +581,16 @@ def test_pump_progress_success_does_not_set_done(tmp_path):
         assert out.exists()
     finally:
         assemble_job._reset()
+
+
+def test_get_video_rejects_path_traversal(client):
+    """/api/video?path=../ → 400（統一走 shared.validate_episode_path）。"""
+    r = client.get("/api/video", params={"path": "../secret.mp4"})
+    assert r.status_code == 400
+    assert "集資料夾內" in r.json()["detail"]
+
+
+def test_post_transcribe_rejects_path_traversal(client):
+    r = client.post("/api/transcribe", json={"path": "../secret.mp3"})
+    assert r.status_code == 400
+    assert "集資料夾內" in r.json()["detail"]
