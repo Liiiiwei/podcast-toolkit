@@ -33,6 +33,55 @@ class TranscribeError(RuntimeError):
     """轉字幕流程任一階段失敗都丟這個。"""
 
 
+def _run_cloud_stt_pipeline(
+    *,
+    transcribe_fn,
+    compressed_name: str,
+    empty_msg: str,
+    src_audio: Path,
+    out_srt: Path,
+    work_dir: Path,
+    progress=None,
+    typo_entries: list[dict] | None = None,
+    post_words=None,
+) -> Path:
+    """雲端 STT pipeline 共用骨架：壓縮 → transcribe_fn → s2tw/錯字 → 寫 SRT。
+
+    grok / gemini / openai 三家共用；provider 差異收斂在兩個 hook：
+    - transcribe_fn(compressed: Path) -> list[dict]：回 words（{text,start,end}）
+    - post_words(words) -> words：provider 特有的時間修正（mod60 / dedup），可省略
+
+    呼叫端負責 fail-fast 的 SDK import 檢查（要在壓縮前就擋下來）。
+    """
+    if not shutil.which("ffmpeg"):
+        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out_srt.parent.mkdir(parents=True, exist_ok=True)
+
+    if progress:
+        progress("compress", 0.0)
+    compressed = work_dir / compressed_name
+    _ffmpeg_compress(src_audio, compressed)
+    if progress:
+        progress("compress", 100.0)
+
+    if progress:
+        progress("upload", 0.0)
+    words = transcribe_fn(compressed)
+    if progress:
+        progress("upload", 100.0)
+
+    if not words:
+        raise TranscribeError(empty_msg)
+    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
+    if post_words is not None:
+        words = post_words(words)
+    cards = _words_to_cards(words)
+    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    return out_srt
+
+
 def run_grok_pipeline(
     *,
     api_key: str,
@@ -54,39 +103,16 @@ def run_grok_pipeline(
     回傳：out_srt 路徑
     """
     del glossary  # 訊號明確：Grok pipeline 不用 prompt-injected glossary
-    if not shutil.which("ffmpeg"):
-        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
-
-    work_dir.mkdir(parents=True, exist_ok=True)
-    out_srt.parent.mkdir(parents=True, exist_ok=True)
-
-    # 1. ffmpeg 壓縮成 16kHz mono mp3（暫存於 04_工作檔/）
-    if progress:
-        progress("compress", 0.0)
-    compressed = work_dir / f"_grok_stt_{src_audio.stem}.mp3"
-    _ffmpeg_compress(src_audio, compressed)
-    if progress:
-        progress("compress", 100.0)
-
-    # 2. POST 到 x.ai
-    if progress:
-        progress("upload", 0.0)
-    data = _post_to_grok(api_key, compressed)
-    if progress:
-        progress("upload", 100.0)
-
-    # 3. 簡 → 繁 + 套錯字字典
-    words = data.get("words") or []
-    if not words:
-        raise TranscribeError("Grok 回傳沒有 words，無法產生字幕")
-    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
-
-    # 4. 寫 SRT
-    cards = _words_to_cards(words)
-    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
-
-    # 暫存檔可以保留方便除錯，需要時改成刪除
-    return out_srt
+    return _run_cloud_stt_pipeline(
+        transcribe_fn=lambda compressed: (_post_to_grok(api_key, compressed).get("words") or []),
+        compressed_name=f"_grok_stt_{src_audio.stem}.mp3",
+        empty_msg="Grok 回傳沒有 words，無法產生字幕",
+        src_audio=src_audio,
+        out_srt=out_srt,
+        work_dir=work_dir,
+        progress=progress,
+        typo_entries=typo_entries,
+    )
 
 
 def run_gemini_pipeline(
@@ -105,8 +131,7 @@ def run_gemini_pipeline(
     glossary：本集專有名詞詞庫（episode-level），同樣塞進 prompt；
               sounds_like→canonical 由 run_pipeline 統一展開到 typo_entries。
     """
-    if not shutil.which("ffmpeg"):
-        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+    # SDK import 在壓縮前就檢查，缺套件不要等壓完才失敗
     try:
         from google import genai
         from google.genai import types as genai_types
@@ -115,72 +140,66 @@ def run_gemini_pipeline(
             "缺少 google-genai；請跑 `pip3 install --user google-genai`"
         ) from e
 
-    work_dir.mkdir(parents=True, exist_ok=True)
-    out_srt.parent.mkdir(parents=True, exist_ok=True)
-
-    if progress:
-        progress("compress", 0.0)
-    compressed = work_dir / f"_gemini_stt_{src_audio.stem}.mp3"
-    _ffmpeg_compress(src_audio, compressed)
-    if progress:
-        progress("compress", 100.0)
-
-    if progress:
-        progress("upload", 0.0)
-    try:
-        client = genai.Client(api_key=api_key)
-        uploaded = client.files.upload(file=str(compressed))
-        # Files API 上傳後可能需要等狀態變 ACTIVE
-        for _ in range(60):
-            state = getattr(uploaded.state, "name", str(uploaded.state))
-            if state == "ACTIVE":
-                break
-            if state == "FAILED":
-                raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
-            time.sleep(1)
-            uploaded = client.files.get(name=uploaded.name)
-        prompt = build_gemini_prompt(typo_entries, glossary=glossary)
-        resp = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=[uploaded, prompt],
-            # max_output_tokens 拉到 Flash 上限 65536；不設的話預設 8192，長集 STT
-            # 字幕陣列會被截斷 → json.loads 壞在尾段（症狀：頭看似正常的 JSON）
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=65536,
-            ),
-        )
-        text = (resp.text or "").strip()
+    def _gemini_transcribe(compressed: Path) -> list[dict]:
         try:
-            words = json.loads(text)
-        except json.JSONDecodeError as e:
-            # 同時顯示頭尾 + 長度 + decode 位置，方便診斷截斷 vs 格式錯誤
-            head = text[:200]
-            tail = text[-200:] if len(text) > 200 else ""
-            raise TranscribeError(
-                f"Gemini 回應不是 JSON（長度={len(text)}, decode_pos={e.pos}, "
-                f"err={e.msg}）\n頭 200 字：{head}\n尾 200 字：{tail}"
-            ) from e
-    except TranscribeError:
-        raise
-    except Exception as e:
-        raise TranscribeError(f"Gemini STT 失敗：{e}") from e
-    if progress:
-        progress("upload", 100.0)
+            client = genai.Client(api_key=api_key)
+            uploaded = client.files.upload(file=str(compressed))
+            # Files API 上傳後可能需要等狀態變 ACTIVE
+            for _ in range(60):
+                state = getattr(uploaded.state, "name", str(uploaded.state))
+                if state == "ACTIVE":
+                    break
+                if state == "FAILED":
+                    raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
+                time.sleep(1)
+                uploaded = client.files.get(name=uploaded.name)
+            prompt = build_gemini_prompt(typo_entries, glossary=glossary)
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=[uploaded, prompt],
+                # max_output_tokens 拉到 Flash 上限 65536；不設的話預設 8192，長集 STT
+                # 字幕陣列會被截斷 → json.loads 壞在尾段（症狀：頭看似正常的 JSON）
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    max_output_tokens=65536,
+                ),
+            )
+            text = (resp.text or "").strip()
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                # 同時顯示頭尾 + 長度 + decode 位置，方便診斷截斷 vs 格式錯誤
+                head = text[:200]
+                tail = text[-200:] if len(text) > 200 else ""
+                raise TranscribeError(
+                    f"Gemini 回應不是 JSON（長度={len(text)}, decode_pos={e.pos}, "
+                    f"err={e.msg}）\n頭 200 字：{head}\n尾 200 字：{tail}"
+                ) from e
+        except TranscribeError:
+            raise
+        except Exception as e:
+            raise TranscribeError(f"Gemini STT 失敗：{e}") from e
 
-    if not words:
-        raise TranscribeError("Gemini 沒回傳任何字幕")
-    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
-    # Gemini 2.5 Flash 偶爾把 start/end 用 mod 60 回傳（只剩秒分量），
-    # 導致 SRT 內 segment 時間不單調遞增 → 預覽時右側字幕卡片亂跳。
-    # 用單調遞增假設重建絕對秒。
-    words = _unwrap_mod60_times(words)
-    # Gemini 也常把一句話拆成多條 entry 但給相同 start/end → 預覽時
-    # activeCardAt(t) 永遠只回第一條，後面的卡片不顯示。把同時段平均切分。
-    words = _dedup_overlapping_times(words)
-    cards = _words_to_cards(words)
-    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
-    return out_srt
+    def _gemini_post_words(words: list[dict]) -> list[dict]:
+        # Gemini 2.5 Flash 偶爾把 start/end 用 mod 60 回傳（只剩秒分量），
+        # 導致 SRT 內 segment 時間不單調遞增 → 預覽時右側字幕卡片亂跳。
+        # 用單調遞增假設重建絕對秒。
+        words = _unwrap_mod60_times(words)
+        # Gemini 也常把一句話拆成多條 entry 但給相同 start/end → 預覽時
+        # activeCardAt(t) 永遠只回第一條，後面的卡片不顯示。把同時段平均切分。
+        return _dedup_overlapping_times(words)
+
+    return _run_cloud_stt_pipeline(
+        transcribe_fn=_gemini_transcribe,
+        compressed_name=f"_gemini_stt_{src_audio.stem}.mp3",
+        empty_msg="Gemini 沒回傳任何字幕",
+        src_audio=src_audio,
+        out_srt=out_srt,
+        work_dir=work_dir,
+        progress=progress,
+        typo_entries=typo_entries,
+        post_words=_gemini_post_words,
+    )
 
 
 def run_openai_pipeline(
@@ -201,8 +220,7 @@ def run_openai_pipeline(
     glossary 透過 prompt 參數做 vocabulary biasing（whisper prompt 上限 224 tokens，
     只塞 canonical 列表 + 錯字字典 right 端，不放長篇指令）。
     """
-    if not shutil.which("ffmpeg"):
-        raise TranscribeError("找不到 ffmpeg。請先 `brew install ffmpeg`。")
+    # SDK import 在壓縮前就檢查，缺套件不要等壓完才失敗
     try:
         from openai import OpenAI
     except ImportError as e:
@@ -210,63 +228,55 @@ def run_openai_pipeline(
             "缺少 openai SDK；請跑 `pip3 install --user openai`"
         ) from e
 
-    work_dir.mkdir(parents=True, exist_ok=True)
-    out_srt.parent.mkdir(parents=True, exist_ok=True)
+    def _openai_transcribe(compressed: Path) -> list[dict]:
+        try:
+            client = OpenAI(api_key=api_key)
+            whisper_prompt = _build_whisper_prompt(typo_entries, glossary)
+            with compressed.open("rb") as fh:
+                kwargs = dict(
+                    model=OPENAI_MODEL,
+                    file=fh,
+                    response_format="verbose_json",
+                    timestamp_granularities=["word"],
+                    language="zh",
+                )
+                if whisper_prompt:
+                    kwargs["prompt"] = whisper_prompt
+                resp = client.audio.transcriptions.create(**kwargs)
+            # verbose_json 回傳物件含 .words = [{word, start, end}, ...]（SDK 物件需 .model_dump）
+            raw_words = getattr(resp, "words", None) or []
+            words = []
+            for w in raw_words:
+                if hasattr(w, "model_dump"):
+                    w = w.model_dump()
+                elif not isinstance(w, dict):
+                    w = {
+                        "word": getattr(w, "word", ""),
+                        "start": getattr(w, "start", 0.0),
+                        "end": getattr(w, "end", 0.0),
+                    }
+                words.append({
+                    "text": w.get("word") or w.get("text") or "",
+                    "start": float(w.get("start", 0.0)),
+                    "end": float(w.get("end", 0.0)),
+                })
+            return words
+        except TranscribeError:
+            raise
+        except Exception as e:
+            raise TranscribeError(f"OpenAI STT 失敗：{e}") from e
 
-    if progress:
-        progress("compress", 0.0)
-    compressed = work_dir / f"_openai_stt_{src_audio.stem}.mp3"
-    _ffmpeg_compress(src_audio, compressed)
-    if progress:
-        progress("compress", 100.0)
-
-    if progress:
-        progress("upload", 0.0)
-    try:
-        client = OpenAI(api_key=api_key)
-        whisper_prompt = _build_whisper_prompt(typo_entries, glossary)
-        with compressed.open("rb") as fh:
-            kwargs = dict(
-                model=OPENAI_MODEL,
-                file=fh,
-                response_format="verbose_json",
-                timestamp_granularities=["word"],
-                language="zh",
-            )
-            if whisper_prompt:
-                kwargs["prompt"] = whisper_prompt
-            resp = client.audio.transcriptions.create(**kwargs)
-        # verbose_json 回傳物件含 .words = [{word, start, end}, ...]（SDK 物件需 .model_dump）
-        raw_words = getattr(resp, "words", None) or []
-        words = []
-        for w in raw_words:
-            if hasattr(w, "model_dump"):
-                w = w.model_dump()
-            elif not isinstance(w, dict):
-                w = {
-                    "word": getattr(w, "word", ""),
-                    "start": getattr(w, "start", 0.0),
-                    "end": getattr(w, "end", 0.0),
-                }
-            words.append({
-                "text": w.get("word") or w.get("text") or "",
-                "start": float(w.get("start", 0.0)),
-                "end": float(w.get("end", 0.0)),
-            })
-    except TranscribeError:
-        raise
-    except Exception as e:
-        raise TranscribeError(f"OpenAI STT 失敗：{e}") from e
-    if progress:
-        progress("upload", 100.0)
-
-    if not words:
-        raise TranscribeError("OpenAI 沒回傳任何字幕")
-    words = [_convert_word(w, typo_entries=typo_entries) for w in words]
-    words = _dedup_overlapping_times(words)
-    cards = _words_to_cards(words)
-    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
-    return out_srt
+    return _run_cloud_stt_pipeline(
+        transcribe_fn=_openai_transcribe,
+        compressed_name=f"_openai_stt_{src_audio.stem}.mp3",
+        empty_msg="OpenAI 沒回傳任何字幕",
+        src_audio=src_audio,
+        out_srt=out_srt,
+        work_dir=work_dir,
+        progress=progress,
+        typo_entries=typo_entries,
+        post_words=_dedup_overlapping_times,
+    )
 
 
 def _build_whisper_prompt(

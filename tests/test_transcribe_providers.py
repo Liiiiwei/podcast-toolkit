@@ -253,3 +253,51 @@ def test_post_transcribe_rejects_when_selected_provider_key_missing(
     r = c.post("/api/transcribe", json={"path": "01_母帶/測試集.mp4"})
     assert r.status_code == 400
     assert "Gemini" in r.text or "gemini" in r.text
+
+
+# ---------- _run_cloud_stt_pipeline 共用骨架 ----------
+
+def test_cloud_pipeline_skeleton_empty_words_raises(tmp_path, monkeypatch):
+    from podcast_toolkit.web import transcribe as t
+
+    monkeypatch.setattr(t, "_ffmpeg_compress", lambda src, dst: dst.write_bytes(b"x"))
+    src = tmp_path / "in.mp3"
+    src.write_bytes(b"x")
+    with pytest.raises(t.TranscribeError, match="沒東西"):
+        t._run_cloud_stt_pipeline(
+            transcribe_fn=lambda compressed: [],
+            compressed_name="_t.mp3",
+            empty_msg="沒東西",
+            src_audio=src,
+            out_srt=tmp_path / "out.srt",
+            work_dir=tmp_path,
+        )
+
+
+def test_cloud_pipeline_skeleton_applies_post_words_and_writes_srt(tmp_path, monkeypatch):
+    from podcast_toolkit.web import transcribe as t
+
+    monkeypatch.setattr(t, "_ffmpeg_compress", lambda src, dst: dst.write_bytes(b"x"))
+    src = tmp_path / "in.mp3"
+    src.write_bytes(b"x")
+    out = tmp_path / "out.srt"
+    phases = []
+
+    result = t._run_cloud_stt_pipeline(
+        transcribe_fn=lambda compressed: [
+            {"text": "哈囉", "start": 0.0, "end": 1.0},
+            {"text": "丟掉我", "start": 1.0, "end": 2.0},
+        ],
+        compressed_name="_t.mp3",
+        empty_msg="沒東西",
+        src_audio=src,
+        out_srt=out,
+        work_dir=tmp_path,
+        progress=lambda phase, pct: phases.append((phase, pct)),
+        post_words=lambda ws: [w for w in ws if w["text"] != "丟掉我"],
+    )
+    assert result == out
+    body = out.read_text(encoding="utf-8")
+    assert "哈囉" in body
+    assert "丟掉我" not in body
+    assert ("compress", 0.0) in phases and ("upload", 100.0) in phases
