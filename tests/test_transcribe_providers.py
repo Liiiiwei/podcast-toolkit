@@ -335,3 +335,131 @@ def test_glossary_lines_shared_between_prompts():
     assert "必須寫成「立崴」" in line and "立偉" in line
     assert line in build_gemini_prompt(None, glossary=glossary)
     assert line in build_prompt({}, glossary)
+
+
+# ---------- _words_to_cards 切長 entry 的時間分配 ----------
+
+def test_words_to_cards_long_entry_gets_allocated_times():
+    """超長 entry 切成多張卡時，每張卡要分到自己的時間窗，
+    不能全部共用母段 [start, end]（會在卡片層重新製造同時段重疊，
+    編輯器預覽 activeCardAt / 拆卡時間排列都會錯亂）。"""
+    from podcast_toolkit.web.transcribe import _words_to_cards
+
+    text = "這是一段沒有標點的超長轉錄內容會被每三十個字硬切成多張字幕卡" * 20  # 600 字
+    cards = _words_to_cards([{"text": text, "start": 56.84, "end": 102.5}])
+
+    assert len(cards) >= 2
+    # 600 字 × 0.3s > 45.66s → 比例分配貼滿整段：頭尾對齊母段、卡卡相接
+    assert cards[0]["start"] == 56.84
+    assert cards[-1]["end"] == 102.5
+    for prev, cur in zip(cards, cards[1:]):
+        assert cur["start"] == prev["end"]
+        assert prev["start"] < prev["end"]
+    # 不允許任兩張卡共用同一個 (start, end)
+    spans = {(c["start"], c["end"]) for c in cards}
+    assert len(spans) == len(cards)
+
+
+def test_words_to_cards_short_entry_times_untouched():
+    """沒切的卡時間要原封不動，不能被語速規則截短。"""
+    from podcast_toolkit.web.transcribe import _words_to_cards
+
+    cards = _words_to_cards([{"text": "哈囉大家好", "start": 3.2, "end": 17.7}])
+    assert len(cards) == 1
+    assert cards[0]["start"] == 3.2
+    assert cards[0]["end"] == 17.7
+
+
+def test_words_to_cards_sparse_entry_packs_from_start():
+    """母段比語速 budget 長（trailing silence）→ 從 start 緊湊排，
+    與 srt_io.allocate_split_times（編輯器拆卡）同一套規則。"""
+    from podcast_toolkit.web.transcribe import _words_to_cards
+
+    text = "甲" * 30 + "乙" * 10  # 40 字、兩個 chunk，budget = 12s
+    cards = _words_to_cards([{"text": text, "start": 0.0, "end": 60.0}])
+    assert [c["text"] for c in cards] == ["甲" * 30, "乙" * 10]
+    assert cards[0]["start"] == 0.0
+    assert cards[0]["end"] == pytest.approx(9.0)
+    assert cards[1]["start"] == pytest.approx(9.0)
+    assert cards[1]["end"] == pytest.approx(12.0)
+
+
+# ---------- _unwrap_mod60_times 對「真實跨度 > 60s」的 entry 會掉分 ----------
+#
+# 背景：mod60 解包假設「每筆 entry 的真實跨度 < 60s」，所以 end 的 wrap 只要
+# 補到第一個 >= start 的值就停（while e < s: e += 60）。但 Gemini 在長音檔上
+# 會違反 prompt 的「每句 15-30 字」要求、回傳數百字的巨型 entry——這種 entry
+# 真實跨度動輒 100-200s，end 被 mod60 包了「不只一圈」，解包只補一圈（甚至零圈），
+# 整數分鐘就被吃掉。實測 episode「過嗨乳牛3」的 Stereo Mix.wav 長 2272.7s，
+# 字幕卻在 2036.8s 就結束（差約 4 分鐘），就是這個累積掉分。
+
+
+def test_unwrap_mod60_long_span_loses_a_minute():
+    """BUG（characterization）：真實跨度 90s 的 entry 被 mod60 包成 end=40，
+    解包後只還原成 30s——掉了整整一分鐘。
+
+    真實 [10, 100]（跨度 90s）→ Gemini mod60 回 start=10, end=100%60=40。
+    `while e < s` 看到 40 > 10 直接不補，end 停在 40。此測試釘住現行錯誤行為，
+    修好後這裡會變號，請連同 xfail 版本一起更新。"""
+    from podcast_toolkit.web.transcribe import _unwrap_mod60_times
+
+    out = _unwrap_mod60_times([{"start": 10.0, "end": 40.0, "text": "x"}])
+    assert out[0]["start"] == 10.0
+    assert out[0]["end"] == 40.0           # 應為 100.0；掉了 60s
+    assert out[0]["end"] - out[0]["start"] == 30.0   # 真實跨度 90s
+
+
+def test_unwrap_mod60_full_minute_span_collapses_to_zero():
+    """BUG（characterization）：真實跨度剛好 60s 時 end%60 == start，
+    `while e < s` 連一圈都不補（e == s 不成立 e < s），跨度塌成 0。"""
+    from podcast_toolkit.web.transcribe import _unwrap_mod60_times
+
+    out = _unwrap_mod60_times([{"start": 10.0, "end": 10.0, "text": "x"}])
+    assert out[0]["end"] - out[0]["start"] == 0.0    # 真實跨度 60s → 塌成 0
+
+
+def test_unwrap_mod60_degenerate_repeats_reproduce_production_ladder():
+    """BUG（characterization）：Gemini 在這段音檔上其實是「**重複迴圈**」——把同一筆
+    (text, start, end) 一字不差地吐了 33 次（這是 LLM decoding loop，不是真實長語音）。
+    33 筆 entry 的 raw time 完全相同，本該一眼可辨（互相重疊），但 start-wrap 啟發法
+    （s+30 < last_end → +60）把它們無中生有攤成一條精準 60s 步進的階梯，
+    讓重複內容偽裝成 56.84s→2022.5s 的「正常時間軸」，反而把重複藏了起來。
+
+    這正是 03_成品/過嗨乳牛3_final.*.bak.srt 裡 33 個 run 的成因：每個 run 文字
+    逐字相同（697 字）、starts = 56.84, 116.84, 176.84 …（步進 60.00）、
+    spans 全部 = 45.66s、隱含語速 15+ 字/秒（中文對話約 3-5 字/秒，物理不可能）。
+    下游 _dedup_overlapping_times 救不了，因為它跑在 unwrap 之後、時間已被攤開。"""
+    from podcast_toolkit.web.transcribe import _unwrap_mod60_times
+
+    # Gemini 重複迴圈：6 筆 entry 全回同一組 (text, 56.84, 42.50)；42.50 = 102.50 % 60
+    words = [{"start": 56.84, "end": 42.50, "text": "乳" * 697} for _ in range(6)]
+    out = _unwrap_mod60_times(words)
+
+    starts = [round(w["start"], 2) for w in out]
+    assert starts == [56.84, 116.84, 176.84, 236.84, 296.84, 356.84]  # 步進 60.00
+    # 文字逐字相同（重複迴圈的獨立證據，與時間碼無關）卻被攤成遞增時間軸
+    assert len({w["text"] for w in out}) == 1
+    for w in out:
+        assert round(w["end"] - w["start"], 2) == 45.66               # 窗全部一樣寬
+        rate = len(w["text"]) / (w["end"] - w["start"])
+        assert rate > 15.0                                            # 物理不可能的語速
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="_unwrap_mod60_times 尚未用文字長度/音檔長度當錨點校正掉分；"
+    "修好後移除本 marker。詳見上方 BUG 區塊。",
+)
+def test_unwrap_mod60_reconstruction_should_not_imply_impossible_speech_rate():
+    """期望（fix-agnostic）：解包後沒有任何 entry 的隱含語速超過物理上限。
+
+    中文 podcast 約 3-5 字/秒；放寬到 8 字/秒當「絕對不可能」上界。任何可接受的
+    修法（用文字長度反推跨度 / 用下一條 start 補 end / 整段按字數重攤）都該讓
+    隱含語速落在這條線下。現行版本對 720 字 entry 給出 15.8 字/秒 → 失敗。"""
+    from podcast_toolkit.web.transcribe import _unwrap_mod60_times
+
+    words = [{"start": 56.84, "end": 42.50, "text": "乳" * 720} for _ in range(6)]
+    out = _unwrap_mod60_times(words)
+
+    worst = max(len(w["text"]) / max(w["end"] - w["start"], 1e-6) for w in out)
+    assert worst <= 8.0

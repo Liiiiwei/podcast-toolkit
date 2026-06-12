@@ -178,13 +178,28 @@ def run_gemini_pipeline(
             try:
                 return json.loads(text)
             except json.JSONDecodeError as e:
-                # 同時顯示頭尾 + 長度 + decode 位置，方便診斷截斷 vs 格式錯誤
                 head = text[:200]
                 tail = text[-200:] if len(text) > 200 else ""
-                raise TranscribeError(
+                diag = (
                     f"Gemini 回應不是 JSON（長度={len(text)}, decode_pos={e.pos}, "
                     f"err={e.msg}）\n頭 200 字：{head}\n尾 200 字：{tail}"
-                ) from e
+                )
+                # 截斷救援：Gemini 偶爾提前結束回應，JSON 在尾段被截斷。
+                # 找最後一個完整 entry（"},"}），把後面的殘段切掉再補 "]"。
+                if e.pos is not None and e.pos >= len(text) - 200:
+                    last_close = text.rfind("},")
+                    if last_close > 0:
+                        try:
+                            recovered = json.loads(text[:last_close + 1] + "]")
+                            import sys
+                            print(
+                                f"[警告] Gemini JSON 截斷，已救回 {len(recovered)} 條字幕\n{diag}",
+                                file=sys.stderr,
+                            )
+                            return recovered
+                        except json.JSONDecodeError:
+                            pass
+                raise TranscribeError(diag) from e
         except TranscribeError:
             raise
         except Exception as e:
@@ -877,18 +892,27 @@ def _words_to_cards(words: list[dict]) -> list[dict]:
     """把 Grok words[]（其實是句子層）轉成 SRT cards。
 
     Grok 回的每筆 word 偶爾長達 80+ 字。超過 SRT_MAX_CHARS 就照逗號 / 句號硬切。
+    切成多張卡時用 allocate_split_times 分時間（與編輯器拆卡同一套規則）；
+    若讓所有 chunk 共用母段完整 [start, end]，會把 _dedup_overlapping_times
+    清掉的同時段重疊在卡片層重新製造回來（編輯器預覽/拆卡會錯亂）。
     """
     cards: list[dict] = []
     idx = 1
     for w in words:
-        for chunk in _split_long(w["text"], SRT_MAX_CHARS):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
+        chunks = [c.strip() for c in _split_long(w["text"], SRT_MAX_CHARS)]
+        chunks = [c for c in chunks if c]
+        if not chunks:
+            continue
+        if len(chunks) == 1:
+            # 沒切的卡時間原封不動；allocate 會把慢語速卡的尾巴截掉
+            times = [(w["start"], w["end"])]
+        else:
+            times = srt_io.allocate_split_times(w["start"], w["end"], chunks)
+        for chunk, (c_start, c_end) in zip(chunks, times):
             cards.append({
                 "idx": idx,
-                "start": w["start"],
-                "end": w["end"],
+                "start": c_start,
+                "end": c_end,
                 "text": chunk,
             })
             idx += 1
