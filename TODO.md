@@ -46,3 +46,21 @@
   - VoiceOver 念 tab/tabpanel 角色正確、不再把 toggle 當第 3 個 tab
   - 縮窗 ≤900px 看 cards-pane 是否正確堆到下方、影片不被擠
   - 抽屜 count pill 在 0 typo / 0 file 時消失
+
+## 效能：合成編碼（下階段）
+
+- [x] **P1. videotoolbox 硬體編碼 + 硬體解碼** ✅ 2026-06-13 已設為全域預設
+  - 實測（M3、37 分雙機集、燒字幕）：libx264 medium 57 分 → vt 10.7 分（**5.4×**），SSIM 0.995 肉眼無差
+  - `defaults.yaml encode.video_codec/hwaccel`；assemble 加 `_video_encode_args`/`_hwaccel_args`（vt 自動略過 -preset）
+- [ ] **P2. 只解需要的段落（結構性優化，預估再快 ~2×：10.7 分 → 約 6 分）**
+  - 現況：兩台攝影機各自「全片」解碼 + 各自燒整份字幕，再 trim 出 61 段 → 大量白工
+  - 改法：每段用 `-ss/-t` 只解需要的區間（或預先 per-segment 切小檔），字幕燒製對齊各段時間軸
+  - 風險點：`-ss` keyframe seek 精度、cam B 的 sync offset、燒字幕時間軸換算、淡入淡出邊界
+  - 進一步：分段平行編碼（M3 8 核）+ `-c copy` concat，附帶斷點續跑能力
+
+## 啟動 App（雙擊開介面）
+
+- 已生成 `/Applications/Podcast.app`（本機 osacompile + adhoc 簽章，無 quarantine），雙擊 → 跑 `scripts/podcast-ui.sh` 開 dashboard。
+- [ ] **自訂圖示**：預設是 AppleScript applet 灰色圖；之後換成節目 icon（需 `.icns`，套到 `Podcast.app/Contents/Resources/applet.icns` + 重簽 + `touch` app）。
+- [ ] **釘 Dock**：之後把 app 拖進 Dock 固定一鍵開。
+- 注意：app 把 repo 路徑烤死，搬專案資料夾後要重生成（或重跑 `./install.sh`）。
