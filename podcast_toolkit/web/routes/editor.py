@@ -71,6 +71,34 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=500, detail=str(e))
         return JSONResponse({"head_silence_sec": head_sec})
 
+    @app.post("/api/shift-srt")
+    def shift_srt_route(payload: dict):
+        """把 _v2.srt 整體位移 offset_sec 秒（就地覆寫，先備份 .bak）。
+        正值 = 字幕往後延遲（字幕目前出現太早）；負值 = 字幕往前提前。
+        """
+        ep = ctx.require_ep()
+        try:
+            offset_sec = float(payload.get("offset_sec") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="offset_sec 必須是數字")
+        if offset_sec == 0:
+            raise HTTPException(status_code=400, detail="offset_sec 不能為 0")
+        v2 = ep.output_v2_srt()
+        if not v2.exists():
+            raise HTTPException(status_code=404, detail="找不到 _v2.srt，請先轉字幕")
+        from podcast_toolkit import srt_io
+        cards = srt_io.parse(v2.read_text(encoding="utf-8"))
+        backup = v2.with_suffix(v2.suffix + ".bak")
+        backup.write_text(v2.read_text(encoding="utf-8"), encoding="utf-8")
+        shifted = []
+        for c in cards:
+            new_end = c["end"] + offset_sec
+            if new_end <= 0:
+                continue
+            shifted.append({**c, "start": max(0.0, c["start"] + offset_sec), "end": new_end})
+        v2.write_text(srt_io.serialize(shifted), encoding="utf-8")
+        return {"ok": True, "card_count": len(shifted), "offset_sec": offset_sec}
+
     @app.post("/api/auto-align")
     def auto_align_route(payload: dict | None = None):
         """T23b：前 120 秒做音訊互相關，回傳「對齊對象 相對 cam A」的秒偏移。

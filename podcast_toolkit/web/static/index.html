@@ -339,6 +339,23 @@
             <span class="spacer"></span>
             <span id="sus-checked-count" class="sus-label">已勾 0</span>
           </div>
+          <div class="srt-shift-row" id="srt-shift-row" hidden>
+            <label class="srt-shift-label" title="正值 = 字幕往後移（字幕目前出現太早）；負值 = 字幕往前移（字幕目前出現太晚）">
+              <span data-icon="clock"></span>
+              <span>字幕偏移（秒）</span>
+            </label>
+            <input
+              type="number"
+              id="srt-shift-input"
+              class="srt-shift-input"
+              step="0.1"
+              placeholder="0.0"
+            />
+            <button type="button" id="srt-shift-btn" class="btn btn-ghost">
+              <span data-icon="move"></span>
+              <span>套用偏移</span>
+            </button>
+          </div>
           <div id="cards-list"></div>
         </section>
       </div>

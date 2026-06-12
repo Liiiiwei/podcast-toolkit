@@ -1809,6 +1809,41 @@ dialog.modal::backdrop {
   flex: 1;
 }
 
+.srt-shift-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 7px 10px;
+  margin-bottom: var(--space-sm);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.srt-shift-row[hidden] {
+  display: none;
+}
+.srt-shift-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.srt-shift-input {
+  width: 72px;
+  padding: 3px 6px;
+  font-size: var(--text-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.srt-shift-row .btn {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
 .card {
   display: grid;
   grid-template-columns: 18px 60px 1fr 24px;

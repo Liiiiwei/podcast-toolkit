@@ -1354,6 +1354,8 @@ async function loadEpisodeState() {
       }))
       .filter((c) => c.end > 0);
   }
+  // 字幕偏移工具列：有字幕才顯示
+  $("#srt-shift-row").hidden = state.cards.length === 0;
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
   applyMainVideoMissingUI();
@@ -1413,6 +1415,42 @@ function setupSusToolbar() {
     renderTopbar();
     renderCaption();
     renderTypo();
+  });
+}
+
+function setupSrtShift() {
+  $("#srt-shift-btn").addEventListener("click", async () => {
+    const input = $("#srt-shift-input");
+    const offset = Number(input.value);
+    if (!offset) {
+      alert("請輸入非零的偏移秒數");
+      return;
+    }
+    const btn = $("#srt-shift-btn");
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/shift-srt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ offset_sec: offset }),
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || `HTTP ${r.status}`);
+      }
+      const d = await r.json();
+      input.value = "";
+      // 重載字幕讓 preview 立即反映新時間
+      await loadEpisodeState();
+      renderCards();
+      renderTopbar();
+      renderCaption();
+      alert(`套用完成：${d.card_count} 張字幕位移了 ${offset > 0 ? "+" : ""}${offset} 秒`);
+    } catch (e) {
+      alert(`套用失敗：${e.message}`);
+    } finally {
+      btn.disabled = false;
+    }
   });
 }
 
@@ -2587,6 +2625,12 @@ $("#save-btn").addEventListener("click", async () => {
     setSaveBtnLabel("check", "已儲存");
     // 儲存成功後既有的 undo 紀錄已落地，視為起點 → 清空 stacks
     clearUndoStacks();
+    // 切卡 bug 修復：存檔已把 splits / overrides 寫進 _v2.srt（卡片切開、重編號、變多）。
+    // 不重新載入的話 state.cards / state.cardSplits 會停在舊狀態，下次存檔時舊的 cardSplits
+    // 會套到已經錯位的卡上 → 卡片重複 / 錯亂（先前「同句連續 N 張」的根因）。
+    // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
+    await loadEpisodeState();
+    renderCards();
     // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
     const ytBtn = $("#assemble-yt-btn");
     const reelsBtn = $("#assemble-reels-btn");
@@ -3153,9 +3197,27 @@ function requestTranscribe(file) {
 }
 
 // 三段進度條：每段佔總長 1/3
+// 後端依 provider 送不同細粒度 phase：
+//   雲端 gemini/openai：compress → upload → resegment
+//   本地 whisper_mlx：compress → vad → decode → stt → resegment
+// UI 只有三顆 pill（壓縮 / STT / 切句），把細 phase 收斂到三段桶；
+// 桶決定 pill 高亮與整體百分比，細 phase 名只用在文字 label。
+// 漏掉任何細 phase → computeOverallPercent 的 indexOf 回 -1 → 進度條卡 0%。
 const TRANSCRIBE_PHASES = ["compress", "upload", "resegment"];
+const TRANSCRIBE_PHASE_BUCKET = {
+  compress: "compress",
+  vad: "upload",
+  decode: "upload",
+  stt: "upload",
+  upload: "upload",
+  resegment: "resegment",
+};
+const bucketOfPhase = (phase) => TRANSCRIBE_PHASE_BUCKET[phase] || phase;
 const TRANSCRIBE_PHASE_LABELS = {
   compress: "壓縮音檔",
+  vad: "偵測語音段",
+  decode: "載入模型",
+  stt: "語音辨識中",
   upload: "上傳並等待 STT",
   resegment: "重新切句",
 };
@@ -3170,7 +3232,7 @@ function stopTranscribePoll() {
 
 function renderTranscribePhasePills(currentPhase, state) {
   // pending / active / done 三種狀態，依目前 phase 與 state 推導
-  const curIdx = TRANSCRIBE_PHASES.indexOf(currentPhase);
+  const curIdx = TRANSCRIBE_PHASES.indexOf(bucketOfPhase(currentPhase));
   for (const phase of TRANSCRIBE_PHASES) {
     const el = document.querySelector(
       `#transcribe-progress .phase-pill[data-phase="${phase}"]`,
@@ -3189,7 +3251,7 @@ function renderTranscribePhasePills(currentPhase, state) {
 }
 
 function computeOverallPercent(phase, percent) {
-  const idx = TRANSCRIBE_PHASES.indexOf(phase);
+  const idx = TRANSCRIBE_PHASES.indexOf(bucketOfPhase(phase));
   if (idx < 0) return 0;
   return idx * (100 / 3) + Math.max(0, Math.min(100, percent)) / 3;
 }
@@ -4938,21 +5000,26 @@ $("#cam-save").addEventListener("click", async () => {
 });
 
 // 離開頁面（重整 / 關分頁 / 上一頁）攔截；瀏覽器只允許 generic 提示文字
+// _leavingToDashboard：按「取消」已自行 confirm 過放棄變動，導去 dashboard 時不要再被瀏覽器攔第二次
+let _leavingToDashboard = false;
 window.addEventListener("beforeunload", (e) => {
-  if (!hasUnsavedChanges()) return;
+  if (_leavingToDashboard || !hasUnsavedChanges()) return;
   e.preventDefault();
   e.returnValue = "";
 });
 
 $("#cancel-btn").addEventListener("click", async () => {
   if (hasUnsavedChanges() && !confirm("未儲存的修改會丟失，確定取消？")) return;
+  // 取消 = 放棄本次編輯、回 dashboard 重選集（不再關掉 server；關 server 才是收工）
   try {
-    await fetch("/api/shutdown", { method: "POST" });
-  } catch (_) {}
-  document.body.innerHTML =
-    "<div style='padding:40px;text-align:center;font-size:16px'>" +
-    "已取消，可以關閉這個分頁。" +
-    "</div>";
+    const r = await fetch("/api/episodes/close", { method: "POST" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  } catch (_) {
+    alert("回 dashboard 失敗");
+    return;
+  }
+  _leavingToDashboard = true;
+  window.location.href = "/";
 });
 
 // === 換集 ===
@@ -5312,6 +5379,7 @@ setupVersionTabs();
 setupReelsClips();
 setupAssembleButtons();
 setupSusToolbar();
+setupSrtShift();
 
 // 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
 if (window.Icons) window.Icons.inject();
