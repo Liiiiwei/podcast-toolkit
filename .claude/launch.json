@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "edit-ui",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-c",
+        "from pathlib import Path; from podcast_toolkit.episode import Episode; from podcast_toolkit.web.api import build_app; import uvicorn; uvicorn.run(build_app(Episode(Path('/Users/Mac365/Downloads/20260612 本地測試集')), shutdown=lambda: None), host='127.0.0.1', port=8765, log_level='warning')"
+      ],
+      "port": 8765
+    }
+  ]
+}

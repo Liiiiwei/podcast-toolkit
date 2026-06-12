@@ -451,9 +451,58 @@ h2 {
   padding: 8px 0;
 }
 .controls input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
   position: relative;
   z-index: 2;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+  --seek-pct: 0%; /* JS 每次 timeupdate / 拖 seek 都會更新，畫已播進度填色 */
+}
+.controls input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--seek-pct),
+    rgba(255, 255, 255, 0.16) var(--seek-pct) 100%
+  );
+}
+.controls input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px; /* (thumb 14 - track 6) / 2 置中 */
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.1s ease;
+}
+.controls input[type="range"]:hover::-webkit-slider-thumb,
+.controls input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+.controls input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.controls input[type="range"]::-moz-range-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.controls input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 .seek-wrap {
   flex: 1;
@@ -482,19 +531,67 @@ h2 {
 .trim-handle {
   position: absolute;
   top: 50%;
-  width: 10px;
-  height: 18px;
+  width: 12px;
+  height: 22px;
   background: var(--accent);
-  border: 1px solid #fff;
-  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 4px;
   transform: translate(-50%, -50%);
-  cursor: ew-resize;
+  cursor: grab;
   z-index: 3;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease,
+    background 0.08s ease;
+  touch-action: none; /* pointer 拖曳不被瀏覽器手勢吃掉 */
 }
-.trim-handle:hover,
-.trim-handle.dragging {
+/* 加大點擊熱區（視覺不變，實際好按範圍 ~28×34px） */
+.trim-handle::before {
+  content: "";
+  position: absolute;
+  inset: -6px -8px;
+}
+/* 握把紋：兩條直線，視覺上「這顆可以抓」 */
+.trim-handle::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 50%;
+  width: 4px;
+  transform: translateX(-50%);
+  border-left: 1px solid rgba(255, 255, 255, 0.75);
+  border-right: 1px solid rgba(255, 255, 255, 0.75);
+}
+.trim-handle:hover {
   background: var(--accent-hover);
+  transform: translate(-50%, -50%) scale(1.12);
+}
+.trim-handle.dragging {
+  cursor: grabbing;
+  background: var(--accent-hover);
+  transform: translate(-50%, -50%) scale(1.18);
+  box-shadow:
+    0 0 0 4px var(--accent-ring),
+    0 1px 4px rgba(0, 0, 0, 0.5);
+}
+/* 拖曳中的浮動時間提示，跟著拖把走 */
+.trim-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  background: rgba(24, 24, 28, 0.95);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 4;
 }
 .trim-controls {
   display: flex;

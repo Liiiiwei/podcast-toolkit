@@ -234,6 +234,14 @@ document.addEventListener("keydown", (e) => {
 
 const $ = (sel) => document.querySelector(sel);
 
+// 秒 → "m:ss.d"（trim 拖把 tooltip 用，0.1s 精度跟 trim 值一致）
+function fmtTimeD(sec) {
+  if (!isFinite(sec)) return "0:00.0";
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return `${m}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
+}
+
 function fmtTime(sec) {
   if (!isFinite(sec)) return "00:00";
   const s = Math.floor(sec % 60)
@@ -1704,7 +1712,10 @@ $("#video").addEventListener("timeupdate", () => {
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
   $("#time").textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
-  $("#seek").value = dur ? (t / dur) * 100 : 0;
+  const seekEl = $("#seek");
+  const pct = dur ? (t / dur) * 100 : 0;
+  seekEl.value = pct;
+  seekEl.style.setProperty("--seek-pct", `${pct}%`); // 已播進度填色
 
   const activeCard = activeCardAt(t);
   const activeKey = activeCard ? String(activeCard.key) : null;
@@ -1756,6 +1767,7 @@ $("#video").addEventListener("pause", () => {
 $("#seek").addEventListener("input", (e) => {
   const v = $("#video");
   if (v.duration) v.currentTime = (e.target.value / 100) * v.duration;
+  e.target.style.setProperty("--seek-pct", `${e.target.value}%`);
 });
 
 // 影片載入完才能算頭尾 trim 在 seek 上的百分比，所以這裡也要重畫
@@ -1872,65 +1884,108 @@ $("#trim-reset").addEventListener("click", () => {
   renderTopbar();
 });
 
-// 拖曳 trim handle：mousedown 在拖把上 → mousemove 即時更新 sec → mouseup 收工。
+// 拖曳 trim handle：pointerdown 在拖把上 → rAF 節流更新 + tooltip + 畫格預覽 → pointerup 收工。
 // pushUndo 只在第一次 move 時押一次，避免拖一下噴一堆 history。
 // 點下去沒拖 = 沒進 stack，跟 frame drag / resize 同 pattern。
-function startTrimDrag(kind) {
+function startTrimDrag(kind, downEvent) {
   const v = $("#video");
   const dur = v.duration || 0;
   if (!dur) return;
   const handle =
     kind === "head" ? $("#trim-handle-head") : $("#trim-handle-tail");
   handle.classList.add("dragging");
+  // pointer capture：拖出視窗 / 觸控都不會掉拖；autoSkip/autoPause 有 paused 防護，
+  // 先暫停讓畫格預覽穩定（拖完留在原地，使用者正好檢視切點畫面）
+  if (downEvent && downEvent.pointerId != null && handle.setPointerCapture) {
+    try {
+      handle.setPointerCapture(downEvent.pointerId);
+    } catch (_) {}
+  }
+  if (!v.paused) v.pause();
   const wrap = $(".seek-wrap");
   const rect = wrap.getBoundingClientRect();
+  const tooltip = $("#trim-tooltip");
   let pushed = false;
+  let pendingX = null;
+  let rafId = null;
 
-  const onMove = (e) => {
-    const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+  // mousemove 可達 60+Hz，全部進 rAF 收斂成每幀最多一次 state+DOM 更新
+  const apply = () => {
+    rafId = null;
+    if (pendingX == null) return;
+    const x = Math.max(0, Math.min(rect.width, pendingX - rect.left));
+    pendingX = null;
     const sec = (x / rect.width) * dur;
     // clamp：頭不能超過尾的對面；尾同理；最少留 0.5s 內容免得整段被吃光
     const MIN_REMAIN = 0.5;
+    let posSec; // 拖把所在的絕對時間（tooltip 定位 + 畫格預覽用）
     if (kind === "head") {
       const maxHead = dur - (state.tailTrimSec || 0) - MIN_REMAIN;
       const next = Math.round(Math.max(0, Math.min(sec, maxHead)) * 10) / 10;
-      if (next === state.headTrimSec) return;
-      if (!pushed) {
-        pushUndo();
-        pushed = true;
+      posSec = next;
+      if (next !== state.headTrimSec) {
+        if (!pushed) {
+          pushUndo();
+          pushed = true;
+        }
+        state.headTrimSec = next;
+        renderTrimControls();
+        renderTopbar();
       }
-      state.headTrimSec = next;
+      tooltip.textContent = `片頭 ${fmtTimeD(next)}`;
     } else {
       const tailFromEnd = dur - sec;
       const maxTail = dur - (state.headTrimSec || 0) - MIN_REMAIN;
       const next =
         Math.round(Math.max(0, Math.min(tailFromEnd, maxTail)) * 10) / 10;
-      if (next === state.tailTrimSec) return;
-      if (!pushed) {
-        pushUndo();
-        pushed = true;
+      posSec = dur - next;
+      if (next !== state.tailTrimSec) {
+        if (!pushed) {
+          pushUndo();
+          pushed = true;
+        }
+        state.tailTrimSec = next;
+        renderTrimControls();
+        renderTopbar();
       }
-      state.tailTrimSec = next;
+      tooltip.textContent = `片尾 -${next.toFixed(1)}s（${fmtTimeD(posSec)}）`;
     }
-    renderTrimControls();
-    renderTopbar();
+    // tooltip 跟著拖把走 + 影片即時跳到拖把位置（所見即切點畫格）
+    tooltip.style.left = `${((posSec / dur) * 100).toFixed(2)}%`;
+    tooltip.hidden = false;
+    if (typeof v.fastSeek === "function") v.fastSeek(posSec);
+    else v.currentTime = posSec;
+  };
+
+  const onMove = (e) => {
+    pendingX = e.clientX;
+    if (rafId == null) rafId = requestAnimationFrame(apply);
   };
   const onUp = () => {
     handle.classList.remove("dragging");
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
+    tooltip.hidden = true;
+    if (rafId != null) cancelAnimationFrame(rafId);
+    document.removeEventListener("pointermove", onMove);
+    document.removeEventListener("pointerup", onUp);
+    document.removeEventListener("pointercancel", onUp);
   };
-  document.addEventListener("mousemove", onMove);
-  document.addEventListener("mouseup", onUp);
+  document.addEventListener("pointermove", onMove);
+  document.addEventListener("pointerup", onUp);
+  document.addEventListener("pointercancel", onUp);
+  // 按下當下就先畫一次：點一下（不拖）也立即看到 tooltip + 畫格
+  if (downEvent) {
+    pendingX = downEvent.clientX;
+    apply();
+  }
 }
 
-$("#trim-handle-head").addEventListener("mousedown", (e) => {
+$("#trim-handle-head").addEventListener("pointerdown", (e) => {
   e.preventDefault();
-  startTrimDrag("head");
+  startTrimDrag("head", e);
 });
-$("#trim-handle-tail").addEventListener("mousedown", (e) => {
+$("#trim-handle-tail").addEventListener("pointerdown", (e) => {
   e.preventDefault();
-  startTrimDrag("tail");
+  startTrimDrag("tail", e);
 });
 
 // C5：智慧建議 — POST /api/detect-silence；結果顯示在 hint，按下 hint 套用
