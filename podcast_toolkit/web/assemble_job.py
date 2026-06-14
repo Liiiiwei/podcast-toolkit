@@ -76,7 +76,8 @@ def start_job(
     subtitle_mode: str = "burn",
 ) -> dict[str, Any]:
     """開新 job；targets 例如 ['yt', 'reels']。preview_sec 非 None → 走預覽模式（截斷 + .preview 檔名）。
-    subtitle_mode：burn=燒字幕（預設）、sidecar=影片不燒+另存對齊 .srt。"""
+    subtitle_mode：burn=燒字幕（預設）、sidecar=影片不燒+另存對齊 .srt。
+    sidecar 只對 yt 生效；reels 一律硬燒（見下方 per-target 政策）。"""
     if not targets:
         raise ValueError("targets 不能為空")
     for t in targets:
@@ -90,9 +91,14 @@ def start_job(
     # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）
     plans = []
     for t in targets:
+        # 字幕模式 per-target 政策：sidecar（跳過 libass 燒字幕→加速）只套在 yt；
+        # reels（IG/TikTok/Shorts 不吃外掛 .srt）一律硬燒，否則成品完全沒字。
+        # 核心 prepare_assembly 仍支援任意 (output_kind, subtitle_mode) 組合（CLI / 測試），
+        # 這裡只是 web 單一字幕開關對應到各 target 的政策。
+        eff_mode = subtitle_mode if t == "yt" else "burn"
         plans.append(prepare_assembly(
             ep.dir, output_kind=t, force=force, preview_sec=preview_sec,
-            subtitle_mode=subtitle_mode,
+            subtitle_mode=eff_mode,
         ))
 
     _reset(

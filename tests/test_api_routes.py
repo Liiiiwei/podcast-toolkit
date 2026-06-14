@@ -143,6 +143,40 @@ def test_start_job_with_two_targets_queues_both(monkeypatch, tmp_episode_full):
     assert state["total"] == 2
 
 
+def test_start_job_sidecar_only_applies_to_yt(monkeypatch, tmp_episode_full):
+    """單一字幕開關選 sidecar → 只有 yt 走 sidecar；reels 一律硬燒。
+    Reels（IG/TikTok/Shorts）不吃外掛 .srt，sidecar 會讓成品完全沒字，故 web 政策強制硬燒。"""
+    from podcast_toolkit.web import assemble_job
+    from podcast_toolkit.episode import Episode
+
+    class _FakeProc:
+        stdout = iter([])
+        stderr = None
+        def wait(self): return 0
+
+    seen = {}
+    real_prepare = assemble_job.prepare_assembly
+
+    def _spy(ep_dir, *, output_kind, subtitle_mode="burn", **kw):
+        seen[output_kind] = subtitle_mode
+        return real_prepare(ep_dir, output_kind=output_kind,
+                            subtitle_mode=subtitle_mode, **kw)
+
+    monkeypatch.setattr(assemble_job, "prepare_assembly", _spy)
+    monkeypatch.setattr(assemble_job, "Popen", lambda *a, **k: _FakeProc())
+    monkeypatch.setattr(threading.Thread, "start", lambda self: None)
+
+    ep = Episode(tmp_episode_full)
+    assemble_job._STATE["state"] = "idle"
+    try:
+        assemble_job.start_job(ep, targets=["yt", "reels"], force=True,
+                               subtitle_mode="sidecar")
+        assert seen["yt"] == "sidecar"   # yt 套用所選 sidecar（加速）
+        assert seen["reels"] == "burn"   # reels 被政策強制硬燒
+    finally:
+        assemble_job._STATE["state"] = "idle"
+
+
 def test_assemble_endpoint_requires_targets(client):
     r = client.post("/api/assemble", json={"force": True})
     assert r.status_code == 400
