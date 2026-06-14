@@ -24,10 +24,14 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/video")
     def get_video(request: Request, path: str | None = None):
         ep = ctx.require_ep()
-        # path 為空 → main_video；否則必須在 ep.dir 內且可預覽
+        # path 為空 → cam A 正片；否則必須在 ep.dir 內且可預覽
         if not path:
-            target = ep.main_video()
-            # 空集（init 完但 01_母帶/ 沒檔）main_video 解析後不存在 → 回 404
+            # cam A 正典來源是 cameras.a（assemble.py 也用它當正片）。main_video 是舊的單機欄位，
+            # 多機集可能跟 cameras.a 不一致（曾見 main_video 指到 cam B 檔）→ 預覽 cam A 誤播成 cam B、
+            # 跟 cam B overlay 同一支檔，AB 切換看起來「沒切換」。單機集 cameras.a==main_video，無差異。
+            cam_a = (ep.cfg.get("cameras") or {}).get("a")
+            target = ep.resolve_episode_path(cam_a) if cam_a else ep.main_video()
+            # 空集（init 完但 01_母帶/ 沒檔）解析後不存在 → 回 404
             # 不要讓 range_response 的 path.stat() 直接拋 FileNotFoundError 變成 500 噪音
             if not target.is_file():
                 raise HTTPException(status_code=404, detail="這集還沒有主影片")
