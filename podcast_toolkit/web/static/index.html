@@ -431,12 +431,27 @@
               <span>套用偏移</span>
             </button>
           </div>
-          <div class="card-insert-row">
-            <button type="button" id="card-insert-btn" class="btn btn-ghost">
-              <span data-icon="plus"></span>
-              <span>在游標處插入字卡</span>
+          <div class="cards-toolbar" id="cards-toolbar">
+            <button
+              id="cards-play-btn"
+              type="button"
+              class="btn btn-icon"
+              aria-label="播放"
+              title="播放 / 暫停（捲動時一直在手邊）"
+            >
+              <span data-icon="play"></span>
             </button>
-            <span class="card-insert-hint" id="card-insert-hint"></span>
+            <span class="cards-time" id="cards-time">0:00 / 0:00</span>
+            <span class="spacer"></span>
+            <button
+              type="button"
+              id="card-insert-btn"
+              class="btn btn-ghost"
+              title="在目前播放位置插入一張新字卡"
+            >
+              <span data-icon="plus"></span>
+              <span>插入字卡</span>
+            </button>
           </div>
           <div id="cards-list"></div>
         </section>

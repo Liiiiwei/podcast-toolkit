@@ -27,6 +27,7 @@ const state = {
   // 新增的字卡：[{tempId, start, end, text}]；存檔時 append 進 SRT、重編號
   newCards: [],
   newCardSeq: 0, // tempId 流水號
+  dragCardIdx: null, // 拖拉換位置中的整卡 idx（null = 沒在拖）
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -689,6 +690,43 @@ function setCardTime(c, start, end) {
   }
 }
 
+// 拖拉換位置：把 D 卡移到目標 T 卡的前 / 後 → 算落點時間（夾住不跟鄰居重疊）→ 設 override；
+// expandedCards 依 start 重排，卡片就自動移到新位置（重用時間微調機制，不另搞排序狀態）。
+function reorderCardTo(dragIdx, targetIdx, before) {
+  if (dragIdx === targetIdx) return;
+  const byIdx = new Map(state.cards.map((c) => [c.idx, c]));
+  const D = byIdx.get(dragIdx);
+  const T = byIdx.get(targetIdx);
+  if (!D || !T) return;
+  const tt = getEffectiveCardTime(T);
+  const dt = getEffectiveCardTime(D);
+  const dur = Math.max(0.3, Math.round((dt.end - dt.start) * 100) / 100);
+  // 依生效時間排序的整卡清單（排除 D），夾住落點不跟前後鄰居重疊
+  const others = state.cards
+    .filter((c) => c.idx !== dragIdx)
+    .map((c) => ({ idx: c.idx, ...getEffectiveCardTime(c) }))
+    .sort((a, b) => a.start - b.start);
+  const ti = others.findIndex((o) => o.idx === targetIdx);
+  let ns, ne;
+  if (before) {
+    ne = tt.start;
+    ns = ne - dur;
+    const prev = ti > 0 ? others[ti - 1] : null;
+    if (prev && ns < prev.end) ns = prev.end;
+    if (ns < 0) ns = 0;
+  } else {
+    ns = tt.end;
+    ne = ns + dur;
+    const next = ti >= 0 && ti < others.length - 1 ? others[ti + 1] : null;
+    if (next && ne > next.start) ne = next.start;
+  }
+  if (ne - ns < 0.1) ne = ns + 0.1;
+  setCardTime(D, ns, ne); // 內含 pushUndo + 四捨五入 + clamp
+  renderCards();
+  renderCaption();
+  renderTopbar();
+}
+
 // 時間微調的「目標」抽象：既有卡走 timeOverrides，新卡直接改自身 start/end。
 // target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
 function cardTimeTarget(c) {
@@ -1175,8 +1213,15 @@ function renderCards() {
       $("#video").currentTime = r.start;
     });
     if (!isSub && state.timeOverrides.has(c.idx)) div.classList.add("time-dirty");
-    // 未切的整卡才給「微調時間」入口（切過的卡時間由斷句配速決定）
+    // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
     if (!isSub) {
+      const grip = document.createElement("span");
+      grip.className = "card-grip";
+      grip.textContent = "⠿";
+      grip.title = "拖曳把這張卡移到新的時間位置";
+      grip.draggable = true;
+      time.insertBefore(grip, time.firstChild);
+
       const teBtn = document.createElement("button");
       teBtn.type = "button";
       teBtn.className = "card-time-edit-btn";
@@ -2085,7 +2130,10 @@ $("#video").addEventListener("timeupdate", () => {
   autoSkipDeletedSegments();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
-  $("#time").textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
+  const timeStr = `${fmtTime(t)} / ${fmtTime(dur)}`;
+  $("#time").textContent = timeStr;
+  const ctEl = $("#cards-time");
+  if (ctEl) ctEl.textContent = timeStr; // 字幕區 sticky 列同步時間
   const seekEl = $("#seek");
   const pct = dur ? (t / dur) * 100 : 0;
   seekEl.value = pct;
@@ -2101,7 +2149,9 @@ $("#video").addEventListener("timeupdate", () => {
       const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
       if (el) {
         el.classList.add("playing");
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // 正在編輯某張卡的文字時不自動捲走，否則邊播邊改會被一直拉到播放卡、打斷編輯
+        const editing = document.activeElement?.classList?.contains("card-text");
+        if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     }
     _lastActiveKey = activeKey;
@@ -2110,19 +2160,27 @@ $("#video").addEventListener("timeupdate", () => {
 });
 
 const playBtn = $("#play-btn");
-playBtn.addEventListener("click", () => {
+function togglePlay() {
   const v = $("#video");
   if (v.paused) v.play();
   else v.pause();
-});
+}
+playBtn.addEventListener("click", togglePlay);
+// 字幕區 sticky 列的播放鈕：捲到字幕下方也能就近播放/暫停
+$("#cards-play-btn")?.addEventListener("click", togglePlay);
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
 function setPlayIcon(name) {
-  playBtn.innerHTML = window.Icons
+  const html = window.Icons
     ? window.Icons.get(name, { size: 16 })
     : name === "pause"
       ? "⏸"
       : "▶";
-  playBtn.setAttribute("aria-label", name === "pause" ? "暫停" : "播放");
+  const label = name === "pause" ? "暫停" : "播放";
+  for (const b of [playBtn, $("#cards-play-btn")]) {
+    if (!b) continue;
+    b.innerHTML = html;
+    b.setAttribute("aria-label", label);
+  }
 }
 $("#video").addEventListener("play", () => {
   setPlayIcon("pause");
@@ -5849,6 +5907,72 @@ $("#card-insert-btn").addEventListener("click", () => {
     }
   });
 });
+
+// 拖拉換位置：grip 啟動拖曳，#cards-list 委派 dragover/drop（只在整卡之間，排除 sub-card / 新卡）
+(() => {
+  const list = $("#cards-list");
+  if (!list) return;
+  const clear = () =>
+    document
+      .querySelectorAll(".card.drop-before, .card.drop-after, .card.dragging")
+      .forEach((el) =>
+        el.classList.remove("drop-before", "drop-after", "dragging"),
+      );
+  const targetCard = (e) => {
+    const card = e.target.closest && e.target.closest(".card");
+    if (!card) return null;
+    if (card.classList.contains("card-sub") || card.classList.contains("card-new")) {
+      return null;
+    }
+    return card;
+  };
+  list.addEventListener("dragstart", (e) => {
+    const grip = e.target.closest && e.target.closest(".card-grip");
+    if (!grip) return;
+    const card = grip.closest(".card");
+    const idx = parseInt(card && card.dataset.idx, 10);
+    if (Number.isNaN(idx)) return;
+    state.dragCardIdx = idx;
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData("text/plain", String(idx));
+      e.dataTransfer.setDragImage(card, 12, 12); // 拖整張卡當 ghost，不是只有把手
+    } catch (_) {}
+    card.classList.add("dragging");
+  });
+  list.addEventListener("dragover", (e) => {
+    if (state.dragCardIdx == null) return;
+    const card = targetCard(e);
+    if (!card) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = card.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    document
+      .querySelectorAll(".card.drop-before, .card.drop-after")
+      .forEach((el) => {
+        if (el !== card) el.classList.remove("drop-before", "drop-after");
+      });
+    card.classList.toggle("drop-before", before);
+    card.classList.toggle("drop-after", !before);
+  });
+  list.addEventListener("drop", (e) => {
+    if (state.dragCardIdx == null) return;
+    const card = targetCard(e);
+    if (!card) return;
+    e.preventDefault();
+    const targetIdx = parseInt(card.dataset.idx, 10);
+    const before = card.classList.contains("drop-before");
+    const dragIdx = state.dragCardIdx;
+    state.dragCardIdx = null;
+    clear();
+    if (!Number.isNaN(targetIdx)) reorderCardTo(dragIdx, targetIdx, before);
+  });
+  list.addEventListener("dragend", () => {
+    state.dragCardIdx = null;
+    clear();
+  });
+})();
 $("#new-ep-cancel").addEventListener("click", closeNewEpModal);
 $("#new-ep-go").addEventListener("click", submitNewEpisode);
 $("#new-ep-date").addEventListener("input", updateNewEpPreview);

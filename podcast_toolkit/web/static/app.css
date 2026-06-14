@@ -2161,12 +2161,48 @@ dialog.modal::backdrop {
   font-family: var(--font-mono);
   color: var(--text-dim);
 }
-/* 插入字卡列 + 新增的字卡樣式 */
-.card-insert-row {
+/* 字幕區頂端 sticky 工具列：播放/暫停 + 時間 + 插入字卡（捲動時一直在手邊）*/
+.cards-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin: 0 -12px 8px;
+  padding: 8px 12px;
+  background: var(--surface-sunken);
+  border-bottom: 0.5px solid var(--border);
+}
+.cards-toolbar .spacer {
+  flex: 1;
+}
+.cards-time {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 拖拉換位置：把手 + 拖曳中 / 落點指示 */
+.card-grip {
+  display: block;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+.card-grip:active {
+  cursor: grabbing;
+}
+.card.dragging {
+  opacity: 0.45;
+}
+.card.drop-before {
+  box-shadow: inset 0 3px 0 var(--accent);
+}
+.card.drop-after {
+  box-shadow: inset 0 -3px 0 var(--accent);
 }
 .card.card-new {
   border-color: var(--accent);
