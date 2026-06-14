@@ -464,12 +464,15 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
                 ov = time_overrides.get(int(c["idx"]))
                 if ov:
                     c["start"], c["end"] = ov
-        # 插入新字卡：給暫時 idx（接在最大 idx 後），再依 start 排序；serialize_with_map 會重編號
+        # 插入新字卡：給暫時 idx（接在最大 idx 後）；serialize_with_map 會重編號
         if new_cards:
             max_idx = max((int(c["idx"]) for c in cards), default=0)
             for i, nc in enumerate(new_cards):
                 cards.append({"idx": max_idx + 1 + i, **nc})
-            cards.sort(key=lambda c: float(c["start"]))
+        # 套完時間 override / 插入新卡後「一律」依 start 重排：SRT 必須時間單調，重新編號才會跟
+        # 前端（也是依 start 排）對得上。拖拉換位置 / 微調把卡移過鄰居時，少了這步會寫出非單調
+        # SRT、重載後整份錯位（症狀：「時間整個跑掉」）。輸入已排序時重排為 no-op，安全。
+        cards.sort(key=lambda c: float(c["start"]))
         new_text, idx_map = srt_io.serialize_with_map(
             cards, overrides=overrides, splits=splits
         )

@@ -66,6 +66,30 @@ def test_save_state_writes_crop_and_deletions_to_yaml(tmp_episode_dir):
     assert new_yaml["deletions"] == [2, 4]
 
 
+def test_save_state_reorder_keeps_srt_time_monotonic(tmp_episode_dir):
+    """回歸：拖拉換位置（time_overrides 把卡移過鄰居）存檔後，_v2.srt 必須仍時間單調、
+    重新編號跟畫面（前端也依 start 排）一致。少了 always-sort 會寫出非單調 SRT →
+    重載後「時間整個跑掉」。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    # 卡 4（我們從牠的飼料配方開始講起，原 14–22s）拖到最前面 1.0–3.0s
+    episode_io.save_state(ep, payload={
+        "cards": [],
+        "time_overrides": {"4": {"start": 1.0, "end": 3.0}},
+    })
+    out = srt_io.parse(
+        (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    )
+    starts = [c["start"] for c in out]
+    assert starts == sorted(starts), f"SRT 非單調（時間跑掉）：{starts}"
+    assert len(out) == 4
+    # 被拖到前面的卡 → 現在排第 2（緊接卡 1），時間 1.0–3.0
+    assert out[1]["text"] == "我們從牠的飼料配方開始講起"
+    assert out[1]["start"] == 1.0 and out[1]["end"] == 3.0
+    # 重新編號連續 1..4
+    assert [c["idx"] for c in out] == [1, 2, 3, 4]
+
+
 def test_save_state_writes_rotate_cover_speed(tmp_episode_dir):
     """旋轉（per cam）/ 節目封面開關 / 倍速 存進 episode.yaml，load_state 再讀回。"""
     ep = Episode(tmp_episode_dir)
