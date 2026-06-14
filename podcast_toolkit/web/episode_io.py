@@ -172,6 +172,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
         "crop_reels": ep.cfg.get("crop_reels"),
+        # 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速：前端編輯介面用
+        "rotate": dict(ep.cfg.get("rotate") or {}),
+        "cover_enabled": bool((ep.cfg.get("watermark") or {}).get("enabled")),
+        "speed": dict(ep.cfg.get("speed") or {}),
         "deletions": list(ep.cfg.get("deletions") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
@@ -271,6 +275,39 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data[key] = entry
         else:
             data.pop(key, None)
+
+    # 旋轉拉正（per cam，度數）：a/b 任一非 0 才寫；全 0 → 移除整個 rotate key
+    if "rotate" in payload:
+        rot_payload = payload.get("rotate") or {}
+        rot_out: dict[str, float] = {}
+        for cam in ("a", "b"):
+            try:
+                v = float(rot_payload.get(cam) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if abs(v) > 1e-6:
+                rot_out[cam] = v
+        if rot_out:
+            data["rotate"] = rot_out
+        else:
+            data.pop("rotate", None)
+
+    # 節目封面開關：明確寫 enabled bool。預設已開（defaults.yaml），所以「關」要寫
+    # explicit false 才壓得過預設（pop 掉會回退成預設的 true）。
+    if "cover_enabled" in payload:
+        data["watermark"] = {"enabled": bool(payload.get("cover_enabled"))}
+
+    # 正片倍速：enabled 時寫 {enabled, factor}（夾在 0.5–2.0）；關閉 → 移除整段（回退預設不加速）
+    if "speed" in payload:
+        sp = payload.get("speed") or {}
+        if sp.get("enabled"):
+            try:
+                factor = float(sp.get("factor") or 1.25)
+            except (TypeError, ValueError):
+                factor = 1.25
+            data["speed"] = {"enabled": True, "factor": min(2.0, max(0.5, factor))}
+        else:
+            data.pop("speed", None)
 
     # deletions：先收原始 composite IDs，等 SRT 重編號完再翻譯成新 int idx
     raw_deletions = list(payload.get("deletions") or [])

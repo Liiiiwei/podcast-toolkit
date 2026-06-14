@@ -69,8 +69,10 @@ def start_job(
     targets: list[str],
     force: bool = False,
     preview_sec: int | None = None,
+    subtitle_mode: str = "burn",
 ) -> dict[str, Any]:
-    """開新 job；targets 例如 ['yt', 'reels']。preview_sec 非 None → 走預覽模式（截斷 + .preview 檔名）。"""
+    """開新 job；targets 例如 ['yt', 'reels']。preview_sec 非 None → 走預覽模式（截斷 + .preview 檔名）。
+    subtitle_mode：burn=燒字幕（預設）、sidecar=影片不燒+另存對齊 .srt。"""
     if not targets:
         raise ValueError("targets 不能為空")
     for t in targets:
@@ -86,6 +88,7 @@ def start_job(
     for t in targets:
         plans.append(prepare_assembly(
             ep.dir, output_kind=t, force=force, preview_sec=preview_sec,
+            subtitle_mode=subtitle_mode,
         ))
 
     _reset(
@@ -132,9 +135,18 @@ def _run_queue(plans: list[dict]) -> None:
         # _pump_progress 失敗會 set state=error；成功只更新 percent，
         # 最終 done 由這裡統一設——否則多 target 間隙會被前端 poll 到假的 done。
         with _LOCK:
-            if _STATE["state"] == "error":
-                return  # 中止後續
-            _STATE["output_files"].append(str(plan["out"]))
+            failed = _STATE["state"] == "error"
+        if failed:
+            return  # 中止後續
+
+        # 成功：影片已 rename 完成。sidecar 模式才把對齊好的字幕 .srt 落在成品旁。
+        outputs = [str(plan["out"])]
+        sidecar = plan.get("sidecar_srt")
+        if sidecar:
+            sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
+            outputs.append(str(sidecar["path"]))
+        with _LOCK:
+            _STATE["output_files"].extend(outputs)
     # 全部跑完
     _set(state="done", percent=100.0, eta_s=0)
 

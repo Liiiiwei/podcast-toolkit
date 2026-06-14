@@ -152,7 +152,7 @@ def test_assemble_endpoint_requires_targets(client):
 def test_assemble_endpoint_with_yt_reels(client, monkeypatch):
     from podcast_toolkit.web import assemble_job
     monkeypatch.setattr(assemble_job, "start_job",
-                        lambda ep, targets, force, preview_sec=None: {
+                        lambda ep, targets, force, preview_sec=None, subtitle_mode="burn": {
                             "targets": targets,
                             "out_paths": [f"/fake/{t}.mp4" for t in targets],
                         })

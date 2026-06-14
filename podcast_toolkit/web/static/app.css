@@ -430,6 +430,102 @@ h2 {
   border-color: var(--accent);
 }
 
+/* === 輸出設定列：旋轉拉正 / 節目封面 / 倍速 === */
+.framing-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-top: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.rotate-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.framing-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.rotate-cam-badge {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--accent);
+}
+.rotate-cam-badge:empty {
+  display: none;
+}
+.rotate-slider {
+  width: 120px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.rotate-input,
+.speed-factor {
+  width: 56px;
+  padding: 4px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: right;
+}
+.speed-factor:disabled {
+  opacity: 0.45;
+}
+.rotate-unit {
+  color: var(--text-faint);
+}
+.btn-sm {
+  font-size: var(--text-xs);
+  padding: 4px 8px;
+  min-height: 26px;
+}
+.toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  cursor: pointer;
+  user-select: none;
+}
+.toggle-chip input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.toggle-chip:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* 合成字幕模式（topbar，與合成按鈕同列） */
+.subtitle-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.subtitle-mode-label {
+  font-weight: 600;
+}
+.subtitle-mode select {
+  padding: 5px 8px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
 .time-readout {
   font-family: var(--font-mono);
   font-size: var(--text-sm);

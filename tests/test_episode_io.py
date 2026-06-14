@@ -65,6 +65,54 @@ def test_save_state_writes_crop_and_deletions_to_yaml(tmp_episode_dir):
     assert new_yaml["deletions"] == [2, 4]
 
 
+def test_save_state_writes_rotate_cover_speed(tmp_episode_dir):
+    """旋轉（per cam）/ 節目封面開關 / 倍速 存進 episode.yaml，load_state 再讀回。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "rotate": {"a": 2.5, "b": -1.0},
+            "cover_enabled": True,
+            "speed": {"enabled": True, "factor": 1.25},
+            "cards": [],
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["rotate"] == {"a": 2.5, "b": -1.0}
+    assert data["watermark"] == {"enabled": True}
+    assert data["speed"] == {"enabled": True, "factor": 1.25}
+    # load_state 透出給前端
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["rotate"] == {"a": 2.5, "b": -1.0}
+    assert state["cover_enabled"] is True
+    assert state["speed"]["enabled"] is True
+
+
+def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
+    """旋轉全 0 / 倍速關閉 / 封面取消 → 對應 key 從 yaml 移除（回退預設）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["rotate"] = {"a": 3.0}
+    data["speed"] = {"enabled": True, "factor": 1.5}
+    data["watermark"] = {"enabled": True}
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={
+            "rotate": {"a": 0, "b": 0},
+            "cover_enabled": False,
+            "speed": {"enabled": False},
+            "cards": [],
+        },
+    )
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "rotate" not in after
+    assert "speed" not in after
+    # 封面預設已開，取消要寫 explicit false（不能 pop，否則回退成預設 true）
+    assert after["watermark"] == {"enabled": False}
+
+
 def test_save_state_overwrites_v2_srt_with_card_text_overrides(tmp_episode_dir):
     ep = Episode(tmp_episode_dir)
     episode_io.save_state(

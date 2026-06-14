@@ -30,9 +30,14 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 raise HTTPException(status_code=400, detail="preview_sec 必須是正整數")
             if preview_sec <= 0:
                 preview_sec = None
+        # subtitle_mode：burn=字幕燒進畫面（預設）、sidecar=影片不燒+另存對齊 .srt
+        subtitle_mode = payload.get("subtitle_mode") or "burn"
+        if subtitle_mode not in ("burn", "sidecar"):
+            raise HTTPException(status_code=400, detail="subtitle_mode 必須是 burn 或 sidecar")
         try:
             info = assemble_job.start_job(
                 ep, targets=targets, force=force, preview_sec=preview_sec,
+                subtitle_mode=subtitle_mode,
             )
         except AssembleError as e:
             # 資產缺失 / 輸出存在 / 找不到 ffmpeg

@@ -128,6 +128,12 @@ def merge(defaults: dict, episode: dict) -> dict:
         "force_join": set(episode.get("force_join") or []),
         "crop_yt": episode.get("crop_yt"),
         "crop_reels": episode.get("crop_reels"),
+        # 節目封面 overlay 開關（沿用 watermark 機制：只疊正片、右上角）；defaults + episode 逐 key 合併
+        "watermark": {**(defaults.get("watermark") or {}), **(episode.get("watermark") or {})},
+        # 正片倍速（只加速正片，片頭尾不動）：{enabled, factor}
+        "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
+        # 畫面拉正旋轉（per cam，度數）：{a, b}
+        "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
         "deletions": list(episode.get("deletions") or []),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),

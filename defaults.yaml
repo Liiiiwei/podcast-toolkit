@@ -77,16 +77,31 @@ subtitle_style_reels:
   alignment: 10               # SSA v3 mid-center（畫面正中央）
   margin_v: 480               # alignment=10 時 MarginV 正值=從中心向下偏移；480/1920 = 25%（中心向下 25%，落在 75% 線、避開臉部、留下方動作列空間）
 
-# 影片浮水印（assemble 階段 ffmpeg overlay 燒上去）
-# enabled=false 時整段 no-op；要啟用先放 logo 檔到 assets.logo 指向的路徑
+# 節目封面 / 浮水印（assemble 階段 ffmpeg overlay 燒上去）
+# 只疊在「正片段」，片頭片尾不放 → 天生符合「錄影開始後才放封面」。
+# enabled=false 時整段 no-op；每集可在編輯介面勾選開關（寫進 episode.yaml watermark.enabled）。
+# 取圖優先 assets.cover（節目封面），退回 assets.logo。
 # 座標都是相對最終輸出 frame（crop+scale 後的 1920×1080 / 1080×1920）
 watermark:
-  enabled: false
+  enabled: true                # 預設每集都放節目封面；個別集可在編輯介面取消
   position: "top-right"        # top-right | top-left | bottom-right | bottom-left
-  width_pct: 0.11              # logo 寬佔 frame 寬比例（1920 → ~211px）
+  width_pct: 0.11              # 封面寬佔 frame 寬比例（1920 → ~211px 小徽章）
   margin_top_pct: 0.03         # 距上/下邊距比例
   margin_right_pct: 0.03       # 距右/左邊距比例
   opacity: 1.0                 # 0.0-1.0，先預留欄位（目前 overlay 直接用原 alpha）
+
+# 正片倍速（只加速正片，片頭/片尾維持原速）。每集可在編輯介面開關 + 調倍率。
+# 燒字幕模式：字幕先燒進畫面再 setpts → 自動同步；sidecar 模式：另存的 .srt 同步 ÷ 倍率。
+# factor 夾在 atempo 合法區間 0.5–2.0。
+speed:
+  enabled: false
+  factor: 1.25
+
+# 畫面拉正旋轉（補拍攝傾斜）。per cam 各自一個角度（度數，順時針為正），YT / Reels 共用。
+# 旋轉露出的黑角靠 crop 內縮裁掉（建議搭配 crop 使用）。
+rotate:
+  a: 0
+  b: 0
 
 assets:
   intro: "assets/intro.mp4"
@@ -95,7 +110,9 @@ assets:
   outro_audio: "assets/outro.mp3"
   outro_image: "assets/subscribe_card.png"
   outro_duration: 20.453333
-  # 浮水印 logo 檔（PNG 建議透明背景）；不存在時 watermark 段會被跳過
+  # 節目封面檔（右上角小徽章，建議方形 PNG）；watermark.enabled=true 時燒上去
+  cover: "assets/cover.png"
+  # 浮水印 logo 檔（PNG 建議透明背景）；cover 不存在時的退路；不存在時 watermark 段會被跳過
   logo: "assets/logo.png"
 
 encode:

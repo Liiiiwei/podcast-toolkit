@@ -84,6 +84,16 @@
             <span data-icon="video"></span>
             <span>鏡頭</span>
           </button>
+          <label
+            class="subtitle-mode"
+            title="燒進畫面：字幕燒在影片上（現行）。另存字幕檔：影片不燒，另出一份對齊最終影片的 .srt（倍速下也對齊）。"
+          >
+            <span class="subtitle-mode-label">字幕</span>
+            <select id="subtitle-mode-select">
+              <option value="burn">燒進畫面</option>
+              <option value="sidecar">另存字幕檔</option>
+            </select>
+          </label>
           <button
             id="assemble-yt-btn"
             type="button"
@@ -263,6 +273,60 @@
                 <span>重設</span>
               </button>
             </div>
+          </div>
+          <div class="framing-row">
+            <div
+              class="rotate-control"
+              title="把傾斜的畫面轉正（旋轉露出的黑角靠裁切內縮裁掉）"
+            >
+              <span data-icon="rotate-cw" data-icon-size="14"></span>
+              <span class="framing-label">旋轉</span>
+              <span id="rotate-cam-badge" class="rotate-cam-badge"></span>
+              <input
+                type="range"
+                id="rotate-slider"
+                class="rotate-slider"
+                min="-10"
+                max="10"
+                step="0.1"
+                value="0"
+              />
+              <input
+                type="number"
+                id="rotate-input"
+                class="rotate-input"
+                min="-15"
+                max="15"
+                step="0.1"
+                value="0"
+              />
+              <span class="rotate-unit">°</span>
+              <button id="rotate-reset" type="button" class="btn btn-ghost btn-sm">
+                歸零
+              </button>
+            </div>
+            <label
+              class="toggle-chip"
+              title="正片右上角放節目封面（片頭片尾不放）"
+            >
+              <input type="checkbox" id="cover-toggle" />
+              <span>節目封面</span>
+            </label>
+            <label class="toggle-chip" title="只加速正片，字幕自動同步">
+              <input type="checkbox" id="speed-toggle" />
+              <span>倍速</span>
+              <input
+                type="number"
+                id="speed-factor"
+                class="speed-factor"
+                min="1"
+                max="2"
+                step="0.05"
+                value="1.25"
+                disabled
+              />
+              <span class="rotate-unit">×</span>
+            </label>
           </div>
           <div class="reels-clips-panel hidden" id="reels-clips-panel">
             <div class="reels-clips-head">

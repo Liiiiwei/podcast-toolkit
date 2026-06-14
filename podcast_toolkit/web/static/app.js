@@ -10,6 +10,8 @@ const state = {
   cropReelsB: null,
   cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
   cropRatioReels: null,
+  // 旋轉拉正：per cam 度數（綁源攝影機，YT/Reels 共用）；正值順時針，搭配 crop 把黑角裁掉
+  rotate: { a: 0, b: 0 },
   deletions: new Set(),
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   cards: [],
@@ -49,6 +51,12 @@ const state = {
   subtitleStyleReels: null,
   outputResYt: { w: 1920, h: 1080 },
   outputResReels: { w: 1080, h: 1920 },
+  // 節目封面（右上角小徽章）開關 / 正片倍速 {enabled,factor} / 合成字幕模式
+  coverEnabled: false,
+  speed: { enabled: false, factor: 1.25 },
+  subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
+  // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
+  outputDirty: false,
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
   // 換集 / 儲存成功 → 一律清空兩 stacks（與 dirty 概念對齊）
   undoStack: [],
@@ -118,6 +126,7 @@ function snapshotEditState() {
     cropReelsB: state.cropReelsB ? { ...state.cropReelsB } : null,
     cropRatioYt: state.cropRatioYt,
     cropRatioReels: state.cropRatioReels,
+    rotate: { a: state.rotate.a, b: state.rotate.b },
     camerasMapping: new Map(state.camerasMapping),
     speakersMapping: new Map(state.speakersMapping),
     headTrimSec: state.headTrimSec,
@@ -136,6 +145,7 @@ function applyEditSnapshot(snap) {
   state.cropReelsB = snap.cropReelsB ? { ...snap.cropReelsB } : null;
   state.cropRatioYt = snap.cropRatioYt;
   state.cropRatioReels = snap.cropRatioReels;
+  state.rotate = snap.rotate ? { ...snap.rotate } : { a: 0, b: 0 };
   state.camerasMapping = new Map(snap.camerasMapping);
   state.speakersMapping = new Map(snap.speakersMapping || []);
   state.headTrimSec = snap.headTrimSec;
@@ -271,7 +281,8 @@ function unsavedCount() {
     state.textOverrides.size +
     state.cardSplits.size +
     (state.cropYt != null ? 1 : 0) +
-    (state.cropReels != null ? 1 : 0)
+    (state.cropReels != null ? 1 : 0) +
+    (state.outputDirty ? 1 : 0)
   );
 }
 
@@ -391,7 +402,40 @@ function applyCaptionFontSize() {
   overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
 }
 
+// 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
+// 「先 rotate 源、再從軸對齊矩形 crop」語意。crop-frame / caption-overlay 不旋轉（維持軸對齊）。
+function applyRotationPreview() {
+  const a = Number(state.rotate?.a) || 0;
+  const b = Number(state.rotate?.b) || 0;
+  const v = document.querySelector("#video");
+  const vb = document.querySelector("#video-camb");
+  if (v) v.style.transform = a ? `rotate(${a}deg)` : "";
+  if (vb) vb.style.transform = b ? `rotate(${b}deg)` : "";
+}
+
+// 旋轉控制目前編哪台（跟 crop 共用 A/B context）；單機集恆 "a"
+function activeRotateCam() {
+  return getActiveCropCam();
+}
+
+// 同步旋轉滑桿 / 數字 / 徽章到目前 active cam 的角度
+function syncRotateControls() {
+  const cam = activeRotateCam();
+  const deg = Number(state.rotate?.[cam]) || 0;
+  const slider = document.querySelector("#rotate-slider");
+  const num = document.querySelector("#rotate-input");
+  const badge = document.querySelector("#rotate-cam-badge");
+  if (slider) slider.value = String(deg);
+  if (num) num.value = String(deg);
+  if (badge) {
+    const hasCamB = !!(state.cameras && state.cameras.b);
+    badge.textContent = hasCamB ? (cam === "b" ? "B" : "A") : "";
+  }
+}
+
 function renderCropInfo() {
+  applyRotationPreview();
+  syncRotateControls();
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
   // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
@@ -1264,6 +1308,14 @@ async function loadEpisodeState() {
       }
     : null;
   state.cropReelsB = reelsIn && reelsIn.b ? { ...reelsIn.b } : null;
+  // 旋轉拉正（per cam）/ 節目封面開關 / 正片倍速
+  const rot = data.rotate || {};
+  state.rotate = { a: Number(rot.a) || 0, b: Number(rot.b) || 0 };
+  state.coverEnabled = !!data.cover_enabled;
+  const sp = data.speed || {};
+  state.speed = { enabled: !!sp.enabled, factor: Number(sp.factor) || 1.25 };
+  state.outputDirty = false;
+  if (typeof syncOutputControls === "function") syncOutputControls();
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
@@ -2599,6 +2651,10 @@ $("#save-btn").addEventListener("click", async () => {
   const payload = {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
+    // 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速；後端 key-presence 判斷要不要寫
+    rotate: { a: state.rotate.a, b: state.rotate.b },
+    cover_enabled: state.coverEnabled,
+    speed: { enabled: state.speed.enabled, factor: state.speed.factor },
     // deletions / cameras_mapping key 可能是 int（未切卡）或 "<idx>:<part>"（子卡）→ 不能用 int sort
     deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
@@ -3996,7 +4052,7 @@ async function startAssemble(
     "ffmpeg 啟動中（片頭 + 正片 + 片尾）";
 
   try {
-    const body = { targets, force };
+    const body = { targets, force, subtitle_mode: state.subtitleMode };
     if (previewSec) body.preview_sec = previewSec;
     const r = await fetch("/api/assemble", {
       method: "POST",
@@ -5375,9 +5431,103 @@ $("#new-ep-date").addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitNewEpisode();
 });
 
+// === 輸出設定：旋轉拉正 / 節目封面 / 倍速 / 合成字幕模式 ===
+// state → UI 控制項（換集載入、undo 後呼叫）
+function syncOutputControls() {
+  const cover = document.querySelector("#cover-toggle");
+  if (cover) cover.checked = !!state.coverEnabled;
+  const spd = document.querySelector("#speed-toggle");
+  const spf = document.querySelector("#speed-factor");
+  if (spd) spd.checked = !!(state.speed && state.speed.enabled);
+  if (spf) {
+    spf.value = String((state.speed && state.speed.factor) || 1.25);
+    spf.disabled = !(state.speed && state.speed.enabled);
+  }
+  const sm = document.querySelector("#subtitle-mode-select");
+  if (sm) sm.value = state.subtitleMode || "burn";
+  syncRotateControls();
+}
+
+function setupOutputControls() {
+  const clampDeg = (v) => {
+    v = Number(v);
+    if (!isFinite(v)) v = 0;
+    return Math.round(Math.max(-15, Math.min(15, v)) * 10) / 10;
+  };
+  // 旋轉：滑桿 + 數字雙向綁定，編目前 active cam（跟 crop 共用 A/B context）
+  const slider = document.querySelector("#rotate-slider");
+  const num = document.querySelector("#rotate-input");
+  function setRotate(deg, push) {
+    const cam = activeRotateCam();
+    const v = clampDeg(deg);
+    if ((Number(state.rotate[cam]) || 0) === v) {
+      syncRotateControls();
+      return;
+    }
+    if (push) pushUndo();
+    state.rotate[cam] = v;
+    state.outputDirty = true;
+    renderCropInfo(); // 套 CSS 旋轉預覽 + 同步滑桿/數字/徽章
+    renderTopbar();
+  }
+  let rotateDragPushed = false;
+  if (slider) {
+    slider.addEventListener("input", () => {
+      setRotate(slider.value, !rotateDragPushed); // 拖一次只 push 一筆 undo
+      rotateDragPushed = true;
+    });
+    slider.addEventListener("change", () => {
+      rotateDragPushed = false;
+    });
+  }
+  if (num) num.addEventListener("change", () => setRotate(num.value, true));
+  const reset = document.querySelector("#rotate-reset");
+  if (reset) reset.addEventListener("click", () => setRotate(0, true));
+
+  // 節目封面開關
+  const cover = document.querySelector("#cover-toggle");
+  if (cover)
+    cover.addEventListener("change", () => {
+      state.coverEnabled = cover.checked;
+      state.outputDirty = true;
+      renderTopbar();
+    });
+
+  // 倍速開關 + 倍率
+  const spd = document.querySelector("#speed-toggle");
+  const spf = document.querySelector("#speed-factor");
+  if (spd)
+    spd.addEventListener("change", () => {
+      state.speed.enabled = spd.checked;
+      if (spf) spf.disabled = !spd.checked;
+      state.outputDirty = true;
+      renderTopbar();
+    });
+  if (spf)
+    spf.addEventListener("change", () => {
+      let v = Number(spf.value);
+      if (!isFinite(v)) v = 1.25;
+      v = Math.round(Math.max(0.5, Math.min(2, v)) * 100) / 100;
+      state.speed.factor = v;
+      spf.value = String(v);
+      state.outputDirty = true;
+      renderTopbar();
+    });
+
+  // 合成字幕模式（per-assemble，不寫 yaml）
+  const sm = document.querySelector("#subtitle-mode-select");
+  if (sm)
+    sm.addEventListener("change", () => {
+      state.subtitleMode = sm.value === "sidecar" ? "sidecar" : "burn";
+    });
+
+  syncOutputControls();
+}
+
 setupVersionTabs();
 setupReelsClips();
 setupAssembleButtons();
+setupOutputControls();
 setupSusToolbar();
 setupSrtShift();
 
