@@ -120,6 +120,22 @@ def test_merge_audio_preserved():
     }
 
 
+# --- srt_path：cam-modal 手選字幕來源 override（最終合成 / 編輯器下拉回顯都靠它）---
+
+
+def test_merge_srt_path_default_none():
+    """沒設 srt_path → None，active_srt() 會 fallback _v2.srt。"""
+    cfg = config.merge(DEFAULTS, {"name": "t"})
+    assert cfg["srt_path"] is None
+
+
+def test_merge_srt_path_preserved():
+    """有 srt_path 時必須讀回 cfg；漏列此 key 會讓寫進 yaml 的值讀不回來，
+    cam-modal 切字幕檔『存了卻跳回舊值』、最終合成也永遠讀 _v2.srt（迴歸守門）。"""
+    cfg = config.merge(DEFAULTS, {"name": "t", "srt_path": "04_工作檔/chosen.srt"})
+    assert cfg["srt_path"] == "04_工作檔/chosen.srt"
+
+
 # --- subtitle_style_reels：Reels 專用字幕風格分離 ---
 
 

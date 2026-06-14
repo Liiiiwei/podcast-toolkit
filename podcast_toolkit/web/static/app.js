@@ -5374,15 +5374,12 @@ $("#manual-align-apply").addEventListener("click", () => {
 });
 
 $("#cam-save").addEventListener("click", async () => {
-  const camAPath = $("#cam-a-select").value || "";
-  const camBPath = $("#cam-b-select").value || "";
   const offsetRaw = $("#cam-sync-offset-b").value;
   const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
   if (!Number.isFinite(offset)) {
     alert("同步偏移要是數字");
     return;
   }
-  const audioPath = $("#audio-select").value || "";
   const audioOffsetRaw = $("#audio-sync-offset").value;
   const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
   if (!Number.isFinite(audioOffset)) {
@@ -5392,25 +5389,10 @@ $("#cam-save").addEventListener("click", async () => {
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
-  // 只送 cam A/B 相關欄位 + 必填的 deletions/cards（保留現有編輯）
-  const payload = {
-    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
-    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions],
-    head_trim_sec: state.headTrimSec,
-    tail_trim_sec: state.tailTrimSec,
-    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
-      idx,
-      text,
-    })),
-    cameras_mapping: Object.fromEntries(state.camerasMapping),
-    speakers_mapping: Object.fromEntries(state.speakersMapping),
-    splits: Object.fromEntries(state.cardSplits),
-    cam_a_path: camAPath,
-    cam_b_path: camBPath,
-    camera_sync_offset_b: offset,
-    audio: { path: audioPath, sync_offset: audioOffset },
-  };
+  // 與 #align-all 共用同一個 payload builder（含 srt_path）：先前 cam-save 內聯自建 payload
+  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。offset/audioOffset
+  // 已於上方驗證為數字，builder 重讀同一組 DOM 值不會踩到它內部的靜默歸零。
+  const payload = _buildCamModalSavePayload();
   try {
     await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras

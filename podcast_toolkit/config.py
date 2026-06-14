@@ -119,6 +119,10 @@ def merge(defaults: dict, episode: dict) -> dict:
         "name": episode.get("name"),
         "main_video": episode.get("main_video"),
         "main_srt": episode.get("main_srt"),
+        # 字幕來源 override：cam-modal 手選哪份 .srt 進最終合成 / 編輯器下拉回顯；
+        # 不設 → active_srt() fallback _v2.srt。先前漏列此 key → 寫進 yaml 也讀不回 cfg，
+        # 導致 cam-modal 切字幕檔「存了卻跳回舊值」、最終合成也永遠讀 _v2.srt。
+        "srt_path": episode.get("srt_path"),
         "cameras": dict(cameras),
         "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
         "audio": episode.get("audio"),
