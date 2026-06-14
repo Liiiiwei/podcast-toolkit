@@ -2,6 +2,18 @@
 
 從 2026-06-06 `/review` 報告搬下來的修補項，按優先級排列。
 
+## 自動化後製管線（feat/auto-pipeline）
+
+目標：使用者選好「影片 + 字幕」後，盡量自動把後製做完，只剩檢查 + 輸出。
+
+- [x] **AP1. 字幕語意校對引擎** ✅ `podcast proofread`
+  - `proofread.py`：provider 抽象（claude_code 本地 / gemini API / off），`auto` 解析（claude CLI 在→本地；否則 gemini key；否則跳過 → **非 CC 使用者零影響**）
+  - 四條規則（同音錯字 / 專名詞庫 / 子句空格 / 去填充詞）+ 安全閘（QA：擋掉短卡被換長句的捏造）
+  - 分塊呼叫 `claude -p --output-format json`、只改文字、先備份 `.pre-proofread.bak`
+- [ ] **AP2. 自動鏡頭對應**（分軌集）：speakers.json（idx→speaker）經 speaker→camera 映射推出 cameras_mapping；episode.yaml 可設 `speaker_camera_mapping` override
+- [ ] **AP3. 自動去頭去尾**：補 `detect_tail_silence()`（對稱 head 版）；結合頭尾靜音 + 首末字幕卡時間推 head/tail trim
+- [ ] **AP4. 編排**：`podcast auto <集>`（串 AP1–AP3，可 `--no-*` 關個別步驟）+ Web「✨ 一鍵自動」背景 job + 進度條
+
 ## 抽屜（drawer）a11y
 
 - [x] **A1. 補 `aria-controls` 與 `role="tabpanel"`** ✅ 2026-06-06 commit 34ec794

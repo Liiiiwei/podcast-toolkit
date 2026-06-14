@@ -21,6 +21,11 @@ def cmd_resegment(args):
     return resegment.run(Path(args.path), force=args.force)
 
 
+def cmd_proofread(args):
+    from podcast_toolkit import proofread
+    return proofread.run(Path(args.path), provider=args.provider, force=args.force)
+
+
 def cmd_merge_per_mic(args):
     from podcast_toolkit import srt_merge
     from podcast_toolkit.episode import Episode
@@ -71,6 +76,15 @@ def build_parser():
     pr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pr.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pr.set_defaults(func=cmd_resegment)
+
+    pp = sub.add_parser("proofread", help="字幕語意校對（本地 Claude Code / Gemini，就地改 _v2.srt）")
+    pp.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pp.add_argument(
+        "--provider", choices=["claude_code", "gemini", "off"], default=None,
+        help="覆寫設定的校對 provider（預設讀 episode.yaml / defaults.yaml 的 proofread.provider=auto）",
+    )
+    pp.add_argument("--force", action="store_true", help="保留參數一致性（校對一律就地覆寫並備份）")
+    pp.set_defaults(func=cmd_proofread)
 
     pm = sub.add_parser(
         "merge-per-mic",

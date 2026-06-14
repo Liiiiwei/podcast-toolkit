@@ -120,3 +120,13 @@ encode:
   audio_sample_rate: 48000
   resolution: "1920x1080"
   framerate: "30000/1001"
+
+# 字幕語意校對引擎(podcast proofread / 未來的一鍵自動)
+proofread:
+  # auto = 本地 Claude Code 優先,其次 Gemini key,都沒有就跳過(非 CC 使用者零影響)
+  # 也可硬指定:claude_code | gemini | off
+  provider: "auto"
+  chunk_size: 150        # 每次餵幾張卡給模型
+  timeout_sec: 300       # 每塊逾時(claude -p 本地呼叫)
+  model: null            # null = 用 provider 預設(CC 預設模型 / gemini-2.5-flash)
+  context: ""            # 可選:節目/來賓背景,提升校對準確度(會放進 prompt)

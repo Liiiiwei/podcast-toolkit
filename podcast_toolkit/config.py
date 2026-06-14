@@ -107,6 +107,7 @@ def merge(defaults: dict, episode: dict) -> dict:
             **(episode.get("subtitle_style_reels") or {}),
         },
         "gemini": {**(defaults.get("gemini") or {}), **(episode.get("gemini") or {})},
+        "proofread": {**(defaults.get("proofread") or {}), **(episode.get("proofread") or {})},
         "assets": dict(defaults["assets"]),
         # encode 可被 episode.yaml 局部覆寫（例：趕時間時 preset: medium 加速）
         "encode": {**defaults["encode"], **(episode.get("encode") or {})},
