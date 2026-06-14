@@ -664,6 +664,18 @@ function expandedCards() {
   return out;
 }
 
+// 時間軸還原：把畫面上（cam A 軸，已被 loadEpisodeState 減過 audioSyncOffset）的時間
+// 加回 +audioSyncOffset，還原成磁碟 _v2.srt 的「外接音檔時間軸」。存檔送 time_overrides /
+// new_cards 前用，讓「存→重載」對稱（載入 -offset、存檔 +offset），避免時間每存一次就漂一次。
+// 沒外接音檔 / offset=0 → 原值回傳（no-op）。
+function toDiskTime(t) {
+  const off = state.audioSyncOffset || 0;
+  return {
+    start: Math.round((t.start + off) * 100) / 100,
+    end: Math.round((t.end + off) * 100) / 100,
+  };
+}
+
 // 取一張卡實際生效的時間（含時間微調 override）
 function getEffectiveCardTime(c) {
   const ov = state.timeOverrides.get(c.idx);
@@ -1215,6 +1227,8 @@ function renderCards() {
     if (!isSub && state.timeOverrides.has(c.idx)) div.classList.add("time-dirty");
     // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
     if (!isSub) {
+      // 拖曳換位置把手：拖一張卡 → 設時間 override 移到新位置。後端 always-sort 修正後，
+      // 拖完存檔會「乾淨地」重排（不再像舊版那樣寫出非單調 SRT 整份亂掃）。
       const grip = document.createElement("span");
       grip.className = "card-grip";
       grip.textContent = "⠿";
@@ -1608,7 +1622,9 @@ function renderSusToolbar() {
 
 async function loadEpisodeState() {
   // 只重抓 episode + cards，重新轉字幕後會用到
-  const r = await fetch("/api/episode");
+  // cache:"no-store"：保險再加一層，避免瀏覽器吃舊 cache → 存檔後重載拿到存檔前資料
+  // （後端 /api/episode 也補了 no-store header；雙保險）
+  const r = await fetch("/api/episode", { cache: "no-store" });
   if (r.status === 409) {
     // 後端尚未選集（重啟 / 多分頁 / 直接打 /edit URL）→ 回 dashboard 重選
     window.location.href = "/";
@@ -3012,11 +3028,21 @@ $("#save-btn").addEventListener("click", async () => {
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
     // 單卡時間微調：{ "<idx>": {start, end} }；後端 serialize 前覆寫該卡 start/end
-    time_overrides: Object.fromEntries(state.timeOverrides),
+    // ── 時間軸還原 ──
+    // 載入時（loadEpisodeState）字卡被整批 -audioSyncOffset 移到 cam A 軸（讓播放預覽的字幕
+    // highlight 對得上 video.currentTime）。但磁碟 _v2.srt 是「外接音檔時間軸」，存檔端
+    // 必須把使用者在 cam A 軸上微調出來的 start/end 加回 +audioSyncOffset 還原成外接音檔軸，
+    // 才能跟磁碟一致、避免每次「存→重載」都再被減一次 offset（症狀：時間越存越早、修不回）。
+    time_overrides: Object.fromEntries(
+      [...state.timeOverrides.entries()].map(([idx, t]) => [
+        idx,
+        toDiskTime(t),
+      ]),
+    ),
     // 新增字卡：[{start, end, text}]；後端 append 進 SRT、依時間排序重編號
+    // 新卡 start/end 來自 video.currentTime（cam A 軸），同樣要 +audioSyncOffset 還原成磁碟軸
     new_cards: state.newCards.map((c) => ({
-      start: c.start,
-      end: c.end,
+      ...toDiskTime(c),
       text: c.text,
     })),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
@@ -5882,15 +5908,31 @@ async function submitNewEpisode() {
 
 $("#ep-new-btn").addEventListener("click", openNewEpModal);
 
-// 在游標處插入一張新字卡（預設 ~1.5s）→ 出現空白卡、自動捲到並 focus 文字
+// 插入一張新字卡：預設接在「上一張卡之後、且不與前後卡重疊」→ 出現空白卡、自動捲到並 focus 文字
 $("#card-insert-btn").addEventListener("click", () => {
   if (state.needsTranscribe) return;
   const v = $("#video");
   const dur = v.duration || 0;
-  const start = Math.round(Math.max(0, v.currentTime || 0) * 100) / 100;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const t = r2(Math.max(0, v.currentTime || 0));
+  // 依 start 排序的所有卡（含新卡 / 子卡），找游標所在/之前那張 prev：
+  //   起點接在 prev.end（不重疊上一張），但不早於目前播放位置；
+  //   終點預設 +1.5s，夾在下一張卡 start 與影片總長內（不重疊下一張）。
+  const ranges = expandedCards()
+    .map((e) => ({ start: e.start, end: e.end }))
+    .sort((a, b) => a.start - b.start);
+  let prev = null;
+  for (const rg of ranges) {
+    if (rg.start <= t + 1e-6) prev = rg;
+    else break;
+  }
+  const start = r2(prev ? Math.max(t, prev.end) : t);
   let end = start + 1.5;
+  const nextAfter = ranges.find((rg) => rg.start > start + 1e-6);
+  if (nextAfter) end = Math.min(end, nextAfter.start);
   if (dur) end = Math.min(end, dur);
-  end = Math.max(Math.round(end * 100) / 100, start + 0.3);
+  end = r2(end);
+  if (end < start + 0.1) end = r2(start + 0.1); // 沒空間時給最短 0.1s（容後手動讓位）
   pushUndo();
   const tempId = state.newCardSeq++;
   state.newCards.push({ tempId, start, end, text: "" });
