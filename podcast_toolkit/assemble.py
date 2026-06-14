@@ -397,41 +397,35 @@ def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
     return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
-def _multicam_cam_prep(
-    src_idx: int,
-    cam_label: str,
+def _multicam_segments(
+    segments: list[dict],
+    *,
     srt_rel: str | None,
     style_str: str,
-    res_w: str | int,
-    res_h: str | int,
-    prep_part: str,
+    crop_part_a: str,
+    crop_part_b: str,
     fps,
     fmt: str,
-    setpts_prefix: str = "",
-) -> str:
-    """組單一鏡頭的前處理 chain（PTS 對齊 → rotate/crop/scale → 字幕 → 規格化）。
-
-    cam_label='a' 或 'b'；輸出 label 為 [m_{cam_label}_v]。
-    setpts_prefix 給 cam B 用來把 PTS 移到主時間軸（cam A 留空）。
-    prep_part 已包含 rotate + crop（源像素）+ scale 到目標解析度的完整 chain。
-    srt_rel=None → sidecar 模式（不燒字幕）。
-    """
-    # 字幕燒在最終裁切後 frame（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
-    return (
-        f"[{src_idx}:v]{setpts_prefix}{prep_part}"
-        f"{_subs_part(srt_rel, style_str)}"
-        f"setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
-    )
-
-
-def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
-    """組 per-segment trim + 必要時的 segment concat。
+    sync_offset_b: float,
+    a_vidx: int,
+    b_vidx: int,
+) -> tuple[list[str], str, str]:
+    """組 per-segment「trim 先切 → crop/scale → 燒字幕 → 正規化」+ 必要時 concat。
 
     回傳 (parts, main_v_in, main_a_in)。單段時直接用 seg_v_0/seg_a_0，
     多段才額外加 concat=n=N 進 main_v_raw/main_a_raw。
 
-    [m_a_v]/[m_b_v]/[m_a_a] 多次引用時必須明確 split/asplit；ffmpeg 的
-    auto-split 在這個 trim+concat 圖形下會吃掉幀導致主段截斷（只剩前 1-2 段）。
+    效能（P2）：crop/scale/字幕從舊版「每台全長各跑一次再 trim」改成「每段只跑自己那台」。
+    GPU 解碼搬回 RAM 後的 CPU 濾鏡鏈（crop/scale/libass 燒字幕）由 2×全長 降到 1×成品長
+    ── 兩台不再各自把整片燒一遍再 trim 丟掉。解碼仍走全長（要再省得逐段 -ss seek，另案）。
+
+    字幕燒在 setpts=PTS-STARTPTS「之前」：trim 後幀仍帶主時間軸 PTS（cam B 已先 setpts
+    對齊主軸），libass 直接讀到正確時間 → 不需逐段位移 SRT；且仍接在 crop/scale 之後，
+    維持「字幕鎖在裁切框內」。
+
+    a_vidx / b_vidx = cam A / cam B 的視訊 input index（YT=1/2，Reels=0/1）。
+    同一 cam 出現 N 段時用明確 split=N：ffmpeg auto-split 在這個 trim+concat 圖形下
+    會吃掉幀導致主段截斷（只剩前 1-2 段，2026-06 regression）。
     """
     parts: list[str] = []
     n = len(segments)
@@ -440,12 +434,17 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     n_b_v = sum(1 for s in segments if s["cam"] == "b")
     n_a_a = n  # 音訊全部走 cam A
 
+    subs = _subs_part(srt_rel, style_str)
+    # cam B 先把 PTS 移到主時間軸，後面 trim / 字幕讀到的時間才對（cam A 原生就是主軸）
+    b_setpts = f"setpts=PTS-{sync_offset_b}/TB,"
+
+    # 視訊：每台先 split 成自己的段數（>1 才明確 split）。cam B 的 setpts 在 split 行套一次。
     if n_a_v > 1:
-        labels = "".join(f"[m_a_v_{i}]" for i in range(n_a_v))
-        parts.append(f"[m_a_v]split={n_a_v}{labels}")
+        labels = "".join(f"[a_v_{i}]" for i in range(n_a_v))
+        parts.append(f"[{a_vidx}:v]split={n_a_v}{labels}")
     if n_b_v > 1:
-        labels = "".join(f"[m_b_v_{i}]" for i in range(n_b_v))
-        parts.append(f"[m_b_v]split={n_b_v}{labels}")
+        labels = "".join(f"[b_v_{i}]" for i in range(n_b_v))
+        parts.append(f"[{b_vidx}:v]{b_setpts}split={n_b_v}{labels}")
     if n_a_a > 1:
         labels = "".join(f"[m_a_a_{i}]" for i in range(n_a_a))
         parts.append(f"[m_a_a]asplit={n_a_a}{labels}")
@@ -455,15 +454,24 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     for i, seg in enumerate(segments):
         cam = seg["cam"]
         s, e = float(seg["start"]), float(seg["end"])
-        n_cam = n_a_v if cam == "a" else n_b_v
-        v_src = f"m_{cam}_v_{cam_idx[cam]}" if n_cam > 1 else f"m_{cam}_v"
+        if cam == "a":
+            v_src = f"a_v_{cam_idx['a']}" if n_a_v > 1 else f"{a_vidx}:v"
+            pre = ""
+            crop = crop_part_a
+        else:
+            v_src = f"b_v_{cam_idx['b']}" if n_b_v > 1 else f"{b_vidx}:v"
+            # 多段時 setpts 已在 split 行；單段沒 split 行 → 在這條 branch 補
+            pre = "" if n_b_v > 1 else b_setpts
+            crop = crop_part_b
         cam_idx[cam] += 1
-        a_src = f"m_a_a_{audio_idx}" if n_a_a > 1 else "m_a_a"
-        audio_idx += 1
+        # trim 先切（主時間軸）→ crop/scale → 燒字幕（PTS 仍主軸）→ 收 PTS 歸零 → 規格化供 concat
         parts.append(
-            f"[{v_src}]trim={s:.3f}:{e:.3f},setpts=PTS-STARTPTS[seg_v_{i}]"
+            f"[{v_src}]{pre}trim={s:.3f}:{e:.3f},{crop}{subs}"
+            f"setpts=PTS-STARTPTS,setsar=1,fps={fps},format={fmt}[seg_v_{i}]"
         )
         # 音訊永遠取 cam A（多鏡頭只切畫面，聲音來源固定）
+        a_src = f"m_a_a_{audio_idx}" if n_a_a > 1 else "m_a_a"
+        audio_idx += 1
         parts.append(
             f"[{a_src}]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS[seg_a_{i}]"
         )
@@ -573,31 +581,18 @@ def build_filter_complex_yt_multicam(
         a_idx_main = 1
         align_a = ""
 
-    # 只為實際出現在 segment plan 的鏡頭加影片 prep chain；
-    # 若某鏡頭完全沒有 segment（如全程都是另一側），就不產生 [m_x_v]，
-    # 避免 format filter 輸出懸空 → ffmpeg EINVAL。
-    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
-    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
-
     parts: list[str] = []
-    # Cam A：不需 PTS 位移（主時間軸就是它的時間軸）
-    if n_a_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-        )
+    # 音訊永遠走 cam A（或外接音檔）；視訊每段只跑自己那台的 crop/scale/字幕（見 _multicam_segments）。
+    # 某鏡頭完全沒 segment 時 _multicam_segments 不產生它的 branch（不會懸空 → 不會 EINVAL）。
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
-    # Cam B：先把 PTS 移到主時間軸，subtitles 之後讀到的時間才會對
-    if n_b_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(
-                2, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
-            )
-        )
-
-    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    seg_parts, main_v_in, main_a_in = _multicam_segments(
+        segments, srt_rel=srt_rel, style_str=style_str,
+        crop_part_a=crop_part_a, crop_part_b=crop_part_b,
+        fps=fps, fmt=fmt, sync_offset_b=sync_offset_b,
+        a_vidx=1, b_vidx=2,
+    )
     parts.extend(seg_parts)
 
     # main 段：先疊封面（只在正片段）→ 倍速 setpts → fade in/out（淡入淡出帶到封面與加速後時間軸）
@@ -679,26 +674,17 @@ def build_filter_complex_reels_multicam(
         a_idx_main = 0
         align_a = ""
 
-    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
-    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
-
     parts: list[str] = []
-    if n_a_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-        )
+    # 音訊永遠走 cam A（或外接音檔）；視訊每段只跑自己那台的 crop/scale/字幕（見 _multicam_segments）
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
-    if n_b_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(
-                1, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
-            )
-        )
-
-    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    seg_parts, main_v_in, main_a_in = _multicam_segments(
+        segments, srt_rel=srt_rel, style_str=style_str,
+        crop_part_a=crop_part_a, crop_part_b=crop_part_b,
+        fps=fps, fmt=fmt, sync_offset_b=sync_offset_b,
+        a_vidx=0, b_vidx=1,
+    )
     parts.extend(seg_parts)
 
     if _wm_enabled(cfg, wm_input_idx):

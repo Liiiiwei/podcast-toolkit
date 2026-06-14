@@ -52,10 +52,19 @@
 - [x] **P1. videotoolbox 硬體編碼 + 硬體解碼** ✅ 2026-06-13 已設為全域預設
   - 實測（M3、37 分雙機集、燒字幕）：libx264 medium 57 分 → vt 10.7 分（**5.4×**），SSIM 0.995 肉眼無差
   - `defaults.yaml encode.video_codec/hwaccel`；assemble 加 `_video_encode_args`/`_hwaccel_args`（vt 自動略過 -preset）
-- [ ] **P2. 只解需要的段落（結構性優化，預估再快 ~2×：10.7 分 → 約 6 分）**
-  - 現況：兩台攝影機各自「全片」解碼 + 各自燒整份字幕，再 trim 出 61 段 → 大量白工
-  - 改法：每段用 `-ss/-t` 只解需要的區間（或預先 per-segment 切小檔），字幕燒製對齊各段時間軸
-  - 風險點：`-ss` keyframe seek 精度、cam B 的 sync offset、燒字幕時間軸換算、淡入淡出邊界
+- [x] **P2a. 逐段只跑自己那台的 CPU 濾鏡鏈（crop/scale/字幕）** ✅ 2026-06-14
+  - 舊現況：兩台各自「全片」crop/scale + 燒整份字幕 → 再 trim 出 N 段 → 一半是白工
+  - 改法：`_multicam_segments` 改成「trim 先切 → crop/scale → 燒字幕 → setpts 歸零 → 規格化」，
+    CPU 濾鏡鏈（GPU 解碼搬回 RAM 後的 crop/scale/libass）由 `2×全長` 降到 `1×成品長`
+  - 字幕燒在 `setpts=PTS-STARTPTS` 之前（trim 後 PTS 仍主軸，cam B 已先 setpts 對齊）→ 不需逐段位移 SRT
+  - 不動 input 結構（仍單一 ffmpeg、單一 filter_complex），不碰 `-ss` → 零 seek 精度風險
+  - 驗證：358 unit + 2 個真跑 ffmpeg smoke（YT 5 輸入 / Reels 2 輸入，段落路由 A→B→A 抽幀驗色正確）
+  - ⚠ 解碼仍是「兩台全長」——這刀省的是 CPU 濾鏡鏈，不是 GPU 解碼。實際加速幅度待真機量測
+    （硬解後若 libass+scale 是主瓶頸 → 接近 2×；若 GPU 解碼/搬運才是瓶頸 → 要再做 P2b）
+
+- [ ] **P2b. 逐段 `-ss` 只解需要的區間（在 P2a 量完、確認解碼仍是瓶頸時才做）**
+  - 改法：每段一個 `-ss start -t dur -i camfile` input（fast seek + 精準 trim），decode 也只跑該段
+  - 風險點：`-ss` keyframe seek 精度、cam B 的 sync offset 換算、input index 重排（intro/outro/音檔/封面位移）
   - 進一步：分段平行編碼（M3 8 核）+ `-c copy` concat，附帶斷點續跑能力
 
 ## 啟動 App（雙擊開介面）

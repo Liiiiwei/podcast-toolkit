@@ -253,13 +253,34 @@ def test_filter_complex_yt_multicam_two_segments_concat():
 
 
 def test_filter_complex_yt_multicam_cam_b_uses_b_input():
-    """cam b 段要從 [m_b_v] trim，不是 [m_a_v]。"""
+    """cam a 段直接吃 cam A 視訊輸入 [1:v]；cam b 段先 setpts 對齊主軸再從 [2:v] 切。"""
     fc = assemble.build_filter_complex_yt_multicam(
         BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # seg_v_1 是 b 段 → 從 m_b_v 來
-    assert "[m_b_v]trim=20.000:50.000" in fc
-    assert "[m_a_v]trim=0.000:20.000" in fc
+    # 逐段處理：trim 直接接在 cam 輸入後（不再先做全長 [m_a_v]/[m_b_v] prep）
+    assert "[1:v]trim=0.000:20.000" in fc
+    assert "[2:v]setpts=PTS-0.0/TB,trim=20.000:50.000" in fc
+
+
+def test_filter_complex_yt_multicam_no_full_length_prep_labels():
+    """P2：不再產生 [m_a_v]/[m_b_v]（全長燒字幕再 trim 的舊結構）→ 逐段只跑自己那台。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "[m_a_v]" not in fc
+    assert "[m_b_v]" not in fc
+
+
+def test_filter_complex_yt_multicam_per_segment_trim_then_crop_then_subs():
+    """P2 不變量：每段順序為 trim → scale/crop → 燒字幕（字幕仍在裁切後、PTS 歸零前）。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    # cam A 段：trim 先切 → scale → subtitles，全部接在同一條 branch
+    assert "[1:v]trim=0.000:20.000,scale=1920:1080,subtitles=x.srt" in fc
+    # 字幕燒在 PTS 歸零（setpts=PTS-STARTPTS）之前 → 仍是主時間軸，libass 對得上
+    seg0 = fc.split("[seg_v_0]")[0]
+    assert seg0.index("subtitles=x.srt") < seg0.index("setpts=PTS-STARTPTS")
 
 
 def test_filter_complex_yt_multicam_audio_always_from_cam_a():
@@ -282,21 +303,29 @@ def test_filter_complex_yt_multicam_cam_b_applies_sync_offset():
     assert "[2:v]setpts=PTS-1.25/TB" in fc
 
 
-def test_filter_complex_yt_multicam_subtitles_burned_on_both_cams():
-    """字幕燒在 cam a 與 cam b 兩個 prep stream 上（不是 segment 後再燒）。"""
+def test_filter_complex_yt_multicam_subtitles_burned_per_segment():
+    """P2：字幕改成逐段燒（每段一次），不再對兩台各燒一遍全長。
+    → subtitles 出現次數 = 段數，而非固定 2（= 兩台）。"""
+    # 3 段（a, b, a）→ 字幕燒 3 次（每段各一），不是 2
+    three = [
+        {"cam": "a", "start": 0.0, "end": 10.0},
+        {"cam": "b", "start": 10.0, "end": 20.0},
+        {"cam": "a", "start": 20.0, "end": 30.0},
+    ]
     fc = assemble.build_filter_complex_yt_multicam(
-        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+        BASE_CFG, main_dur=30.0, srt_rel="x.srt", segments=three,
     )
-    assert fc.count("subtitles=x.srt") == 2
+    assert fc.count("subtitles=x.srt") == len(three) == 3
 
 
 def test_filter_complex_yt_multicam_with_crop_applied_to_both_cams():
-    """crop_yt 同時套到 cam a 與 cam b（兩鏡頭同畫面）。"""
+    """crop_yt 套到 cam a 與 cam b（兩鏡頭同畫面）。P2 後 crop 逐段套用：
+    TWO_SEG_AB = 1 段 a + 1 段 b → crop 出現 2 次（各自那段）。"""
     cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
     fc = assemble.build_filter_complex_yt_multicam(
         cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # iw/ih 源像素表達式，cam a 和 cam b 都套同一個 crop
+    # iw/ih 源像素表達式，cam a 和 cam b 都套同一個 crop（每段一次）
     assert fc.count("crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05") == 2
 
 
@@ -312,12 +341,13 @@ def test_filter_complex_yt_multicam_same_cam_multi_segments_explicit_split():
     fc = assemble.build_filter_complex_yt_multicam(
         BASE_CFG, main_dur=15.0, srt_rel="x.srt", segments=segs,
     )
-    assert "[m_a_v]split=3[m_a_v_0][m_a_v_1][m_a_v_2]" in fc
+    # 視訊從 cam A 輸入 [1:v] 明確 split=3；音訊 [m_a_a] asplit=3
+    assert "[1:v]split=3[a_v_0][a_v_1][a_v_2]" in fc
     assert "[m_a_a]asplit=3[m_a_a_0][m_a_a_1][m_a_a_2]" in fc
     # 各段引用自己的 split 輸出
-    assert "[m_a_v_0]trim=0.000:5.000" in fc
-    assert "[m_a_v_1]trim=5.000:10.000" in fc
-    assert "[m_a_v_2]trim=10.000:15.000" in fc
+    assert "[a_v_0]trim=0.000:5.000" in fc
+    assert "[a_v_1]trim=5.000:10.000" in fc
+    assert "[a_v_2]trim=10.000:15.000" in fc
 
 
 def test_filter_complex_reels_multicam_basic():
@@ -444,13 +474,14 @@ def test_prepare_assembly_yt_multicam_adds_cam_b_input(tmp_episode_full_multicam
     assert i_count == 5, f"YT multicam 應有 5 個 -i，目前 {i_count}"
 
 
-def test_prepare_assembly_yt_multicam_filter_contains_cam_b_labels(tmp_episode_full_multicam):
-    """YT multicam filter_complex 應包含 [m_b_v]（cam B 處理 stream）。"""
+def test_prepare_assembly_yt_multicam_filter_uses_both_cam_inputs(tmp_episode_full_multicam):
+    """YT multicam filter_complex 應同時切到 cam A 輸入 [1:v] 與 cam B 輸入 [2:v]。
+    （fixture 段規劃：a 段 [0,12)、b 段 [12,100)；sync offset 1.25）"""
     plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
-    assert "[m_b_v]" in fc
-    assert "[m_a_v]" in fc
+    assert "[1:v]trim=0.000:12.000" in fc
+    assert "[2:v]setpts=PTS-1.25/TB,trim=12.000:100.000" in fc
 
 
 def test_prepare_assembly_yt_multicam_applies_sync_offset(tmp_episode_full_multicam):
