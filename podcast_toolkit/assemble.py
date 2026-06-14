@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -223,6 +224,102 @@ def _rotate_for(cfg: dict, cam: str) -> float:
         return float(rot.get(cam) or 0.0)
     except (TypeError, ValueError):
         return 0.0
+
+
+# === 旋轉拉正預烤（P2c）===
+# rotate filter 又慢（實測 0.7× 即時）又難平行化（全核榨頂 ~1.9×），是燒字幕多機集輸出
+# 的主瓶頸。對策：有角度的鏡頭先「一次性」轉正成中間 proxy 檔快取，之後每次輸出改吃 proxy、
+# 該鏡頭 rotate 設 0 → 畫面完全一致（proxy 就是 rotate 後的幀、黑角保留交給後續 crop 切），
+# 但 assemble 跑在無 rotate 的 ~3× 速度。快取鍵 = 角度 + 來源檔簽章，沒變就重用。
+
+def _leveled_proxy_paths(work_dir: Path, cam_label: str) -> tuple[Path, Path, Path]:
+    """回 (proxy, tmp, meta)。proxy=轉正後中間檔；tmp=寫入中暫存；meta=快取鍵 json。"""
+    up = cam_label.upper()
+    return (
+        work_dir / f"_leveled_cam{up}.mp4",
+        work_dir / f".leveled_cam{up}.tmp.mp4",
+        work_dir / f"_leveled_cam{up}.json",
+    )
+
+
+def _src_signature(src: Path) -> tuple[int, int]:
+    """來源檔簽章 (mtime 取整秒, size)——換片/重新匯出就會變 → proxy 失效重烤。"""
+    st = src.stat()
+    return int(st.st_mtime), st.st_size
+
+
+def _leveled_proxy_valid(proxy: Path, meta: Path, src: Path, angle: float) -> bool:
+    """proxy 可否重用：檔在 + meta 的角度與來源簽章吻合現況。"""
+    if not proxy.exists() or not meta.exists():
+        return False
+    try:
+        m = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    mtime, size = _src_signature(src)
+    return (
+        abs(float(m.get("angle", 0.0)) - float(angle)) < 1e-6
+        and m.get("src_mtime") == mtime
+        and m.get("src_size") == size
+    )
+
+
+def write_leveled_meta(meta: Path, src: Path, angle: float) -> None:
+    """轉正成功後寫快取鍵（assemble_job 跑完 proxy 呼叫）。"""
+    mtime, size = _src_signature(src)
+    meta.write_text(
+        json.dumps({"angle": float(angle), "src_mtime": mtime, "src_size": size}),
+        encoding="utf-8",
+    )
+
+
+def build_leveled_cmd(src: str, out: str, angle: float, enc: dict) -> list[str]:
+    """預烤轉正指令：整支來源套 rotate=angle:ow=iw:oh=ih（與 _rotate_part 同義，黑角保留），
+    硬解 + 高碼率硬編成中間檔。無音訊（multicam 音訊一律走 cam A，proxy 用不到）。
+    高碼率（預設 60M，可由 enc.leveled_video_bitrate 覆寫）求視覺無損——assemble 之後還會
+    再編一次到最終碼率，避免兩代壓縮看得出來。"""
+    hw = _hwaccel_args(enc)
+    venc = ["-c:v", enc["video_codec"]]
+    if "videotoolbox" not in enc["video_codec"]:
+        venc += ["-preset", enc.get("preset", "medium")]
+    bitrate = enc.get("leveled_video_bitrate", "60M")
+    venc += ["-b:v", bitrate, "-maxrate", bitrate, "-bufsize", bitrate, "-pix_fmt", enc["pix_fmt"]]
+    return [
+        "ffmpeg", "-y",
+        *hw, "-i", src,
+        "-vf", f"rotate={float(angle)}*PI/180:ow=iw:oh=ih",
+        *venc, "-an",
+        out,
+    ]
+
+
+def _maybe_leveled(
+    work_dir: Path, src: Path, cam_label: str, angle: float, enc: dict
+) -> tuple[Path, dict | None, bool]:
+    """旋轉拉正預烤判斷。回 (assemble 要吃的來源, prebake_spec_or_None, baked)。
+
+    angle≈0 → (src, None, False)：不轉正，照舊。
+    proxy 有效 → (proxy, None, True)：重用快取，assemble 跳過 rotate。
+    proxy 無效 → (proxy, spec, True)：spec 描述要先跑的轉正指令，assemble 一樣跳過 rotate
+                （proxy 由 assemble_job 在主合成前建好）。
+    """
+    if abs(float(angle)) < 1e-6:
+        return src, None, False
+    proxy, tmp, meta = _leveled_proxy_paths(work_dir, cam_label)
+    if _leveled_proxy_valid(proxy, meta, src, angle):
+        return proxy, None, True
+    spec = {
+        "cmd": build_leveled_cmd(str(src), str(tmp), angle, enc),
+        "cwd": str(work_dir),
+        "proxy": proxy,
+        "tmp": tmp,
+        "meta": meta,
+        "angle": float(angle),
+        "src": src,
+        "total_dur": ffprobe_duration(src),
+        "label": f"cam{cam_label.upper()} 旋轉拉正",
+    }
+    return proxy, spec, True
 
 
 def _subs_part(srt_rel: str | None, style_str: str) -> str:
@@ -840,6 +937,25 @@ def prepare_assembly(
 
     # filter_complex：subtitles filter 路徑要相對 cwd，subprocess cwd 設為 03_成品/
     cwd = ep.subdir("output")
+
+    # 旋轉拉正預烤（P2c）：有角度的鏡頭先一次性轉正成 proxy 快取，assemble 改吃 proxy、
+    # 該鏡頭 rotate 設 0（畫面一致，省掉每次輸出最重的 rotate）。proxy 由 assemble_job 在
+    # 主合成前建好；角度/來源沒變就重用，YT/Reels/重輸出共享。只在 multicam 啟用（單機後續再補）。
+    render_cfg = cfg
+    prebakes: list[dict] = []
+    if multicam:
+        work_dir = ep.subdir("work")
+        new_rot = dict(cfg.get("rotate") or {})
+        main_video, pb_a, baked_a = _maybe_leveled(work_dir, main_video, "a", _rotate_for(cfg, "a"), enc)
+        cam_b_video, pb_b, baked_b = _maybe_leveled(work_dir, cam_b_video, "b", _rotate_for(cfg, "b"), enc)
+        if baked_a:
+            new_rot["a"] = 0.0
+        if baked_b:
+            new_rot["b"] = 0.0
+        if baked_a or baked_b:
+            render_cfg = {**cfg, "rotate": new_rot}
+        prebakes = [pb for pb in (pb_a, pb_b) if pb]
+
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
 
     # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
@@ -959,7 +1075,7 @@ def prepare_assembly(
             wm_next = 6 if audio_rel_str else 5
             wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_yt_multicam(
-                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                render_cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
@@ -1030,7 +1146,7 @@ def prepare_assembly(
             wm_next = 3 if audio_rel_str else 2
             wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_reels_multicam(
-                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                render_cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
@@ -1112,6 +1228,7 @@ def prepare_assembly(
         "total_dur": total_dur,
         "output_kind": output_kind,
         "sidecar_srt": sidecar_srt,
+        "prebake": prebakes,
     }
 
 

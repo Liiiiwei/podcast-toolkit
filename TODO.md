@@ -58,14 +58,23 @@
     CPU 濾鏡鏈（GPU 解碼搬回 RAM 後的 crop/scale/libass）由 `2×全長` 降到 `1×成品長`
   - 字幕燒在 `setpts=PTS-STARTPTS` 之前（trim 後 PTS 仍主軸，cam B 已先 setpts 對齊）→ 不需逐段位移 SRT
   - 不動 input 結構（仍單一 ffmpeg、單一 filter_complex），不碰 `-ss` → 零 seek 精度風險
-  - 驗證：358 unit + 2 個真跑 ffmpeg smoke（YT 5 輸入 / Reels 2 輸入，段落路由 A→B→A 抽幀驗色正確）
-  - ⚠ 解碼仍是「兩台全長」——這刀省的是 CPU 濾鏡鏈，不是 GPU 解碼。實際加速幅度待真機量測
-    （硬解後若 libass+scale 是主瓶頸 → 接近 2×；若 GPU 解碼/搬運才是瓶頸 → 要再做 P2b）
+  - 驗證：unit + 2 個真跑 ffmpeg smoke（YT 5 輸入 / Reels 2 輸入，段落路由 A→B→A 抽幀驗色正確）
+  - 真機量測（過嗨乳牛3，1080p 雙機、含旋轉/封面/1.25 倍速/外接音）：**70 分 → 40 分（~1.75×）**
 
-- [ ] **P2b. 逐段 `-ss` 只解需要的區間（在 P2a 量完、確認解碼仍是瓶頸時才做）**
-  - 改法：每段一個 `-ss start -t dur -i camfile` input（fast seek + 精準 trim），decode 也只跑該段
-  - 風險點：`-ss` keyframe seek 精度、cam B 的 sync offset 換算、input index 重排（intro/outro/音檔/封面位移）
-  - 進一步：分段平行編碼（M3 8 核）+ `-c copy` concat，附帶斷點續跑能力
+- [x] **量測：定位 40 分的真兇** ✅ 2026-06-14（過嗨乳牛3 母帶實測，60s benchmark）
+  - 解碼**不是**瓶頸：1080p H.264/HEVC 硬解+搬回 RAM **4.56–4.67×**；編碼 h264_vt **3.92×**；libass 燒字幕 **3×**
+  - **真兇 = `rotate`（旋轉拉正）**：cam B 加 rotate 從 3.84× 崩到 **0.705×**，佔一半時間軸 → 吃掉 ~21 分
+  - rotate 又**難平行**：4 並行每個剩 0.28×（聚合 1.12×），全核榨頂 ~1.9× → 分段平行救不了
+  - ⇒ 原本想的 P2b「逐段 `-ss` 解碼」**不必做**（解碼本來就快）；nearest（bilinear=0）只到 1.05×，治標
+
+- [x] **P2c. 旋轉拉正預烤 + 快取** ✅ 2026-06-14
+  - 有角度的鏡頭先一次性 `rotate=angle:ow=iw:oh=ih` 轉正成 proxy（黑角保留交給後續 crop），
+    assemble 改吃 proxy、該鏡頭 rotate 設 0 → 主合成跑無 rotate 的 ~3×（每集約 10–12 分）
+  - 快取鍵 = 角度 + 來源檔簽章（mtime/size）；YT/Reels/重輸出共享，角度沒變不重烤
+  - `assemble.py`：`_maybe_leveled`/`build_leveled_cmd`/`_leveled_proxy_valid`/`write_leveled_meta` + prepare 用 `render_cfg`（baked 鏡頭 rotate→0）+ plan 帶 `prebake`；`assemble_job` 主合成前先跑/略過預烤（共用 `_pump_progress`）
+  - 驗證：unit + 真跑 ffmpeg SSIM smoke = **0.9962**（proxy 路徑與 inline rotate 畫面等價）
+  - ⚠ 預烤是「整支 cam B 全長轉正」（~50 分一次性），**首次輸出反而較慢**；回本在第 2 次起（YT+Reels/重輸出）
+  - [ ] **P2c-follow. 分段平行預烤**：把那一次性 ~50 分用 `-ss` 切塊平行 rotate + `-c copy` concat → ~1.9× 砍到 ~28 分，讓首次也不吃虧（rotate 唯一吃得到平行的地方就是這支獨立 pass）
 
 ## 啟動 App（雙擊開介面）
 

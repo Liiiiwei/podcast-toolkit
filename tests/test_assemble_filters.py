@@ -754,3 +754,78 @@ def test_prepare_assembly_cover_disabled_no_overlay(tmp_episode_full):
     fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
     assert "overlay=" not in fc
     assert sum(1 for a in plan["cmd"] if a == "-i") == 4
+
+
+# --- P2c 旋轉拉正預烤：rotate 移到一次性 proxy，主合成跳過 rotate ---
+
+
+def _set_rotate_b(ep_dir, angle):
+    p = ep_dir / "episode.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    data["rotate"] = {"b": angle}
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
+def test_leveled_proxy_valid_logic(tmp_path):
+    """proxy 快取鍵：檔在 + 角度 + 來源簽章三者吻合才算有效。"""
+    from podcast_toolkit import assemble as asm
+    src = tmp_path / "camB.mp4"
+    src.write_bytes(b"x" * 100)
+    proxy = tmp_path / "_leveled_camB.mp4"
+    meta = tmp_path / "_leveled_camB.json"
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -1.3)   # 都不存在
+    proxy.write_bytes(b"p")
+    asm.write_leveled_meta(meta, src, -1.3)
+    assert asm._leveled_proxy_valid(proxy, meta, src, -1.3)       # 吻合
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -2.0)   # 角度不符 → 失效
+    src.write_bytes(b"y" * 200)                                   # 來源改了（size 變）
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -1.3)
+
+
+def test_build_leveled_cmd_has_rotate_and_no_audio():
+    from podcast_toolkit import assemble as asm
+    enc = {"video_codec": "h264_videotoolbox", "hwaccel": "videotoolbox", "pix_fmt": "yuv420p"}
+    cmd = asm.build_leveled_cmd("/src/camB.mp4", "/work/.tmp.mp4", -1.3, enc)
+    joined = " ".join(cmd)
+    assert "rotate=-1.3*PI/180:ow=iw:oh=ih" in joined  # 與 _rotate_part 同義
+    assert "-hwaccel" in cmd and "videotoolbox" in cmd  # 硬解
+    assert "-an" in cmd                                 # proxy 不要音訊
+    assert cmd[-1] == "/work/.tmp.mp4"                  # 輸出到 tmp
+
+
+def test_prepare_assembly_multicam_rotate_b_prebakes_and_drops_rotate(tmp_episode_full_multicam):
+    """cam B 有旋轉角 + 無 proxy → plan 帶一筆 cam B 預烤；主 filter 不再含 rotate（移到預烤）。"""
+    _set_rotate_b(tmp_episode_full_multicam, -1.3)
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert len(plan["prebake"]) == 1
+    pb = plan["prebake"][0]
+    assert pb["angle"] == -1.3
+    assert "rotate=-1.3" in " ".join(pb["cmd"])         # 預烤指令含 rotate
+    # 主 filter 不再有 rotate（cam B 已預烤 → render_cfg rotate.b=0）
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "rotate=" not in fc
+    # 主 cmd 的 cam B 輸入換成 proxy
+    assert any("_leveled_camB" in str(a) for a in plan["cmd"])
+
+
+def test_prepare_assembly_multicam_valid_proxy_skips_prebake(tmp_episode_full_multicam):
+    """已有有效 proxy → 不再預烤，主 filter 仍無 rotate、吃 proxy（重用快取）。"""
+    from podcast_toolkit import assemble as asm
+    from podcast_toolkit.episode import Episode
+    _set_rotate_b(tmp_episode_full_multicam, -1.3)
+    ep = Episode(tmp_episode_full_multicam)
+    proxy, _tmp, meta = asm._leveled_proxy_paths(ep.subdir("work"), "b")
+    cam_b = ep.resolve_episode_path(ep.cfg["cameras"]["b"])
+    proxy.write_bytes(b"fake-proxy")
+    asm.write_leveled_meta(meta, cam_b, -1.3)
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert plan["prebake"] == []                        # 重用，不再預烤
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "rotate=" not in fc
+    assert any("_leveled_camB" in str(a) for a in plan["cmd"])
+
+
+def test_prepare_assembly_multicam_no_rotate_no_prebake(tmp_episode_full_multicam):
+    """沒設旋轉角 → 無預烤（行為照舊，回歸保護）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert plan["prebake"] == []

@@ -11,7 +11,11 @@ from subprocess import PIPE, Popen
 from time import monotonic
 from typing import Any
 
-from podcast_toolkit.assemble import prepare_assembly
+from podcast_toolkit.assemble import (
+    _leveled_proxy_valid,
+    prepare_assembly,
+    write_leveled_meta,
+)
 from podcast_toolkit.episode import Episode
 
 
@@ -127,6 +131,15 @@ def _run_queue(plans: list[dict]) -> None:
             percent=0.0,
             eta_s=None,
         )
+        # 旋轉拉正預烤：主合成前先把需要的 proxy 建好（已建好 / 前一個 target 剛建好 → 跳過）。
+        # 任一預烤失敗 → 中止整批（_run_prebake 已 set state=error）。
+        for pb in plan.get("prebake", []):
+            if _leveled_proxy_valid(pb["proxy"], pb["meta"], pb["src"], pb["angle"]):
+                continue
+            if not _run_prebake(pb):
+                return
+            # 預烤完回到該 target 的進度起點
+            _set(current=plan["output_kind"], percent=0.0, eta_s=None)
         cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
         proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
                      text=True, bufsize=1)
@@ -149,6 +162,24 @@ def _run_queue(plans: list[dict]) -> None:
             _STATE["output_files"].extend(outputs)
     # 全部跑完
     _set(state="done", percent=100.0, eta_s=0)
+
+
+def _run_prebake(pb: dict) -> bool:
+    """跑單一旋轉拉正預烤；成功 rename proxy + 寫 meta 回 True，失敗回 False（_pump_progress 已 set error）。
+
+    與主合成共用 _pump_progress（tmp→proxy rename + watchdog + 進度）。proxy 是一次性快取，
+    之後同角度的輸出都重用 → 這段 rotate 成本只在角度變動後付一次。"""
+    proxy = Path(pb["proxy"])
+    tmp = Path(pb["tmp"])
+    _set(current=pb.get("label", "旋轉拉正"), percent=0.0, eta_s=None)
+    cmd = list(pb["cmd"]) + ["-progress", "pipe:1", "-nostats"]
+    proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True, bufsize=1)
+    _pump_progress(proc, pb["total_dur"], proxy, tmp)
+    with _LOCK:
+        if _STATE["state"] == "error":
+            return False
+    write_leveled_meta(Path(pb["meta"]), Path(pb["src"]), pb["angle"])
+    return True
 
 
 def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
