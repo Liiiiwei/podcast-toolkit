@@ -20,15 +20,26 @@
             <span data-icon="arrow-left"></span>
             <span>列表</span>
           </button>
-          <button
-            id="ep-switch-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="開啟集資料夾"
-          >
-            <span data-icon="folder-open"></span>
-            <span>開啟</span>
-          </button>
+          <div class="ep-switch-wrap">
+            <button
+              id="ep-switch-btn"
+              type="button"
+              class="btn btn-ghost"
+              title="換集：快速切換最近的集（不離開頁面）"
+              aria-haspopup="true"
+              aria-expanded="false"
+            >
+              <span data-icon="folder-open"></span>
+              <span>換集</span>
+              <span class="ep-switch-caret">▾</span>
+            </button>
+            <div
+              class="ep-switch-menu"
+              id="ep-switch-menu"
+              role="menu"
+              hidden
+            ></div>
+          </div>
           <button
             id="ep-new-btn"
             type="button"
@@ -419,6 +430,13 @@
               <span data-icon="move"></span>
               <span>套用偏移</span>
             </button>
+          </div>
+          <div class="card-insert-row">
+            <button type="button" id="card-insert-btn" class="btn btn-ghost">
+              <span data-icon="plus"></span>
+              <span>在游標處插入字卡</span>
+            </button>
+            <span class="card-insert-hint" id="card-insert-hint"></span>
           </div>
           <div id="cards-list"></div>
         </section>

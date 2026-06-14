@@ -21,6 +21,12 @@ const state = {
   // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
   // sub-card 上按 Enter 可連鎖切：把該 part 拆兩半、後面 composite key 全部 +1。
   cardSplits: new Map(),
+  // 單卡時間微調：idx -> {start, end}（覆寫該卡時間）；只用於未切的整卡
+  timeOverrides: new Map(),
+  timeEditKey: null, // 目前展開時間微調工具列的卡 domKey（字串；null = 沒開）
+  // 新增的字卡：[{tempId, start, end, text}]；存檔時 append 進 SRT、重編號
+  newCards: [],
+  newCardSeq: 0, // tempId 流水號
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -133,6 +139,8 @@ function snapshotEditState() {
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
+    timeOverrides: new Map([...state.timeOverrides].map(([k, v]) => [k, { ...v }])),
+    newCards: state.newCards.map((c) => ({ ...c })),
   };
 }
 
@@ -154,6 +162,10 @@ function applyEditSnapshot(snap) {
   state.cardSplits = new Map(
     [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
   );
+  state.timeOverrides = new Map(
+    [...(snap.timeOverrides || [])].map(([k, v]) => [k, { ...v }]),
+  );
+  state.newCards = (snap.newCards || []).map((c) => ({ ...c }));
 }
 
 function pushUndo() {
@@ -280,6 +292,8 @@ function unsavedCount() {
     state.deletions.size +
     state.textOverrides.size +
     state.cardSplits.size +
+    state.timeOverrides.size +
+    state.newCards.length +
     (state.cropYt != null ? 1 : 0) +
     (state.cropReels != null ? 1 : 0) +
     (state.outputDirty ? 1 : 0)
@@ -595,12 +609,16 @@ const SPLIT_SEC_PER_CHAR = 0.3;
 function expandedCards() {
   const out = [];
   for (const c of state.cards) {
+    // 時間微調 override：未切卡直接套；切過的卡用 override 當 t0/t1 重算 sub-card
+    const ov = state.timeOverrides.get(c.idx);
+    const cStart = ov ? ov.start : c.start;
+    const cEnd = ov ? ov.end : c.end;
     const parts = state.cardSplits.get(c.idx);
     if (parts && parts.length > 1) {
       const lengths = parts.map((p) => Math.max((p || "").length, 1));
       const total = lengths.reduce((a, b) => a + b, 0);
-      const t0 = c.start;
-      const t1 = c.end;
+      const t0 = cStart;
+      const t1 = cEnd;
       const dur = t1 - t0;
       const budget = total * SPLIT_SEC_PER_CHAR;
       const rate = budget <= dur ? SPLIT_SEC_PER_CHAR : dur / total;
@@ -624,12 +642,248 @@ function expandedCards() {
         partIdx: null,
         key: c.idx,
         text: state.textOverrides.get(c.idx) ?? c.text,
-        start: c.start,
-        end: c.end,
+        start: cStart,
+        end: cEnd,
       });
     }
   }
+  // 新增的字卡：併進清單、依 start 排序（讓它出現在正確時間位置、預覽也吃得到）
+  for (const nc of state.newCards) {
+    out.push({
+      c: null,
+      newCard: nc,
+      partIdx: null,
+      key: `new:${nc.tempId}`,
+      text: nc.text,
+      start: nc.start,
+      end: nc.end,
+    });
+  }
+  out.sort((a, b) => a.start - b.start);
   return out;
+}
+
+// 取一張卡實際生效的時間（含時間微調 override）
+function getEffectiveCardTime(c) {
+  const ov = state.timeOverrides.get(c.idx);
+  return ov ? { start: ov.start, end: ov.end } : { start: c.start, end: c.end };
+}
+
+// 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除 override
+function setCardTime(c, start, end) {
+  start = Math.max(0, Math.round(start * 100) / 100);
+  end = Math.max(start + 0.1, Math.round(end * 100) / 100);
+  const sameAsOrig =
+    Math.abs(start - c.start) < 0.005 && Math.abs(end - c.end) < 0.005;
+  const cur = state.timeOverrides.get(c.idx);
+  if (sameAsOrig) {
+    if (!cur) return;
+    pushUndo();
+    state.timeOverrides.delete(c.idx);
+  } else {
+    if (cur && Math.abs(cur.start - start) < 0.005 && Math.abs(cur.end - end) < 0.005) {
+      return;
+    }
+    pushUndo();
+    state.timeOverrides.set(c.idx, { start, end });
+  }
+}
+
+// 時間微調的「目標」抽象：既有卡走 timeOverrides，新卡直接改自身 start/end。
+// target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
+function cardTimeTarget(c) {
+  return {
+    domKey: String(c.idx),
+    get: () => getEffectiveCardTime(c),
+    set: (s, e) => setCardTime(c, s, e),
+    reset: () => {
+      if (!state.timeOverrides.has(c.idx)) return;
+      pushUndo();
+      state.timeOverrides.delete(c.idx);
+    },
+    isDirty: () => state.timeOverrides.has(c.idx),
+  };
+}
+function newCardTimeTarget(nc) {
+  return {
+    domKey: `new:${nc.tempId}`,
+    get: () => ({ start: nc.start, end: nc.end }),
+    set: (s, e) => {
+      s = Math.max(0, Math.round(s * 100) / 100);
+      e = Math.max(s + 0.1, Math.round(e * 100) / 100);
+      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005) return;
+      pushUndo();
+      nc.start = s;
+      nc.end = e;
+    },
+    reset: null,
+    isDirty: () => false,
+  };
+}
+
+// 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
+// undo / 整列重繪時靠 renderCards 的注入點還原。
+function buildTimeToolbar(target) {
+  const bar = document.createElement("div");
+  bar.className = "card-time-edit";
+  bar.addEventListener("click", (e) => e.stopPropagation());
+  const val = document.createElement("span");
+  val.className = "te-val";
+  const repaint = () => {
+    const t = target.get();
+    val.textContent = `${t.start.toFixed(2)} → ${t.end.toFixed(2)}s`;
+    const card = document.querySelector(
+      `#cards-list .card[data-idx="${target.domKey}"]`,
+    );
+    if (card) {
+      card.classList.toggle("time-dirty", target.isDirty());
+      const cv = card.querySelector(".card-time-val");
+      if (cv) cv.textContent = `${fmtTime(t.start)}\n${fmtTime(t.end)}`;
+    }
+    renderCaption();
+    renderTopbar();
+  };
+  const act = (fn) => () => {
+    fn();
+    repaint();
+  };
+  const nudge = (ds, de) => {
+    const t = target.get();
+    target.set(t.start + ds, t.end + de);
+  };
+  const mk = (label, title, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "te-btn";
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", act(fn));
+    return b;
+  };
+  const lab = (t) => {
+    const s = document.createElement("span");
+    s.className = "te-lab";
+    s.textContent = t;
+    return s;
+  };
+  bar.append(
+    lab("起"),
+    mk("⇤游標", "把起點設到目前播放位置", () => {
+      const t = target.get();
+      target.set($("#video").currentTime, t.end);
+    }),
+    mk("−", "起點 −0.1s", () => nudge(-0.1, 0)),
+    mk("＋", "起點 +0.1s", () => nudge(0.1, 0)),
+    lab("訖"),
+    mk("游標⇥", "把終點設到目前播放位置", () => {
+      const t = target.get();
+      target.set(t.start, $("#video").currentTime);
+    }),
+    mk("−", "終點 −0.1s", () => nudge(0, -0.1)),
+    mk("＋", "終點 +0.1s", () => nudge(0, 0.1)),
+    val,
+  );
+  if (target.reset) {
+    bar.append(
+      mk("還原", "清除這張卡的時間微調", () => target.reset()),
+    );
+  }
+  const t0 = target.get();
+  val.textContent = `${t0.start.toFixed(2)} → ${t0.end.toFixed(2)}s`;
+  return bar;
+}
+
+// 開 / 關某卡的時間微調工具列（一次只開一張）
+function toggleTimeEdit(target, cardEl) {
+  if (state.timeEditKey !== null && state.timeEditKey !== target.domKey) {
+    const prev = document.querySelector(
+      `#cards-list .card[data-idx="${state.timeEditKey}"]`,
+    );
+    if (prev) {
+      const bar = prev.querySelector(".card-time-edit");
+      if (bar) bar.remove();
+      prev.classList.remove("editing-time");
+    }
+  }
+  const existing = cardEl.querySelector(".card-time-edit");
+  if (existing) {
+    existing.remove();
+    cardEl.classList.remove("editing-time");
+    state.timeEditKey = null;
+  } else {
+    cardEl.appendChild(buildTimeToolbar(target));
+    cardEl.classList.add("editing-time");
+    state.timeEditKey = target.domKey;
+  }
+}
+
+// 渲染一張「新增字卡」列（自包，不碰既有卡的 sus / split / cam 邏輯）
+function renderNewCardRow(r, list) {
+  const nc = r.newCard;
+  const div = document.createElement("div");
+  div.className = "card card-new";
+  div.dataset.idx = `new:${nc.tempId}`;
+
+  const spacer = document.createElement("div"); // 對齊 grid 第一欄
+
+  const time = document.createElement("div");
+  time.className = "card-time";
+  const timeVal = document.createElement("span");
+  timeVal.className = "card-time-val";
+  timeVal.style.whiteSpace = "pre";
+  timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+  time.appendChild(timeVal);
+  const badge = document.createElement("span");
+  badge.className = "card-new-badge";
+  badge.textContent = "新";
+  time.appendChild(badge);
+  const teBtn = document.createElement("button");
+  teBtn.type = "button";
+  teBtn.className = "card-time-edit-btn";
+  teBtn.textContent = "⏱";
+  teBtn.title = "調整這張新卡的時間（設到游標 / ±0.1s）";
+  teBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleTimeEdit(newCardTimeTarget(nc), div);
+  });
+  time.appendChild(teBtn);
+  time.addEventListener("click", () => {
+    $("#video").currentTime = nc.start;
+  });
+
+  const text = document.createElement("div");
+  text.className = "card-text";
+  text.contentEditable = "true";
+  text.textContent = nc.text;
+  text.dataset.placeholder = "輸入字幕…";
+  text.addEventListener("blur", () => {
+    const v = text.textContent.trim();
+    if (v === nc.text) return;
+    pushUndo();
+    nc.text = v;
+    renderTopbar();
+    renderCaption();
+  });
+
+  const del = document.createElement("button");
+  del.className = "card-del";
+  del.setAttribute("aria-label", "刪除這張新卡");
+  del.innerHTML = window.Icons ? window.Icons.get("x", { size: 14 }) : "✕";
+  del.addEventListener("click", () => {
+    pushUndo();
+    state.newCards = state.newCards.filter((x) => x.tempId !== nc.tempId);
+    if (state.timeEditKey === `new:${nc.tempId}`) state.timeEditKey = null;
+    renderCards();
+    renderTopbar();
+    renderCaption();
+  });
+
+  div.append(spacer, time, text, del);
+  if (state.timeEditKey === `new:${nc.tempId}`) {
+    div.appendChild(buildTimeToolbar(newCardTimeTarget(nc)));
+    div.classList.add("editing-time");
+  }
+  list.appendChild(div);
 }
 
 // 算這張卡實際生效的 speaker：speakers sidecar 是每張卡都有明確值
@@ -855,6 +1109,10 @@ function renderCards() {
   const hasCamB = !!state.cameras && !!state.cameras.b;
   const rendered = expandedCards();
   for (const r of rendered) {
+    if (r.newCard) {
+      renderNewCardRow(r, list);
+      continue;
+    }
     const c = r.c;
     const partIdx = r.partIdx; // null = 未切；0..N-1 = sub-card
     const key = r.key; // int (未切) 或 "<idx>:<part>"（切過）；deletions / cameras 都用這個
@@ -908,11 +1166,28 @@ function renderCards() {
 
     const time = document.createElement("div");
     time.className = "card-time";
-    time.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
-    time.style.whiteSpace = "pre";
+    const timeVal = document.createElement("span");
+    timeVal.className = "card-time-val";
+    timeVal.style.whiteSpace = "pre";
+    timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+    time.appendChild(timeVal);
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
+    if (!isSub && state.timeOverrides.has(c.idx)) div.classList.add("time-dirty");
+    // 未切的整卡才給「微調時間」入口（切過的卡時間由斷句配速決定）
+    if (!isSub) {
+      const teBtn = document.createElement("button");
+      teBtn.type = "button";
+      teBtn.className = "card-time-edit-btn";
+      teBtn.textContent = "⏱";
+      teBtn.title = "微調這張卡的時間（設到游標 / ±0.1s）";
+      teBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleTimeEdit(cardTimeTarget(c), div);
+      });
+      time.appendChild(teBtn);
+    }
     // 分軌集才掛 speaker tag：值來自 srt_merge sidecar（read-only）
     // 要改 speaker → 走 _final_v2.speakers.json 手改或重跑 srt_merge，不在 UI 上 toggle
     const sp = computeEffectiveSpeaker(key);
@@ -1229,6 +1504,11 @@ function renderCards() {
     } else {
       div.append(susBox, time, text, del);
     }
+    // 整列重繪（undo / 切句 / 刪除等）後，若這張卡的時間微調工具列原本開著就還原
+    if (!isSub && state.timeEditKey === String(c.idx)) {
+      div.appendChild(buildTimeToolbar(cardTimeTarget(c)));
+      div.classList.add("editing-time");
+    }
     list.appendChild(div);
   }
   renderSusToolbar();
@@ -1322,6 +1602,10 @@ async function loadEpisodeState() {
   state.susChecked = new Set();
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
+  state.timeOverrides = new Map();
+  state.timeEditKey = null;
+  state.newCards = [];
+  state.newCardSeq = 0;
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
@@ -2669,6 +2953,14 @@ $("#save-btn").addEventListener("click", async () => {
     speakers_mapping: Object.fromEntries(state.speakersMapping),
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
+    // 單卡時間微調：{ "<idx>": {start, end} }；後端 serialize 前覆寫該卡 start/end
+    time_overrides: Object.fromEntries(state.timeOverrides),
+    // 新增字卡：[{start, end, text}]；後端 append 進 SRT、依時間排序重編號
+    new_cards: state.newCards.map((c) => ({
+      start: c.start,
+      end: c.end,
+      text: c.text,
+    })),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
     reels_clips: state.reelsClips.map((c) => ({
       name: c.name,
@@ -5308,7 +5600,118 @@ async function switchEpisode(newPath) {
   }
 }
 
-$("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
+// === 換集下拉：列出最近 / 掃到的集，一鍵 hot-swap（不離開頁面、不跳 osascript 對話框）===
+let _epMenuOpen = false;
+
+function closeEpSwitchMenu() {
+  const menu = $("#ep-switch-menu");
+  if (menu) menu.hidden = true;
+  $("#ep-switch-btn")?.setAttribute("aria-expanded", "false");
+  _epMenuOpen = false;
+}
+
+async function openEpSwitchMenu() {
+  const menu = $("#ep-switch-menu");
+  if (!menu) return;
+  menu.hidden = false;
+  $("#ep-switch-btn")?.setAttribute("aria-expanded", "true");
+  _epMenuOpen = true;
+  menu.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "ep-menu-msg";
+  loading.textContent = "載入中…";
+  menu.appendChild(loading);
+
+  let eps = [];
+  try {
+    const r = await fetch("/api/episodes");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    eps = Array.isArray(data.episodes) ? data.episodes : [];
+  } catch (e) {
+    menu.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "ep-menu-msg ep-menu-error";
+    err.textContent = `讀取集數失敗：${e.message}`;
+    menu.appendChild(err);
+    return;
+  }
+  if (!_epMenuOpen) return; // 載入期間使用者已關閉
+
+  // 依 path 去重
+  const seen = new Set();
+  const items = eps.filter((e) => {
+    const p = e && e.path;
+    if (!p || seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+
+  menu.innerHTML = "";
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ep-menu-msg";
+    empty.textContent = "（沒有掃到其他集）";
+    menu.appendChild(empty);
+  }
+  for (const e of items) {
+    const isCurrent = e.name === state.name;
+    const folder = (e.path || "").split("/").pop() || "";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "ep-menu-item" + (isCurrent ? " is-current" : "");
+    const nameEl = document.createElement("span");
+    nameEl.className = "ep-menu-name";
+    nameEl.textContent = e.name || folder;
+    const folderEl = document.createElement("span");
+    folderEl.className = "ep-menu-folder";
+    folderEl.textContent = folder;
+    row.append(nameEl, folderEl);
+    if (isCurrent) {
+      const badge = document.createElement("span");
+      badge.className = "ep-menu-badge";
+      badge.textContent = "目前";
+      row.append(badge);
+      row.disabled = true;
+    } else {
+      row.addEventListener("click", () => {
+        closeEpSwitchMenu();
+        if (
+          hasUnsavedChanges() &&
+          !confirm("有未儲存的修改，換集後會丟失，繼續？")
+        )
+          return;
+        switchEpisode(e.path);
+      });
+    }
+    menu.appendChild(row);
+  }
+  // 底部：選其他資料夾（osascript fallback，給不在清單上的集）
+  const sep = document.createElement("div");
+  sep.className = "ep-menu-sep";
+  menu.appendChild(sep);
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "ep-menu-item ep-menu-pick";
+  pick.textContent = "選其他資料夾…";
+  pick.addEventListener("click", () => {
+    closeEpSwitchMenu();
+    pickEpisodeFolder();
+  });
+  menu.appendChild(pick);
+}
+
+$("#ep-switch-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (_epMenuOpen) closeEpSwitchMenu();
+  else openEpSwitchMenu();
+});
+document.addEventListener("click", (e) => {
+  if (_epMenuOpen && !e.target.closest(".ep-switch-wrap")) closeEpSwitchMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _epMenuOpen) closeEpSwitchMenu();
+});
 document
   .getElementById("back-to-dash-btn")
   ?.addEventListener("click", async () => {
@@ -5420,6 +5823,32 @@ async function submitNewEpisode() {
 }
 
 $("#ep-new-btn").addEventListener("click", openNewEpModal);
+
+// 在游標處插入一張新字卡（預設 ~1.5s）→ 出現空白卡、自動捲到並 focus 文字
+$("#card-insert-btn").addEventListener("click", () => {
+  if (state.needsTranscribe) return;
+  const v = $("#video");
+  const dur = v.duration || 0;
+  const start = Math.round(Math.max(0, v.currentTime || 0) * 100) / 100;
+  let end = start + 1.5;
+  if (dur) end = Math.min(end, dur);
+  end = Math.max(Math.round(end * 100) / 100, start + 0.3);
+  pushUndo();
+  const tempId = state.newCardSeq++;
+  state.newCards.push({ tempId, start, end, text: "" });
+  state.timeEditKey = null;
+  renderCards();
+  renderTopbar();
+  renderCaption();
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`#cards-list .card[data-idx="new:${tempId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      const txt = el.querySelector(".card-text");
+      if (txt) txt.focus();
+    }
+  });
+});
 $("#new-ep-cancel").addEventListener("click", closeNewEpModal);
 $("#new-ep-go").addEventListener("click", submitNewEpisode);
 $("#new-ep-date").addEventListener("input", updateNewEpPreview);

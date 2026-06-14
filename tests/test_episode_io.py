@@ -1,4 +1,5 @@
 """web/episode_io：把 episode 資料夾轉成前端要的 JSON 狀態。"""
+import pytest
 import yaml
 
 from podcast_toolkit.episode import Episode
@@ -111,6 +112,81 @@ def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
     assert "speed" not in after
     # 封面預設已開，取消要寫 explicit false（不能 pop，否則回退成預設 true）
     assert after["watermark"] == {"enabled": False}
+
+
+def test_save_state_applies_time_overrides_to_v2_srt(tmp_episode_dir):
+    """time_overrides 覆寫對應卡的 start/end，寫回 _v2.srt。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "time_overrides": {"2": {"start": 5.0, "end": 10.5}},
+            "cards": [],
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    # 卡 2 的文字維持原樣、時間被覆寫
+    c2 = next(c for c in cards if "過嗨乳牛這個議題" in c["text"])
+    assert c2["start"] == pytest.approx(5.0)
+    assert c2["end"] == pytest.approx(10.5)
+    # 其他卡不受影響（卡 1 仍 0–4.2）
+    c1 = cards[0]
+    assert c1["start"] == pytest.approx(0.0)
+    assert c1["end"] == pytest.approx(4.2)
+
+
+def test_save_state_ignores_invalid_time_override(tmp_episode_dir):
+    """end <= start 的非法時間值要被丟掉，不寫回。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={"time_overrides": {"1": {"start": 8.0, "end": 3.0}}, "cards": []},
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    c1 = srt_io.parse(v2)[0]
+    assert c1["start"] == pytest.approx(0.0)  # 維持原值
+    assert c1["end"] == pytest.approx(4.2)
+
+
+def test_save_state_inserts_new_cards_in_time_order(tmp_episode_dir):
+    """new_cards 被 append 進 SRT、依時間排序、重編號連續。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    # 在卡 1(0–4.2) 與卡 2(4.2–12) 之間插一張新卡
+    episode_io.save_state(
+        ep,
+        payload={
+            "new_cards": [{"start": 4.0, "end": 4.2, "text": "插入的新句"}],
+            "cards": [],
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    assert len(cards) == 5  # 原 4 張 + 1 新
+    # idx 連續 1..5
+    assert [c["idx"] for c in cards] == [1, 2, 3, 4, 5]
+    # 依時間排序：新卡(4.0) 落在原卡 1(0) 之後、原卡 2(4.2) 之前
+    new_pos = next(i for i, c in enumerate(cards) if c["text"] == "插入的新句")
+    assert cards[new_pos - 1]["text"] == "大家好歡迎來到我愛上班"
+    assert cards[new_pos]["start"] == pytest.approx(4.0)
+    assert cards[new_pos]["end"] == pytest.approx(4.2)
+
+
+def test_save_state_skips_invalid_new_cards(tmp_episode_dir):
+    """end <= start 的新卡要被丟掉。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={"new_cards": [{"start": 5.0, "end": 5.0, "text": "壞卡"}], "cards": []},
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    assert len(cards) == 4  # 沒新增
+    assert all("壞卡" not in c["text"] for c in cards)
 
 
 def test_save_state_overwrites_v2_srt_with_card_text_overrides(tmp_episode_dir):

@@ -419,6 +419,38 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
+    # 單卡時間微調：{ "<idx>": {start, end} }；serialize 前覆寫對應卡的 start/end
+    raw_time = payload.get("time_overrides") or {}
+    time_overrides: dict[int, tuple[float, float]] = {}
+    for k, v in raw_time.items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            s = float(v.get("start"))
+            e = float(v.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:  # 終點不得早於起點，丟掉非法值
+            continue
+        try:
+            time_overrides[int(k)] = (max(0.0, s), e)
+        except (TypeError, ValueError):
+            continue
+
+    # 新增字卡：[{start, end, text}]；append 進現有卡、依時間排序後一起重編號
+    new_cards: list[dict] = []
+    for nc in payload.get("new_cards") or []:
+        if not isinstance(nc, dict):
+            continue
+        try:
+            s = float(nc.get("start"))
+            e = float(nc.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        new_cards.append({"start": max(0.0, s), "end": e, "text": str(nc.get("text") or "")})
+
     # 預設 lookup：未切 + 未改的卡，old idx == new idx；遇到 v2.srt 不存在但又有狀態要存時也能 fallback
     idx_lookup: dict[tuple[int, int], int] = {}
     if v2.exists():
@@ -426,13 +458,25 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         backup = v2.with_suffix(v2.suffix + ".bak")
         backup.write_text(original, encoding="utf-8")
         cards = srt_io.parse(original)
+        # 套用時間微調（在 serialize 前改 card.start/end；切過的卡 override 會當 t0/t1 重算 sub-card）
+        if time_overrides:
+            for c in cards:
+                ov = time_overrides.get(int(c["idx"]))
+                if ov:
+                    c["start"], c["end"] = ov
+        # 插入新字卡：給暫時 idx（接在最大 idx 後），再依 start 排序；serialize_with_map 會重編號
+        if new_cards:
+            max_idx = max((int(c["idx"]) for c in cards), default=0)
+            for i, nc in enumerate(new_cards):
+                cards.append({"idx": max_idx + 1 + i, **nc})
+            cards.sort(key=lambda c: float(c["start"]))
         new_text, idx_map = srt_io.serialize_with_map(
             cards, overrides=overrides, splits=splits
         )
         v2.write_text(new_text, encoding="utf-8")
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
-    elif overrides or splits:
+    elif overrides or splits or time_overrides or new_cards:
         raise FileNotFoundError(
             f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
         )
