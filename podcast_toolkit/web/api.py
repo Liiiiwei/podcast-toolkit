@@ -524,7 +524,11 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     @app.post("/api/save")
     def save(payload: dict):
         ep = _require_ep()
-        episode_io.save_state(ep, payload)
+        try:
+            episode_io.save_state(ep, payload)
+        except ValueError as e:
+            # card_timings 等前端送來的不合法值 → 400（而非 500）
+            raise HTTPException(status_code=400, detail=str(e))
         # 重新 init Episode 讓 cfg 反映剛寫入的 yaml；否則 GET /api/episode
         # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
         holder["ep"] = Episode(ep.dir)
@@ -709,6 +713,70 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     @app.get("/api/transcribe/status")
     def get_transcribe_status():
         return JSONResponse(transcribe_job.get_status())
+
+    @app.post("/api/resegment")
+    def post_resegment(payload: dict):
+        """同步重新斷句：使用者自帶字幕（不跑雲端 STT）時，只跑 resegment 後處理
+        （斷句 + 改錯字 + 反幻覺）。resegment 純 CPU、秒級，不走 transcribe_job 的
+        background slot；只複用它的備份邏輯。
+
+        payload: { src_srt?: 相對路徑 }
+        src_srt 給定且非 main_srt → 備份後複製到 main_srt 位置再跑。
+        """
+        from podcast_toolkit import resegment
+
+        ep = _require_ep()
+        if transcribe_job.get_status().get("state") == "running":
+            raise HTTPException(status_code=409, detail="已有轉字幕正在進行中，請稍候")
+
+        main_srt = ep.main_srt()
+        src_srt = (payload.get("src_srt") or "").strip()
+        src_path = None
+        if src_srt:
+            src_path = (ep.dir / src_srt).resolve()
+            try:
+                src_path.relative_to(ep.dir)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="路徑必須在集資料夾內")
+            if not src_path.is_file():
+                raise HTTPException(status_code=404, detail=f"找不到字幕：{src_srt}")
+
+        if not src_srt and not main_srt.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail="找不到來源字幕，請先放一份 SRT 到 01_母帶/ 或在『檔案』選一份",
+            )
+
+        # 重跑前先備份現有 _v2.srt / main_srt（複用 transcribe_job 的備份；不走 job 編排）
+        try:
+            backups = transcribe_job._backup_existing_srts(ep)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"備份原 SRT 失敗：{e}")
+
+        # 使用者指定的來源 → 覆寫成 main_srt（resegment.run 固定吃 ep.main_srt()）
+        if src_path is not None and src_path != main_srt.resolve():
+            main_srt.parent.mkdir(parents=True, exist_ok=True)
+            main_srt.write_bytes(src_path.read_bytes())
+
+        try:
+            rc = resegment.run(ep.dir, force=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"重新斷句失敗：{e}")
+        if rc != 0:
+            raise HTTPException(status_code=400, detail=f"重新斷句失敗 (rc={rc})")
+
+        out = ep.output_v2_srt()
+        if not out.is_file() or not out.read_text(encoding="utf-8").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="重新斷句後沒有產生字幕，請確認來源 SRT 的時間碼格式正確",
+            )
+
+        # 重建 Episode 讓後續 GET /api/episode 反映新 _v2.srt
+        holder["ep"] = Episode(ep.dir)
+        return JSONResponse(
+            {"ok": True, "out_srt": str(out.relative_to(ep.dir)), "backups": backups}
+        )
 
     @app.post("/api/detect-silence")
     def post_detect_silence():

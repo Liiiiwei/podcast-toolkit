@@ -12,6 +12,7 @@ const state = {
   cropRatioReels: null,
   deletions: new Set(),
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
+  reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
   cards: [],
   textOverrides: new Map(), // idx -> text
   // 在 UI 上按 Enter 切句：oldIdx -> [part0_text, part1_text, ...]；存檔時翻譯成
@@ -19,6 +20,9 @@ const state = {
   // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
   // sub-card 上按 Enter 可連鎖切：把該 part 拆兩半、後面 composite key 全部 +1。
   cardSplits: new Map(),
+  // 時間軸拖拉改的字幕時間：composite key（int 或 "idx:part"）→ {start, end} 秒。
+  // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
+  cardTimings: new Map(),
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -118,6 +122,7 @@ function snapshotEditState() {
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
+    cardTimings: new Map([...state.cardTimings].map(([k, v]) => [k, { ...v }])),
   };
 }
 
@@ -137,12 +142,27 @@ function applyEditSnapshot(snap) {
   state.cardSplits = new Map(
     [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
   );
+  state.cardTimings = new Map(
+    [...(snap.cardTimings || [])].map(([k, v]) => [k, { ...v }]),
+  );
 }
 
 function pushUndo() {
   state.undoStack.push(snapshotEditState());
   if (state.undoStack.length > UNDO_MAX) state.undoStack.shift();
   state.redoStack = [];
+}
+
+// 切句 / 合併會重算該卡各段時間（allocate_split_times），舊的手動時間覆寫失效 →
+// 清掉這張原卡的 int key 與所有 "idx:part" composite key。
+function clearCardTimings(idx) {
+  state.cardTimings.delete(idx);
+  const prefix = `${idx}:`;
+  for (const k of [...state.cardTimings.keys()]) {
+    if (typeof k === "string" && k.startsWith(prefix)) {
+      state.cardTimings.delete(k);
+    }
+  }
 }
 
 function clearUndoStacks() {
@@ -207,6 +227,36 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// 編輯工作流快捷鍵（無修飾鍵）：Space 播放/暫停、↑/↓ 切前後字幕卡、? 開快捷鍵總覽。
+// 字幕編輯框 / input 聚焦時讓出原生行為（打字、IME、捲動）；有 modal 開著時也不攔。
+document.addEventListener("keydown", (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (
+    t &&
+    (t.tagName === "INPUT" ||
+      t.tagName === "TEXTAREA" ||
+      t.isContentEditable === true)
+  ) {
+    return;
+  }
+  if (document.querySelector("dialog[open]")) return;
+  const key = e.key;
+  if (key === " " || key === "Spacebar") {
+    e.preventDefault();
+    togglePlay();
+  } else if (key === "ArrowDown") {
+    e.preventDefault();
+    stepCard(1);
+  } else if (key === "ArrowUp") {
+    e.preventDefault();
+    stepCard(-1);
+  } else if (key === "?") {
+    e.preventDefault();
+    showModal("shortcuts-modal");
+  }
+});
+
 const $ = (sel) => document.querySelector(sel);
 
 function fmtTime(sec) {
@@ -227,6 +277,7 @@ function hasUnsavedChanges() {
     state.deletions.size > 0 ||
     state.textOverrides.size > 0 ||
     state.cardSplits.size > 0 ||
+    state.cardTimings.size > 0 ||
     state.cropYt != null ||
     state.cropReels != null
   );
@@ -237,6 +288,7 @@ function unsavedCount() {
     state.deletions.size +
     state.textOverrides.size +
     state.cardSplits.size +
+    state.cardTimings.size +
     (state.cropYt != null ? 1 : 0) +
     (state.cropReels != null ? 1 : 0)
   );
@@ -517,23 +569,26 @@ function expandedCards() {
         const start = t0 + cum;
         cum += lengths[i] * rate;
         const end = Math.min(t0 + cum, t1);
+        const key = `${c.idx}:${i}`;
+        const ov = state.cardTimings.get(key);
         out.push({
           c,
           partIdx: i,
-          key: `${c.idx}:${i}`,
+          key,
           text: parts[i],
-          start,
-          end,
+          start: ov ? ov.start : start,
+          end: ov ? ov.end : end,
         });
       }
     } else {
+      const ov = state.cardTimings.get(c.idx);
       out.push({
         c,
         partIdx: null,
         key: c.idx,
         text: state.textOverrides.get(c.idx) ?? c.text,
-        start: c.start,
-        end: c.end,
+        start: ov ? ov.start : c.start,
+        end: ov ? ov.end : c.end,
       });
     }
   }
@@ -606,6 +661,150 @@ function renderCamRuler() {
   ruler.hidden = false;
 }
 
+// === 字幕時間軸（拖卡片邊緣改進/出時間）===
+// 整集時長映射成一條橫軸，每張字幕卡畫一塊 block；拖左/右邊緣改 start/end。
+// edge-trim、不 ripple（只改自己；同源觸接子卡才同步相鄰邊界維持連續）。
+const TL_MIN_DUR = 0.1; // 單句最短 0.1s，避免拖成零/負時長
+let _tlDrag = null;
+
+function _tlSetBlockGeom(el, start, end, t0, total) {
+  el.style.left = `${((start - t0) / total) * 100}%`;
+  el.style.width = `${Math.max(((end - start) / total) * 100, 0.3)}%`;
+}
+
+function renderCardTimeline() {
+  const wrap = $("#card-timeline-wrap");
+  const tl = $("#card-timeline");
+  if (!wrap || !tl) return;
+  const rendered =
+    state.needsTranscribe || !state.cards.length ? [] : expandedCards();
+  if (!rendered.length) {
+    wrap.hidden = true;
+    tl.innerHTML = "";
+    return;
+  }
+  wrap.hidden = false;
+  const t0 = rendered[0].start;
+  const t1 = rendered[rendered.length - 1].end;
+  const total = Math.max(t1 - t0, 0.001);
+  tl.dataset.t0 = String(t0);
+  tl.dataset.total = String(total);
+  tl.innerHTML = "";
+  for (const r of rendered) {
+    const block = document.createElement("div");
+    block.className = "tl-block";
+    block.dataset.key = String(r.key);
+    if (state.deletions.has(r.key)) block.classList.add("deleted");
+    if (state.cardTimings.has(r.key)) block.classList.add("edited");
+    _tlSetBlockGeom(block, r.start, r.end, t0, total);
+    block.title = `${fmtTime(r.start)} – ${fmtTime(r.end)}（${(r.end - r.start).toFixed(1)}s）\n${r.text}`;
+    block.addEventListener("click", (e) => {
+      if (e.target.classList.contains("tl-handle")) return;
+      $("#video").currentTime = r.start;
+    });
+    const hL = document.createElement("div");
+    hL.className = "tl-handle tl-handle-l";
+    hL.title = "拖曳改進場時間";
+    hL.addEventListener("pointerdown", (e) => startTimelineDrag(e, r, "start"));
+    const hR = document.createElement("div");
+    hR.className = "tl-handle tl-handle-r";
+    hR.title = "拖曳改出場時間";
+    hR.addEventListener("pointerdown", (e) => startTimelineDrag(e, r, "end"));
+    block.append(hL, hR);
+    tl.appendChild(block);
+  }
+}
+
+function startTimelineDrag(e, r, edge) {
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.currentTarget;
+  const tl = $("#card-timeline");
+  const rect = tl.getBoundingClientRect();
+  pushUndo();
+  _tlDrag = {
+    key: r.key,
+    edge,
+    rect,
+    total: Number(tl.dataset.total) || 1,
+    t0: Number(tl.dataset.t0) || 0,
+    tl,
+    handle,
+    block: handle.parentElement,
+  };
+  try {
+    handle.setPointerCapture(e.pointerId);
+  } catch (_) {}
+  handle.addEventListener("pointermove", onTimelineDragMove);
+  handle.addEventListener("pointerup", endTimelineDrag);
+  handle.addEventListener("pointercancel", endTimelineDrag);
+}
+
+function onTimelineDragMove(e) {
+  if (!_tlDrag) return;
+  const { rect, total, t0, edge, tl, block } = _tlDrag;
+  const rendered = expandedCards();
+  const i = rendered.findIndex((x) => String(x.key) === String(_tlDrag.key));
+  if (i < 0) return;
+  const cur = rendered[i];
+  const prev = rendered[i - 1];
+  const next = rendered[i + 1];
+  let t = t0 + ((e.clientX - rect.left) / rect.width) * total;
+  let syncKey = null;
+  let syncStart = 0;
+  let syncEnd = 0;
+  if (edge === "start") {
+    // 同源觸接子卡：拖 start 同步把前一段 end 拉到同位，維持連續不留空窗
+    const touch =
+      prev && prev.c.idx === cur.c.idx && Math.abs(prev.end - cur.start) < 0.06;
+    const lo = prev ? (touch ? prev.start + TL_MIN_DUR : prev.end) : t0;
+    t = Math.max(lo, Math.min(cur.end - TL_MIN_DUR, t));
+    state.cardTimings.set(cur.key, { start: t, end: cur.end });
+    _tlSetBlockGeom(block, t, cur.end, t0, total);
+    block.classList.add("edited");
+    if (touch) {
+      syncKey = prev.key;
+      syncStart = prev.start;
+      syncEnd = t;
+    }
+  } else {
+    const touch =
+      next && next.c.idx === cur.c.idx && Math.abs(next.start - cur.end) < 0.06;
+    const hi = next ? (touch ? next.end - TL_MIN_DUR : next.start) : t0 + total;
+    t = Math.max(cur.start + TL_MIN_DUR, Math.min(hi, t));
+    state.cardTimings.set(cur.key, { start: cur.start, end: t });
+    _tlSetBlockGeom(block, cur.start, t, t0, total);
+    block.classList.add("edited");
+    if (touch) {
+      syncKey = next.key;
+      syncStart = t;
+      syncEnd = next.end;
+    }
+  }
+  if (syncKey != null) {
+    state.cardTimings.set(syncKey, { start: syncStart, end: syncEnd });
+    const el = tl.querySelector(`.tl-block[data-key="${String(syncKey)}"]`);
+    if (el) {
+      _tlSetBlockGeom(el, syncStart, syncEnd, t0, total);
+      el.classList.add("edited");
+    }
+  }
+}
+
+function endTimelineDrag(e) {
+  if (!_tlDrag) return;
+  const { handle } = _tlDrag;
+  try {
+    handle.releasePointerCapture(e.pointerId);
+  } catch (_) {}
+  handle.removeEventListener("pointermove", onTimelineDragMove);
+  handle.removeEventListener("pointerup", endTimelineDrag);
+  handle.removeEventListener("pointercancel", endTimelineDrag);
+  _tlDrag = null;
+  // 全量同步：卡片時間欄 / ruler / caption / 未儲存徽章 / timeline 重建
+  rerenderEditState();
+}
+
 function renderCaption() {
   const r = activeCardAt($("#video").currentTime);
   const overlay = $("#caption-overlay");
@@ -628,12 +827,23 @@ function renderCardSkeletons(n = 8) {
   }
 }
 
+// resegment 待複查旗標原因 → 中文標籤（半句結尾 / 疑似重複幻覺）
+function reviewReasonLabel(r) {
+  return { half_sentence: "半句結尾", repetition: "疑似重複幻覺" }[r] || r;
+}
+
+// 「待複查卡」= resegment 旗標（半句 / 幻覺）或空拍卡。導覽 / 篩選共用這個判斷。
+function cardNeedsReview(c) {
+  return !!(c.needs_review || c.suspicious_pause);
+}
+
 function renderCards() {
   // T60：量測 renderCards 用時（搭配 .card 的 content-visibility）。
   // 若 cardCount > 500 且 dur > 50ms 就警告，當作導入 windowing 的訊號。
   const _t0 = performance.now();
   const list = $("#cards-list");
   list.innerHTML = "";
+  list.classList.toggle("filter-review", state.reviewFilter);
   if (state.needsTranscribe) {
     const empty = document.createElement("div");
     empty.className = "cards-empty";
@@ -683,6 +893,8 @@ function renderCards() {
     }
     if (state.deletions.has(key)) div.classList.add("deleted");
     if (c.suspicious_pause && !isSub) div.classList.add("suspicious");
+    // 待複查卡標記（給「只看待複查」篩選 + 導覽用）；sub-card 也標，沿用原卡旗標
+    if (cardNeedsReview(c)) div.classList.add("review-hit");
     // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
     if (hasCamB) {
       const eff = computeEffectiveCamera(key);
@@ -745,11 +957,27 @@ function renderCards() {
         if (trailing > 3) {
           const warn = document.createElement("div");
           warn.className = "card-split-warn";
-          warn.textContent = `⚠ ${trailing.toFixed(1)}s`;
+          warn.innerHTML =
+            (window.Icons ? window.Icons.get("alert-triangle", { size: 10 }) : "") +
+            ` ${trailing.toFixed(1)}s`;
           warn.title = `斷句後尾段空窗 ${trailing.toFixed(1)} 秒沒分配字幕，可能漏字或斷句配速太快`;
           time.appendChild(warn);
         }
       }
+    }
+    // resegment 待複查旗標（半句結尾 / 重複幻覺）→ ⚠ icon 掛在時間欄，與其他
+    // per-card 警告同欄。子卡不掛（複查判定走原始整卡，與 suspicious 一致）。
+    if (c.needs_review && !isSub) {
+      const reasons = c.review_reasons || [];
+      const flag = document.createElement("div");
+      flag.className = "card-review-flag";
+      // 重複幻覺較重 → danger 紅；只有半句 → warning 黃
+      if (reasons.includes("repetition")) flag.classList.add("severe");
+      flag.title = `待複查：${reasons.map(reviewReasonLabel).join("、")}`;
+      flag.innerHTML =
+        (window.Icons ? window.Icons.get("alert-triangle", { size: 11 }) : "") +
+        ` ${reasons.map(reviewReasonLabel).join("、")}`;
+      time.appendChild(flag);
     }
 
     const text = document.createElement("div");
@@ -848,6 +1076,7 @@ function renderCards() {
           .concat([mergedText], oldParts.slice(partIdx + 1));
         state.deletions.delete(leftKey);
         if (mergedDeleted) state.deletions.add(leftKey);
+        clearCardTimings(c.idx); // 合併改變段數 → 舊時間覆寫失效
         if (newParts.length === 1) {
           // 只剩 1 段 → 收回未切狀態：composite "<idx>:0" 鍵搬回 int idx
           const finalText = newParts[0];
@@ -896,6 +1125,7 @@ function renderCards() {
           // 第二張靠 carry-forward 從第一張拿值，不顯式標
         }
         state.textOverrides.delete(c.idx); // splits 內容才是真相
+        clearCardTimings(c.idx); // 切句改變段數 → 舊時間覆寫失效
         state.cardSplits.set(c.idx, [before, after]);
         focusSplitTarget(c.idx, 1);
         return;
@@ -929,6 +1159,7 @@ function renderCards() {
         if (state.deletions.has(`${c.idx}:${partIdx}`)) {
           state.deletions.add(`${c.idx}:${partIdx + 1}`);
         }
+        clearCardTimings(c.idx); // 連鎖切句改變段數 → 舊時間覆寫失效
         state.cardSplits.set(c.idx, newParts);
         focusSplitTarget(c.idx, partIdx + 1);
         return;
@@ -1023,7 +1254,9 @@ function renderCards() {
     list.appendChild(div);
   }
   renderSusToolbar();
+  renderReviewToolbar();
   renderCamRuler();
+  renderCardTimeline();
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
@@ -1071,6 +1304,42 @@ function renderSusToolbar() {
     : label;
 }
 
+// 待複查卡導覽 toolbar：總數 / 只看待複查篩選 / 跳下一張
+function renderReviewToolbar() {
+  const bar = $("#review-toolbar");
+  if (!bar) return;
+  // 還沒刪除的原卡才算（切過的卡旗標屬原句，仍保留導覽價值）
+  const reviewCards = state.cards.filter(
+    (c) => cardNeedsReview(c) && !state.deletions.has(c.idx),
+  );
+  if (reviewCards.length === 0) {
+    bar.classList.add("hidden");
+    // 沒有待複查卡時自動關掉篩選，避免畫面整片空
+    if (state.reviewFilter) {
+      state.reviewFilter = false;
+      $("#cards-list").classList.remove("filter-review");
+    }
+    return;
+  }
+  bar.classList.remove("hidden");
+  $("#review-count").textContent = reviewCards.length;
+  const filterBtn = $("#review-filter");
+  filterBtn.classList.toggle("active", state.reviewFilter);
+  filterBtn.setAttribute("aria-pressed", state.reviewFilter ? "true" : "false");
+}
+
+// 從目前播放時間往後找下一張待複查卡，seek + scroll 過去（到尾端則繞回第一張）
+function jumpToNextReview() {
+  const v = $("#video");
+  const hits = expandedCards().filter((r) => cardNeedsReview(r.c));
+  if (!hits.length) return;
+  const t = v.currentTime;
+  const next = hits.find((r) => r.start > t + 0.05) || hits[0];
+  v.currentTime = next.start;
+  const el = document.querySelector(`.card[data-idx="${String(next.key)}"]`);
+  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 async function loadEpisodeState() {
   // 只重抓 episode + cards，重新轉字幕後會用到
   const r = await fetch("/api/episode");
@@ -1104,6 +1373,7 @@ async function loadEpisodeState() {
   state.susChecked = new Set();
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
+  state.cardTimings = new Map();
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
@@ -1239,6 +1509,13 @@ function setupSusToolbar() {
     renderCaption();
     renderTypo();
   });
+
+  // 待複查卡導覽：只看待複查篩選 + 跳下一張
+  $("#review-filter").addEventListener("click", () => {
+    state.reviewFilter = !state.reviewFilter;
+    renderCards();
+  });
+  $("#review-next").addEventListener("click", jumpToNextReview);
 }
 
 async function loadFiles() {
@@ -1554,12 +1831,40 @@ $("#video").addEventListener("timeupdate", () => {
   renderCaption();
 });
 
-const playBtn = $("#play-btn");
-playBtn.addEventListener("click", () => {
+// 播放/暫停切換：給 play 按鈕與 Space 快捷鍵共用
+function togglePlay() {
   const v = $("#video");
   if (v.paused) v.play();
   else v.pause();
-});
+}
+
+// 切到上一張 / 下一張字幕卡（dir = -1 / +1）：seek 影片到該卡 start。
+// .playing 高亮 + scrollIntoView 由 #video 的 timeupdate（seek 也會 fire）統一處理。
+function stepCard(dir) {
+  const v = $("#video");
+  const rendered = expandedCards();
+  if (!rendered.length) return;
+  const t = v.currentTime;
+  let idx = rendered.findIndex((r) => t >= r.start && t < r.end);
+  if (idx < 0) {
+    // 不在任何卡內（落在空窗）：以第一張 start > t 的卡為「下一張」基準
+    const nextIdx = rendered.findIndex((r) => r.start > t);
+    if (dir > 0) {
+      idx = nextIdx < 0 ? rendered.length - 1 : nextIdx;
+    } else {
+      idx = nextIdx < 0 ? rendered.length - 1 : Math.max(0, nextIdx - 1);
+    }
+  } else {
+    idx = Math.max(0, Math.min(rendered.length - 1, idx + dir));
+  }
+  const target = rendered[idx];
+  v.currentTime = target.start;
+  const el = document.querySelector(`.card[data-idx="${String(target.key)}"]`);
+  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+const playBtn = $("#play-btn");
+playBtn.addEventListener("click", togglePlay);
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
 function setPlayIcon(name) {
   playBtn.innerHTML = window.Icons
@@ -2329,6 +2634,8 @@ $("#save-btn").addEventListener("click", async () => {
     cameras_mapping: Object.fromEntries(state.camerasMapping),
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
+    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt
+    card_timings: Object.fromEntries(state.cardTimings),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
     reels_clips: state.reelsClips.map((c) => ({
       name: c.name,
@@ -2458,6 +2765,17 @@ function renderFileItem(f) {
       ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
       : `請先到設定面板填 ${providerLabel} API key`;
     action.addEventListener("click", () => requestTranscribe(f));
+  } else if (
+    f.path.toLowerCase().endsWith(".srt") &&
+    !f.is_main_srt_backup
+  ) {
+    // 自帶字幕：直接拿這份 .srt 跑斷句 + 改錯字 + 反幻覺（不跑雲端 STT）
+    action = document.createElement("button");
+    action.className = "file-stt";
+    action.innerHTML = `${iconHtml("scissors", 12)}<span>斷句</span>`;
+    action.title =
+      "用這份字幕重新斷句 + 改錯字 + 反幻覺（不跑雲端 STT），覆蓋 _v2.srt";
+    action.addEventListener("click", () => requestResegment(f.path));
   } else {
     action = document.createElement("span");
     action.className = "file-stt-placeholder";
@@ -2878,6 +3196,51 @@ function requestTranscribe(file) {
   go.onclick = () => runTranscribe(file);
   cancel.onclick = () => hideModal("transcribe-modal");
   showModal("transcribe-modal");
+}
+
+// 自帶字幕：只跑 resegment 後處理（斷句 + 改錯字 + 反幻覺），不跑雲端 STT。
+// 複用 transcribe-modal 的版面；resegment 是同步秒級，不需要 phase pills / poll。
+function requestResegment(srcPath) {
+  $("#transcribe-progress").hidden = true;
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  go.hidden = false;
+  go.disabled = false;
+  cancel.hidden = false;
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+  setModalStatusTitle("transcribe-title", "scissors", "重新斷句（不轉 STT）", "accent");
+  $("#transcribe-msg").innerHTML =
+    `來源字幕：<code>${srcPath}</code><br><br>` +
+    `直接用這份字幕重新斷句 + 改錯字 + 反幻覺，覆寫 <code>_v2.srt</code>，<strong>不會呼叫雲端 STT</strong>。<br>` +
+    `原稿會先自動備份成 <code>.bak.srt</code>。`;
+  go.textContent = "開始斷句";
+  go.onclick = () => runResegment(srcPath);
+  cancel.onclick = () => hideModal("transcribe-modal");
+  showModal("transcribe-modal");
+}
+
+async function runResegment(srcPath) {
+  setModalStatusTitle("transcribe-title", "scissors", "重新斷句中…", "accent");
+  $("#transcribe-msg").innerHTML =
+    `<div class="modal-loading"><span class="spinner"></span> 正在重新斷句 + 改錯字…</div>`;
+  $("#transcribe-progress").hidden = true;
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  go.disabled = true;
+  cancel.disabled = true;
+  try {
+    const r = await fetch("/api/resegment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(srcPath ? { src_srt: srcPath } : {}),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+    await finishTranscribe({ ok: true, out_srt: body.out_srt });
+  } catch (e) {
+    finishTranscribe({ ok: false, error: e.message });
+  }
 }
 
 // 三段進度條：每段佔總長 1/3
@@ -3371,6 +3734,14 @@ function openSettings() {
 
 $("#settings-btn").addEventListener("click", openSettings);
 
+// 鍵盤快捷鍵總覽：topbar 的 ? 按鈕與快捷鍵 ? 共用同一個 modal
+$("#shortcuts-btn").addEventListener("click", () =>
+  showModal("shortcuts-modal"),
+);
+$("#shortcuts-close").addEventListener("click", () =>
+  hideModal("shortcuts-modal"),
+);
+
 $("#settings-cancel").addEventListener("click", () =>
   hideModal("settings-modal"),
 );
@@ -3863,6 +4234,8 @@ function _buildCamModalSavePayload() {
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
     splits: Object.fromEntries(state.cardSplits),
+    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt
+    card_timings: Object.fromEntries(state.cardTimings),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
@@ -4132,6 +4505,8 @@ $("#cam-save").addEventListener("click", async () => {
     })),
     cameras_mapping: Object.fromEntries(state.camerasMapping),
     splits: Object.fromEntries(state.cardSplits),
+    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt
+    card_timings: Object.fromEntries(state.cardTimings),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: offset,

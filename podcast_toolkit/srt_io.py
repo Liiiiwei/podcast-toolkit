@@ -77,14 +77,18 @@ def serialize(
     cards: Iterable[dict],
     overrides: dict[int, str] | None = None,
     splits: dict[int, list[str]] | None = None,
+    time_overrides: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> str:
     """把 cards 寫回 srt 字串。
 
     overrides[idx]：覆寫對應 card 的文字（在 split 之前先 apply）
     splits[idx]：把該卡切成 N 段文字，時間依文字長度比例分配；
                  切完所有 idx 一律重編序號。
+    time_overrides[(idx, part)]：手動覆寫該卡 / 該段的 (start, end) 秒（最後一道覆寫）。
     """
-    text, _ = serialize_with_map(cards, overrides=overrides, splits=splits)
+    text, _ = serialize_with_map(
+        cards, overrides=overrides, splits=splits, time_overrides=time_overrides
+    )
     return text
 
 
@@ -92,14 +96,20 @@ def serialize_with_map(
     cards: Iterable[dict],
     overrides: dict[int, str] | None = None,
     splits: dict[int, list[str]] | None = None,
+    time_overrides: dict[tuple[int, int], tuple[float, float]] | None = None,
 ) -> tuple[str, list[tuple[int, int]]]:
     """同 serialize，但額外回傳 idx_map：
     new_idx (1-based) → (original_idx, part_idx)
     part_idx：未切的卡固定 0；切的卡 0..N-1。
     給 caller 翻譯 cameras_mapping / deletions / textOverrides 用。
+
+    time_overrides[(oid, part)]：手動拖拉改的時間，疊在最外層覆寫衍生值——
+    未切卡覆寫 SRT 原始時間；切句卡覆寫 allocate_split_times 算出的該段時間
+    （沒被覆寫的段仍走字數分配）。idx_map 不受影響（時間覆寫不改編號）。
     """
     overrides = overrides or {}
     splits = splits or {}
+    time_overrides = time_overrides or {}
     out: list[str] = []
     idx_map: list[tuple[int, int]] = []
     new_idx = 1
@@ -110,15 +120,13 @@ def serialize_with_map(
         if parts and len(parts) > 1:
             times = allocate_split_times(c["start"], c["end"], parts)
             for i, (part, (p_start, p_end)) in enumerate(zip(parts, times)):
-                out.append(
-                    f"{new_idx}\n{_s2ts(p_start)} --> {_s2ts(p_end)}\n{part}\n"
-                )
+                st, en = time_overrides.get((oid, i), (p_start, p_end))
+                out.append(f"{new_idx}\n{_s2ts(st)} --> {_s2ts(en)}\n{part}\n")
                 idx_map.append((oid, i))
                 new_idx += 1
         else:
-            out.append(
-                f"{new_idx}\n{_s2ts(c['start'])} --> {_s2ts(c['end'])}\n{base_text}\n"
-            )
+            st, en = time_overrides.get((oid, 0), (c["start"], c["end"]))
+            out.append(f"{new_idx}\n{_s2ts(st)} --> {_s2ts(en)}\n{base_text}\n")
             idx_map.append((oid, 0))
             new_idx += 1
     return "\n".join(out), idx_map
