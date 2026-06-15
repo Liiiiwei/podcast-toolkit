@@ -10,9 +10,13 @@ requires-python = ">=3.9"
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    # media.py 的 /api/upload 用 UploadFile/File，FastAPI 處理 form/檔案上傳需要這個(runtime)
+    "python-multipart>=0.0.9",
     "pyyaml>=6.0",
     "numpy>=1.24",
     "requests>=2.31",
+    # transcribe.py 的簡→繁轉換用 opencc(OpenCC);純 python 版,免編譯
+    "opencc-python-reimplemented>=0.1.7",
     # Python 3.9 跑 fastapi/pydantic 的 `X | Y` 型別標註需要這個 backport
     "eval-type-backport>=0.2; python_version < '3.10'",
 ]
