@@ -105,8 +105,32 @@
             <select id="subtitle-mode-select">
               <option value="burn">燒進畫面</option>
               <option value="sidecar">另存字幕檔（僅 YT，較快）</option>
+              <option value="overlay">抽換字幕（燒指定字幕檔）</option>
             </select>
           </label>
+          <span
+            id="overlay-controls"
+            class="overlay-controls"
+            hidden
+            title="抽換字幕：選一份已對齊成品時間軸的字幕檔（例如從 YT 下載修正後的 .srt），在合成最後一段直接燒上。鏡頭/刪段/倍速照舊，另存成新檔不蓋原成品。提前(ms) 可整份微調字幕快慢。"
+          >
+            <select id="overlay-srt-select" title="要燒的字幕檔（集資料夾內）"></select>
+            <label class="overlay-shift-label"
+              >提前<input
+                id="overlay-shift-ms"
+                type="number"
+                value="0"
+                step="50"
+                min="-2000"
+                max="2000"
+              />ms</label
+            >
+            <label
+              class="overlay-keep-label"
+              title="勾選＝合成時不套用 yaml 的刪段，保留全部內容，對齊外部字幕的完整時間軸（外部字幕通常來自未刪減的完整版）。若取消，會套用你目前的刪段，外部字幕在刪點之後可能會慢出現。"
+              ><input id="overlay-keep-all" type="checkbox" checked />保留全部內容</label
+            >
+          </span>
           <button
             id="assemble-yt-btn"
             type="button"

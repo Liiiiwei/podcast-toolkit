@@ -4430,6 +4430,17 @@ async function startAssemble(
   try {
     const body = { targets, force, subtitle_mode: state.subtitleMode };
     if (previewSec) body.preview_sec = previewSec;
+    if (state.subtitleMode === "overlay") {
+      const ovSel = document.querySelector("#overlay-srt-select");
+      const ovShift = document.querySelector("#overlay-shift-ms");
+      const ovKeep = document.querySelector("#overlay-keep-all");
+      body.overlay_srt = ovSel ? ovSel.value : "";
+      body.overlay_shift_ms = ovShift ? Math.round(Number(ovShift.value) || 0) : 0;
+      body.overlay_keep_all = ovKeep ? !!ovKeep.checked : false;
+      if (!body.overlay_srt) {
+        throw new Error("抽換字幕：請先在「字幕」旁選一份字幕檔");
+      }
+    }
     const r = await fetch("/api/assemble", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6022,7 +6033,42 @@ function syncOutputControls() {
   }
   const sm = document.querySelector("#subtitle-mode-select");
   if (sm) sm.value = state.subtitleMode || "burn";
+  syncOverlayControls();
   syncRotateControls();
+}
+
+// 抽換字幕：依字幕模式顯示/隱藏 overlay 控制項，並用集內 .srt 候選填字幕檔下拉
+function syncOverlayControls() {
+  const wrap = document.querySelector("#overlay-controls");
+  if (!wrap) return;
+  const on = state.subtitleMode === "overlay";
+  wrap.hidden = !on;
+  if (!on) return;
+  const sel = document.querySelector("#overlay-srt-select");
+  if (!sel) return;
+  const cands = Array.isArray(state.srtCandidates) ? state.srtCandidates : [];
+  const prev = sel.value;
+  sel.innerHTML = "";
+  if (!cands.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "（集資料夾找不到 .srt）";
+    sel.appendChild(o);
+    return;
+  }
+  for (const c of cands) {
+    const o = document.createElement("option");
+    o.value = c;
+    o.textContent = c;
+    sel.appendChild(o);
+  }
+  // 保留先前選擇；否則優先挑名字含 修正/修改/caption 的，再退回第一個
+  if (prev && cands.includes(prev)) {
+    sel.value = prev;
+  } else {
+    const pref = cands.find((c) => /修正|修改|caption|correct/i.test(c));
+    sel.value = pref || cands[0];
+  }
 }
 
 function setupOutputControls() {
@@ -6095,7 +6141,10 @@ function setupOutputControls() {
   const sm = document.querySelector("#subtitle-mode-select");
   if (sm)
     sm.addEventListener("change", () => {
-      state.subtitleMode = sm.value === "sidecar" ? "sidecar" : "burn";
+      state.subtitleMode = ["sidecar", "overlay"].includes(sm.value)
+        ? sm.value
+        : "burn";
+      syncOverlayControls();
     });
 
   syncOutputControls();

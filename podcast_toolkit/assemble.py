@@ -646,6 +646,7 @@ def build_filter_complex_yt_multicam(
     audio_sync_offset: float = 0.0,
     wm_input_idx: int | None = None,
     speed_factor: float = 1.0,
+    overlay_ass_rel: str | None = None,
 ) -> str:
     """YT 雙鏡頭：[0]=intro, [1]=cam A, [2]=cam B, [3]=outro image, [4]=outro audio。
 
@@ -726,10 +727,22 @@ def build_filter_complex_yt_multicam(
         f"afade=t=in:st=0:d=0.5[a_outro]"
     )
 
-    parts.append(
-        "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
-        "concat=n=3:v=1:a=1[v][a]"
-    )
+    if overlay_ass_rel:
+        # 抽換字幕：concat 後（intro+正片+outro 全幀、成品時間軸）直接疊字幕，
+        # 不經來源時間軸轉換 → 任何「對齊成品時間軸的 .srt/.ass」都能原樣換上。
+        # 單次編碼、無中間檔；鏡頭/刪段/倍速已烙進 [vbody]，字幕純圖層。
+        parts.append(
+            "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
+            "concat=n=3:v=1:a=1[vbody][a]"
+        )
+        parts.append(
+            f"[vbody]subtitles={overlay_ass_rel}:force_style='{style_str}'[v]"
+        )
+    else:
+        parts.append(
+            "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
+            "concat=n=3:v=1:a=1[v][a]"
+        )
 
     return ";".join(parts)
 
@@ -816,6 +829,9 @@ def prepare_assembly(
     force: bool = False,
     preview_sec: int | None = None,
     subtitle_mode: str = "burn",
+    overlay_srt: Path | None = None,
+    out_override: Path | None = None,
+    deletions_override: list | None = None,
 ) -> dict:
     """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
 
@@ -824,9 +840,15 @@ def prepare_assembly(
       - reels：1080x1920,只含主影片，用 crop_reels
 
     subtitle_mode：
-      - 'burn'（直接合成）：字幕燒進畫面（現行行為）。
+      - 'burn'（直接合成）：字幕燒進畫面（現行行為）。來源時間軸 _v2 隨管線轉換後逐段燒。
       - 'sidecar'（輸出字幕與影片）：影片不燒字幕，另把字幕映射到「成品時間軸」
         （收刪段 → ÷倍速 → +片頭偏移）寫成 .srt，放在成品旁。倍速下也對得齊。
+      - 'overlay'（抽換字幕）：影片不燒來源字幕，改在合成最後一段（concat 後、成品時間軸全幀）
+        直接疊 overlay_srt。overlay_srt 必須已對齊「成品時間軸」（例如自 YT 下載修正後的 .srt）。
+        鏡頭/刪段/倍速完全照舊烙進畫面，字幕變成可任意抽換的圖層；單次編碼、無中間檔。
+
+    overlay_srt：subtitle_mode='overlay' 時必填，成品時間軸的字幕檔。
+    out_override：指定輸出檔路徑（None = 用 {name}_YT完整版.mp4）；抽換字幕時用來另存、不蓋原成品。
 
     preview_sec：若為正整數，ffmpeg 加 -t 截斷輸出長度（含 intro/正片/outro 全鏈路前 N 秒）；
     輸出檔名插入 .preview 避免覆蓋正式成品。
@@ -837,9 +859,17 @@ def prepare_assembly(
     """
     if output_kind not in ("yt", "reels"):
         raise AssembleError(f"未知 output_kind={output_kind}")
-    if subtitle_mode not in ("burn", "sidecar"):
+    if subtitle_mode not in ("burn", "sidecar", "overlay"):
         raise AssembleError(f"未知 subtitle_mode={subtitle_mode}")
-    burn_subs = subtitle_mode != "sidecar"
+    if subtitle_mode == "overlay":
+        if overlay_srt is None:
+            raise AssembleError("subtitle_mode='overlay' 需提供 overlay_srt")
+        if not Path(overlay_srt).exists():
+            raise AssembleError(f"找不到 overlay_srt：{overlay_srt}", exit_code=3)
+        if output_kind != "yt":
+            raise AssembleError("overlay 模式目前只支援 output_kind='yt'")
+    # overlay / sidecar 都不燒「來源時間軸」字幕；overlay 改在最後一段疊成品時間軸字幕
+    burn_subs = subtitle_mode == "burn"
 
     if not shutil.which("ffmpeg"):
         raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
@@ -896,6 +926,10 @@ def prepare_assembly(
         out = ep.output_yt_video()
     else:
         out = ep.output_reels_video()
+
+    # 抽換字幕等情境：另存到指定檔名，不蓋原成品
+    if out_override is not None:
+        out = Path(out_override)
 
     # preview 模式：檔名插 .preview 避免覆蓋正式成品（驗證 bitrate 用，反覆跑不影響交付檔）
     if preview_sec and preview_sec > 0:
@@ -970,7 +1004,17 @@ def prepare_assembly(
         _write_ass_from_srt(srt, ass_path, ass_res_w, ass_res_h)
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
-    deletions = list(cfg.get("deletions") or [])
+    # 抽換字幕：把成品時間軸的 overlay_srt 轉成成品解析度的 ASS，最後一段直接疊在全幀上
+    overlay_ass_rel: str | None = None
+    if subtitle_mode == "overlay":
+        ov_w, ov_h = (int(x) for x in enc["resolution"].split("x"))
+        ov_ass = ep.subdir("work") / f"_overlay_{ov_w}x{ov_h}.ass"
+        _write_ass_from_srt(Path(overlay_srt), ov_ass, ov_w, ov_h)
+        overlay_ass_rel = str(ov_ass.relative_to(cwd)) if ov_ass.is_relative_to(cwd) else str(ov_ass)
+
+    # deletions_override 非 None → 取代 yaml deletions（抽換字幕「保留全部內容」用：對齊外部字幕的
+    # 完整時間軸，避免事後加的刪段讓外部字幕在刪點之後整段慢出現）
+    deletions = list(deletions_override if deletions_override is not None else (cfg.get("deletions") or []))
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
@@ -982,11 +1026,24 @@ def prepare_assembly(
         from podcast_toolkit import cameras_io
         from podcast_toolkit.segment_plan import build_segment_plan
 
-        cameras_mapping = cameras_io.load(ep.output_v2_cameras_json())
+        # 鏡頭時間版切換點，存在 **_v2（外接音檔）時間軸**（與字幕脫鉤，且不依賴 active_srt）。
+        # legacy idx 格式用 canonical _v2 卡換算（不是 active_srt，避免 srt_path 指到別份字幕時錯位）。
+        v2_cam_path = ep.output_v2_srt()
+        v2_cam_cards = (
+            srt_io.parse(v2_cam_path.read_text(encoding="utf-8"))
+            if v2_cam_path.exists() else all_cards
+        )
+        cam_transitions = cameras_io.load_transitions(ep.output_v2_cameras_json(), v2_cam_cards)
+        # _v2 → cam-A 時間軸：與 srt 一樣 -sync 位移，segment_plan 才跟 all_cards 同一條軸
+        if audio_file is not None and abs(audio_sync_offset) >= 0.001:
+            cam_transitions = [
+                {"t": tr["t"] - audio_sync_offset, "cam": tr["cam"]}
+                for tr in cam_transitions
+            ]
         segments = build_segment_plan(
             cards=all_cards,
             deletions=deletions,
-            cameras_mapping=cameras_mapping,
+            cam_transitions=cam_transitions,
             main_dur=main_dur,
             head_trim_sec=head_trim,
             tail_trim_sec=tail_trim,
@@ -1081,6 +1138,7 @@ def prepare_assembly(
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
                 speed_factor=speed_factor,
+                overlay_ass_rel=overlay_ass_rel,
             )
             hw = _hwaccel_args(enc)
             cmd = [
@@ -1214,7 +1272,7 @@ def prepare_assembly(
     # sidecar 字幕（輸出字幕與影片）：把源字幕映射到成品時間軸（收刪段 → ÷倍速 → +片頭偏移）。
     # YT 正片接在片頭後 → intro_offset=intro_duration；Reels 無片頭 = 0。呼叫端跑完 ffmpeg 成功才落檔。
     sidecar_srt: dict | None = None
-    if not burn_subs:
+    if subtitle_mode == "sidecar":
         intro_offset = float(cfg["assets"]["intro_duration"]) if output_kind == "yt" else 0.0
         content = build_sidecar_srt(all_cards, removed_intervals, speed_factor, intro_offset)
         sidecar_srt = {"path": out.with_suffix(".srt"), "content": content}
@@ -1463,10 +1521,12 @@ def run_clips(episode_dir: Path, clip_names: list[str] | None = None, force: boo
 
 
 def run(episode_dir: Path, dry_run: bool = False, force: bool = False,
-        output_kind: str = "yt", subtitle_mode: str = "burn") -> int:
+        output_kind: str = "yt", subtitle_mode: str = "burn",
+        overlay_srt: Path | None = None, out_override: Path | None = None) -> int:
     try:
         plan = prepare_assembly(
             episode_dir, output_kind=output_kind, force=force, subtitle_mode=subtitle_mode,
+            overlay_srt=overlay_srt, out_override=out_override,
         )
     except AssembleError as e:
         print(f"✗ {e}", file=sys.stderr)

@@ -616,6 +616,43 @@ h2 {
   cursor: pointer;
 }
 
+/* 抽換字幕控制項：字幕檔下拉 + 提前 ms */
+.overlay-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.overlay-controls[hidden] {
+  display: none;
+}
+.overlay-controls select {
+  max-width: 220px;
+  padding: 5px 8px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.overlay-shift-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.overlay-controls input[type="number"] {
+  width: 64px;
+  padding: 5px 6px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
 .time-readout {
   font-family: var(--font-mono);
   font-size: var(--text-sm);

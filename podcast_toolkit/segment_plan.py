@@ -38,44 +38,46 @@ def _cam_at(time: float, transitions: list[tuple[float, str]], default_cam: str)
 def build_segment_plan(
     cards: list[dict],
     deletions: list[int],
-    cameras_mapping: dict[int, str],
+    cam_transitions: list[dict],
     main_dur: float,
     head_trim_sec: float = 0.0,
     tail_trim_sec: float = 0.0,
     default_cam: str = "a",
 ) -> list[dict]:
-    """組合字幕卡 + 刪除 + trim + 鏡頭對應 → 連續區段清單。
+    """組合字幕卡 + 刪除 + trim + 鏡頭切換點 → 連續區段清單。
 
     Args:
-        cards: srt 解析後的字幕卡（含 idx / start / end）
+        cards: srt 解析後的字幕卡（含 idx / start / end）—— 給刪段算區間用
         deletions: 要刪掉的卡 idx
-        cameras_mapping: 顯式 cam 對應（只含 explicit，沒標的會 carry-forward）
+        cam_transitions: **時間版**鏡頭切換點 [{"t": 秒, "cam": "a"|"b"}]（與字幕脫鉤）；
+                         carry-forward：第一個切換前用 default_cam
         main_dur: 正片總時長（秒）
         head_trim_sec: 開頭要砍掉的秒數
         tail_trim_sec: 結尾要砍掉的秒數
-        default_cam: 沒任何標記前的預設 cam（通常 "a"）
+        default_cam: 沒任何切換前的預設 cam（通常 "a"）
     """
     deletions_set = {int(i) for i in (deletions or [])}
+    by_idx = {c["idx"]: c for c in cards}
 
-    # 依 idx 排序卡片，建 cam transition 時間軸（被刪的卡不參與切換）
-    sorted_cards = sorted(cards, key=lambda c: c["idx"])
-    transitions: list[tuple[float, str]] = []
-    current_cam = default_cam
-    for c in sorted_cards:
-        if c["idx"] in deletions_set:
-            continue
-        explicit = cameras_mapping.get(int(c["idx"]))
-        if explicit and explicit != current_cam:
-            transitions.append((float(c["start"]), explicit))
-            current_cam = explicit
-
-    # 蒐集要跳過的時間區間（被刪卡片 + head/tail trim）
-    by_idx = {c["idx"]: c for c in sorted_cards}
-    skip_intervals: list[tuple[float, float]] = []
+    # 被刪卡片 → 源時間軸區間（給 skip_intervals + 過濾落在其中的鏡頭切換點）
+    deleted_intervals: list[tuple[float, float]] = []
     for idx in deletions_set:
         c = by_idx.get(idx)
         if c is not None:
-            skip_intervals.append((float(c["start"]), float(c["end"])))
+            deleted_intervals.append((float(c["start"]), float(c["end"])))
+
+    # 鏡頭切換點已是時間版（不再從卡序號建）；落在被刪區間內的切換點無意義 → 丟掉
+    def _in_deleted(t: float) -> bool:
+        return any(a <= t < b for a, b in deleted_intervals)
+
+    transitions: list[tuple[float, str]] = sorted(
+        (float(tr["t"]), str(tr["cam"]))
+        for tr in (cam_transitions or [])
+        if not _in_deleted(float(tr["t"]))
+    )
+
+    # 蒐集要跳過的時間區間（被刪卡片 + head/tail trim）
+    skip_intervals: list[tuple[float, float]] = list(deleted_intervals)
     if head_trim_sec > 0:
         skip_intervals.append((0.0, head_trim_sec))
     if tail_trim_sec > 0:

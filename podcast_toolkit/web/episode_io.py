@@ -187,8 +187,11 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cameras": dict(ep.cfg.get("cameras") or {}),
         "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
         "audio": ep.cfg.get("audio"),
-        # 字幕卡 → 鏡頭對應表（只含 explicit 標過的；前端用 carry-forward 補其他卡）
-        "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
+        # 鏡頭已改時間版切換點（與字幕脫鉤）；載入時吸附到當下卡 → idx→cam 給前端顯示。
+        # 換字幕後吸附到新斷句最近的卡，前端維持「卡 key」介面不變。
+        "cameras_mapping": cameras_io.transitions_to_card_mapping(
+            cameras_io.load_transitions(ep.output_v2_cameras_json(), cards), cards
+        ),
         # 分軌 mic 設定（前端拿來決定要不要渲染 speaker tag / ruler；空 dict = 單軌集）
         "mics": dict(ep.cfg.get("mics") or {}),
         # 已存在的分軌 SRT（04_工作檔/{name}_mic_{speaker}.srt）— UI 勾選 modal 用來顯示「已轉/未轉」
@@ -513,7 +516,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
-    # T23a：字幕卡 → 鏡頭對應表 sidecar；前端傳回只含 explicit 標記的 mapping
+    # 鏡頭：前端傳回 idx→cam（carry-forward 標記）。翻成新 idx 後，用剛寫好的 v2 卡把每個
+    # idx 解析成「卡起始時間」，存成**時間版**切換點 [{t, cam}]（與字幕脫鉤，換字幕不錯位）。
     new_cameras_mapping: dict[int, str] = {}
     for k, v in (payload.get("cameras_mapping") or {}).items():
         if v not in ("a", "b"):
@@ -524,7 +528,9 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             continue
         if nid is not None:
             new_cameras_mapping[nid] = str(v)
-    cameras_io.save(ep.output_v2_cameras_json(), new_cameras_mapping)
+    v2_cards = srt_io.parse(v2.read_text(encoding="utf-8")) if v2.exists() else []
+    cam_transitions = cameras_io.card_mapping_to_transitions(new_cameras_mapping, v2_cards)
+    cameras_io.save_transitions(ep.output_v2_cameras_json(), cam_transitions)
 
     # 分軌 speaker sidecar：使用者在前端手動改 speaker tag 後一併存回。
     # valid speaker keys 由 episode.yaml.mics 決定（不是寫死 a/b），保留三人以上集的擴充空間。

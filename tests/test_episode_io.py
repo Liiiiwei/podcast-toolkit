@@ -385,7 +385,7 @@ def test_load_state_returns_cameras_mapping_from_sidecar(tmp_episode_dir):
 
 
 def test_save_state_writes_cameras_mapping_sidecar(tmp_episode_dir):
-    """save_state 把 cameras_mapping 寫進 sidecar JSON。"""
+    """save_state 把 cameras_mapping 轉成**時間版切換點**寫進 sidecar JSON。"""
     ep = Episode(tmp_episode_dir)
     episode_io.save_state(
         ep,
@@ -401,7 +401,9 @@ def test_save_state_writes_cameras_mapping_sidecar(tmp_episode_dir):
     assert sidecar.exists()
     import json
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert data == {"1": "a", "3": "b"}
+    # 卡1標a(預設就是a→冗餘不產生切換)、卡3 start=12.0 切 b
+    assert data["version"] == 2
+    assert data["transitions"] == [{"t": 12.0, "cam": "b"}]
 
 
 def test_save_state_empty_cameras_mapping_removes_sidecar(tmp_episode_dir):
@@ -432,7 +434,8 @@ def test_save_state_filters_invalid_camera_values(tmp_episode_dir):
     sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
     import json
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert data == {"1": "a", "3": "b"}
+    # 'c'(卡2 @4.2s)與 None(卡4)被過濾掉 → 只剩卡3 的 b @12.0
+    assert data["transitions"] == [{"t": 12.0, "cam": "b"}]
 
 
 # --- 分軌 speaker mapping：UI 端要拿到 mics + speakers_mapping ---
@@ -795,9 +798,15 @@ def test_save_state_translates_cameras_mapping_via_composite_id(tmp_episode_dir)
     )
     sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
     import json
+    from podcast_toolkit import srt_io
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    # 新 idx：原 1 → 1；原 2:0 → 2；原 2:1 → 3；原 3 → 4；原 4 → 5
-    assert data == {"2": "a", "3": "b", "5": "b"}
+    # 新 idx：2:0→2(a 冗餘)、2:1→3(b)、4→5(b carry 冗餘) → 只有一個切到 b，時間=新卡3 start
+    v2cards = srt_io.parse(
+        (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    )
+    card3_start = next(c["start"] for c in v2cards if c["idx"] == 3)
+    assert data["version"] == 2
+    assert data["transitions"] == [{"t": round(card3_start, 3), "cam": "b"}]
 
 
 def test_save_state_splits_with_text_overrides_on_other_card(tmp_episode_dir):
