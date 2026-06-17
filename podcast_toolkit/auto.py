@@ -19,20 +19,22 @@ from podcast_toolkit import autotrim, proofread
 from podcast_toolkit.episode import Episode
 
 
-def _run_camera(ep: Episode) -> str:
-    """鏡頭對應：需要 speakers.json。沒有就略過（單軌集的正常情況）。
+def _run_camera(ep: Episode, *, force: bool = False) -> str:
+    """鏡頭對應：需要 speakers.json(分軌 / Breeze 匯入才有)。沒有就略過(單軌集正常情況)。
 
-    回一句人看的結果字串。AP2（speaker→camera 推導）落地後在這裡接上。
+    有講者資料 → 走 cameras_suggest(camera_rule:home 待著、feature 講者連講≥min_sec 才切),
+    產出時間版 cameras.json v2(與字幕脫鉤,重斷句不破壞)。回一句人看的結果字串。
     """
     speakers = ep.output_v2_speakers_json()
     if not speakers.exists():
         return "略過（本集無分軌講者資料 speakers.json，鏡頭維持原設定）"
-    try:
-        from podcast_toolkit import autocamera  # AP2，尚未實作時優雅退場
-    except ImportError:
-        return "略過（偵測到 speakers.json，但自動鏡頭對應 AP2 尚未實作）"
-    n = autocamera.run(ep)  # pragma: no cover - AP2 落地後才會走到
-    return f"由 speakers.json 推出 {n} 段鏡頭對應"
+    from podcast_toolkit import cameras_suggest
+    rc = cameras_suggest.run(ep, force=force)
+    if rc == 0:
+        return "已從 speakers.json 推出時間版鏡頭切換點"
+    if rc == 1:
+        return "已有 cameras.json，保留不動（--force 才重算）"
+    return f"鏡頭建議未完成（rc={rc}）"
 
 
 def run(
@@ -74,7 +76,7 @@ def run(
     # 2. 鏡頭對應
     if do_camera:
         banner("鏡頭對應")
-        result = _run_camera(ep)
+        result = _run_camera(ep, force=force)
         print(f"  {result}")
         summary.append(("鏡頭對應", result))
 

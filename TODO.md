@@ -16,8 +16,15 @@
     - **單塊失敗不拖垮全部**（逾時/壞 JSON → 記下、套其餘成功塊）
     - `--model` 旗標（bulk 校對用 sonnet 比 Opus 預設快很多）；defaults 補 `max_workers: 4`
   - 實測沈奕妤：修 118 卡（去 嗯/啊/呃/哎 填充詞、简→繁 輕松→輕鬆/復制→複製、詞庫），QA 還原 0
-- [ ] **AP2. 自動鏡頭對應**（分軌集）：speakers.json（idx→speaker）經 speaker→camera 映射推出 cameras_mapping；episode.yaml 可設 `speaker_camera_mapping` override
-  - **單軌集不適用**（沒有分軌講者資料）；`auto.py._run_camera` 已留 hook：偵到 speakers.json 才 import `autocamera` 跑，否則優雅略過
+- [x] **AP2. 自動鏡頭對應** ✅ `cameras_suggest.py`（`podcast suggest-cameras`，PR#2 已有）+ 接進 `podcast auto`
+  - 規則式：home 鏡頭待著、`feature` 講者連講 ≥`min_sec` 才切到他的鏡頭、講完回 home（`defaults camera_rule`）
+  - 產出**時間版** cameras.json v2（`transitions:[{t,cam}]`，與字幕脫鉤）；單軌集無 speakers.json 自動略過
+  - `auto._run_camera` 已從 phantom `autocamera` 改接 `cameras_suggest.run(ep, force)`
+  - **資料來源**：分軌 `merge-per-mic` 或 **Breeze `ingest-breeze`** 都會產 speakers.json → 直接餵這步
+- [x] **AP5. Breeze ASR 匯入** ✅ `ingest_breeze.py`（`podcast ingest-breeze`）
+  - Breeze（本地 Whisper-large-v2 微調，台灣腔 + 中英 + 逐字時間 + jieba 斷句 + 麥能量講者標）
+  - 解析含講者 `[MicN]` SRT → 去標籤寫 `_final_v2.srt` + 拆 MicN→speaker 寫 `speakers.json`
+  - 沈奕妤實測：816 卡 + 3 講者 → suggest-cameras 自動推 58 個切點；時間版鏡頭不受換字幕影響
 - [x] **AP3. 自動去頭去尾** ✅ `autotrim.py`
   - `silencedetect.py` 補 `parse_duration` / `parse_tail_silence` / `detect_tail_silence`（解析 ffmpeg Duration + 尾段一路靜音到檔尾）
   - 只補「沒設過」的 head/tail_trim_sec（`force` 才重測覆寫），safe round-trip 寫回 episode.yaml（保留 deletions 等欄位）
