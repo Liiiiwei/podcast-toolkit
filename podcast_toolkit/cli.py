@@ -28,6 +28,13 @@ def cmd_merge_per_mic(args):
     return srt_merge.run(ep, force=args.force)
 
 
+def cmd_suggest_cameras(args):
+    from podcast_toolkit import cameras_suggest
+    from podcast_toolkit.episode import Episode
+    ep = Episode(Path(args.path))
+    return cameras_suggest.run(ep, force=args.force)
+
+
 def cmd_assemble(args):
     from podcast_toolkit import assemble
     return assemble.run(Path(args.path), dry_run=args.dry_run, force=args.force)
@@ -79,6 +86,14 @@ def build_parser():
     pm.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pm.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pm.set_defaults(func=cmd_merge_per_mic)
+
+    psc = sub.add_parser(
+        "suggest-cameras",
+        help="從分軌 speakers.json 自動建議時間版鏡頭切換點 → cameras.json（人再覆蓋例外）",
+    )
+    psc.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    psc.add_argument("--force", action="store_true", help="覆寫已存在的 cameras.json（先備份 .bak）")
+    psc.set_defaults(func=cmd_suggest_cameras)
 
     pa = sub.add_parser("assemble", help="合成片頭+正片+片尾 → YT 完整版")
     pa.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")

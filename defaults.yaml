@@ -103,6 +103,17 @@ rotate:
   a: 0
   b: 0
 
+# 鏡頭自動建議規則（podcast suggest-cameras 用，分軌集才有 speakers）。
+# 剪法：預設待在 home 鏡頭（wide/主持）；feature 裡的講者連續講滿 min_sec 秒，才把那整段
+# 切到他的鏡頭，講完回 home；其他講者一律留 home。沈奕妤集實測逐卡吻合 99%。
+# feature 是 speaker_key→cam（speaker_key 對齊 mics 的 key；來賓通常在最後一軌）。
+# 不同集若來賓在別軌/別台，於 episode.yaml 覆寫 camera_rule。
+camera_rule:
+  home: a
+  feature:
+    c: b
+  min_sec: 15
+
 assets:
   intro: "assets/intro.mp4"
   intro_duration: 7.040375

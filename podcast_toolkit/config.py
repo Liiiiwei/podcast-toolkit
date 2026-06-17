@@ -138,6 +138,11 @@ def merge(defaults: dict, episode: dict) -> dict:
         "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
         # 畫面拉正旋轉（per cam，度數）：{a, b}
         "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
+        # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段
+        "camera_rule": {
+            **(defaults.get("camera_rule") or {}),
+            **(episode.get("camera_rule") or {}),
+        },
         "deletions": list(episode.get("deletions") or []),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
