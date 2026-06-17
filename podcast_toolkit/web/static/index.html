@@ -58,6 +58,15 @@
           >
             <span data-icon="settings"></span>
           </button>
+          <button
+            id="shortcuts-btn"
+            type="button"
+            class="btn btn-icon"
+            title="鍵盤快捷鍵（按 ? 開啟）"
+            aria-label="鍵盤快捷鍵"
+          >
+            <span data-icon="circle-help"></span>
+          </button>
         </div>
         <div class="ep-switch-error" id="ep-switch-error" hidden></div>
       </div>
@@ -184,6 +193,19 @@
                 title="拖曳設定片尾"
               ></div>
             </div>
+          </div>
+          <div class="card-timeline-wrap" id="card-timeline-wrap" hidden>
+            <div class="card-timeline-head">
+              <span class="card-timeline-title">字幕時間軸</span>
+              <span class="card-timeline-hint"
+                >拖卡片左右邊緣改進 / 出時間</span
+              >
+            </div>
+            <div
+              class="card-timeline"
+              id="card-timeline"
+              title="字幕時間軸：拖卡片左右邊緣調整字幕進 / 出時間"
+            ></div>
           </div>
           <div class="trim-controls">
             <button
@@ -331,6 +353,23 @@
             </button>
             <span class="spacer"></span>
             <span id="sus-checked-count" class="sus-label">已勾 0</span>
+          </div>
+          <div class="review-toolbar hidden" id="review-toolbar">
+            <span class="review-flag-icon" data-icon="alert-triangle"></span>
+            <span class="review-count" id="review-count">0</span>
+            <span class="review-label">張待複查卡（半句 / 幻覺 / 空拍）</span>
+            <button
+              id="review-filter"
+              type="button"
+              class="btn btn-ghost"
+              aria-pressed="false"
+            >
+              <span>只看待複查</span>
+            </button>
+            <button id="review-next" type="button" class="btn btn-ghost">
+              <span data-icon="chevron-down"></span>
+              <span>跳下一張</span>
+            </button>
           </div>
           <div id="cards-list"></div>
         </section>
@@ -955,6 +994,37 @@
         </button>
         <button id="transcribe-go" type="button" class="btn btn-primary">
           開始
+        </button>
+      </div>
+    </dialog>
+
+    <dialog class="modal" id="shortcuts-modal">
+      <div class="modal-head">鍵盤快捷鍵</div>
+      <div class="modal-body">
+        <dl class="shortcuts-list">
+          <dt><kbd>Space</kbd></dt>
+          <dd>播放 / 暫停</dd>
+          <dt><kbd>↑</kbd> / <kbd>↓</kbd></dt>
+          <dd>跳到上一張 / 下一張字幕卡</dd>
+          <dt><kbd>Enter</kbd></dt>
+          <dd>在游標處把字幕卡切成兩句</dd>
+          <dt><kbd>Backspace</kbd></dt>
+          <dd>子卡開頭按 → 合併回上一段</dd>
+          <dt><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></dt>
+          <dd>復原 / 重做</dd>
+          <dt>點字幕時間</dt>
+          <dd>影片跳到該句開頭</dd>
+          <dt><kbd>?</kbd></dt>
+          <dd>開啟這份快捷鍵清單</dd>
+        </dl>
+      </div>
+      <div class="modal-actions">
+        <button
+          id="shortcuts-close"
+          type="button"
+          class="btn btn-primary"
+        >
+          知道了
         </button>
       </div>
     </dialog>

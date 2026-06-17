@@ -7,6 +7,36 @@ import yaml
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.resegment import _HALF_SENTENCE_TAIL
+from podcast_toolkit.whisper_guard import GuardConfig, WhisperGuard
+
+
+def _flag_review(
+    cards: list[dict],
+    rcfg: dict,
+    guard: WhisperGuard,
+) -> list[dict]:
+    """重算 resegment.py 寫進 _resegment_review.txt 的兩條「待複查」旗標，
+    讓前端不用開文字檔就能在卡片上看到 ⚠：
+
+    - half_sentence：句子斷在連接詞/介詞上（像沒講完），判斷對齊 resegment.py。
+    - repetition：whisper 重複幻覺（guard.is_repetitive）。
+
+    與 _flag_suspicious_pause 並列、用獨立欄位（needs_review / review_reasons），
+    刻意不塞進 suspicious_pause，避免紅卡批次刪除 toolbar 誤收這些卡。
+    in-place 加欄位後回傳同一份 cards。
+    """
+    dangle = tuple(rcfg.get("dangle_endings") or ())
+    for c in cards:
+        txt = (c.get("text") or "").replace("\n", "").strip()
+        reasons: list[str] = []
+        if len(txt) >= 4 and (txt[-1] in _HALF_SENTENCE_TAIL or (dangle and txt.endswith(dangle))):
+            reasons.append("half_sentence")
+        if guard.is_repetitive(txt):
+            reasons.append("repetition")
+        c["needs_review"] = bool(reasons)
+        c["review_reasons"] = reasons
+    return cards
 
 
 def _flag_suspicious_pause(
@@ -158,11 +188,21 @@ def load_state(ep: Episode) -> dict[str, Any]:
     else:
         cam_a_rel = ""
     if cards:
+        rcfg = ep.cfg.get("resegment") or {}
         _flag_suspicious_pause(
             cards,
             ep.cfg.get("suspicious_pause") or {},
-            ep.cfg.get("resegment", {}).get("reaction_words") or [],
+            rcfg.get("reaction_words") or [],
         )
+        # resegment 的「待複查」旗標（半句結尾 / 重複幻覺）→ 前端卡片顯示 ⚠
+        guard = WhisperGuard(
+            GuardConfig(
+                char_loop_min_repeats=(rcfg.get("whisper_guard") or {}).get(
+                    "char_loop_min_repeats", 3
+                )
+            )
+        )
+        _flag_review(cards, rcfg, guard)
     # 空集（init 完但沒放母帶）main_video 解析後可能不存在；前端拿這個旗標決定要不要
     # 顯示「請放檔案到 01_母帶/」的 empty banner，並跳過 <video> 自動 fetch。
     try:
@@ -359,6 +399,24 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
+    # card_timings：時間軸拖拉改的字幕時間，composite key（"5" / "5:1"）→ {start, end}。
+    # 直接寫進 _v2.srt（不另開 yaml 欄位）；驗證後端權威：每筆需 0 ≤ start < end。
+    raw_timings = payload.get("card_timings") or {}
+    time_overrides: dict[tuple[int, int], tuple[float, float]] = {}
+    for k, v in raw_timings.items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            st = float(v.get("start"))
+            en = float(v.get("end"))
+        except (TypeError, ValueError):
+            raise ValueError(f"字幕時間不是數字：{k} → {v!r}")
+        if not (st >= 0 and st < en):
+            raise ValueError(
+                f"字幕時間不合法（需 0 ≤ 開始 < 結束）：{k} → {st:.3f}–{en:.3f}"
+            )
+        time_overrides[_parse_composite_id(k)] = (st, en)
+
     # 預設 lookup：未切 + 未改的卡，old idx == new idx；遇到 v2.srt 不存在但又有狀態要存時也能 fallback
     idx_lookup: dict[tuple[int, int], int] = {}
     if v2.exists():
@@ -367,14 +425,14 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         backup.write_text(original, encoding="utf-8")
         cards = srt_io.parse(original)
         new_text, idx_map = srt_io.serialize_with_map(
-            cards, overrides=overrides, splits=splits
+            cards, overrides=overrides, splits=splits, time_overrides=time_overrides
         )
         v2.write_text(new_text, encoding="utf-8")
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
-    elif overrides or splits:
+    elif overrides or splits or time_overrides:
         raise FileNotFoundError(
-            f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
+            f"找不到 {v2.name}，無法套用字幕文字／時間修改；請先跑 podcast subtitle 產生字幕"
         )
 
     def _translate(key: Any) -> int | None:

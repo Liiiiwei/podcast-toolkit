@@ -9,6 +9,10 @@ from podcast_toolkit.episode import Episode
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
 from podcast_toolkit.whisper_guard.vocab import filter_filler_words
 
+# 「半句結尾」判斷的尾字集合：句子斷在這些連接詞/介詞上像是沒講完。
+# web/episode_io.py 的 _flag_review 也 import 這個常數，兩處共用避免漂移。
+_HALF_SENTENCE_TAIL = "很會在就把被跟和"
+
 
 def ts2s(ts: str) -> float:
     h, m, rest = ts.split(":")
@@ -154,7 +158,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
             f.write("\n")
         for n, (st, en, txt, fi, li) in enumerate(cards, 1):
             flag = ""
-            if len(txt) >= 4 and (txt[-1] in "很會在就把被跟和" or txt.endswith(dangle)):
+            if len(txt) >= 4 and (txt[-1] in _HALF_SENTENCE_TAIL or txt.endswith(dangle)):
                 flag = "  ⚠半句結尾"
                 risky.append(n)
             if guard.is_repetitive(txt):

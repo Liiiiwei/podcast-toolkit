@@ -3,6 +3,11 @@ import yaml
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import episode_io
+from podcast_toolkit.whisper_guard import GuardConfig, WhisperGuard
+
+
+def _guard() -> WhisperGuard:
+    return WhisperGuard(GuardConfig())
 
 
 def test_load_state_returns_name_and_cards(tmp_episode_dir):
@@ -621,3 +626,135 @@ def test_save_state_no_reels_clips_key_preserves_yaml(tmp_episode_dir):
     )
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert data["reels_clips"] == [{"name": "existing", "start_card": 2, "end_card": 4}]
+
+
+# --- 功能1：_flag_review（半句結尾 / 重複幻覺）---
+
+
+def test_flag_review_half_sentence_tail_char():
+    """結尾落在 _HALF_SENTENCE_TAIL（如「把」）且 len>=4 → half_sentence。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "我等一下要把"},
+        {"idx": 2, "start": 2.0, "end": 4.0, "text": "大家好歡迎收看節目"},
+    ]
+    episode_io._flag_review(cards, {"dangle_endings": ["然後", "可是"]}, _guard())
+    assert cards[0]["needs_review"] is True
+    assert "half_sentence" in cards[0]["review_reasons"]
+    assert cards[1]["needs_review"] is False
+    assert cards[1]["review_reasons"] == []
+
+
+def test_flag_review_dangle_ending_suffix():
+    """結尾是 config 的 dangle_endings（如「然後」）→ half_sentence。"""
+    cards = [{"idx": 1, "start": 0.0, "end": 2.0, "text": "我覺得這個然後"}]
+    episode_io._flag_review(cards, {"dangle_endings": ["然後"]}, _guard())
+    assert cards[0]["needs_review"] is True
+    assert "half_sentence" in cards[0]["review_reasons"]
+
+
+def test_flag_review_repetition_long_loop():
+    """長重複字串 → guard.is_repetitive → repetition。"""
+    cards = [{"idx": 1, "start": 0.0, "end": 5.0, "text": "哈" * 20}]
+    episode_io._flag_review(cards, {"dangle_endings": []}, _guard())
+    assert cards[0]["needs_review"] is True
+    assert "repetition" in cards[0]["review_reasons"]
+
+
+def test_flag_review_short_chinese_clean():
+    """短中文正常卡（無空白、非半句）→ 不標。"""
+    cards = [{"idx": 1, "start": 0.0, "end": 2.0, "text": "對對對好"}]
+    episode_io._flag_review(cards, {"dangle_endings": []}, _guard())
+    assert cards[0]["needs_review"] is False
+    assert cards[0]["review_reasons"] == []
+
+
+def test_flag_review_too_short_not_half_sentence():
+    """len<4 即使結尾是尾字也不算半句（對齊 resegment.py 的 len>=4 門檻）。"""
+    cards = [{"idx": 1, "start": 0.0, "end": 2.0, "text": "要把"}]
+    episode_io._flag_review(cards, {"dangle_endings": []}, _guard())
+    assert cards[0]["needs_review"] is False
+
+
+def test_load_state_includes_needs_review_fields(tmp_episode_dir):
+    """整合：load_state 後每張卡都帶 needs_review / review_reasons，半句卡標 True。"""
+    srt = (
+        "1\n00:00:00,000 --> 00:00:03,000\n我等一下要把\n\n"
+        "2\n00:00:03,000 --> 00:00:06,000\n大家好歡迎收看節目\n\n"
+    )
+    (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").write_text(
+        srt, encoding="utf-8"
+    )
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    c1, c2 = state["cards"]
+    assert c1["needs_review"] is True
+    assert "half_sentence" in c1["review_reasons"]
+    assert c2["needs_review"] is False
+
+
+def test_needs_review_independent_from_suspicious_pause(tmp_episode_dir):
+    """needs_review 與 suspicious_pause 是兩套獨立欄位，互不取代。"""
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    for c in state["cards"]:
+        assert "needs_review" in c
+        assert "review_reasons" in c
+        assert "suspicious_pause" in c
+        assert "suspicious_reasons" in c
+
+
+# --- 功能2A：save_state 的 card_timings（手動拖拉改時間）---
+
+
+def test_save_card_timings_rewrites_v2_srt(tmp_episode_dir):
+    ep = Episode(tmp_episode_dir)
+    v2 = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    episode_io.save_state(
+        ep,
+        payload={"cards": [], "card_timings": {"2": {"start": 5.0, "end": 9.0}}},
+    )
+    after = v2.read_text(encoding="utf-8")
+    assert "00:00:05,000 --> 00:00:09,000" in after
+    # 第 1 卡沒動，維持原時間
+    assert "00:00:00,000 --> 00:00:04,200" in after
+    # 留了備份
+    assert (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt.bak").is_file()
+
+
+def test_save_card_timings_composite_key(tmp_episode_dir):
+    """切句子卡的 composite key "2:1" 經 _parse_composite_id 正確套到該段。"""
+    ep = Episode(tmp_episode_dir)
+    v2 = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    episode_io.save_state(
+        ep,
+        payload={
+            "cards": [],
+            "splits": {"2": ["前半", "後半"]},
+            "card_timings": {"2:1": {"start": 8.0, "end": 11.5}},
+        },
+    )
+    after = v2.read_text(encoding="utf-8")
+    assert "00:00:08,000 --> 00:00:11,500" in after
+
+
+def test_save_card_timings_inverted_raises(tmp_episode_dir):
+    """start >= end（負/零時長）→ ValueError（端點會轉 400）。"""
+    import pytest
+
+    ep = Episode(tmp_episode_dir)
+    with pytest.raises(ValueError):
+        episode_io.save_state(
+            ep,
+            payload={"cards": [], "card_timings": {"2": {"start": 9.0, "end": 5.0}}},
+        )
+
+
+def test_save_card_timings_negative_start_raises(tmp_episode_dir):
+    import pytest
+
+    ep = Episode(tmp_episode_dir)
+    with pytest.raises(ValueError):
+        episode_io.save_state(
+            ep,
+            payload={"cards": [], "card_timings": {"2": {"start": -1.0, "end": 5.0}}},
+        )
