@@ -81,6 +81,68 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
     dst.write_text(srt_io.serialize(kept), encoding="utf-8")
 
 
+def _pad_and_merge_cuts(
+    intervals: list[tuple[float, float]], v2_cards: list[dict], pad: float
+) -> list[tuple[float, float]]:
+    """把每個刪除區間往前後各延伸 pad 秒，吃掉講話前後間隙裡的雜音（換氣/雜聲/底噪）；
+    但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。pad<=0 → 原樣返回。
+
+    保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
+    語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
+    pad 給很大 → 把整個間隙吃到鄰卡語音邊界；給小 → 溫和留點呼吸。
+    """
+    intervals = sorted(intervals)
+    if pad <= 0 or not intervals:
+        return intervals  # 關閉 → 維持原本逐卡區間（向後相容、逐位元等同 baseline）
+
+    # 正規化：修反置 (start>end)、丟零長度（手動 cuts 打錯時的防呆）
+    norm = sorted((min(a, b), max(a, b)) for a, b in intervals if a != b)
+    if not norm:
+        return []
+
+    cards = [(float(c["start"]), float(c["end"])) for c in v2_cards]
+    # 保留卡 = 沒被任一刪段「整段涵蓋」的卡；部分被切的卡仍算保留（存活語音不可被 pad 吃掉）
+    kept = [
+        (cs, ce) for cs, ce in cards
+        if not any(s - 1e-6 <= cs and ce <= e + 1e-6 for s, e in norm)
+    ]
+
+    # 先併「相鄰刪段之間沒有保留卡語音」的區間（連刪 → 中間間隙一起砍）。判定「間隙有保留卡」
+    # = 有保留卡與間隙 (pe, s) 重疊（cs < s 且 ce > pe）→ flush-adjacent（cs==pe、連續字幕常態）也擋得下。
+    pre = [list(norm[0])]
+    for s, e in norm[1:]:
+        pe = pre[-1][1]
+        gap_has_kept = any(cs < s - 1e-6 and ce > pe + 1e-6 for cs, ce in kept)
+        if s <= pe + 1e-6 or not gap_has_kept:
+            pre[-1][1] = max(pe, e)
+        else:
+            pre.append([s, e])
+
+    # 各段往前後延伸 pad，夾在保留卡語音邊界內（部分被切的卡用 min(ce,s)/max(cs,e) 夾住存活語音）
+    out: list[tuple[float, float]] = []
+    for s, e in pre:
+        left_limit, right_limit = 0.0, e + pad
+        for cs, ce in kept:
+            if cs < s - 1e-6:
+                left_limit = max(left_limit, min(ce, s))
+            if ce > e + 1e-6:
+                right_limit = min(right_limit, max(cs, e))
+        ns = max(s - pad, left_limit, 0.0)
+        ne = min(e + pad, right_limit)
+        out.append((ns, max(ne, ns)))
+
+    # 延伸後若重疊/相鄰 → 合併
+    out.sort()
+    merged = [out[0]]
+    for s, e in out[1:]:
+        ps, pe = merged[-1]
+        if s <= pe + 1e-6:
+            merged[-1] = (ps, max(pe, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
 def cut_intervals_from_cfg(
     cfg: dict, v2_cards: list[dict], deletions_override: list | None = None
 ) -> list[tuple[float, float]]:
@@ -89,6 +151,8 @@ def cut_intervals_from_cfg(
     優先序：deletions_override（overlay「保留全部內容」用；idx list，[] = 無刪段）
       → cfg['cuts']（時間版新格式 [[start,end]...] 或 [{start,end}...]）
       → cfg['deletions']（舊 idx，用 v2_cards 換算 → 自動遷移讀取）。
+
+    最後依 cfg['cut_pad'] 把每段往前後延伸吃掉間隙雜音（夾在鄰卡語音邊界內）；0 = 不延伸。
     """
     by_idx = {c["idx"]: c for c in v2_cards}
 
@@ -101,17 +165,20 @@ def cut_intervals_from_cfg(
         return sorted(out)
 
     if deletions_override is not None:
-        return _from_idx(deletions_override)
-    cuts = cfg.get("cuts")
-    if cuts:
-        out = []
-        for c in cuts:
-            if isinstance(c, dict):
-                out.append((float(c["start"]), float(c["end"])))
-            else:
-                out.append((float(c[0]), float(c[1])))
-        return sorted(out)
-    return _from_idx(cfg.get("deletions") or [])
+        intervals = _from_idx(deletions_override)
+    else:
+        cuts = cfg.get("cuts")
+        if cuts:
+            intervals = []
+            for c in cuts:
+                if isinstance(c, dict):
+                    intervals.append((float(c["start"]), float(c["end"])))
+                else:
+                    intervals.append((float(c[0]), float(c[1])))
+        else:
+            intervals = _from_idx(cfg.get("deletions") or [])
+
+    return _pad_and_merge_cuts(sorted(intervals), v2_cards, float(cfg.get("cut_pad") or 0))
 
 
 def filter_srt_by_intervals(

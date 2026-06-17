@@ -146,6 +146,8 @@ def merge(defaults: dict, episode: dict) -> dict:
         "deletions": list(episode.get("deletions") or []),
         # 時間版刪段（與字幕脫鉤）：[[start, end], ...] 秒；assemble.cut_intervals_from_cfg 優先吃它
         "cuts": list(episode.get("cuts") or []),
+        # 刪段往前後延伸吃掉間隙雜音的秒數（每邊上限，夾在鄰卡邊界內）。episode 覆寫；0=關
+        "cut_pad": float(episode.get("cut_pad", defaults.get("cut_pad", 0)) or 0),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
         # Reels 片段截取：list of {name, start_card, end_card}

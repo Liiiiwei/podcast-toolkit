@@ -64,6 +64,94 @@ def test_filter_srt_by_intervals(tmp_path: Path):
     assert texts_starts == [0.0, 8.0]
 
 
+# ── cut_pad：刪段往前後吃掉間隙雜音（夾在鄰卡邊界內）──────────────────────
+# 有間隙的卡：卡1[0,3] (間隙) 卡2[5,8] (間隙) 卡3[10,13]
+GAPPED = _cards((1, 0.0, 3.0), (2, 5.0, 8.0), (3, 10.0, 13.0))
+
+
+def test_cut_pad_zero_unchanged():
+    """cut_pad=0（或沒設）→ 維持逐卡區間、不延伸、連刪不併間隙（向後相容）。"""
+    assert assemble.cut_intervals_from_cfg({"deletions": [1, 2]}, GAPPED) == [(0.0, 3.0), (5.0, 8.0)]
+
+
+def test_cut_pad_extends_into_gap_clamped_to_neighbor():
+    """刪卡2，pad 往前後吃間隙；夾在卡1尾/卡3頭內。"""
+    out = assemble.cut_intervals_from_cfg({"deletions": [2], "cut_pad": 0.5}, GAPPED)
+    assert out == [(4.5, 8.5)]
+
+
+def test_cut_pad_larger_than_gap_clamps_to_neighbor_speech():
+    """pad 比間隙大 → 夾到鄰卡語音邊界，不咬進保留語音。"""
+    out = assemble.cut_intervals_from_cfg({"deletions": [2], "cut_pad": 5.0}, GAPPED)
+    assert out == [(3.0, 10.0)]  # 卡1尾 3.0 ~ 卡3頭 10.0，整個間隙吃掉
+
+
+def test_cut_pad_first_card_clamps_left_to_zero():
+    out = assemble.cut_intervals_from_cfg({"deletions": [1], "cut_pad": 0.5}, GAPPED)
+    assert out == [(0.0, 3.5)]
+
+
+def test_cut_pad_last_card_no_right_neighbor():
+    out = assemble.cut_intervals_from_cfg({"deletions": [3], "cut_pad": 0.5}, GAPPED)
+    assert out == [(9.5, 13.5)]
+
+
+def test_cut_pad_consecutive_deletes_merge_through_gap():
+    """連刪卡1+卡2（中間間隙沒有保留卡）→ 併成一段一起砍 + pad。"""
+    out = assemble.cut_intervals_from_cfg({"deletions": [1, 2], "cut_pad": 0.5}, GAPPED)
+    assert out == [(0.0, 8.5)]
+
+
+def test_cut_pad_kept_card_between_deletes_not_merged():
+    """刪卡1+卡3、保留卡2 → 不併（間隙有保留卡），各自 pad 夾到卡2邊界。"""
+    out = assemble.cut_intervals_from_cfg({"deletions": [1, 3], "cut_pad": 0.5}, GAPPED)
+    assert out == [(0.0, 3.5), (9.5, 13.5)]
+
+
+def test_config_merge_cut_pad_default_and_override():
+    from podcast_toolkit import config
+    defaults = config.load_defaults()
+    assert config.merge(defaults, {})["cut_pad"] == defaults.get("cut_pad")  # 用 defaults
+    assert config.merge(defaults, {"cut_pad": 0})["cut_pad"] == 0.0  # episode 明確關閉
+    assert config.merge(defaults, {"cut_pad": 0.4})["cut_pad"] == 0.4
+
+
+def test_cut_pad_flush_kept_card_between_deletes_preserved():
+    """[對抗式驗證抓到的關鍵 bug] 連續(無間隙)字幕、刪卡1+卡3、保留卡2(flush：start==前段尾)，
+    pad>0 不可把兩刪段跨過卡2併掉、靜默刪除保留卡。"""
+    cards = _cards((1, 0.0, 4.0), (2, 4.0, 8.0), (3, 8.0, 12.0))
+    out = assemble.cut_intervals_from_cfg({"deletions": [1, 3], "cut_pad": 0.3}, cards)
+    # 卡2[4,8] 必須完整保留：兩段、第一段止於 4.0、第二段始於 8.0（不可併成單段 (0,12)）
+    assert len(out) == 2
+    assert out[0] == (0.0, 4.0)
+    assert out[1][0] == 8.0
+    segs = build_segment_plan(cut_intervals=out, cam_transitions=[], main_dur=12.0)
+    assert (4.0, 8.0) in [(s["start"], s["end"]) for s in segs]  # 卡2 影像段還在
+
+
+def test_cut_pad_three_segment_flush_keeps_alternating_kept():
+    """flush 連續、三段交錯保留：刪 1/3/5、保留 2/4，不可全併。"""
+    cards = _cards((1, 0.0, 2.0), (2, 2.0, 4.0), (3, 4.0, 6.0), (4, 6.0, 8.0), (5, 8.0, 10.0))
+    out = assemble.cut_intervals_from_cfg({"deletions": [1, 3, 5], "cut_pad": 0.5}, cards)
+    assert len(out) == 3  # 保留卡2、卡4 → 三段不相連
+    assert out[0] == (0.0, 2.0)
+    assert out[1] == (4.0, 6.0)
+    assert out[2][0] == 8.0
+
+
+def test_cut_pad_midcard_cut_does_not_eat_kept_speech():
+    """[對抗式驗證抓到的 bug] 手動 cut 落在保留卡中間，pad 不可咬進該卡存活語音（連超大 pad 也不行）。"""
+    assert assemble.cut_intervals_from_cfg({"cuts": [[6.0, 7.0]], "cut_pad": 0.5}, GAPPED) == [(6.0, 7.0)]
+    assert assemble.cut_intervals_from_cfg({"cuts": [[6.0, 7.0]], "cut_pad": 999.0}, GAPPED) == [(6.0, 7.0)]
+
+
+def test_cut_pad_normalizes_inverted_and_drops_zero_length():
+    """手動 cuts 打錯：start>end 修正成 (min,max)、零長度丟棄。"""
+    out = assemble.cut_intervals_from_cfg({"cuts": [[9.0, 4.0], [3.0, 3.0]], "cut_pad": 0.1}, GAPPED)
+    assert len(out) == 1          # (3,3) 零長丟掉、(9,4) 修正後只剩一段
+    assert out[0][0] < out[0][1]  # 反置已修正成正向
+
+
 def test_equivalence_legacy_deletions_vs_cuts():
     """同一刪段：舊 idx 路徑 與 時間版 cuts 路徑 → segment plan 一字不差。"""
     # 舊：deletions=[2] 經 cut_intervals_from_cfg 換算
