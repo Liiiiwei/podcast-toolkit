@@ -12,6 +12,14 @@ def _cards(*rows):
 CARDS = _cards((1, 0.0, 4.0), (2, 4.0, 8.0), (3, 8.0, 12.0))
 
 
+def test_config_merge_passes_cuts_through():
+    """config.merge 必須透傳 episode 的 cuts，否則 cfg['cuts'] 永遠 None、cuts 路徑形同未接。"""
+    from podcast_toolkit import config
+    defaults = config.load_defaults()
+    assert config.merge(defaults, {"cuts": [[4.0, 8.0]]})["cuts"] == [[4.0, 8.0]]
+    assert config.merge(defaults, {})["cuts"] == []  # 沒設 → 空 list
+
+
 def test_cuts_new_format_list_pairs():
     cfg = {"cuts": [[4.0, 8.0]]}
     assert assemble.cut_intervals_from_cfg(cfg, CARDS) == [(4.0, 8.0)]

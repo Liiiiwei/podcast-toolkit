@@ -315,6 +315,26 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     # deletions：先收原始 composite IDs，等 SRT 重編號完再翻譯成新 int idx
     raw_deletions = list(payload.get("deletions") or [])
 
+    # 時間版刪段（cuts）：[[start, end], ...] 秒（與字幕脫鉤、不需翻譯卡 idx）。有值寫、空清掉。
+    # 前端改用時間版刪段後送 cuts；舊 per-card deletions 仍走下面那條，cut_intervals_from_cfg
+    # 兩者都吃且 cuts 優先。容許 [s,e] 或 {start,end}，丟掉非法/零長度。
+    if "cuts" in payload:
+        norm = []
+        for c in (payload.get("cuts") or []):
+            try:
+                if isinstance(c, dict):
+                    s, e = float(c["start"]), float(c["end"])
+                else:
+                    s, e = float(c[0]), float(c[1])
+            except (TypeError, ValueError, KeyError, IndexError):
+                continue
+            if e > s:
+                norm.append([round(max(0.0, s), 3), round(e, 3)])
+        if norm:
+            data["cuts"] = sorted(norm)
+        else:
+            data.pop("cuts", None)
+
     # head / tail trim：> 0 才寫，否則清掉避免噪音
     for key in ("head_trim_sec", "tail_trim_sec"):
         val = float(payload.get(key) or 0)

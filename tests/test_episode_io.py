@@ -113,6 +113,29 @@ def test_save_state_writes_rotate_cover_speed(tmp_episode_dir):
     assert state["speed"]["enabled"] is True
 
 
+def test_save_state_writes_cuts_to_yaml(tmp_episode_dir):
+    """時間版刪段 cuts 存進 yaml（排序、去零長度）；重 init 後 cfg 透傳得到。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(ep, payload={
+        "cuts": [[40.0, 50.0], [10.0, 15.0], [3.0, 3.0]],  # 亂序 + 一個零長度
+        "cards": [],
+    })
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["cuts"] == [[10.0, 15.0], [40.0, 50.0]]  # 排序、零長度被丟
+    # 重 init Episode → config.merge 透傳 → cfg['cuts'] 讀得到（否則 cuts 路徑形同未接）
+    assert Episode(tmp_episode_dir).cfg["cuts"] == [[10.0, 15.0], [40.0, 50.0]]
+
+
+def test_save_state_empty_cuts_removes_key(tmp_episode_dir):
+    """cuts 傳空 → 移除 yaml key。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["cuts"] = [[1.0, 2.0]]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": [], "cards": []})
+    assert "cuts" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+
 def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
     """旋轉全 0 / 倍速關閉 / 封面取消 → 對應 key 從 yaml 移除（回退預設）。"""
     yaml_path = tmp_episode_dir / "episode.yaml"
