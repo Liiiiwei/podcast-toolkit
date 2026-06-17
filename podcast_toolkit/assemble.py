@@ -81,6 +81,52 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
     dst.write_text(srt_io.serialize(kept), encoding="utf-8")
 
 
+def cut_intervals_from_cfg(
+    cfg: dict, v2_cards: list[dict], deletions_override: list | None = None
+) -> list[tuple[float, float]]:
+    """取得**時間版刪除區間**（_v2/源時間軸的秒數），與字幕脫鉤。
+
+    優先序：deletions_override（overlay「保留全部內容」用；idx list，[] = 無刪段）
+      → cfg['cuts']（時間版新格式 [[start,end]...] 或 [{start,end}...]）
+      → cfg['deletions']（舊 idx，用 v2_cards 換算 → 自動遷移讀取）。
+    """
+    by_idx = {c["idx"]: c for c in v2_cards}
+
+    def _from_idx(idxs) -> list[tuple[float, float]]:
+        out = []
+        for i in idxs or []:
+            c = by_idx.get(int(i))
+            if c is not None:
+                out.append((float(c["start"]), float(c["end"])))
+        return sorted(out)
+
+    if deletions_override is not None:
+        return _from_idx(deletions_override)
+    cuts = cfg.get("cuts")
+    if cuts:
+        out = []
+        for c in cuts:
+            if isinstance(c, dict):
+                out.append((float(c["start"]), float(c["end"])))
+            else:
+                out.append((float(c[0]), float(c[1])))
+        return sorted(out)
+    return _from_idx(cfg.get("deletions") or [])
+
+
+def filter_srt_by_intervals(
+    src: Path, dst: Path, intervals: list[tuple[float, float]]
+) -> None:
+    """把落在任一刪除區間內的字幕卡拿掉，寫到 dst（單機燒字幕用，時間版）。"""
+    from podcast_toolkit import srt_io
+    cards = srt_io.parse(src.read_text(encoding="utf-8"))
+    kept = [
+        c for c in cards
+        if not any(a <= float(c["start"]) < b for a, b in intervals)
+    ]
+    dst.write_text(srt_io.serialize(kept), encoding="utf-8")
+
+
 def shift_srt(src: Path, dst: Path, offset_sec: float) -> None:
     """把 SRT 時間軸整體位移 offset_sec 秒，寫到 dst。
 
@@ -1014,11 +1060,23 @@ def prepare_assembly(
 
     # deletions_override 非 None → 取代 yaml deletions（抽換字幕「保留全部內容」用：對齊外部字幕的
     # 完整時間軸，避免事後加的刪段讓外部字幕在刪點之後整段慢出現）
-    deletions = list(deletions_override if deletions_override is not None else (cfg.get("deletions") or []))
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
-    # multicam 分流：segment plan 取代 deletion_intervals，已內建 deletions + 頭尾 trim
+    # 刪段已改**時間版**（cuts，存 _v2 時間軸，與字幕脫鉤）。canonical _v2 卡供 legacy idx 換算，
+    # 也供鏡頭 legacy 換算共用（不依賴 active_srt，避免 srt_path 指到別份字幕時錯位）。
+    v2_canon_path = ep.output_v2_srt()
+    v2_canon_cards = (
+        srt_io.parse(v2_canon_path.read_text(encoding="utf-8"))
+        if v2_canon_path.exists() else all_cards
+    )
+    cut_intervals = cut_intervals_from_cfg(cfg, v2_canon_cards, deletions_override)
+    # _v2 → cam-A 時間軸：與 srt 一樣 -sync 位移（segment_plan / 單機 deletion_intervals 同軸）
+    if audio_file is not None and abs(audio_sync_offset) >= 0.001:
+        cut_intervals = [
+            (a - audio_sync_offset, b - audio_sync_offset) for a, b in cut_intervals
+        ]
+
     # removed_intervals = 源時間軸上「被剪掉的區間」，sidecar .srt 映射用（單機 / 雙機共用同一套換算）
     segments: list[dict] = []
     sync_offset_b = 0.0
@@ -1026,37 +1084,29 @@ def prepare_assembly(
         from podcast_toolkit import cameras_io
         from podcast_toolkit.segment_plan import build_segment_plan
 
-        # 鏡頭時間版切換點，存在 **_v2（外接音檔）時間軸**（與字幕脫鉤，且不依賴 active_srt）。
-        # legacy idx 格式用 canonical _v2 卡換算（不是 active_srt，避免 srt_path 指到別份字幕時錯位）。
-        v2_cam_path = ep.output_v2_srt()
-        v2_cam_cards = (
-            srt_io.parse(v2_cam_path.read_text(encoding="utf-8"))
-            if v2_cam_path.exists() else all_cards
-        )
-        cam_transitions = cameras_io.load_transitions(ep.output_v2_cameras_json(), v2_cam_cards)
-        # _v2 → cam-A 時間軸：與 srt 一樣 -sync 位移，segment_plan 才跟 all_cards 同一條軸
+        # 鏡頭時間版切換點（同 _v2 時間軸 → -sync）
+        cam_transitions = cameras_io.load_transitions(ep.output_v2_cameras_json(), v2_canon_cards)
         if audio_file is not None and abs(audio_sync_offset) >= 0.001:
             cam_transitions = [
                 {"t": tr["t"] - audio_sync_offset, "cam": tr["cam"]}
                 for tr in cam_transitions
             ]
         segments = build_segment_plan(
-            cards=all_cards,
-            deletions=deletions,
+            cut_intervals=cut_intervals,
             cam_transitions=cam_transitions,
             main_dur=main_dur,
             head_trim_sec=head_trim,
             tail_trim_sec=tail_trim,
         )
-        # main_dur = 所有 keep 段加總（segment_plan 已扣 deletion + trim）
+        # main_dur = 所有 keep 段加總（segment_plan 已扣刪段 + 頭尾 trim）
         main_dur = sum(s["end"] - s["start"] for s in segments)
         sync_offset_b = float((cfg.get("camera_sync_offset") or {}).get("b") or 0.0)
-        # multicam 直接燒原 _v2.srt（trim 自動把被刪段的字幕一起切掉，不需 clean_srt）
+        # multicam 直接燒原字幕（trim 自動把被刪段的字幕一起切掉，不需 clean_srt）
         deletion_intervals = []
         removed_intervals = _removed_intervals_from_segments(segments, main_dur_src)
     else:
-        # 處理 deletions + 頭尾 trim：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
-        deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
+        # 單機：cut_intervals 直接當刪除區間 + 頭尾 trim
+        deletion_intervals = list(cut_intervals)
         if head_trim > 0:
             deletion_intervals.append((0.0, head_trim))
         if tail_trim > 0:
@@ -1064,10 +1114,10 @@ def prepare_assembly(
         deletion_intervals = sorted(deletion_intervals)
         removed_intervals = deletion_intervals
 
-        if burn_subs and deletions:
-            # 燒字幕：去掉刪除段，避免 select 後字幕時間錯位閃爍
+        if burn_subs and cut_intervals:
+            # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
-            filter_deletion_srt(srt, clean_srt, deletions)
+            filter_srt_by_intervals(srt, clean_srt, cut_intervals)
             srt = clean_srt
             srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
@@ -1426,7 +1476,6 @@ def extract_reels_clips(
     cards = srt_io.parse(srt_path.read_text(encoding="utf-8"))
     by_idx = {c["idx"]: c for c in cards}
 
-    deletions = list(cfg.get("deletions") or [])
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
@@ -1435,7 +1484,8 @@ def extract_reels_clips(
         raise AssembleError(f"找不到正片以量總時長：{main_video}", exit_code=3)
     main_dur = ffprobe_duration(main_video)
 
-    deletion_intervals = build_deletion_intervals(srt_path, deletions) if deletions else []
+    # 刪段時間版（cuts，或舊 deletions[idx] 用當下 cards 換算）
+    deletion_intervals = list(cut_intervals_from_cfg(cfg, cards))
     if head_trim > 0:
         deletion_intervals.append((0.0, head_trim))
     if tail_trim > 0:

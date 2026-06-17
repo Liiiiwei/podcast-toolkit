@@ -36,37 +36,29 @@ def _cam_at(time: float, transitions: list[tuple[float, str]], default_cam: str)
 
 
 def build_segment_plan(
-    cards: list[dict],
-    deletions: list[int],
+    cut_intervals: list,
     cam_transitions: list[dict],
     main_dur: float,
     head_trim_sec: float = 0.0,
     tail_trim_sec: float = 0.0,
     default_cam: str = "a",
 ) -> list[dict]:
-    """組合字幕卡 + 刪除 + trim + 鏡頭切換點 → 連續區段清單。
+    """組合刪段 + trim + 鏡頭切換點 → 連續區段清單（**純時間版，不需要字幕卡**）。
 
     Args:
-        cards: srt 解析後的字幕卡（含 idx / start / end）—— 給刪段算區間用
-        deletions: 要刪掉的卡 idx
-        cam_transitions: **時間版**鏡頭切換點 [{"t": 秒, "cam": "a"|"b"}]（與字幕脫鉤）；
+        cut_intervals: **時間版**刪除區間 [(start, end), ...]（源/_v2 時間軸；與字幕脫鉤）
+        cam_transitions: **時間版**鏡頭切換點 [{"t": 秒, "cam": "a"|"b"}]；
                          carry-forward：第一個切換前用 default_cam
         main_dur: 正片總時長（秒）
         head_trim_sec: 開頭要砍掉的秒數
         tail_trim_sec: 結尾要砍掉的秒數
         default_cam: 沒任何切換前的預設 cam（通常 "a"）
     """
-    deletions_set = {int(i) for i in (deletions or [])}
-    by_idx = {c["idx"]: c for c in cards}
+    deleted_intervals: list[tuple[float, float]] = [
+        (float(a), float(b)) for a, b in (cut_intervals or [])
+    ]
 
-    # 被刪卡片 → 源時間軸區間（給 skip_intervals + 過濾落在其中的鏡頭切換點）
-    deleted_intervals: list[tuple[float, float]] = []
-    for idx in deletions_set:
-        c = by_idx.get(idx)
-        if c is not None:
-            deleted_intervals.append((float(c["start"]), float(c["end"])))
-
-    # 鏡頭切換點已是時間版（不再從卡序號建）；落在被刪區間內的切換點無意義 → 丟掉
+    # 鏡頭切換點落在被刪區間內 → 無意義，丟掉
     def _in_deleted(t: float) -> bool:
         return any(a <= t < b for a, b in deleted_intervals)
 
@@ -76,7 +68,7 @@ def build_segment_plan(
         if not _in_deleted(float(tr["t"]))
     )
 
-    # 蒐集要跳過的時間區間（被刪卡片 + head/tail trim）
+    # 蒐集要跳過的時間區間（刪除區間 + head/tail trim）
     skip_intervals: list[tuple[float, float]] = list(deleted_intervals)
     if head_trim_sec > 0:
         skip_intervals.append((0.0, head_trim_sec))
@@ -97,8 +89,8 @@ def build_segment_plan(
     # 在每個 keep 區間內，依 cam transition 切段
     raw_segments: list[dict] = []
     for ks, ke in keep:
-        cuts = sorted(t for t, _ in transitions if ks < t < ke)
-        boundaries = [ks] + cuts + [ke]
+        cam_cuts = sorted(t for t, _ in transitions if ks < t < ke)
+        boundaries = [ks] + cam_cuts + [ke]
         for i in range(len(boundaries) - 1):
             seg_start, seg_end = boundaries[i], boundaries[i + 1]
             if seg_end <= seg_start:
