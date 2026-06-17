@@ -172,6 +172,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
         "crop_reels": ep.cfg.get("crop_reels"),
+        # 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速：前端編輯介面用
+        "rotate": dict(ep.cfg.get("rotate") or {}),
+        "cover_enabled": bool((ep.cfg.get("watermark") or {}).get("enabled")),
+        "speed": dict(ep.cfg.get("speed") or {}),
         "deletions": list(ep.cfg.get("deletions") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
@@ -183,8 +187,11 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cameras": dict(ep.cfg.get("cameras") or {}),
         "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
         "audio": ep.cfg.get("audio"),
-        # 字幕卡 → 鏡頭對應表（只含 explicit 標過的；前端用 carry-forward 補其他卡）
-        "cameras_mapping": cameras_io.load(ep.output_v2_cameras_json()),
+        # 鏡頭已改時間版切換點（與字幕脫鉤）；載入時吸附到當下卡 → idx→cam 給前端顯示。
+        # 換字幕後吸附到新斷句最近的卡，前端維持「卡 key」介面不變。
+        "cameras_mapping": cameras_io.transitions_to_card_mapping(
+            cameras_io.load_transitions(ep.output_v2_cameras_json(), cards), cards
+        ),
         # 分軌 mic 設定（前端拿來決定要不要渲染 speaker tag / ruler；空 dict = 單軌集）
         "mics": dict(ep.cfg.get("mics") or {}),
         # 已存在的分軌 SRT（04_工作檔/{name}_mic_{speaker}.srt）— UI 勾選 modal 用來顯示「已轉/未轉」
@@ -272,8 +279,61 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop(key, None)
 
+    # 旋轉拉正（per cam，度數）：a/b 任一非 0 才寫；全 0 → 移除整個 rotate key
+    if "rotate" in payload:
+        rot_payload = payload.get("rotate") or {}
+        rot_out: dict[str, float] = {}
+        for cam in ("a", "b"):
+            try:
+                v = float(rot_payload.get(cam) or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if abs(v) > 1e-6:
+                rot_out[cam] = v
+        if rot_out:
+            data["rotate"] = rot_out
+        else:
+            data.pop("rotate", None)
+
+    # 節目封面開關：明確寫 enabled bool。預設已開（defaults.yaml），所以「關」要寫
+    # explicit false 才壓得過預設（pop 掉會回退成預設的 true）。
+    if "cover_enabled" in payload:
+        data["watermark"] = {"enabled": bool(payload.get("cover_enabled"))}
+
+    # 正片倍速：enabled 時寫 {enabled, factor}（夾在 0.5–2.0）；關閉 → 移除整段（回退預設不加速）
+    if "speed" in payload:
+        sp = payload.get("speed") or {}
+        if sp.get("enabled"):
+            try:
+                factor = float(sp.get("factor") or 1.25)
+            except (TypeError, ValueError):
+                factor = 1.25
+            data["speed"] = {"enabled": True, "factor": min(2.0, max(0.5, factor))}
+        else:
+            data.pop("speed", None)
+
     # deletions：先收原始 composite IDs，等 SRT 重編號完再翻譯成新 int idx
     raw_deletions = list(payload.get("deletions") or [])
+
+    # 時間版刪段（cuts）：[[start, end], ...] 秒（與字幕脫鉤、不需翻譯卡 idx）。有值寫、空清掉。
+    # 前端改用時間版刪段後送 cuts；舊 per-card deletions 仍走下面那條，cut_intervals_from_cfg
+    # 兩者都吃且 cuts 優先。容許 [s,e] 或 {start,end}，丟掉非法/零長度。
+    if "cuts" in payload:
+        norm = []
+        for c in (payload.get("cuts") or []):
+            try:
+                if isinstance(c, dict):
+                    s, e = float(c["start"]), float(c["end"])
+                else:
+                    s, e = float(c[0]), float(c[1])
+            except (TypeError, ValueError, KeyError, IndexError):
+                continue
+            if e > s:
+                norm.append([round(max(0.0, s), 3), round(e, 3)])
+        if norm:
+            data["cuts"] = sorted(norm)
+        else:
+            data.pop("cuts", None)
 
     # head / tail trim：> 0 才寫，否則清掉避免噪音
     for key in ("head_trim_sec", "tail_trim_sec"):
@@ -382,6 +442,38 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
+    # 單卡時間微調：{ "<idx>": {start, end} }；serialize 前覆寫對應卡的 start/end
+    raw_time = payload.get("time_overrides") or {}
+    time_overrides: dict[int, tuple[float, float]] = {}
+    for k, v in raw_time.items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            s = float(v.get("start"))
+            e = float(v.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:  # 終點不得早於起點，丟掉非法值
+            continue
+        try:
+            time_overrides[int(k)] = (max(0.0, s), e)
+        except (TypeError, ValueError):
+            continue
+
+    # 新增字卡：[{start, end, text}]；append 進現有卡、依時間排序後一起重編號
+    new_cards: list[dict] = []
+    for nc in payload.get("new_cards") or []:
+        if not isinstance(nc, dict):
+            continue
+        try:
+            s = float(nc.get("start"))
+            e = float(nc.get("end"))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        new_cards.append({"start": max(0.0, s), "end": e, "text": str(nc.get("text") or "")})
+
     # 預設 lookup：未切 + 未改的卡，old idx == new idx；遇到 v2.srt 不存在但又有狀態要存時也能 fallback
     idx_lookup: dict[tuple[int, int], int] = {}
     if v2.exists():
@@ -389,13 +481,28 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         backup = v2.with_suffix(v2.suffix + ".bak")
         backup.write_text(original, encoding="utf-8")
         cards = srt_io.parse(original)
+        # 套用時間微調（在 serialize 前改 card.start/end；切過的卡 override 會當 t0/t1 重算 sub-card）
+        if time_overrides:
+            for c in cards:
+                ov = time_overrides.get(int(c["idx"]))
+                if ov:
+                    c["start"], c["end"] = ov
+        # 插入新字卡：給暫時 idx（接在最大 idx 後）；serialize_with_map 會重編號
+        if new_cards:
+            max_idx = max((int(c["idx"]) for c in cards), default=0)
+            for i, nc in enumerate(new_cards):
+                cards.append({"idx": max_idx + 1 + i, **nc})
+        # 套完時間 override / 插入新卡後「一律」依 start 重排：SRT 必須時間單調，重新編號才會跟
+        # 前端（也是依 start 排）對得上。拖拉換位置 / 微調把卡移過鄰居時，少了這步會寫出非單調
+        # SRT、重載後整份錯位（症狀：「時間整個跑掉」）。輸入已排序時重排為 no-op，安全。
+        cards.sort(key=lambda c: float(c["start"]))
         new_text, idx_map = srt_io.serialize_with_map(
             cards, overrides=overrides, splits=splits
         )
         v2.write_text(new_text, encoding="utf-8")
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
-    elif overrides or splits:
+    elif overrides or splits or time_overrides or new_cards:
         raise FileNotFoundError(
             f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
         )
@@ -429,7 +536,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         encoding="utf-8",
     )
 
-    # T23a：字幕卡 → 鏡頭對應表 sidecar；前端傳回只含 explicit 標記的 mapping
+    # 鏡頭：前端傳回 idx→cam（carry-forward 標記）。翻成新 idx 後，用剛寫好的 v2 卡把每個
+    # idx 解析成「卡起始時間」，存成**時間版**切換點 [{t, cam}]（與字幕脫鉤，換字幕不錯位）。
     new_cameras_mapping: dict[int, str] = {}
     for k, v in (payload.get("cameras_mapping") or {}).items():
         if v not in ("a", "b"):
@@ -440,7 +548,9 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             continue
         if nid is not None:
             new_cameras_mapping[nid] = str(v)
-    cameras_io.save(ep.output_v2_cameras_json(), new_cameras_mapping)
+    v2_cards = srt_io.parse(v2.read_text(encoding="utf-8")) if v2.exists() else []
+    cam_transitions = cameras_io.card_mapping_to_transitions(new_cameras_mapping, v2_cards)
+    cameras_io.save_transitions(ep.output_v2_cameras_json(), cam_transitions)
 
     # 分軌 speaker sidecar：使用者在前端手動改 speaker tag 後一併存回。
     # valid speaker keys 由 episode.yaml.mics 決定（不是寫死 a/b），保留三人以上集的擴充空間。

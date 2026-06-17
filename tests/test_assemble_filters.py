@@ -29,6 +29,14 @@ BASE_CFG = {
 }
 
 
+def _disable_cover(ep_dir):
+    """關掉節目封面 overlay（預設已開）→ 讓輸入數測試只看 cam/audio 結構，不受封面影響。"""
+    p = ep_dir / "episode.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    data["watermark"] = {"enabled": False}
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
 def test_filter_complex_yt_no_crop_no_deletions(monkeypatch):
     fc = assemble.build_filter_complex_yt(BASE_CFG, main_dur=100.0, srt_rel="x.srt")
     assert "crop=" not in fc
@@ -108,6 +116,7 @@ def test_prepare_assembly_tmp_out_keeps_mp4_extension(tmp_episode_full):
 
 def test_prepare_assembly_reels_skips_intro_outro(tmp_episode_full):
     """output_kind='reels' 時 ffmpeg cmd 不含 intro / outro 輸入。"""
+    _disable_cover(tmp_episode_full)
     plan = prepare_assembly(tmp_episode_full, output_kind="reels", force=True)
     assert plan["out"].name.endswith("_Reels.mp4")
     # Reels cmd 只有 1 個 -i（main video），不含 intro/outro
@@ -244,13 +253,34 @@ def test_filter_complex_yt_multicam_two_segments_concat():
 
 
 def test_filter_complex_yt_multicam_cam_b_uses_b_input():
-    """cam b 段要從 [m_b_v] trim，不是 [m_a_v]。"""
+    """cam a 段直接吃 cam A 視訊輸入 [1:v]；cam b 段先 setpts 對齊主軸再從 [2:v] 切。"""
     fc = assemble.build_filter_complex_yt_multicam(
         BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # seg_v_1 是 b 段 → 從 m_b_v 來
-    assert "[m_b_v]trim=20.000:50.000" in fc
-    assert "[m_a_v]trim=0.000:20.000" in fc
+    # 逐段處理：trim 直接接在 cam 輸入後（不再先做全長 [m_a_v]/[m_b_v] prep）
+    assert "[1:v]trim=0.000:20.000" in fc
+    assert "[2:v]setpts=PTS-0.0/TB,trim=20.000:50.000" in fc
+
+
+def test_filter_complex_yt_multicam_no_full_length_prep_labels():
+    """P2：不再產生 [m_a_v]/[m_b_v]（全長燒字幕再 trim 的舊結構）→ 逐段只跑自己那台。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "[m_a_v]" not in fc
+    assert "[m_b_v]" not in fc
+
+
+def test_filter_complex_yt_multicam_per_segment_trim_then_crop_then_subs():
+    """P2 不變量：每段順序為 trim → scale/crop → 燒字幕（字幕仍在裁切後、PTS 歸零前）。"""
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    # cam A 段：trim 先切 → scale → subtitles，全部接在同一條 branch
+    assert "[1:v]trim=0.000:20.000,scale=1920:1080,subtitles=x.srt" in fc
+    # 字幕燒在 PTS 歸零（setpts=PTS-STARTPTS）之前 → 仍是主時間軸，libass 對得上
+    seg0 = fc.split("[seg_v_0]")[0]
+    assert seg0.index("subtitles=x.srt") < seg0.index("setpts=PTS-STARTPTS")
 
 
 def test_filter_complex_yt_multicam_audio_always_from_cam_a():
@@ -273,21 +303,29 @@ def test_filter_complex_yt_multicam_cam_b_applies_sync_offset():
     assert "[2:v]setpts=PTS-1.25/TB" in fc
 
 
-def test_filter_complex_yt_multicam_subtitles_burned_on_both_cams():
-    """字幕燒在 cam a 與 cam b 兩個 prep stream 上（不是 segment 後再燒）。"""
+def test_filter_complex_yt_multicam_subtitles_burned_per_segment():
+    """P2：字幕改成逐段燒（每段一次），不再對兩台各燒一遍全長。
+    → subtitles 出現次數 = 段數，而非固定 2（= 兩台）。"""
+    # 3 段（a, b, a）→ 字幕燒 3 次（每段各一），不是 2
+    three = [
+        {"cam": "a", "start": 0.0, "end": 10.0},
+        {"cam": "b", "start": 10.0, "end": 20.0},
+        {"cam": "a", "start": 20.0, "end": 30.0},
+    ]
     fc = assemble.build_filter_complex_yt_multicam(
-        BASE_CFG, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+        BASE_CFG, main_dur=30.0, srt_rel="x.srt", segments=three,
     )
-    assert fc.count("subtitles=x.srt") == 2
+    assert fc.count("subtitles=x.srt") == len(three) == 3
 
 
 def test_filter_complex_yt_multicam_with_crop_applied_to_both_cams():
-    """crop_yt 同時套到 cam a 與 cam b（兩鏡頭同畫面）。"""
+    """crop_yt 套到 cam a 與 cam b（兩鏡頭同畫面）。P2 後 crop 逐段套用：
+    TWO_SEG_AB = 1 段 a + 1 段 b → crop 出現 2 次（各自那段）。"""
     cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
     fc = assemble.build_filter_complex_yt_multicam(
         cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
     )
-    # iw/ih 源像素表達式，cam a 和 cam b 都套同一個 crop
+    # iw/ih 源像素表達式，cam a 和 cam b 都套同一個 crop（每段一次）
     assert fc.count("crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05") == 2
 
 
@@ -303,12 +341,13 @@ def test_filter_complex_yt_multicam_same_cam_multi_segments_explicit_split():
     fc = assemble.build_filter_complex_yt_multicam(
         BASE_CFG, main_dur=15.0, srt_rel="x.srt", segments=segs,
     )
-    assert "[m_a_v]split=3[m_a_v_0][m_a_v_1][m_a_v_2]" in fc
+    # 視訊從 cam A 輸入 [1:v] 明確 split=3；音訊 [m_a_a] asplit=3
+    assert "[1:v]split=3[a_v_0][a_v_1][a_v_2]" in fc
     assert "[m_a_a]asplit=3[m_a_a_0][m_a_a_1][m_a_a_2]" in fc
     # 各段引用自己的 split 輸出
-    assert "[m_a_v_0]trim=0.000:5.000" in fc
-    assert "[m_a_v_1]trim=5.000:10.000" in fc
-    assert "[m_a_v_2]trim=10.000:15.000" in fc
+    assert "[a_v_0]trim=0.000:5.000" in fc
+    assert "[a_v_1]trim=5.000:10.000" in fc
+    assert "[a_v_2]trim=10.000:15.000" in fc
 
 
 def test_filter_complex_reels_multicam_basic():
@@ -429,18 +468,20 @@ def test_filter_complex_reels_includes_alignment_when_set():
 
 def test_prepare_assembly_yt_multicam_adds_cam_b_input(tmp_episode_full_multicam):
     """cameras.b 存在 → YT cmd 應有 5 個 -i（intro / camA / camB / outro img / outro audio）。"""
+    _disable_cover(tmp_episode_full_multicam)
     plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
     i_count = sum(1 for a in plan["cmd"] if a == "-i")
     assert i_count == 5, f"YT multicam 應有 5 個 -i，目前 {i_count}"
 
 
-def test_prepare_assembly_yt_multicam_filter_contains_cam_b_labels(tmp_episode_full_multicam):
-    """YT multicam filter_complex 應包含 [m_b_v]（cam B 處理 stream）。"""
+def test_prepare_assembly_yt_multicam_filter_uses_both_cam_inputs(tmp_episode_full_multicam):
+    """YT multicam filter_complex 應同時切到 cam A 輸入 [1:v] 與 cam B 輸入 [2:v]。
+    （fixture 段規劃：a 段 [0,12)、b 段 [12,100)；sync offset 1.25）"""
     plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
-    assert "[m_b_v]" in fc
-    assert "[m_a_v]" in fc
+    assert "[1:v]trim=0.000:12.000" in fc
+    assert "[2:v]setpts=PTS-1.25/TB,trim=12.000:100.000" in fc
 
 
 def test_prepare_assembly_yt_multicam_applies_sync_offset(tmp_episode_full_multicam):
@@ -468,6 +509,7 @@ def test_prepare_assembly_yt_multicam_uses_segment_plan(tmp_episode_full_multica
 
 def test_prepare_assembly_reels_multicam_two_inputs(tmp_episode_full_multicam):
     """Reels multicam → 只有 2 個 -i（camA / camB），無 intro/outro。"""
+    _disable_cover(tmp_episode_full_multicam)
     plan = prepare_assembly(tmp_episode_full_multicam, output_kind="reels", force=True)
     i_count = sum(1 for a in plan["cmd"] if a == "-i")
     assert i_count == 2, f"Reels multicam 應有 2 個 -i，目前 {i_count}"
@@ -487,6 +529,7 @@ def test_prepare_assembly_single_cam_unchanged_when_no_cam_b(tmp_episode_full):
 
     單機 YT 4 個 -i = intro + main + outro_image(-loop) + outro_audio。
     """
+    _disable_cover(tmp_episode_full)
     plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
     fc_idx = plan["cmd"].index("-filter_complex")
     fc = plan["cmd"][fc_idx + 1]
@@ -533,3 +576,256 @@ def test_filter_complex_reels_escapes_srt_path():
         BASE_CFG, main_dur=100.0, srt_rel="a,b/_v2.srt"
     )
     assert "subtitles=a\\,b/_v2.srt:force_style=" in fc
+
+
+# --- 旋轉拉正：rotate 在 crop/scale 之前，per cam 各自角度 ---
+
+def test_filter_complex_yt_rotate_before_crop():
+    cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9},
+           "rotate": {"a": 2.5}}
+    fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
+    # 主鏡頭前處理鏈：rotate → crop → scale 連續出現（順序正確）
+    assert (
+        "[1:v]rotate=2.5*PI/180:ow=iw:oh=ih,"
+        "crop=iw*0.8:ih*0.9:iw*0.1:ih*0.05,scale=1920:1080" in fc
+    )
+
+
+def test_filter_complex_yt_no_rotate_when_zero():
+    fc = assemble.build_filter_complex_yt(
+        {**BASE_CFG, "rotate": {"a": 0}}, main_dur=100.0, srt_rel="x.srt"
+    )
+    assert "rotate=" not in fc
+
+
+def test_filter_complex_yt_multicam_rotate_per_cam():
+    cfg = {**BASE_CFG, "rotate": {"a": 2.0, "b": -1.5}}
+    fc = assemble.build_filter_complex_yt_multicam(
+        cfg, main_dur=50.0, srt_rel="x.srt", segments=TWO_SEG_AB,
+    )
+    assert "rotate=2.0*PI/180" in fc   # cam A 拉正
+    assert "rotate=-1.5*PI/180" in fc  # cam B 各自獨立角度
+
+
+# --- 倍速：只加速正片，setpts/atempo；字幕先燒再加速 ---
+
+def test_filter_complex_yt_speed_adds_setpts_atempo():
+    fc = assemble.build_filter_complex_yt(
+        BASE_CFG, main_dur=80.0, srt_rel="x.srt", speed_factor=1.25,
+    )
+    assert "setpts=PTS/1.25" in fc
+    assert "atempo=1.25" in fc
+    # 字幕在 setpts 之前燒 → 字幕像素隨畫面一起加速 → 自動同步
+    assert fc.index("subtitles=x.srt") < fc.index("setpts=PTS/1.25")
+
+
+def test_filter_complex_yt_no_speed_when_factor_one():
+    fc = assemble.build_filter_complex_yt(
+        BASE_CFG, main_dur=80.0, srt_rel="x.srt", speed_factor=1.0,
+    )
+    assert "setpts=PTS/" not in fc
+    assert "atempo=" not in fc
+
+
+def test_filter_complex_yt_multicam_speed_on_body():
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=40.0, srt_rel="x.srt", segments=TWO_SEG_AB, speed_factor=1.25,
+    )
+    assert "setpts=PTS/1.25" in fc and "atempo=1.25" in fc
+
+
+# --- sidecar 模式：srt_rel=None 時不燒字幕 ---
+
+def test_filter_complex_yt_sidecar_skips_subtitles():
+    fc = assemble.build_filter_complex_yt(BASE_CFG, main_dur=80.0, srt_rel=None)
+    assert "subtitles=" not in fc
+
+
+def test_filter_complex_reels_sidecar_skips_subtitles():
+    fc = assemble.build_filter_complex_reels(BASE_CFG, main_dur=80.0, srt_rel=None)
+    assert "subtitles=" not in fc
+
+
+def test_filter_complex_yt_multicam_sidecar_skips_subtitles():
+    fc = assemble.build_filter_complex_yt_multicam(
+        BASE_CFG, main_dur=50.0, srt_rel=None, segments=TWO_SEG_AB,
+    )
+    assert "subtitles=" not in fc
+
+
+# --- build_sidecar_srt：倍速 + 刪段 + 片頭偏移後仍對齊（守住使用者擔心的 case）---
+
+def test_build_sidecar_srt_maps_speed_deletion_and_offset():
+    from podcast_toolkit import srt_io
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 4.0, "text": "A"},
+        {"idx": 2, "start": 10.0, "end": 12.0, "text": "DEL"},  # 落在被刪區間
+        {"idx": 3, "start": 12.0, "end": 20.0, "text": "C"},
+    ]
+    srt = assemble.build_sidecar_srt(
+        cards, removed_intervals=[(10.0, 12.0)], speed=1.25, intro_offset=5.0,
+    )
+    out = srt_io.parse(srt)
+    # 被刪的卡 2 → 長度 0 → 丟掉；其餘重新編號
+    assert [c["text"] for c in out] == ["A", "C"]
+    assert [c["idx"] for c in out] == [1, 2]
+    # 卡1：5 + (0..4)/1.25 = 5.0..8.2
+    assert out[0]["start"] == pytest.approx(5.0)
+    assert out[0]["end"] == pytest.approx(8.2)
+    # 卡3：收掉前面 2s 刪段 → body (10..18)，÷1.25 = 8..14.4，+5 = 13.0..19.4
+    assert out[1]["start"] == pytest.approx(13.0)
+    assert out[1]["end"] == pytest.approx(19.4)
+
+
+# --- prepare_assembly：倍速 / sidecar / 封面 整合 ---
+
+def test_prepare_assembly_speed_divides_main_dur(tmp_episode_full):
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["speed"] = {"enabled": True, "factor": 1.25}
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    # main_dur 100 → 80（/1.25），fade/total 計時用加速後長度
+    assert plan["main_dur"] == pytest.approx(80.0)
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "setpts=PTS/1.25" in fc and "atempo=1.25" in fc
+
+
+def test_prepare_assembly_sidecar_writes_srt_and_skips_burn(tmp_episode_full):
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, subtitle_mode="sidecar",
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "subtitles=" not in fc          # 影片不燒字幕
+    sc = plan["sidecar_srt"]
+    assert sc is not None
+    assert sc["path"].name.endswith("_YT完整版.srt")
+    assert "-->" in sc["content"]          # 有字幕內容
+
+
+def test_prepare_assembly_burn_mode_has_no_sidecar(tmp_episode_full):
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    assert plan["sidecar_srt"] is None
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "subtitles=" in fc              # burn 模式仍燒字幕
+
+
+def test_prepare_assembly_sidecar_yt_applies_intro_offset(tmp_episode_full):
+    """YT sidecar：正片接在片頭後 → 第一卡時間軸平移 intro_duration。"""
+    from podcast_toolkit import srt_io
+    from podcast_toolkit.episode import Episode
+    intro = float(Episode(tmp_episode_full).cfg["assets"]["intro_duration"])
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, subtitle_mode="sidecar",
+    )
+    cards = srt_io.parse(plan["sidecar_srt"]["content"])
+    # SAMPLE_SRT 第一卡原 start=0 → 平移到片頭之後
+    assert cards[0]["start"] == pytest.approx(intro, abs=0.05)
+
+
+def test_prepare_assembly_sidecar_reels_no_intro_offset(tmp_episode_full):
+    """Reels 無片頭 → sidecar 第一卡仍從 ~0 開始。"""
+    from podcast_toolkit import srt_io
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="reels", force=True, subtitle_mode="sidecar",
+    )
+    cards = srt_io.parse(plan["sidecar_srt"]["content"])
+    assert cards[0]["start"] == pytest.approx(0.0, abs=0.05)
+
+
+def test_prepare_assembly_cover_overlay_on_by_default(tmp_episode_full):
+    """封面預設開（defaults.yaml watermark.enabled=true）+ assets/cover.png 存在
+    → overlay 被 wire（多一個 -i + overlay=），不需 episode 額外設定。"""
+    from podcast_toolkit import config
+    root = config.toolkit_root() / "assets"
+    if not ((root / "cover.png").exists() or (root / "logo.png").exists()):
+        pytest.skip("本機無 cover/logo 資產，跳過封面 overlay wiring 測試")
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "overlay=" in fc                # 封面疊在正片上
+    # 單機 YT 基本 4 個 -i + 封面 1 個 = 5
+    assert sum(1 for a in plan["cmd"] if a == "-i") == 5
+
+
+def test_prepare_assembly_cover_disabled_no_overlay(tmp_episode_full):
+    """個別集明確關閉封面（watermark.enabled=false）→ 無 overlay、回到 4 個 -i。"""
+    _disable_cover(tmp_episode_full)
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "overlay=" not in fc
+    assert sum(1 for a in plan["cmd"] if a == "-i") == 4
+
+
+# --- P2c 旋轉拉正預烤：rotate 移到一次性 proxy，主合成跳過 rotate ---
+
+
+def _set_rotate_b(ep_dir, angle):
+    p = ep_dir / "episode.yaml"
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    data["rotate"] = {"b": angle}
+    p.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
+def test_leveled_proxy_valid_logic(tmp_path):
+    """proxy 快取鍵：檔在 + 角度 + 來源簽章三者吻合才算有效。"""
+    from podcast_toolkit import assemble as asm
+    src = tmp_path / "camB.mp4"
+    src.write_bytes(b"x" * 100)
+    proxy = tmp_path / "_leveled_camB.mp4"
+    meta = tmp_path / "_leveled_camB.json"
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -1.3)   # 都不存在
+    proxy.write_bytes(b"p")
+    asm.write_leveled_meta(meta, src, -1.3)
+    assert asm._leveled_proxy_valid(proxy, meta, src, -1.3)       # 吻合
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -2.0)   # 角度不符 → 失效
+    src.write_bytes(b"y" * 200)                                   # 來源改了（size 變）
+    assert not asm._leveled_proxy_valid(proxy, meta, src, -1.3)
+
+
+def test_build_leveled_cmd_has_rotate_and_no_audio():
+    from podcast_toolkit import assemble as asm
+    enc = {"video_codec": "h264_videotoolbox", "hwaccel": "videotoolbox", "pix_fmt": "yuv420p"}
+    cmd = asm.build_leveled_cmd("/src/camB.mp4", "/work/.tmp.mp4", -1.3, enc)
+    joined = " ".join(cmd)
+    assert "rotate=-1.3*PI/180:ow=iw:oh=ih" in joined  # 與 _rotate_part 同義
+    assert "-hwaccel" in cmd and "videotoolbox" in cmd  # 硬解
+    assert "-an" in cmd                                 # proxy 不要音訊
+    assert cmd[-1] == "/work/.tmp.mp4"                  # 輸出到 tmp
+
+
+def test_prepare_assembly_multicam_rotate_b_prebakes_and_drops_rotate(tmp_episode_full_multicam):
+    """cam B 有旋轉角 + 無 proxy → plan 帶一筆 cam B 預烤；主 filter 不再含 rotate（移到預烤）。"""
+    _set_rotate_b(tmp_episode_full_multicam, -1.3)
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert len(plan["prebake"]) == 1
+    pb = plan["prebake"][0]
+    assert pb["angle"] == -1.3
+    assert "rotate=-1.3" in " ".join(pb["cmd"])         # 預烤指令含 rotate
+    # 主 filter 不再有 rotate（cam B 已預烤 → render_cfg rotate.b=0）
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "rotate=" not in fc
+    # 主 cmd 的 cam B 輸入換成 proxy
+    assert any("_leveled_camB" in str(a) for a in plan["cmd"])
+
+
+def test_prepare_assembly_multicam_valid_proxy_skips_prebake(tmp_episode_full_multicam):
+    """已有有效 proxy → 不再預烤，主 filter 仍無 rotate、吃 proxy（重用快取）。"""
+    from podcast_toolkit import assemble as asm
+    from podcast_toolkit.episode import Episode
+    _set_rotate_b(tmp_episode_full_multicam, -1.3)
+    ep = Episode(tmp_episode_full_multicam)
+    proxy, _tmp, meta = asm._leveled_proxy_paths(ep.subdir("work"), "b")
+    cam_b = ep.resolve_episode_path(ep.cfg["cameras"]["b"])
+    proxy.write_bytes(b"fake-proxy")
+    asm.write_leveled_meta(meta, cam_b, -1.3)
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert plan["prebake"] == []                        # 重用，不再預烤
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "rotate=" not in fc
+    assert any("_leveled_camB" in str(a) for a in plan["cmd"])
+
+
+def test_prepare_assembly_multicam_no_rotate_no_prebake(tmp_episode_full_multicam):
+    """沒設旋轉角 → 無預烤（行為照舊，回歸保護）。"""
+    plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
+    assert plan["prebake"] == []

@@ -60,7 +60,12 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.get("/api/episode")
     def get_episode():
-        return JSONResponse(episode_io.load_state(ctx.require_ep()))
+        # no-store：否則 Chromium 啟發式快取會吃舊 cache 不打 server，存檔後 loadEpisodeState
+        # 重抓 /api/episode 拿到的是存檔前資料 → 拖拉/新增/微調等編輯「存了卻沒反映在 UI」。
+        return JSONResponse(
+            episode_io.load_state(ctx.require_ep()),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.post("/api/episode/pick")
     def pick_episode():

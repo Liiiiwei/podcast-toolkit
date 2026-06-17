@@ -10,6 +10,8 @@ const state = {
   cropReelsB: null,
   cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
   cropRatioReels: null,
+  // 旋轉拉正：per cam 度數（綁源攝影機，YT/Reels 共用）；正值順時針，搭配 crop 把黑角裁掉
+  rotate: { a: 0, b: 0 },
   deletions: new Set(),
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   cards: [],
@@ -19,6 +21,13 @@ const state = {
   // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
   // sub-card 上按 Enter 可連鎖切：把該 part 拆兩半、後面 composite key 全部 +1。
   cardSplits: new Map(),
+  // 單卡時間微調：idx -> {start, end}（覆寫該卡時間）；只用於未切的整卡
+  timeOverrides: new Map(),
+  timeEditKey: null, // 目前展開時間微調工具列的卡 domKey（字串；null = 沒開）
+  // 新增的字卡：[{tempId, start, end, text}]；存檔時 append 進 SRT、重編號
+  newCards: [],
+  newCardSeq: 0, // tempId 流水號
+  dragCardIdx: null, // 拖拉換位置中的整卡 idx（null = 沒在拖）
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -49,6 +58,12 @@ const state = {
   subtitleStyleReels: null,
   outputResYt: { w: 1920, h: 1080 },
   outputResReels: { w: 1080, h: 1920 },
+  // 節目封面（右上角小徽章）開關 / 正片倍速 {enabled,factor} / 合成字幕模式
+  coverEnabled: false,
+  speed: { enabled: false, factor: 1.25 },
+  subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
+  // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
+  outputDirty: false,
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
   // 換集 / 儲存成功 → 一律清空兩 stacks（與 dirty 概念對齊）
   undoStack: [],
@@ -118,12 +133,15 @@ function snapshotEditState() {
     cropReelsB: state.cropReelsB ? { ...state.cropReelsB } : null,
     cropRatioYt: state.cropRatioYt,
     cropRatioReels: state.cropRatioReels,
+    rotate: { a: state.rotate.a, b: state.rotate.b },
     camerasMapping: new Map(state.camerasMapping),
     speakersMapping: new Map(state.speakersMapping),
     headTrimSec: state.headTrimSec,
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
+    timeOverrides: new Map([...state.timeOverrides].map(([k, v]) => [k, { ...v }])),
+    newCards: state.newCards.map((c) => ({ ...c })),
   };
 }
 
@@ -136,6 +154,7 @@ function applyEditSnapshot(snap) {
   state.cropReelsB = snap.cropReelsB ? { ...snap.cropReelsB } : null;
   state.cropRatioYt = snap.cropRatioYt;
   state.cropRatioReels = snap.cropRatioReels;
+  state.rotate = snap.rotate ? { ...snap.rotate } : { a: 0, b: 0 };
   state.camerasMapping = new Map(snap.camerasMapping);
   state.speakersMapping = new Map(snap.speakersMapping || []);
   state.headTrimSec = snap.headTrimSec;
@@ -144,6 +163,10 @@ function applyEditSnapshot(snap) {
   state.cardSplits = new Map(
     [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
   );
+  state.timeOverrides = new Map(
+    [...(snap.timeOverrides || [])].map(([k, v]) => [k, { ...v }]),
+  );
+  state.newCards = (snap.newCards || []).map((c) => ({ ...c }));
 }
 
 function pushUndo() {
@@ -270,8 +293,11 @@ function unsavedCount() {
     state.deletions.size +
     state.textOverrides.size +
     state.cardSplits.size +
+    state.timeOverrides.size +
+    state.newCards.length +
     (state.cropYt != null ? 1 : 0) +
-    (state.cropReels != null ? 1 : 0)
+    (state.cropReels != null ? 1 : 0) +
+    (state.outputDirty ? 1 : 0)
   );
 }
 
@@ -391,7 +417,40 @@ function applyCaptionFontSize() {
   overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
 }
 
+// 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
+// 「先 rotate 源、再從軸對齊矩形 crop」語意。crop-frame / caption-overlay 不旋轉（維持軸對齊）。
+function applyRotationPreview() {
+  const a = Number(state.rotate?.a) || 0;
+  const b = Number(state.rotate?.b) || 0;
+  const v = document.querySelector("#video");
+  const vb = document.querySelector("#video-camb");
+  if (v) v.style.transform = a ? `rotate(${a}deg)` : "";
+  if (vb) vb.style.transform = b ? `rotate(${b}deg)` : "";
+}
+
+// 旋轉控制目前編哪台（跟 crop 共用 A/B context）；單機集恆 "a"
+function activeRotateCam() {
+  return getActiveCropCam();
+}
+
+// 同步旋轉滑桿 / 數字 / 徽章到目前 active cam 的角度
+function syncRotateControls() {
+  const cam = activeRotateCam();
+  const deg = Number(state.rotate?.[cam]) || 0;
+  const slider = document.querySelector("#rotate-slider");
+  const num = document.querySelector("#rotate-input");
+  const badge = document.querySelector("#rotate-cam-badge");
+  if (slider) slider.value = String(deg);
+  if (num) num.value = String(deg);
+  if (badge) {
+    const hasCamB = !!(state.cameras && state.cameras.b);
+    badge.textContent = hasCamB ? (cam === "b" ? "B" : "A") : "";
+  }
+}
+
 function renderCropInfo() {
+  applyRotationPreview();
+  syncRotateControls();
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
   // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
@@ -551,12 +610,16 @@ const SPLIT_SEC_PER_CHAR = 0.3;
 function expandedCards() {
   const out = [];
   for (const c of state.cards) {
+    // 時間微調 override：未切卡直接套；切過的卡用 override 當 t0/t1 重算 sub-card
+    const ov = state.timeOverrides.get(c.idx);
+    const cStart = ov ? ov.start : c.start;
+    const cEnd = ov ? ov.end : c.end;
     const parts = state.cardSplits.get(c.idx);
     if (parts && parts.length > 1) {
       const lengths = parts.map((p) => Math.max((p || "").length, 1));
       const total = lengths.reduce((a, b) => a + b, 0);
-      const t0 = c.start;
-      const t1 = c.end;
+      const t0 = cStart;
+      const t1 = cEnd;
       const dur = t1 - t0;
       const budget = total * SPLIT_SEC_PER_CHAR;
       const rate = budget <= dur ? SPLIT_SEC_PER_CHAR : dur / total;
@@ -580,12 +643,297 @@ function expandedCards() {
         partIdx: null,
         key: c.idx,
         text: state.textOverrides.get(c.idx) ?? c.text,
-        start: c.start,
-        end: c.end,
+        start: cStart,
+        end: cEnd,
       });
     }
   }
+  // 新增的字卡：併進清單、依 start 排序（讓它出現在正確時間位置、預覽也吃得到）
+  for (const nc of state.newCards) {
+    out.push({
+      c: null,
+      newCard: nc,
+      partIdx: null,
+      key: `new:${nc.tempId}`,
+      text: nc.text,
+      start: nc.start,
+      end: nc.end,
+    });
+  }
+  out.sort((a, b) => a.start - b.start);
   return out;
+}
+
+// 時間軸還原：把畫面上（cam A 軸，已被 loadEpisodeState 減過 audioSyncOffset）的時間
+// 加回 +audioSyncOffset，還原成磁碟 _v2.srt 的「外接音檔時間軸」。存檔送 time_overrides /
+// new_cards 前用，讓「存→重載」對稱（載入 -offset、存檔 +offset），避免時間每存一次就漂一次。
+// 沒外接音檔 / offset=0 → 原值回傳（no-op）。
+function toDiskTime(t) {
+  const off = state.audioSyncOffset || 0;
+  return {
+    start: Math.round((t.start + off) * 100) / 100,
+    end: Math.round((t.end + off) * 100) / 100,
+  };
+}
+
+// 取一張卡實際生效的時間（含時間微調 override）
+function getEffectiveCardTime(c) {
+  const ov = state.timeOverrides.get(c.idx);
+  return ov ? { start: ov.start, end: ov.end } : { start: c.start, end: c.end };
+}
+
+// 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除 override
+function setCardTime(c, start, end) {
+  start = Math.max(0, Math.round(start * 100) / 100);
+  end = Math.max(start + 0.1, Math.round(end * 100) / 100);
+  const sameAsOrig =
+    Math.abs(start - c.start) < 0.005 && Math.abs(end - c.end) < 0.005;
+  const cur = state.timeOverrides.get(c.idx);
+  if (sameAsOrig) {
+    if (!cur) return;
+    pushUndo();
+    state.timeOverrides.delete(c.idx);
+  } else {
+    if (cur && Math.abs(cur.start - start) < 0.005 && Math.abs(cur.end - end) < 0.005) {
+      return;
+    }
+    pushUndo();
+    state.timeOverrides.set(c.idx, { start, end });
+  }
+}
+
+// 拖拉換位置：把 D 卡移到目標 T 卡的前 / 後 → 算落點時間（夾住不跟鄰居重疊）→ 設 override；
+// expandedCards 依 start 重排，卡片就自動移到新位置（重用時間微調機制，不另搞排序狀態）。
+function reorderCardTo(dragIdx, targetIdx, before) {
+  if (dragIdx === targetIdx) return;
+  const byIdx = new Map(state.cards.map((c) => [c.idx, c]));
+  const D = byIdx.get(dragIdx);
+  const T = byIdx.get(targetIdx);
+  if (!D || !T) return;
+  const tt = getEffectiveCardTime(T);
+  const dt = getEffectiveCardTime(D);
+  const dur = Math.max(0.3, Math.round((dt.end - dt.start) * 100) / 100);
+  // 依生效時間排序的整卡清單（排除 D），夾住落點不跟前後鄰居重疊
+  const others = state.cards
+    .filter((c) => c.idx !== dragIdx)
+    .map((c) => ({ idx: c.idx, ...getEffectiveCardTime(c) }))
+    .sort((a, b) => a.start - b.start);
+  const ti = others.findIndex((o) => o.idx === targetIdx);
+  let ns, ne;
+  if (before) {
+    ne = tt.start;
+    ns = ne - dur;
+    const prev = ti > 0 ? others[ti - 1] : null;
+    if (prev && ns < prev.end) ns = prev.end;
+    if (ns < 0) ns = 0;
+  } else {
+    ns = tt.end;
+    ne = ns + dur;
+    const next = ti >= 0 && ti < others.length - 1 ? others[ti + 1] : null;
+    if (next && ne > next.start) ne = next.start;
+  }
+  if (ne - ns < 0.1) ne = ns + 0.1;
+  setCardTime(D, ns, ne); // 內含 pushUndo + 四捨五入 + clamp
+  renderCards();
+  renderCaption();
+  renderTopbar();
+}
+
+// 時間微調的「目標」抽象：既有卡走 timeOverrides，新卡直接改自身 start/end。
+// target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
+function cardTimeTarget(c) {
+  return {
+    domKey: String(c.idx),
+    get: () => getEffectiveCardTime(c),
+    set: (s, e) => setCardTime(c, s, e),
+    reset: () => {
+      if (!state.timeOverrides.has(c.idx)) return;
+      pushUndo();
+      state.timeOverrides.delete(c.idx);
+    },
+    isDirty: () => state.timeOverrides.has(c.idx),
+  };
+}
+function newCardTimeTarget(nc) {
+  return {
+    domKey: `new:${nc.tempId}`,
+    get: () => ({ start: nc.start, end: nc.end }),
+    set: (s, e) => {
+      s = Math.max(0, Math.round(s * 100) / 100);
+      e = Math.max(s + 0.1, Math.round(e * 100) / 100);
+      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005) return;
+      pushUndo();
+      nc.start = s;
+      nc.end = e;
+    },
+    reset: null,
+    isDirty: () => false,
+  };
+}
+
+// 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
+// undo / 整列重繪時靠 renderCards 的注入點還原。
+function buildTimeToolbar(target) {
+  const bar = document.createElement("div");
+  bar.className = "card-time-edit";
+  bar.addEventListener("click", (e) => e.stopPropagation());
+  const val = document.createElement("span");
+  val.className = "te-val";
+  const repaint = () => {
+    const t = target.get();
+    val.textContent = `${t.start.toFixed(2)} → ${t.end.toFixed(2)}s`;
+    const card = document.querySelector(
+      `#cards-list .card[data-idx="${target.domKey}"]`,
+    );
+    if (card) {
+      card.classList.toggle("time-dirty", target.isDirty());
+      const cv = card.querySelector(".card-time-val");
+      if (cv) cv.textContent = `${fmtTime(t.start)}\n${fmtTime(t.end)}`;
+    }
+    renderCaption();
+    renderTopbar();
+  };
+  const act = (fn) => () => {
+    fn();
+    repaint();
+  };
+  const nudge = (ds, de) => {
+    const t = target.get();
+    target.set(t.start + ds, t.end + de);
+  };
+  const mk = (label, title, fn) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "te-btn";
+    b.textContent = label;
+    b.title = title;
+    b.addEventListener("click", act(fn));
+    return b;
+  };
+  const lab = (t) => {
+    const s = document.createElement("span");
+    s.className = "te-lab";
+    s.textContent = t;
+    return s;
+  };
+  bar.append(
+    lab("起"),
+    mk("⇤游標", "把起點設到目前播放位置", () => {
+      const t = target.get();
+      target.set($("#video").currentTime, t.end);
+    }),
+    mk("−", "起點 −0.1s", () => nudge(-0.1, 0)),
+    mk("＋", "起點 +0.1s", () => nudge(0.1, 0)),
+    lab("訖"),
+    mk("游標⇥", "把終點設到目前播放位置", () => {
+      const t = target.get();
+      target.set(t.start, $("#video").currentTime);
+    }),
+    mk("−", "終點 −0.1s", () => nudge(0, -0.1)),
+    mk("＋", "終點 +0.1s", () => nudge(0, 0.1)),
+    val,
+  );
+  if (target.reset) {
+    bar.append(
+      mk("還原", "清除這張卡的時間微調", () => target.reset()),
+    );
+  }
+  const t0 = target.get();
+  val.textContent = `${t0.start.toFixed(2)} → ${t0.end.toFixed(2)}s`;
+  return bar;
+}
+
+// 開 / 關某卡的時間微調工具列（一次只開一張）
+function toggleTimeEdit(target, cardEl) {
+  if (state.timeEditKey !== null && state.timeEditKey !== target.domKey) {
+    const prev = document.querySelector(
+      `#cards-list .card[data-idx="${state.timeEditKey}"]`,
+    );
+    if (prev) {
+      const bar = prev.querySelector(".card-time-edit");
+      if (bar) bar.remove();
+      prev.classList.remove("editing-time");
+    }
+  }
+  const existing = cardEl.querySelector(".card-time-edit");
+  if (existing) {
+    existing.remove();
+    cardEl.classList.remove("editing-time");
+    state.timeEditKey = null;
+  } else {
+    cardEl.appendChild(buildTimeToolbar(target));
+    cardEl.classList.add("editing-time");
+    state.timeEditKey = target.domKey;
+  }
+}
+
+// 渲染一張「新增字卡」列（自包，不碰既有卡的 sus / split / cam 邏輯）
+function renderNewCardRow(r, list) {
+  const nc = r.newCard;
+  const div = document.createElement("div");
+  div.className = "card card-new";
+  div.dataset.idx = `new:${nc.tempId}`;
+
+  const spacer = document.createElement("div"); // 對齊 grid 第一欄
+
+  const time = document.createElement("div");
+  time.className = "card-time";
+  const timeVal = document.createElement("span");
+  timeVal.className = "card-time-val";
+  timeVal.style.whiteSpace = "pre";
+  timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+  time.appendChild(timeVal);
+  const badge = document.createElement("span");
+  badge.className = "card-new-badge";
+  badge.textContent = "新";
+  time.appendChild(badge);
+  const teBtn = document.createElement("button");
+  teBtn.type = "button";
+  teBtn.className = "card-time-edit-btn";
+  teBtn.textContent = "⏱";
+  teBtn.title = "調整這張新卡的時間（設到游標 / ±0.1s）";
+  teBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleTimeEdit(newCardTimeTarget(nc), div);
+  });
+  time.appendChild(teBtn);
+  time.addEventListener("click", () => {
+    $("#video").currentTime = nc.start;
+  });
+
+  const text = document.createElement("div");
+  text.className = "card-text";
+  text.contentEditable = "true";
+  text.textContent = nc.text;
+  text.dataset.placeholder = "輸入字幕…";
+  text.addEventListener("blur", () => {
+    const v = text.textContent.trim();
+    if (v === nc.text) return;
+    pushUndo();
+    nc.text = v;
+    renderTopbar();
+    renderCaption();
+  });
+
+  const del = document.createElement("button");
+  del.className = "card-del";
+  del.setAttribute("aria-label", "刪除這張新卡");
+  del.innerHTML = window.Icons ? window.Icons.get("x", { size: 14 }) : "✕";
+  del.addEventListener("click", () => {
+    pushUndo();
+    state.newCards = state.newCards.filter((x) => x.tempId !== nc.tempId);
+    if (state.timeEditKey === `new:${nc.tempId}`) state.timeEditKey = null;
+    renderCards();
+    renderTopbar();
+    renderCaption();
+  });
+
+  div.append(spacer, time, text, del);
+  if (state.timeEditKey === `new:${nc.tempId}`) {
+    div.appendChild(buildTimeToolbar(newCardTimeTarget(nc)));
+    div.classList.add("editing-time");
+  }
+  list.appendChild(div);
 }
 
 // 算這張卡實際生效的 speaker：speakers sidecar 是每張卡都有明確值
@@ -811,6 +1159,10 @@ function renderCards() {
   const hasCamB = !!state.cameras && !!state.cameras.b;
   const rendered = expandedCards();
   for (const r of rendered) {
+    if (r.newCard) {
+      renderNewCardRow(r, list);
+      continue;
+    }
     const c = r.c;
     const partIdx = r.partIdx; // null = 未切；0..N-1 = sub-card
     const key = r.key; // int (未切) 或 "<idx>:<part>"（切過）；deletions / cameras 都用這個
@@ -864,11 +1216,37 @@ function renderCards() {
 
     const time = document.createElement("div");
     time.className = "card-time";
-    time.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
-    time.style.whiteSpace = "pre";
+    const timeVal = document.createElement("span");
+    timeVal.className = "card-time-val";
+    timeVal.style.whiteSpace = "pre";
+    timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+    time.appendChild(timeVal);
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
+    if (!isSub && state.timeOverrides.has(c.idx)) div.classList.add("time-dirty");
+    // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
+    if (!isSub) {
+      // 拖曳換位置把手：拖一張卡 → 設時間 override 移到新位置。後端 always-sort 修正後，
+      // 拖完存檔會「乾淨地」重排（不再像舊版那樣寫出非單調 SRT 整份亂掃）。
+      const grip = document.createElement("span");
+      grip.className = "card-grip";
+      grip.textContent = "⠿";
+      grip.title = "拖曳把這張卡移到新的時間位置";
+      grip.draggable = true;
+      time.insertBefore(grip, time.firstChild);
+
+      const teBtn = document.createElement("button");
+      teBtn.type = "button";
+      teBtn.className = "card-time-edit-btn";
+      teBtn.textContent = "⏱";
+      teBtn.title = "微調這張卡的時間（設到游標 / ±0.1s）";
+      teBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleTimeEdit(cardTimeTarget(c), div);
+      });
+      time.appendChild(teBtn);
+    }
     // 分軌集才掛 speaker tag：值來自 srt_merge sidecar（read-only）
     // 要改 speaker → 走 _final_v2.speakers.json 手改或重跑 srt_merge，不在 UI 上 toggle
     const sp = computeEffectiveSpeaker(key);
@@ -1185,6 +1563,11 @@ function renderCards() {
     } else {
       div.append(susBox, time, text, del);
     }
+    // 整列重繪（undo / 切句 / 刪除等）後，若這張卡的時間微調工具列原本開著就還原
+    if (!isSub && state.timeEditKey === String(c.idx)) {
+      div.appendChild(buildTimeToolbar(cardTimeTarget(c)));
+      div.classList.add("editing-time");
+    }
     list.appendChild(div);
   }
   renderSusToolbar();
@@ -1239,7 +1622,9 @@ function renderSusToolbar() {
 
 async function loadEpisodeState() {
   // 只重抓 episode + cards，重新轉字幕後會用到
-  const r = await fetch("/api/episode");
+  // cache:"no-store"：保險再加一層，避免瀏覽器吃舊 cache → 存檔後重載拿到存檔前資料
+  // （後端 /api/episode 也補了 no-store header；雙保險）
+  const r = await fetch("/api/episode", { cache: "no-store" });
   if (r.status === 409) {
     // 後端尚未選集（重啟 / 多分頁 / 直接打 /edit URL）→ 回 dashboard 重選
     window.location.href = "/";
@@ -1264,12 +1649,24 @@ async function loadEpisodeState() {
       }
     : null;
   state.cropReelsB = reelsIn && reelsIn.b ? { ...reelsIn.b } : null;
+  // 旋轉拉正（per cam）/ 節目封面開關 / 正片倍速
+  const rot = data.rotate || {};
+  state.rotate = { a: Number(rot.a) || 0, b: Number(rot.b) || 0 };
+  state.coverEnabled = !!data.cover_enabled;
+  const sp = data.speed || {};
+  state.speed = { enabled: !!sp.enabled, factor: Number(sp.factor) || 1.25 };
+  state.outputDirty = false;
+  if (typeof syncOutputControls === "function") syncOutputControls();
   state.deletions = new Set(data.deletions || []);
   state.cards = data.cards || [];
   state.textOverrides = new Map();
   state.susChecked = new Set();
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
+  state.timeOverrides = new Map();
+  state.timeEditKey = null;
+  state.newCards = [];
+  state.newCardSeq = 0;
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
@@ -1749,7 +2146,10 @@ $("#video").addEventListener("timeupdate", () => {
   autoSkipDeletedSegments();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
-  $("#time").textContent = `${fmtTime(t)} / ${fmtTime(dur)}`;
+  const timeStr = `${fmtTime(t)} / ${fmtTime(dur)}`;
+  $("#time").textContent = timeStr;
+  const ctEl = $("#cards-time");
+  if (ctEl) ctEl.textContent = timeStr; // 字幕區 sticky 列同步時間
   const seekEl = $("#seek");
   const pct = dur ? (t / dur) * 100 : 0;
   seekEl.value = pct;
@@ -1765,7 +2165,9 @@ $("#video").addEventListener("timeupdate", () => {
       const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
       if (el) {
         el.classList.add("playing");
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // 正在編輯某張卡的文字時不自動捲走，否則邊播邊改會被一直拉到播放卡、打斷編輯
+        const editing = document.activeElement?.classList?.contains("card-text");
+        if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
     }
     _lastActiveKey = activeKey;
@@ -1774,19 +2176,27 @@ $("#video").addEventListener("timeupdate", () => {
 });
 
 const playBtn = $("#play-btn");
-playBtn.addEventListener("click", () => {
+function togglePlay() {
   const v = $("#video");
   if (v.paused) v.play();
   else v.pause();
-});
+}
+playBtn.addEventListener("click", togglePlay);
+// 字幕區 sticky 列的播放鈕：捲到字幕下方也能就近播放/暫停
+$("#cards-play-btn")?.addEventListener("click", togglePlay);
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
 function setPlayIcon(name) {
-  playBtn.innerHTML = window.Icons
+  const html = window.Icons
     ? window.Icons.get(name, { size: 16 })
     : name === "pause"
       ? "⏸"
       : "▶";
-  playBtn.setAttribute("aria-label", name === "pause" ? "暫停" : "播放");
+  const label = name === "pause" ? "暫停" : "播放";
+  for (const b of [playBtn, $("#cards-play-btn")]) {
+    if (!b) continue;
+    b.innerHTML = html;
+    b.setAttribute("aria-label", label);
+  }
 }
 $("#video").addEventListener("play", () => {
   setPlayIcon("pause");
@@ -2599,6 +3009,10 @@ $("#save-btn").addEventListener("click", async () => {
   const payload = {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
+    // 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速；後端 key-presence 判斷要不要寫
+    rotate: { a: state.rotate.a, b: state.rotate.b },
+    cover_enabled: state.coverEnabled,
+    speed: { enabled: state.speed.enabled, factor: state.speed.factor },
     // deletions / cameras_mapping key 可能是 int（未切卡）或 "<idx>:<part>"（子卡）→ 不能用 int sort
     deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
@@ -2613,6 +3027,24 @@ $("#save-btn").addEventListener("click", async () => {
     speakers_mapping: Object.fromEntries(state.speakersMapping),
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
+    // 單卡時間微調：{ "<idx>": {start, end} }；後端 serialize 前覆寫該卡 start/end
+    // ── 時間軸還原 ──
+    // 載入時（loadEpisodeState）字卡被整批 -audioSyncOffset 移到 cam A 軸（讓播放預覽的字幕
+    // highlight 對得上 video.currentTime）。但磁碟 _v2.srt 是「外接音檔時間軸」，存檔端
+    // 必須把使用者在 cam A 軸上微調出來的 start/end 加回 +audioSyncOffset 還原成外接音檔軸，
+    // 才能跟磁碟一致、避免每次「存→重載」都再被減一次 offset（症狀：時間越存越早、修不回）。
+    time_overrides: Object.fromEntries(
+      [...state.timeOverrides.entries()].map(([idx, t]) => [
+        idx,
+        toDiskTime(t),
+      ]),
+    ),
+    // 新增字卡：[{start, end, text}]；後端 append 進 SRT、依時間排序重編號
+    // 新卡 start/end 來自 video.currentTime（cam A 軸），同樣要 +audioSyncOffset 還原成磁碟軸
+    new_cards: state.newCards.map((c) => ({
+      ...toDiskTime(c),
+      text: c.text,
+    })),
     // Reels 片段：list of {name, start_card, end_card}；空 list 後端會把 key 砍掉
     reels_clips: state.reelsClips.map((c) => ({
       name: c.name,
@@ -3996,8 +4428,19 @@ async function startAssemble(
     "ffmpeg 啟動中（片頭 + 正片 + 片尾）";
 
   try {
-    const body = { targets, force };
+    const body = { targets, force, subtitle_mode: state.subtitleMode };
     if (previewSec) body.preview_sec = previewSec;
+    if (state.subtitleMode === "overlay") {
+      const ovSel = document.querySelector("#overlay-srt-select");
+      const ovShift = document.querySelector("#overlay-shift-ms");
+      const ovKeep = document.querySelector("#overlay-keep-all");
+      body.overlay_srt = ovSel ? ovSel.value : "";
+      body.overlay_shift_ms = ovShift ? Math.round(Number(ovShift.value) || 0) : 0;
+      body.overlay_keep_all = ovKeep ? !!ovKeep.checked : false;
+      if (!body.overlay_srt) {
+        throw new Error("抽換字幕：請先在「字幕」旁選一份字幕檔");
+      }
+    }
     const r = await fetch("/api/assemble", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4942,15 +5385,12 @@ $("#manual-align-apply").addEventListener("click", () => {
 });
 
 $("#cam-save").addEventListener("click", async () => {
-  const camAPath = $("#cam-a-select").value || "";
-  const camBPath = $("#cam-b-select").value || "";
   const offsetRaw = $("#cam-sync-offset-b").value;
   const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
   if (!Number.isFinite(offset)) {
     alert("同步偏移要是數字");
     return;
   }
-  const audioPath = $("#audio-select").value || "";
   const audioOffsetRaw = $("#audio-sync-offset").value;
   const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
   if (!Number.isFinite(audioOffset)) {
@@ -4960,25 +5400,10 @@ $("#cam-save").addEventListener("click", async () => {
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
-  // 只送 cam A/B 相關欄位 + 必填的 deletions/cards（保留現有編輯）
-  const payload = {
-    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
-    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions],
-    head_trim_sec: state.headTrimSec,
-    tail_trim_sec: state.tailTrimSec,
-    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
-      idx,
-      text,
-    })),
-    cameras_mapping: Object.fromEntries(state.camerasMapping),
-    speakers_mapping: Object.fromEntries(state.speakersMapping),
-    splits: Object.fromEntries(state.cardSplits),
-    cam_a_path: camAPath,
-    cam_b_path: camBPath,
-    camera_sync_offset_b: offset,
-    audio: { path: audioPath, sync_offset: audioOffset },
-  };
+  // 與 #align-all 共用同一個 payload builder（含 srt_path）：先前 cam-save 內聯自建 payload
+  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。offset/audioOffset
+  // 已於上方驗證為數字，builder 重讀同一組 DOM 值不會踩到它內部的靜默歸零。
+  const payload = _buildCamModalSavePayload();
   try {
     await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
@@ -5252,7 +5677,118 @@ async function switchEpisode(newPath) {
   }
 }
 
-$("#ep-switch-btn").addEventListener("click", pickEpisodeFolder);
+// === 換集下拉：列出最近 / 掃到的集，一鍵 hot-swap（不離開頁面、不跳 osascript 對話框）===
+let _epMenuOpen = false;
+
+function closeEpSwitchMenu() {
+  const menu = $("#ep-switch-menu");
+  if (menu) menu.hidden = true;
+  $("#ep-switch-btn")?.setAttribute("aria-expanded", "false");
+  _epMenuOpen = false;
+}
+
+async function openEpSwitchMenu() {
+  const menu = $("#ep-switch-menu");
+  if (!menu) return;
+  menu.hidden = false;
+  $("#ep-switch-btn")?.setAttribute("aria-expanded", "true");
+  _epMenuOpen = true;
+  menu.innerHTML = "";
+  const loading = document.createElement("div");
+  loading.className = "ep-menu-msg";
+  loading.textContent = "載入中…";
+  menu.appendChild(loading);
+
+  let eps = [];
+  try {
+    const r = await fetch("/api/episodes");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    eps = Array.isArray(data.episodes) ? data.episodes : [];
+  } catch (e) {
+    menu.innerHTML = "";
+    const err = document.createElement("div");
+    err.className = "ep-menu-msg ep-menu-error";
+    err.textContent = `讀取集數失敗：${e.message}`;
+    menu.appendChild(err);
+    return;
+  }
+  if (!_epMenuOpen) return; // 載入期間使用者已關閉
+
+  // 依 path 去重
+  const seen = new Set();
+  const items = eps.filter((e) => {
+    const p = e && e.path;
+    if (!p || seen.has(p)) return false;
+    seen.add(p);
+    return true;
+  });
+
+  menu.innerHTML = "";
+  if (items.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ep-menu-msg";
+    empty.textContent = "（沒有掃到其他集）";
+    menu.appendChild(empty);
+  }
+  for (const e of items) {
+    const isCurrent = e.name === state.name;
+    const folder = (e.path || "").split("/").pop() || "";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "ep-menu-item" + (isCurrent ? " is-current" : "");
+    const nameEl = document.createElement("span");
+    nameEl.className = "ep-menu-name";
+    nameEl.textContent = e.name || folder;
+    const folderEl = document.createElement("span");
+    folderEl.className = "ep-menu-folder";
+    folderEl.textContent = folder;
+    row.append(nameEl, folderEl);
+    if (isCurrent) {
+      const badge = document.createElement("span");
+      badge.className = "ep-menu-badge";
+      badge.textContent = "目前";
+      row.append(badge);
+      row.disabled = true;
+    } else {
+      row.addEventListener("click", () => {
+        closeEpSwitchMenu();
+        if (
+          hasUnsavedChanges() &&
+          !confirm("有未儲存的修改，換集後會丟失，繼續？")
+        )
+          return;
+        switchEpisode(e.path);
+      });
+    }
+    menu.appendChild(row);
+  }
+  // 底部：選其他資料夾（osascript fallback，給不在清單上的集）
+  const sep = document.createElement("div");
+  sep.className = "ep-menu-sep";
+  menu.appendChild(sep);
+  const pick = document.createElement("button");
+  pick.type = "button";
+  pick.className = "ep-menu-item ep-menu-pick";
+  pick.textContent = "選其他資料夾…";
+  pick.addEventListener("click", () => {
+    closeEpSwitchMenu();
+    pickEpisodeFolder();
+  });
+  menu.appendChild(pick);
+}
+
+$("#ep-switch-btn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (_epMenuOpen) closeEpSwitchMenu();
+  else openEpSwitchMenu();
+});
+document.addEventListener("click", (e) => {
+  if (_epMenuOpen && !e.target.closest(".ep-switch-wrap")) closeEpSwitchMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && _epMenuOpen) closeEpSwitchMenu();
+});
 document
   .getElementById("back-to-dash-btn")
   ?.addEventListener("click", async () => {
@@ -5364,6 +5900,114 @@ async function submitNewEpisode() {
 }
 
 $("#ep-new-btn").addEventListener("click", openNewEpModal);
+
+// 插入一張新字卡：預設接在「上一張卡之後、且不與前後卡重疊」→ 出現空白卡、自動捲到並 focus 文字
+$("#card-insert-btn").addEventListener("click", () => {
+  if (state.needsTranscribe) return;
+  const v = $("#video");
+  const dur = v.duration || 0;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  const t = r2(Math.max(0, v.currentTime || 0));
+  // 依 start 排序的所有卡（含新卡 / 子卡），找游標所在/之前那張 prev：
+  //   起點接在 prev.end（不重疊上一張），但不早於目前播放位置；
+  //   終點預設 +1.5s，夾在下一張卡 start 與影片總長內（不重疊下一張）。
+  const ranges = expandedCards()
+    .map((e) => ({ start: e.start, end: e.end }))
+    .sort((a, b) => a.start - b.start);
+  let prev = null;
+  for (const rg of ranges) {
+    if (rg.start <= t + 1e-6) prev = rg;
+    else break;
+  }
+  const start = r2(prev ? Math.max(t, prev.end) : t);
+  let end = start + 1.5;
+  const nextAfter = ranges.find((rg) => rg.start > start + 1e-6);
+  if (nextAfter) end = Math.min(end, nextAfter.start);
+  if (dur) end = Math.min(end, dur);
+  end = r2(end);
+  if (end < start + 0.1) end = r2(start + 0.1); // 沒空間時給最短 0.1s（容後手動讓位）
+  pushUndo();
+  const tempId = state.newCardSeq++;
+  state.newCards.push({ tempId, start, end, text: "" });
+  state.timeEditKey = null;
+  renderCards();
+  renderTopbar();
+  renderCaption();
+  requestAnimationFrame(() => {
+    const el = document.querySelector(`#cards-list .card[data-idx="new:${tempId}"]`);
+    if (el) {
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      const txt = el.querySelector(".card-text");
+      if (txt) txt.focus();
+    }
+  });
+});
+
+// 拖拉換位置：grip 啟動拖曳，#cards-list 委派 dragover/drop（只在整卡之間，排除 sub-card / 新卡）
+(() => {
+  const list = $("#cards-list");
+  if (!list) return;
+  const clear = () =>
+    document
+      .querySelectorAll(".card.drop-before, .card.drop-after, .card.dragging")
+      .forEach((el) =>
+        el.classList.remove("drop-before", "drop-after", "dragging"),
+      );
+  const targetCard = (e) => {
+    const card = e.target.closest && e.target.closest(".card");
+    if (!card) return null;
+    if (card.classList.contains("card-sub") || card.classList.contains("card-new")) {
+      return null;
+    }
+    return card;
+  };
+  list.addEventListener("dragstart", (e) => {
+    const grip = e.target.closest && e.target.closest(".card-grip");
+    if (!grip) return;
+    const card = grip.closest(".card");
+    const idx = parseInt(card && card.dataset.idx, 10);
+    if (Number.isNaN(idx)) return;
+    state.dragCardIdx = idx;
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData("text/plain", String(idx));
+      e.dataTransfer.setDragImage(card, 12, 12); // 拖整張卡當 ghost，不是只有把手
+    } catch (_) {}
+    card.classList.add("dragging");
+  });
+  list.addEventListener("dragover", (e) => {
+    if (state.dragCardIdx == null) return;
+    const card = targetCard(e);
+    if (!card) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    const rect = card.getBoundingClientRect();
+    const before = e.clientY < rect.top + rect.height / 2;
+    document
+      .querySelectorAll(".card.drop-before, .card.drop-after")
+      .forEach((el) => {
+        if (el !== card) el.classList.remove("drop-before", "drop-after");
+      });
+    card.classList.toggle("drop-before", before);
+    card.classList.toggle("drop-after", !before);
+  });
+  list.addEventListener("drop", (e) => {
+    if (state.dragCardIdx == null) return;
+    const card = targetCard(e);
+    if (!card) return;
+    e.preventDefault();
+    const targetIdx = parseInt(card.dataset.idx, 10);
+    const before = card.classList.contains("drop-before");
+    const dragIdx = state.dragCardIdx;
+    state.dragCardIdx = null;
+    clear();
+    if (!Number.isNaN(targetIdx)) reorderCardTo(dragIdx, targetIdx, before);
+  });
+  list.addEventListener("dragend", () => {
+    state.dragCardIdx = null;
+    clear();
+  });
+})();
 $("#new-ep-cancel").addEventListener("click", closeNewEpModal);
 $("#new-ep-go").addEventListener("click", submitNewEpisode);
 $("#new-ep-date").addEventListener("input", updateNewEpPreview);
@@ -5375,9 +6019,141 @@ $("#new-ep-date").addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitNewEpisode();
 });
 
+// === 輸出設定：旋轉拉正 / 節目封面 / 倍速 / 合成字幕模式 ===
+// state → UI 控制項（換集載入、undo 後呼叫）
+function syncOutputControls() {
+  const cover = document.querySelector("#cover-toggle");
+  if (cover) cover.checked = !!state.coverEnabled;
+  const spd = document.querySelector("#speed-toggle");
+  const spf = document.querySelector("#speed-factor");
+  if (spd) spd.checked = !!(state.speed && state.speed.enabled);
+  if (spf) {
+    spf.value = String((state.speed && state.speed.factor) || 1.25);
+    spf.disabled = !(state.speed && state.speed.enabled);
+  }
+  const sm = document.querySelector("#subtitle-mode-select");
+  if (sm) sm.value = state.subtitleMode || "burn";
+  syncOverlayControls();
+  syncRotateControls();
+}
+
+// 抽換字幕：依字幕模式顯示/隱藏 overlay 控制項，並用集內 .srt 候選填字幕檔下拉
+function syncOverlayControls() {
+  const wrap = document.querySelector("#overlay-controls");
+  if (!wrap) return;
+  const on = state.subtitleMode === "overlay";
+  wrap.hidden = !on;
+  if (!on) return;
+  const sel = document.querySelector("#overlay-srt-select");
+  if (!sel) return;
+  const cands = Array.isArray(state.srtCandidates) ? state.srtCandidates : [];
+  const prev = sel.value;
+  sel.innerHTML = "";
+  if (!cands.length) {
+    const o = document.createElement("option");
+    o.value = "";
+    o.textContent = "（集資料夾找不到 .srt）";
+    sel.appendChild(o);
+    return;
+  }
+  for (const c of cands) {
+    const o = document.createElement("option");
+    o.value = c;
+    o.textContent = c;
+    sel.appendChild(o);
+  }
+  // 保留先前選擇；否則優先挑名字含 修正/修改/caption 的，再退回第一個
+  if (prev && cands.includes(prev)) {
+    sel.value = prev;
+  } else {
+    const pref = cands.find((c) => /修正|修改|caption|correct/i.test(c));
+    sel.value = pref || cands[0];
+  }
+}
+
+function setupOutputControls() {
+  const clampDeg = (v) => {
+    v = Number(v);
+    if (!isFinite(v)) v = 0;
+    return Math.round(Math.max(-15, Math.min(15, v)) * 10) / 10;
+  };
+  // 旋轉：滑桿 + 數字雙向綁定，編目前 active cam（跟 crop 共用 A/B context）
+  const slider = document.querySelector("#rotate-slider");
+  const num = document.querySelector("#rotate-input");
+  function setRotate(deg, push) {
+    const cam = activeRotateCam();
+    const v = clampDeg(deg);
+    if ((Number(state.rotate[cam]) || 0) === v) {
+      syncRotateControls();
+      return;
+    }
+    if (push) pushUndo();
+    state.rotate[cam] = v;
+    state.outputDirty = true;
+    renderCropInfo(); // 套 CSS 旋轉預覽 + 同步滑桿/數字/徽章
+    renderTopbar();
+  }
+  let rotateDragPushed = false;
+  if (slider) {
+    slider.addEventListener("input", () => {
+      setRotate(slider.value, !rotateDragPushed); // 拖一次只 push 一筆 undo
+      rotateDragPushed = true;
+    });
+    slider.addEventListener("change", () => {
+      rotateDragPushed = false;
+    });
+  }
+  if (num) num.addEventListener("change", () => setRotate(num.value, true));
+  const reset = document.querySelector("#rotate-reset");
+  if (reset) reset.addEventListener("click", () => setRotate(0, true));
+
+  // 節目封面開關
+  const cover = document.querySelector("#cover-toggle");
+  if (cover)
+    cover.addEventListener("change", () => {
+      state.coverEnabled = cover.checked;
+      state.outputDirty = true;
+      renderTopbar();
+    });
+
+  // 倍速開關 + 倍率
+  const spd = document.querySelector("#speed-toggle");
+  const spf = document.querySelector("#speed-factor");
+  if (spd)
+    spd.addEventListener("change", () => {
+      state.speed.enabled = spd.checked;
+      if (spf) spf.disabled = !spd.checked;
+      state.outputDirty = true;
+      renderTopbar();
+    });
+  if (spf)
+    spf.addEventListener("change", () => {
+      let v = Number(spf.value);
+      if (!isFinite(v)) v = 1.25;
+      v = Math.round(Math.max(0.5, Math.min(2, v)) * 100) / 100;
+      state.speed.factor = v;
+      spf.value = String(v);
+      state.outputDirty = true;
+      renderTopbar();
+    });
+
+  // 合成字幕模式（per-assemble，不寫 yaml）
+  const sm = document.querySelector("#subtitle-mode-select");
+  if (sm)
+    sm.addEventListener("change", () => {
+      state.subtitleMode = ["sidecar", "overlay"].includes(sm.value)
+        ? sm.value
+        : "burn";
+      syncOverlayControls();
+    });
+
+  syncOutputControls();
+}
+
 setupVersionTabs();
 setupReelsClips();
 setupAssembleButtons();
+setupOutputControls();
 setupSusToolbar();
 setupSrtShift();
 

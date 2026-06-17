@@ -1,4 +1,5 @@
 """web/episode_io：把 episode 資料夾轉成前端要的 JSON 狀態。"""
+import pytest
 import yaml
 
 from podcast_toolkit.episode import Episode
@@ -63,6 +64,176 @@ def test_save_state_writes_crop_and_deletions_to_yaml(tmp_episode_dir):
     )
     assert new_yaml["crop_yt"] == {"x": 0.05, "y": 0.05, "width": 0.9, "height": 0.9}
     assert new_yaml["deletions"] == [2, 4]
+
+
+def test_save_state_reorder_keeps_srt_time_monotonic(tmp_episode_dir):
+    """回歸：拖拉換位置（time_overrides 把卡移過鄰居）存檔後，_v2.srt 必須仍時間單調、
+    重新編號跟畫面（前端也依 start 排）一致。少了 always-sort 會寫出非單調 SRT →
+    重載後「時間整個跑掉」。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    # 卡 4（我們從牠的飼料配方開始講起，原 14–22s）拖到最前面 1.0–3.0s
+    episode_io.save_state(ep, payload={
+        "cards": [],
+        "time_overrides": {"4": {"start": 1.0, "end": 3.0}},
+    })
+    out = srt_io.parse(
+        (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    )
+    starts = [c["start"] for c in out]
+    assert starts == sorted(starts), f"SRT 非單調（時間跑掉）：{starts}"
+    assert len(out) == 4
+    # 被拖到前面的卡 → 現在排第 2（緊接卡 1），時間 1.0–3.0
+    assert out[1]["text"] == "我們從牠的飼料配方開始講起"
+    assert out[1]["start"] == 1.0 and out[1]["end"] == 3.0
+    # 重新編號連續 1..4
+    assert [c["idx"] for c in out] == [1, 2, 3, 4]
+
+
+def test_save_state_writes_rotate_cover_speed(tmp_episode_dir):
+    """旋轉（per cam）/ 節目封面開關 / 倍速 存進 episode.yaml，load_state 再讀回。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "rotate": {"a": 2.5, "b": -1.0},
+            "cover_enabled": True,
+            "speed": {"enabled": True, "factor": 1.25},
+            "cards": [],
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["rotate"] == {"a": 2.5, "b": -1.0}
+    assert data["watermark"] == {"enabled": True}
+    assert data["speed"] == {"enabled": True, "factor": 1.25}
+    # load_state 透出給前端
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["rotate"] == {"a": 2.5, "b": -1.0}
+    assert state["cover_enabled"] is True
+    assert state["speed"]["enabled"] is True
+
+
+def test_save_state_writes_cuts_to_yaml(tmp_episode_dir):
+    """時間版刪段 cuts 存進 yaml（排序、去零長度）；重 init 後 cfg 透傳得到。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(ep, payload={
+        "cuts": [[40.0, 50.0], [10.0, 15.0], [3.0, 3.0]],  # 亂序 + 一個零長度
+        "cards": [],
+    })
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["cuts"] == [[10.0, 15.0], [40.0, 50.0]]  # 排序、零長度被丟
+    # 重 init Episode → config.merge 透傳 → cfg['cuts'] 讀得到（否則 cuts 路徑形同未接）
+    assert Episode(tmp_episode_dir).cfg["cuts"] == [[10.0, 15.0], [40.0, 50.0]]
+
+
+def test_save_state_empty_cuts_removes_key(tmp_episode_dir):
+    """cuts 傳空 → 移除 yaml key。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["cuts"] = [[1.0, 2.0]]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": [], "cards": []})
+    assert "cuts" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+
+def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
+    """旋轉全 0 / 倍速關閉 / 封面取消 → 對應 key 從 yaml 移除（回退預設）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["rotate"] = {"a": 3.0}
+    data["speed"] = {"enabled": True, "factor": 1.5}
+    data["watermark"] = {"enabled": True}
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={
+            "rotate": {"a": 0, "b": 0},
+            "cover_enabled": False,
+            "speed": {"enabled": False},
+            "cards": [],
+        },
+    )
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "rotate" not in after
+    assert "speed" not in after
+    # 封面預設已開，取消要寫 explicit false（不能 pop，否則回退成預設 true）
+    assert after["watermark"] == {"enabled": False}
+
+
+def test_save_state_applies_time_overrides_to_v2_srt(tmp_episode_dir):
+    """time_overrides 覆寫對應卡的 start/end，寫回 _v2.srt。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "time_overrides": {"2": {"start": 5.0, "end": 10.5}},
+            "cards": [],
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    # 卡 2 的文字維持原樣、時間被覆寫
+    c2 = next(c for c in cards if "過嗨乳牛這個議題" in c["text"])
+    assert c2["start"] == pytest.approx(5.0)
+    assert c2["end"] == pytest.approx(10.5)
+    # 其他卡不受影響（卡 1 仍 0–4.2）
+    c1 = cards[0]
+    assert c1["start"] == pytest.approx(0.0)
+    assert c1["end"] == pytest.approx(4.2)
+
+
+def test_save_state_ignores_invalid_time_override(tmp_episode_dir):
+    """end <= start 的非法時間值要被丟掉，不寫回。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={"time_overrides": {"1": {"start": 8.0, "end": 3.0}}, "cards": []},
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    c1 = srt_io.parse(v2)[0]
+    assert c1["start"] == pytest.approx(0.0)  # 維持原值
+    assert c1["end"] == pytest.approx(4.2)
+
+
+def test_save_state_inserts_new_cards_in_time_order(tmp_episode_dir):
+    """new_cards 被 append 進 SRT、依時間排序、重編號連續。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    # 在卡 1(0–4.2) 與卡 2(4.2–12) 之間插一張新卡
+    episode_io.save_state(
+        ep,
+        payload={
+            "new_cards": [{"start": 4.0, "end": 4.2, "text": "插入的新句"}],
+            "cards": [],
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    assert len(cards) == 5  # 原 4 張 + 1 新
+    # idx 連續 1..5
+    assert [c["idx"] for c in cards] == [1, 2, 3, 4, 5]
+    # 依時間排序：新卡(4.0) 落在原卡 1(0) 之後、原卡 2(4.2) 之前
+    new_pos = next(i for i, c in enumerate(cards) if c["text"] == "插入的新句")
+    assert cards[new_pos - 1]["text"] == "大家好歡迎來到我愛上班"
+    assert cards[new_pos]["start"] == pytest.approx(4.0)
+    assert cards[new_pos]["end"] == pytest.approx(4.2)
+
+
+def test_save_state_skips_invalid_new_cards(tmp_episode_dir):
+    """end <= start 的新卡要被丟掉。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={"new_cards": [{"start": 5.0, "end": 5.0, "text": "壞卡"}], "cards": []},
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    assert len(cards) == 4  # 沒新增
+    assert all("壞卡" not in c["text"] for c in cards)
 
 
 def test_save_state_overwrites_v2_srt_with_card_text_overrides(tmp_episode_dir):
@@ -237,7 +408,7 @@ def test_load_state_returns_cameras_mapping_from_sidecar(tmp_episode_dir):
 
 
 def test_save_state_writes_cameras_mapping_sidecar(tmp_episode_dir):
-    """save_state 把 cameras_mapping 寫進 sidecar JSON。"""
+    """save_state 把 cameras_mapping 轉成**時間版切換點**寫進 sidecar JSON。"""
     ep = Episode(tmp_episode_dir)
     episode_io.save_state(
         ep,
@@ -253,7 +424,9 @@ def test_save_state_writes_cameras_mapping_sidecar(tmp_episode_dir):
     assert sidecar.exists()
     import json
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert data == {"1": "a", "3": "b"}
+    # 卡1標a(預設就是a→冗餘不產生切換)、卡3 start=12.0 切 b
+    assert data["version"] == 2
+    assert data["transitions"] == [{"t": 12.0, "cam": "b"}]
 
 
 def test_save_state_empty_cameras_mapping_removes_sidecar(tmp_episode_dir):
@@ -284,7 +457,8 @@ def test_save_state_filters_invalid_camera_values(tmp_episode_dir):
     sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
     import json
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    assert data == {"1": "a", "3": "b"}
+    # 'c'(卡2 @4.2s)與 None(卡4)被過濾掉 → 只剩卡3 的 b @12.0
+    assert data["transitions"] == [{"t": 12.0, "cam": "b"}]
 
 
 # --- 分軌 speaker mapping：UI 端要拿到 mics + speakers_mapping ---
@@ -647,9 +821,15 @@ def test_save_state_translates_cameras_mapping_via_composite_id(tmp_episode_dir)
     )
     sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.cameras.json"
     import json
+    from podcast_toolkit import srt_io
     data = json.loads(sidecar.read_text(encoding="utf-8"))
-    # 新 idx：原 1 → 1；原 2:0 → 2；原 2:1 → 3；原 3 → 4；原 4 → 5
-    assert data == {"2": "a", "3": "b", "5": "b"}
+    # 新 idx：2:0→2(a 冗餘)、2:1→3(b)、4→5(b carry 冗餘) → 只有一個切到 b，時間=新卡3 start
+    v2cards = srt_io.parse(
+        (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    )
+    card3_start = next(c["start"] for c in v2cards if c["idx"] == 3)
+    assert data["version"] == 2
+    assert data["transitions"] == [{"t": round(card3_start, 3), "cam": "b"}]
 
 
 def test_save_state_splits_with_text_overrides_on_other_card(tmp_episode_dir):

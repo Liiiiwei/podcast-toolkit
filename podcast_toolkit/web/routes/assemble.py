@@ -30,9 +30,35 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 raise HTTPException(status_code=400, detail="preview_sec 必須是正整數")
             if preview_sec <= 0:
                 preview_sec = None
+        # subtitle_mode：burn=字幕燒進畫面（預設）、sidecar=影片不燒+另存對齊 .srt、overlay=抽換字幕
+        subtitle_mode = payload.get("subtitle_mode") or "burn"
+        if subtitle_mode not in ("burn", "sidecar", "overlay"):
+            raise HTTPException(status_code=400, detail="subtitle_mode 必須是 burn / sidecar / overlay")
+        overlay_srt = None
+        overlay_shift_ms = 0
+        overlay_keep_all = bool(payload.get("overlay_keep_all"))
+        if subtitle_mode == "overlay":
+            rel = (payload.get("overlay_srt") or "").strip()
+            if not rel:
+                raise HTTPException(status_code=400, detail="overlay 模式需指定 overlay_srt（字幕檔）")
+            # 限制在集資料夾內，避免任意路徑讀取
+            ep_root = ep.dir.resolve()
+            p = (ep.dir / rel).resolve()
+            if ep_root not in p.parents and p != ep_root:
+                raise HTTPException(status_code=400, detail="overlay_srt 必須在集資料夾內")
+            if not p.is_file():
+                raise HTTPException(status_code=400, detail=f"找不到字幕檔：{rel}")
+            overlay_srt = p
+            try:
+                overlay_shift_ms = int(payload.get("overlay_shift_ms") or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="overlay_shift_ms 必須是整數（毫秒）")
         try:
             info = assemble_job.start_job(
                 ep, targets=targets, force=force, preview_sec=preview_sec,
+                subtitle_mode=subtitle_mode,
+                overlay_srt=overlay_srt, overlay_shift_ms=overlay_shift_ms,
+                keep_all_content=overlay_keep_all,
             )
         except AssembleError as e:
             # 資產缺失 / 輸出存在 / 找不到 ffmpeg

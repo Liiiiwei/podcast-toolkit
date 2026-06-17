@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -77,6 +78,52 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
     cards = srt_io.parse(src.read_text(encoding="utf-8"))
     deletion_set = {int(i) for i in deletions or []}
     kept = [c for c in cards if c["idx"] not in deletion_set]
+    dst.write_text(srt_io.serialize(kept), encoding="utf-8")
+
+
+def cut_intervals_from_cfg(
+    cfg: dict, v2_cards: list[dict], deletions_override: list | None = None
+) -> list[tuple[float, float]]:
+    """取得**時間版刪除區間**（_v2/源時間軸的秒數），與字幕脫鉤。
+
+    優先序：deletions_override（overlay「保留全部內容」用；idx list，[] = 無刪段）
+      → cfg['cuts']（時間版新格式 [[start,end]...] 或 [{start,end}...]）
+      → cfg['deletions']（舊 idx，用 v2_cards 換算 → 自動遷移讀取）。
+    """
+    by_idx = {c["idx"]: c for c in v2_cards}
+
+    def _from_idx(idxs) -> list[tuple[float, float]]:
+        out = []
+        for i in idxs or []:
+            c = by_idx.get(int(i))
+            if c is not None:
+                out.append((float(c["start"]), float(c["end"])))
+        return sorted(out)
+
+    if deletions_override is not None:
+        return _from_idx(deletions_override)
+    cuts = cfg.get("cuts")
+    if cuts:
+        out = []
+        for c in cuts:
+            if isinstance(c, dict):
+                out.append((float(c["start"]), float(c["end"])))
+            else:
+                out.append((float(c[0]), float(c[1])))
+        return sorted(out)
+    return _from_idx(cfg.get("deletions") or [])
+
+
+def filter_srt_by_intervals(
+    src: Path, dst: Path, intervals: list[tuple[float, float]]
+) -> None:
+    """把落在任一刪除區間內的字幕卡拿掉，寫到 dst（單機燒字幕用，時間版）。"""
+    from podcast_toolkit import srt_io
+    cards = srt_io.parse(src.read_text(encoding="utf-8"))
+    kept = [
+        c for c in cards
+        if not any(a <= float(c["start"]) < b for a, b in intervals)
+    ]
     dst.write_text(srt_io.serialize(kept), encoding="utf-8")
 
 
@@ -212,28 +259,163 @@ def _hwaccel_args(enc: dict) -> list[str]:
     return ["-hwaccel", str(hw)] if hw else []
 
 
+def _rotate_for(cfg: dict, cam: str) -> float:
+    """讀 cfg.rotate.{cam} 的度數（cam='a'|'b'）；缺值 / 格式錯 → 0。
+
+    旋轉是「源畫面拉正」屬性，綁定實體攝影機（per cam），YT / Reels 共用同一角度；
+    crop 才是 per-version（輸出比例不同）。所以 rotate 由 builder 直接讀 cfg、不走 builder 參數。
+    """
+    rot = cfg.get("rotate") or {}
+    try:
+        return float(rot.get(cam) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# === 旋轉拉正預烤（P2c）===
+# rotate filter 又慢（實測 0.7× 即時）又難平行化（全核榨頂 ~1.9×），是燒字幕多機集輸出
+# 的主瓶頸。對策：有角度的鏡頭先「一次性」轉正成中間 proxy 檔快取，之後每次輸出改吃 proxy、
+# 該鏡頭 rotate 設 0 → 畫面完全一致（proxy 就是 rotate 後的幀、黑角保留交給後續 crop 切），
+# 但 assemble 跑在無 rotate 的 ~3× 速度。快取鍵 = 角度 + 來源檔簽章，沒變就重用。
+
+def _leveled_proxy_paths(work_dir: Path, cam_label: str) -> tuple[Path, Path, Path]:
+    """回 (proxy, tmp, meta)。proxy=轉正後中間檔；tmp=寫入中暫存；meta=快取鍵 json。"""
+    up = cam_label.upper()
+    return (
+        work_dir / f"_leveled_cam{up}.mp4",
+        work_dir / f".leveled_cam{up}.tmp.mp4",
+        work_dir / f"_leveled_cam{up}.json",
+    )
+
+
+def _src_signature(src: Path) -> tuple[int, int]:
+    """來源檔簽章 (mtime 取整秒, size)——換片/重新匯出就會變 → proxy 失效重烤。"""
+    st = src.stat()
+    return int(st.st_mtime), st.st_size
+
+
+def _leveled_proxy_valid(proxy: Path, meta: Path, src: Path, angle: float) -> bool:
+    """proxy 可否重用：檔在 + meta 的角度與來源簽章吻合現況。"""
+    if not proxy.exists() or not meta.exists():
+        return False
+    try:
+        m = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    mtime, size = _src_signature(src)
+    return (
+        abs(float(m.get("angle", 0.0)) - float(angle)) < 1e-6
+        and m.get("src_mtime") == mtime
+        and m.get("src_size") == size
+    )
+
+
+def write_leveled_meta(meta: Path, src: Path, angle: float) -> None:
+    """轉正成功後寫快取鍵（assemble_job 跑完 proxy 呼叫）。"""
+    mtime, size = _src_signature(src)
+    meta.write_text(
+        json.dumps({"angle": float(angle), "src_mtime": mtime, "src_size": size}),
+        encoding="utf-8",
+    )
+
+
+def build_leveled_cmd(src: str, out: str, angle: float, enc: dict) -> list[str]:
+    """預烤轉正指令：整支來源套 rotate=angle:ow=iw:oh=ih（與 _rotate_part 同義，黑角保留），
+    硬解 + 高碼率硬編成中間檔。無音訊（multicam 音訊一律走 cam A，proxy 用不到）。
+    高碼率（預設 60M，可由 enc.leveled_video_bitrate 覆寫）求視覺無損——assemble 之後還會
+    再編一次到最終碼率，避免兩代壓縮看得出來。"""
+    hw = _hwaccel_args(enc)
+    venc = ["-c:v", enc["video_codec"]]
+    if "videotoolbox" not in enc["video_codec"]:
+        venc += ["-preset", enc.get("preset", "medium")]
+    bitrate = enc.get("leveled_video_bitrate", "60M")
+    venc += ["-b:v", bitrate, "-maxrate", bitrate, "-bufsize", bitrate, "-pix_fmt", enc["pix_fmt"]]
+    return [
+        "ffmpeg", "-y",
+        *hw, "-i", src,
+        "-vf", f"rotate={float(angle)}*PI/180:ow=iw:oh=ih",
+        *venc, "-an",
+        out,
+    ]
+
+
+def _maybe_leveled(
+    work_dir: Path, src: Path, cam_label: str, angle: float, enc: dict
+) -> tuple[Path, dict | None, bool]:
+    """旋轉拉正預烤判斷。回 (assemble 要吃的來源, prebake_spec_or_None, baked)。
+
+    angle≈0 → (src, None, False)：不轉正，照舊。
+    proxy 有效 → (proxy, None, True)：重用快取，assemble 跳過 rotate。
+    proxy 無效 → (proxy, spec, True)：spec 描述要先跑的轉正指令，assemble 一樣跳過 rotate
+                （proxy 由 assemble_job 在主合成前建好）。
+    """
+    if abs(float(angle)) < 1e-6:
+        return src, None, False
+    proxy, tmp, meta = _leveled_proxy_paths(work_dir, cam_label)
+    if _leveled_proxy_valid(proxy, meta, src, angle):
+        return proxy, None, True
+    spec = {
+        "cmd": build_leveled_cmd(str(src), str(tmp), angle, enc),
+        "cwd": str(work_dir),
+        "proxy": proxy,
+        "tmp": tmp,
+        "meta": meta,
+        "angle": float(angle),
+        "src": src,
+        "total_dur": ffprobe_duration(src),
+        "label": f"cam{cam_label.upper()} 旋轉拉正",
+    }
+    return proxy, spec, True
+
+
+def _subs_part(srt_rel: str | None, style_str: str) -> str:
+    """字幕燒製 filter 片段（含結尾逗號）。
+
+    srt_rel=None → sidecar 模式（影片不燒字幕，字幕另存 .srt）→ 回空字串，整段 no-op。
+    """
+    if not srt_rel:
+        return ""
+    return f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
+
+
+def _speed_parts(factor: float) -> tuple[str, str]:
+    """回 (video_setpts, audio_atempo) 兩個 filter 片段（各含結尾逗號）。
+
+    只加速正片：影片 setpts=PTS/factor、音訊 atempo=factor。factor≈1 → 兩者皆空字串。
+    字幕在這之前就燒進畫面 → 像素隨畫面一起加速 → 自動同步（燒字幕模式）。
+    """
+    if not factor or abs(float(factor) - 1.0) < 1e-6:
+        return "", ""
+    f = float(factor)
+    return f"setpts=PTS/{f},", f"atempo={f},"
+
+
 def build_filter_complex_yt(
     cfg: dict,
     main_dur: float,
-    srt_rel: str,
+    srt_rel: str | None,
     deletion_intervals: list[tuple[float, float]] | None = None,
     wm_input_idx: int | None = None,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
+    speed_factor: float = 1.0,
 ) -> str:
     """YT 16:9：原本的三段 concat（intro + main + outro card），讀 crop_yt。
 
     audio_input_idx：若提供，正片音訊改從該 input idx 取（外接音檔），
     並套用 audio_sync_offset 對齊；None = 用 cam A 原音。
+    srt_rel=None → sidecar 模式（影片不燒字幕）。speed_factor>1 → 只加速正片。
+    main_dur 已是「加速後」的正片長度（呼叫端先除以 speed_factor），fade 計時直接用。
     """
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
     intro_dur = cfg["assets"]["intro_duration"]
     intro_fade_out = cfg["assets"]["intro_fade_out"]
     style_str = build_style_string(cfg["subtitle_style"])
+    speed_v, speed_a = _speed_parts(speed_factor)
 
-    # main video 前處理 chain：crop_yt（源像素裁切）→ scale 到 1920×1080
-    prep_part = _crop_part_str(cfg.get("crop_yt"), res_w, res_h)
+    # main video 前處理 chain：rotate（cam A 拉正）→ crop_yt（源像素裁切）→ scale 到 1920×1080
+    prep_part = _crop_part_str(cfg.get("crop_yt"), res_w, res_h, _rotate_for(cfg, "a"))
 
     # 刪除區間：select / aselect filter（跳過 deletion 時間段）
     select_v, select_a = "", ""
@@ -254,9 +436,12 @@ def build_filter_complex_yt(
     # 字幕會以原片底部為基準算 MarginV，crop 後跟前端預覽（鎖在裁切框內）對不上。
     v1_pre = (
         f"[1:v]{prep_part}"
-        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
+        f"{_subs_part(srt_rel, style_str)}"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
+    # 倍速：字幕燒製後再 setpts，字幕像素隨畫面一起加速 → 自動同步
+    if speed_v:
+        v1_pre = f"{v1_pre},{speed_v.rstrip(',')}"
     v1_fade = (
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
     )
@@ -278,7 +463,7 @@ def build_filter_complex_yt(
         f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
         f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
@@ -288,22 +473,25 @@ def build_filter_complex_yt(
 def build_filter_complex_reels(
     cfg: dict,
     main_dur: float,
-    srt_rel: str,
+    srt_rel: str | None,
     deletion_intervals: list[tuple[float, float]] | None = None,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
     wm_input_idx: int | None = None,
+    speed_factor: float = 1.0,
 ) -> str:
     """Reels 9:16：只有主影片，1080x1920，用 crop_reels。
 
     audio_input_idx：若提供，音訊改從該 input idx 取（外接音檔）並對齊；
-    None = 用主影片原音。"""
+    None = 用主影片原音。
+    srt_rel=None → sidecar 模式（不燒字幕）。speed_factor>1 → 加速；main_dur 已是加速後長度。"""
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
     style_str = build_style_string(cfg.get("subtitle_style_reels") or cfg["subtitle_style"])
+    speed_v, speed_a = _speed_parts(speed_factor)
 
-    # crop_reels 源像素裁切 → scale 到 1080×1920；無 crop 時純 scale
-    prep_part = _crop_part_str(cfg.get("crop_reels"), res_w, res_h)
+    # rotate（cam A 拉正）→ crop_reels 源像素裁切 → scale 到 1080×1920；無 crop 時純 scale
+    prep_part = _crop_part_str(cfg.get("crop_reels"), res_w, res_h, _rotate_for(cfg, "a"))
 
     select_v, select_a = "", ""
     if deletion_intervals:
@@ -322,9 +510,12 @@ def build_filter_complex_reels(
     # 字幕燒在最終 1080×1920 frame 上（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
     v_pre = (
         f"[0:v]{prep_part}"
-        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
+        f"{_subs_part(srt_rel, style_str)}"
         f"{select_v}setsar=1,fps={enc['framerate']},format={enc['pix_fmt']}"
     )
+    # 倍速：字幕燒製後再 setpts，字幕像素隨畫面一起加速 → 自動同步
+    if speed_v:
+        v_pre = f"{v_pre},{speed_v.rstrip(',')}"
     v_fade = (
         f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
     )
@@ -340,7 +531,7 @@ def build_filter_complex_reels(
     return (
         f"{v_chain};"
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
 
 
@@ -349,40 +540,35 @@ def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
     return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
-def _multicam_cam_prep(
-    src_idx: int,
-    cam_label: str,
-    srt_rel: str,
+def _multicam_segments(
+    segments: list[dict],
+    *,
+    srt_rel: str | None,
     style_str: str,
-    res_w: str | int,
-    res_h: str | int,
-    prep_part: str,
+    crop_part_a: str,
+    crop_part_b: str,
     fps,
     fmt: str,
-    setpts_prefix: str = "",
-) -> str:
-    """組單一鏡頭的前處理 chain（PTS 對齊 → crop/scale → 字幕 → 規格化）。
-
-    cam_label='a' 或 'b'；輸出 label 為 [m_{cam_label}_v]。
-    setpts_prefix 給 cam B 用來把 PTS 移到主時間軸（cam A 留空）。
-    prep_part 已包含 crop（源像素）+ scale 到目標解析度的完整 chain。
-    """
-    # 字幕燒在最終裁切後 frame（crop+scale 之後），對齊前端「字幕鎖在裁切框內」預覽。
-    return (
-        f"[{src_idx}:v]{setpts_prefix}{prep_part}"
-        f"subtitles={escape_filter_path(srt_rel)}:force_style='{style_str}',"
-        f"setsar=1,fps={fps},format={fmt}[m_{cam_label}_v]"
-    )
-
-
-def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
-    """組 per-segment trim + 必要時的 segment concat。
+    sync_offset_b: float,
+    a_vidx: int,
+    b_vidx: int,
+) -> tuple[list[str], str, str]:
+    """組 per-segment「trim 先切 → crop/scale → 燒字幕 → 正規化」+ 必要時 concat。
 
     回傳 (parts, main_v_in, main_a_in)。單段時直接用 seg_v_0/seg_a_0，
     多段才額外加 concat=n=N 進 main_v_raw/main_a_raw。
 
-    [m_a_v]/[m_b_v]/[m_a_a] 多次引用時必須明確 split/asplit；ffmpeg 的
-    auto-split 在這個 trim+concat 圖形下會吃掉幀導致主段截斷（只剩前 1-2 段）。
+    效能（P2）：crop/scale/字幕從舊版「每台全長各跑一次再 trim」改成「每段只跑自己那台」。
+    GPU 解碼搬回 RAM 後的 CPU 濾鏡鏈（crop/scale/libass 燒字幕）由 2×全長 降到 1×成品長
+    ── 兩台不再各自把整片燒一遍再 trim 丟掉。解碼仍走全長（要再省得逐段 -ss seek，另案）。
+
+    字幕燒在 setpts=PTS-STARTPTS「之前」：trim 後幀仍帶主時間軸 PTS（cam B 已先 setpts
+    對齊主軸），libass 直接讀到正確時間 → 不需逐段位移 SRT；且仍接在 crop/scale 之後，
+    維持「字幕鎖在裁切框內」。
+
+    a_vidx / b_vidx = cam A / cam B 的視訊 input index（YT=1/2，Reels=0/1）。
+    同一 cam 出現 N 段時用明確 split=N：ffmpeg auto-split 在這個 trim+concat 圖形下
+    會吃掉幀導致主段截斷（只剩前 1-2 段，2026-06 regression）。
     """
     parts: list[str] = []
     n = len(segments)
@@ -391,12 +577,17 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     n_b_v = sum(1 for s in segments if s["cam"] == "b")
     n_a_a = n  # 音訊全部走 cam A
 
+    subs = _subs_part(srt_rel, style_str)
+    # cam B 先把 PTS 移到主時間軸，後面 trim / 字幕讀到的時間才對（cam A 原生就是主軸）
+    b_setpts = f"setpts=PTS-{sync_offset_b}/TB,"
+
+    # 視訊：每台先 split 成自己的段數（>1 才明確 split）。cam B 的 setpts 在 split 行套一次。
     if n_a_v > 1:
-        labels = "".join(f"[m_a_v_{i}]" for i in range(n_a_v))
-        parts.append(f"[m_a_v]split={n_a_v}{labels}")
+        labels = "".join(f"[a_v_{i}]" for i in range(n_a_v))
+        parts.append(f"[{a_vidx}:v]split={n_a_v}{labels}")
     if n_b_v > 1:
-        labels = "".join(f"[m_b_v_{i}]" for i in range(n_b_v))
-        parts.append(f"[m_b_v]split={n_b_v}{labels}")
+        labels = "".join(f"[b_v_{i}]" for i in range(n_b_v))
+        parts.append(f"[{b_vidx}:v]{b_setpts}split={n_b_v}{labels}")
     if n_a_a > 1:
         labels = "".join(f"[m_a_a_{i}]" for i in range(n_a_a))
         parts.append(f"[m_a_a]asplit={n_a_a}{labels}")
@@ -406,15 +597,24 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     for i, seg in enumerate(segments):
         cam = seg["cam"]
         s, e = float(seg["start"]), float(seg["end"])
-        n_cam = n_a_v if cam == "a" else n_b_v
-        v_src = f"m_{cam}_v_{cam_idx[cam]}" if n_cam > 1 else f"m_{cam}_v"
+        if cam == "a":
+            v_src = f"a_v_{cam_idx['a']}" if n_a_v > 1 else f"{a_vidx}:v"
+            pre = ""
+            crop = crop_part_a
+        else:
+            v_src = f"b_v_{cam_idx['b']}" if n_b_v > 1 else f"{b_vidx}:v"
+            # 多段時 setpts 已在 split 行；單段沒 split 行 → 在這條 branch 補
+            pre = "" if n_b_v > 1 else b_setpts
+            crop = crop_part_b
         cam_idx[cam] += 1
-        a_src = f"m_a_a_{audio_idx}" if n_a_a > 1 else "m_a_a"
-        audio_idx += 1
+        # trim 先切（主時間軸）→ crop/scale → 燒字幕（PTS 仍主軸）→ 收 PTS 歸零 → 規格化供 concat
         parts.append(
-            f"[{v_src}]trim={s:.3f}:{e:.3f},setpts=PTS-STARTPTS[seg_v_{i}]"
+            f"[{v_src}]{pre}trim={s:.3f}:{e:.3f},{crop}{subs}"
+            f"setpts=PTS-STARTPTS,setsar=1,fps={fps},format={fmt}[seg_v_{i}]"
         )
         # 音訊永遠取 cam A（多鏡頭只切畫面，聲音來源固定）
+        a_src = f"m_a_a_{audio_idx}" if n_a_a > 1 else "m_a_a"
+        audio_idx += 1
         parts.append(
             f"[{a_src}]atrim={s:.3f}:{e:.3f},asetpts=PTS-STARTPTS[seg_a_{i}]"
         )
@@ -427,46 +627,72 @@ def _multicam_segments(segments: list[dict]) -> tuple[list[str], str, str]:
     return parts, "seg_v_0", "seg_a_0"
 
 
-def _crop_part_str(crop: dict | None, res_w, res_h) -> str:
+def _rotate_part(rotate_deg: float) -> str:
+    """把傾斜畫面拉正的 rotate filter 片段（含結尾逗號）。角度≈0 → 空字串。
+
+    ow=iw:oh=ih 保持原 frame 尺寸（旋轉露出的角落填黑）；交給後續 crop 把黑角裁掉。
+    所以 rotate 之後的 crop 仍以「源尺寸」為基準算 iw*X/ih*Y，座標語意不變。
+    bilinear=1（預設）讓邊緣平滑，避免小角度旋轉鋸齒。
+    """
+    if not rotate_deg or abs(float(rotate_deg)) < 1e-6:
+        return ""
+    return f"rotate={float(rotate_deg)}*PI/180:ow=iw:oh=ih,"
+
+
+def _crop_part_str(crop: dict | None, res_w, res_h, rotate_deg: float = 0.0) -> str:
     """把源視訊轉到目標解析度的 prep chain（含 trailing comma）。
 
+    順序：rotate（拉正）→ crop（源像素裁切）→ scale（目標解析度）。
     crop 用 iw*W:ih*H:iw*X:ih*Y 表達式直接吃源像素，再 scale 到目標解析度。
     比舊的 scale→crop→scale 三段穩 — 源 aspect 跟目標不同時（例如 1920×1080
-    源 + 1080×1920 Reels 目標）不會先被壓扁再裁。crop 不存在時只 scale。
+    源 + 1080×1920 Reels 目標）不會先被壓扁再裁。crop 不存在時只 rotate+scale。
 
+    rotate_deg：>0 順時針拉正；旋轉露出的黑角靠 crop 內縮裁掉（旋轉建議搭配 crop）。
     res_w / res_h 可傳 str 或 int（YT 用 cfg 字串 split、Reels 是 int）。
     """
     rw, rh = int(res_w), int(res_h)
+    rot = _rotate_part(rotate_deg)
     if not crop:
-        return f"scale={rw}:{rh},"
+        return f"{rot}scale={rw}:{rh},"
     return (
-        f"crop=iw*{crop['width']}:ih*{crop['height']}:"
+        f"{rot}crop=iw*{crop['width']}:ih*{crop['height']}:"
         f"iw*{crop['x']}:ih*{crop['y']},scale={rw}:{rh},"
     )
 
 
-def _cam_crop_parts(base_crop: dict | None, res_w, res_h) -> tuple[str, str]:
-    """把 crop_yt / crop_reels 拆成 (prep_a, prep_b)：含 crop+scale 完整 prep chain。
+def _cam_crop_parts(
+    base_crop: dict | None, res_w, res_h,
+    rotate_a: float = 0.0, rotate_b: float = 0.0,
+) -> tuple[str, str]:
+    """把 crop_yt / crop_reels 拆成 (prep_a, prep_b)：含 rotate+crop+scale 完整 prep chain。
 
     base_crop.b（optional dict）= cam B 獨立 crop；沒設就 fallback 用 base 給兩鏡頭。
-    無 base_crop 時兩鏡頭都只 scale 到目標解析度（不裁切）。
+    無 base_crop 時兩鏡頭都只 rotate+scale 到目標解析度（不裁切）。
+    rotate_a / rotate_b：cam A / cam B 各自的拉正角度（度數，per cam 獨立）。
     """
     if not base_crop:
-        scale_only = _crop_part_str(None, res_w, res_h)
-        return scale_only, scale_only
+        return (
+            _crop_part_str(None, res_w, res_h, rotate_a),
+            _crop_part_str(None, res_w, res_h, rotate_b),
+        )
     crop_b = base_crop.get("b") or base_crop
-    return _crop_part_str(base_crop, res_w, res_h), _crop_part_str(crop_b, res_w, res_h)
+    return (
+        _crop_part_str(base_crop, res_w, res_h, rotate_a),
+        _crop_part_str(crop_b, res_w, res_h, rotate_b),
+    )
 
 
 def build_filter_complex_yt_multicam(
     cfg: dict,
     main_dur: float,
-    srt_rel: str,
+    srt_rel: str | None,
     segments: list[dict],
     sync_offset_b: float = 0.0,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
     wm_input_idx: int | None = None,
+    speed_factor: float = 1.0,
+    overlay_ass_rel: str | None = None,
 ) -> str:
     """YT 雙鏡頭：[0]=intro, [1]=cam A, [2]=cam B, [3]=outro image, [4]=outro audio。
 
@@ -475,6 +701,7 @@ def build_filter_complex_yt_multicam(
 
     audio_input_idx：若提供，主音訊改從該 input idx 取（外接音檔），
     並套用 audio_sync_offset 對齊；None = 走 cam A 原音。
+    srt_rel=None → sidecar 模式（不燒字幕）。speed_factor>1 → 只加速 concat 後的正片段（intro/outro 不動）。
     """
     enc = cfg["encode"]
     res_w, res_h = enc["resolution"].split("x")
@@ -484,8 +711,11 @@ def build_filter_complex_yt_multicam(
     sr = enc["audio_sample_rate"]
     fmt = enc["pix_fmt"]
     fps = enc["framerate"]
+    speed_v, speed_a = _speed_parts(speed_factor)
 
-    crop_part_a, crop_part_b = _cam_crop_parts(cfg.get("crop_yt"), res_w, res_h)
+    crop_part_a, crop_part_b = _cam_crop_parts(
+        cfg.get("crop_yt"), res_w, res_h, _rotate_for(cfg, "a"), _rotate_for(cfg, "b")
+    )
 
     # 主音訊來源：外接音檔（含對齊）或 cam A 原音
     if audio_input_idx is not None:
@@ -495,47 +725,34 @@ def build_filter_complex_yt_multicam(
         a_idx_main = 1
         align_a = ""
 
-    # 只為實際出現在 segment plan 的鏡頭加影片 prep chain；
-    # 若某鏡頭完全沒有 segment（如全程都是另一側），就不產生 [m_x_v]，
-    # 避免 format filter 輸出懸空 → ffmpeg EINVAL。
-    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
-    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
-
     parts: list[str] = []
-    # Cam A：不需 PTS 位移（主時間軸就是它的時間軸）
-    if n_a_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(1, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-        )
+    # 音訊永遠走 cam A（或外接音檔）；視訊每段只跑自己那台的 crop/scale/字幕（見 _multicam_segments）。
+    # 某鏡頭完全沒 segment 時 _multicam_segments 不產生它的 branch（不會懸空 → 不會 EINVAL）。
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
-    # Cam B：先把 PTS 移到主時間軸，subtitles 之後讀到的時間才會對
-    if n_b_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(
-                2, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
-            )
-        )
-
-    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    seg_parts, main_v_in, main_a_in = _multicam_segments(
+        segments, srt_rel=srt_rel, style_str=style_str,
+        crop_part_a=crop_part_a, crop_part_b=crop_part_b,
+        fps=fps, fmt=fmt, sync_offset_b=sync_offset_b,
+        a_vidx=1, b_vidx=2,
+    )
     parts.extend(seg_parts)
 
-    # main 段 fade in/out（若有 watermark，先 overlay 再 fade，讓淡入淡出帶到 logo）
+    # main 段：先疊封面（只在正片段）→ 倍速 setpts → fade in/out（淡入淡出帶到封面與加速後時間軸）
     if _wm_enabled(cfg, wm_input_idx):
         wm_w, xy = _wm_overlay_params(cfg["watermark"], res_w, res_h)
         parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm_main]")
         parts.append(
             f"[{main_v_in}][wm_main]overlay={xy},"
-            f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
+            f"{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
         )
     else:
         parts.append(
-            f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
+            f"[{main_v_in}]{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
         )
     parts.append(
-        f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
+        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
     )
 
     # Intro / outro
@@ -556,10 +773,22 @@ def build_filter_complex_yt_multicam(
         f"afade=t=in:st=0:d=0.5[a_outro]"
     )
 
-    parts.append(
-        "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
-        "concat=n=3:v=1:a=1[v][a]"
-    )
+    if overlay_ass_rel:
+        # 抽換字幕：concat 後（intro+正片+outro 全幀、成品時間軸）直接疊字幕，
+        # 不經來源時間軸轉換 → 任何「對齊成品時間軸的 .srt/.ass」都能原樣換上。
+        # 單次編碼、無中間檔；鏡頭/刪段/倍速已烙進 [vbody]，字幕純圖層。
+        parts.append(
+            "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
+            "concat=n=3:v=1:a=1[vbody][a]"
+        )
+        parts.append(
+            f"[vbody]subtitles={overlay_ass_rel}:force_style='{style_str}'[v]"
+        )
+    else:
+        parts.append(
+            "[v_intro][a_intro][main_v][main_a][v_outro][a_outro]"
+            "concat=n=3:v=1:a=1[v][a]"
+        )
 
     return ";".join(parts)
 
@@ -567,17 +796,19 @@ def build_filter_complex_yt_multicam(
 def build_filter_complex_reels_multicam(
     cfg: dict,
     main_dur: float,
-    srt_rel: str,
+    srt_rel: str | None,
     segments: list[dict],
     sync_offset_b: float = 0.0,
     audio_input_idx: int | None = None,
     audio_sync_offset: float = 0.0,
     wm_input_idx: int | None = None,
+    speed_factor: float = 1.0,
 ) -> str:
     """Reels 雙鏡頭：[0]=cam A, [1]=cam B。1080×1920，無 intro/outro。
 
     audio_input_idx：若提供，音訊改從該 input idx 取（外接音檔）並對齊；
     None = 用 cam A 原音。
+    srt_rel=None → sidecar 模式（不燒字幕）。speed_factor>1 → 加速正片；main_dur 已是加速後長度。
     """
     enc = cfg["encode"]
     res_w, res_h = 1080, 1920
@@ -585,8 +816,11 @@ def build_filter_complex_reels_multicam(
     sr = enc["audio_sample_rate"]
     fmt = enc["pix_fmt"]
     fps = enc["framerate"]
+    speed_v, speed_a = _speed_parts(speed_factor)
 
-    crop_part_a, crop_part_b = _cam_crop_parts(cfg.get("crop_reels"), res_w, res_h)
+    crop_part_a, crop_part_b = _cam_crop_parts(
+        cfg.get("crop_reels"), res_w, res_h, _rotate_for(cfg, "a"), _rotate_for(cfg, "b")
+    )
 
     # 主音訊來源：外接音檔（含對齊）或 cam A 原音
     if audio_input_idx is not None:
@@ -596,26 +830,17 @@ def build_filter_complex_reels_multicam(
         a_idx_main = 0
         align_a = ""
 
-    n_a_v_segs = sum(1 for s in segments if s["cam"] == "a")
-    n_b_v_segs = sum(1 for s in segments if s["cam"] == "b")
-
     parts: list[str] = []
-    if n_a_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(0, "a", srt_rel, style_str, res_w, res_h, crop_part_a, fps, fmt)
-        )
+    # 音訊永遠走 cam A（或外接音檔）；視訊每段只跑自己那台的 crop/scale/字幕（見 _multicam_segments）
     parts.append(
         f"[{a_idx_main}:a]aformat=sample_rates={sr}:channel_layouts=stereo,{align_a}anull[m_a_a]"
     )
-    if n_b_v_segs > 0:
-        parts.append(
-            _multicam_cam_prep(
-                1, "b", srt_rel, style_str, res_w, res_h, crop_part_b, fps, fmt,
-                setpts_prefix=f"setpts=PTS-{sync_offset_b}/TB,",
-            )
-        )
-
-    seg_parts, main_v_in, main_a_in = _multicam_segments(segments)
+    seg_parts, main_v_in, main_a_in = _multicam_segments(
+        segments, srt_rel=srt_rel, style_str=style_str,
+        crop_part_a=crop_part_a, crop_part_b=crop_part_b,
+        fps=fps, fmt=fmt, sync_offset_b=sync_offset_b,
+        a_vidx=0, b_vidx=1,
+    )
     parts.extend(seg_parts)
 
     if _wm_enabled(cfg, wm_input_idx):
@@ -623,14 +848,14 @@ def build_filter_complex_reels_multicam(
         parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm_main]")
         parts.append(
             f"[{main_v_in}][wm_main]overlay={xy},"
-            f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
+            f"{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
         )
     else:
         parts.append(
-            f"[{main_v_in}]fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
+            f"[{main_v_in}]{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
         )
     parts.append(
-        f"[{main_a_in}]afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
 
     return ";".join(parts)
@@ -649,6 +874,10 @@ def prepare_assembly(
     output_kind: str = "yt",
     force: bool = False,
     preview_sec: int | None = None,
+    subtitle_mode: str = "burn",
+    overlay_srt: Path | None = None,
+    out_override: Path | None = None,
+    deletions_override: list | None = None,
 ) -> dict:
     """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
 
@@ -656,14 +885,37 @@ def prepare_assembly(
       - yt：1920x1080，含 intro + outro card，用 crop_yt
       - reels：1080x1920,只含主影片，用 crop_reels
 
+    subtitle_mode：
+      - 'burn'（直接合成）：字幕燒進畫面（現行行為）。來源時間軸 _v2 隨管線轉換後逐段燒。
+      - 'sidecar'（輸出字幕與影片）：影片不燒字幕，另把字幕映射到「成品時間軸」
+        （收刪段 → ÷倍速 → +片頭偏移）寫成 .srt，放在成品旁。倍速下也對得齊。
+      - 'overlay'（抽換字幕）：影片不燒來源字幕，改在合成最後一段（concat 後、成品時間軸全幀）
+        直接疊 overlay_srt。overlay_srt 必須已對齊「成品時間軸」（例如自 YT 下載修正後的 .srt）。
+        鏡頭/刪段/倍速完全照舊烙進畫面，字幕變成可任意抽換的圖層；單次編碼、無中間檔。
+
+    overlay_srt：subtitle_mode='overlay' 時必填，成品時間軸的字幕檔。
+    out_override：指定輸出檔路徑（None = 用 {name}_YT完整版.mp4）；抽換字幕時用來另存、不蓋原成品。
+
     preview_sec：若為正整數，ffmpeg 加 -t 截斷輸出長度（含 intro/正片/outro 全鏈路前 N 秒）；
     輸出檔名插入 .preview 避免覆蓋正式成品。
 
     tmp_out 寫在 04_工作檔/.{out.name}.tmp，呼叫端跑完 ffmpeg 後負責 rename 到 03_成品/。
-    回傳 dict：cmd / cwd / out / tmp_out / main_dur / total_dur / output_kind。
+    回傳 dict：cmd / cwd / out / tmp_out / main_dur / total_dur / output_kind / sidecar_srt。
+    sidecar_srt：burn 模式為 None；sidecar 模式為 {"path": Path, "content": str}，呼叫端成功後落檔。
     """
     if output_kind not in ("yt", "reels"):
         raise AssembleError(f"未知 output_kind={output_kind}")
+    if subtitle_mode not in ("burn", "sidecar", "overlay"):
+        raise AssembleError(f"未知 subtitle_mode={subtitle_mode}")
+    if subtitle_mode == "overlay":
+        if overlay_srt is None:
+            raise AssembleError("subtitle_mode='overlay' 需提供 overlay_srt")
+        if not Path(overlay_srt).exists():
+            raise AssembleError(f"找不到 overlay_srt：{overlay_srt}", exit_code=3)
+        if output_kind != "yt":
+            raise AssembleError("overlay 模式目前只支援 output_kind='yt'")
+    # overlay / sidecar 都不燒「來源時間軸」字幕；overlay 改在最後一段疊成品時間軸字幕
+    burn_subs = subtitle_mode == "burn"
 
     if not shutil.which("ffmpeg"):
         raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
@@ -721,6 +973,10 @@ def prepare_assembly(
     else:
         out = ep.output_reels_video()
 
+    # 抽換字幕等情境：另存到指定檔名，不蓋原成品
+    if out_override is not None:
+        out = Path(out_override)
+
     # preview 模式：檔名插 .preview 避免覆蓋正式成品（驗證 bitrate 用，反覆跑不影響交付檔）
     if preview_sec and preview_sec > 0:
         out = out.with_name(f"{out.stem}.preview{out.suffix}")
@@ -740,63 +996,128 @@ def prepare_assembly(
                     exit_code=3,
                 )
 
-    # 量正片時長
+    # 量正片時長（main_dur_src = 未扣刪段/未加速的源長度，sidecar 時間軸換算要用原長）
     main_dur = ffprobe_duration(main_video)
+    main_dur_src = main_dur
     enc = cfg["encode"]
+
+    # 倍速：speed.enabled 時取 factor（夾在 atempo 合法區間 0.5–2.0；預設 1.25）；否則 1.0 = 不加速
+    speed_cfg = cfg.get("speed") or {}
+    speed_factor = 1.0
+    if speed_cfg.get("enabled"):
+        try:
+            speed_factor = float(speed_cfg.get("factor") or 1.0)
+        except (TypeError, ValueError):
+            speed_factor = 1.0
+        speed_factor = min(2.0, max(0.5, speed_factor))
+
+    # 字幕卡（源時間軸）：sidecar 模式拿來映射成成品時間軸；multicam 段規劃也共用這份 parse
+    from podcast_toolkit import srt_io
+    all_cards = srt_io.parse(srt.read_text(encoding="utf-8"))
 
     # filter_complex：subtitles filter 路徑要相對 cwd，subprocess cwd 設為 03_成品/
     cwd = ep.subdir("output")
+
+    # 旋轉拉正預烤（P2c）：有角度的鏡頭先一次性轉正成 proxy 快取，assemble 改吃 proxy、
+    # 該鏡頭 rotate 設 0（畫面一致，省掉每次輸出最重的 rotate）。proxy 由 assemble_job 在
+    # 主合成前建好；角度/來源沒變就重用，YT/Reels/重輸出共享。只在 multicam 啟用（單機後續再補）。
+    render_cfg = cfg
+    prebakes: list[dict] = []
+    if multicam:
+        work_dir = ep.subdir("work")
+        new_rot = dict(cfg.get("rotate") or {})
+        main_video, pb_a, baked_a = _maybe_leveled(work_dir, main_video, "a", _rotate_for(cfg, "a"), enc)
+        cam_b_video, pb_b, baked_b = _maybe_leveled(work_dir, cam_b_video, "b", _rotate_for(cfg, "b"), enc)
+        if baked_a:
+            new_rot["a"] = 0.0
+        if baked_b:
+            new_rot["b"] = 0.0
+        if baked_a or baked_b:
+            render_cfg = {**cfg, "rotate": new_rot}
+        prebakes = [pb for pb in (pb_a, pb_b) if pb]
+
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
 
-    # 把 SRT 轉成有明確 PlayResX/Y 的 ASS，PlayResY 設為輸出 frame 高，避免
-    # libass 對 SRT 的預設 PlayResY=288 把 MarginV/FontSize 等比放大。
-    if output_kind == "yt":
-        ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
-    else:
-        ass_res_w, ass_res_h = 1080, 1920
-    ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
-    _write_ass_from_srt(srt, ass_path, ass_res_w, ass_res_h)
-    srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
+    # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
+    # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
+    srt_rel: str | None = None
+    if burn_subs:
+        if output_kind == "yt":
+            ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
+        else:
+            ass_res_w, ass_res_h = 1080, 1920
+        ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
+        _write_ass_from_srt(srt, ass_path, ass_res_w, ass_res_h)
+        srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
-    deletions = list(cfg.get("deletions") or [])
+    # 抽換字幕：把成品時間軸的 overlay_srt 轉成成品解析度的 ASS，最後一段直接疊在全幀上
+    overlay_ass_rel: str | None = None
+    if subtitle_mode == "overlay":
+        ov_w, ov_h = (int(x) for x in enc["resolution"].split("x"))
+        ov_ass = ep.subdir("work") / f"_overlay_{ov_w}x{ov_h}.ass"
+        _write_ass_from_srt(Path(overlay_srt), ov_ass, ov_w, ov_h)
+        overlay_ass_rel = str(ov_ass.relative_to(cwd)) if ov_ass.is_relative_to(cwd) else str(ov_ass)
+
+    # deletions_override 非 None → 取代 yaml deletions（抽換字幕「保留全部內容」用：對齊外部字幕的
+    # 完整時間軸，避免事後加的刪段讓外部字幕在刪點之後整段慢出現）
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
-    # multicam 分流：segment plan 取代 deletion_intervals，已內建 deletions + 頭尾 trim
+    # 刪段已改**時間版**（cuts，存 _v2 時間軸，與字幕脫鉤）。canonical _v2 卡供 legacy idx 換算，
+    # 也供鏡頭 legacy 換算共用（不依賴 active_srt，避免 srt_path 指到別份字幕時錯位）。
+    v2_canon_path = ep.output_v2_srt()
+    v2_canon_cards = (
+        srt_io.parse(v2_canon_path.read_text(encoding="utf-8"))
+        if v2_canon_path.exists() else all_cards
+    )
+    cut_intervals = cut_intervals_from_cfg(cfg, v2_canon_cards, deletions_override)
+    # _v2 → cam-A 時間軸：與 srt 一樣 -sync 位移（segment_plan / 單機 deletion_intervals 同軸）
+    if audio_file is not None and abs(audio_sync_offset) >= 0.001:
+        cut_intervals = [
+            (a - audio_sync_offset, b - audio_sync_offset) for a, b in cut_intervals
+        ]
+
+    # removed_intervals = 源時間軸上「被剪掉的區間」，sidecar .srt 映射用（單機 / 雙機共用同一套換算）
     segments: list[dict] = []
     sync_offset_b = 0.0
     if multicam:
-        from podcast_toolkit import cameras_io, srt_io
+        from podcast_toolkit import cameras_io
         from podcast_toolkit.segment_plan import build_segment_plan
 
-        cards = srt_io.parse(srt.read_text(encoding="utf-8"))
-        cameras_mapping = cameras_io.load(ep.output_v2_cameras_json())
+        # 鏡頭時間版切換點（同 _v2 時間軸 → -sync）
+        cam_transitions = cameras_io.load_transitions(ep.output_v2_cameras_json(), v2_canon_cards)
+        if audio_file is not None and abs(audio_sync_offset) >= 0.001:
+            cam_transitions = [
+                {"t": tr["t"] - audio_sync_offset, "cam": tr["cam"]}
+                for tr in cam_transitions
+            ]
         segments = build_segment_plan(
-            cards=cards,
-            deletions=deletions,
-            cameras_mapping=cameras_mapping,
+            cut_intervals=cut_intervals,
+            cam_transitions=cam_transitions,
             main_dur=main_dur,
             head_trim_sec=head_trim,
             tail_trim_sec=tail_trim,
         )
-        # main_dur = 所有 keep 段加總（segment_plan 已扣 deletion + trim）
+        # main_dur = 所有 keep 段加總（segment_plan 已扣刪段 + 頭尾 trim）
         main_dur = sum(s["end"] - s["start"] for s in segments)
         sync_offset_b = float((cfg.get("camera_sync_offset") or {}).get("b") or 0.0)
-        # multicam 直接燒原 _v2.srt（trim 自動把被刪段的字幕一起切掉，不需 clean_srt）
+        # multicam 直接燒原字幕（trim 自動把被刪段的字幕一起切掉，不需 clean_srt）
         deletion_intervals = []
+        removed_intervals = _removed_intervals_from_segments(segments, main_dur_src)
     else:
-        # 處理 deletions + 頭尾 trim：算時間區間 + 寫一份過濾後的 srt 給 ffmpeg 燒字幕
-        deletion_intervals = build_deletion_intervals(srt, deletions) if deletions else []
+        # 單機：cut_intervals 直接當刪除區間 + 頭尾 trim
+        deletion_intervals = list(cut_intervals)
         if head_trim > 0:
             deletion_intervals.append((0.0, head_trim))
         if tail_trim > 0:
             deletion_intervals.append((main_dur - tail_trim, main_dur))
         deletion_intervals = sorted(deletion_intervals)
+        removed_intervals = deletion_intervals
 
-        if deletions:
-            # 燒字幕：去掉刪除段，避免 select 後字幕時間錯位閃爍
+        if burn_subs and cut_intervals:
+            # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
-            filter_deletion_srt(srt, clean_srt, deletions)
+            filter_srt_by_intervals(srt, clean_srt, cut_intervals)
             srt = clean_srt
             srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
 
@@ -804,6 +1125,9 @@ def prepare_assembly(
             # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
             deleted_total = sum(b - a for a, b in deletion_intervals)
             main_dur = main_dur - deleted_total
+
+    # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
+    main_dur = main_dur / speed_factor
 
     # tmp_out 寫在 work/，成功後由呼叫端 rename 到 out
     # 保留 .mp4 結尾，否則 ffmpeg 從 .tmp 副檔名無法判斷輸出格式
@@ -824,21 +1148,30 @@ def prepare_assembly(
             str(audio_file.relative_to(cwd)) if audio_file.is_relative_to(cwd) else str(audio_file)
         )
 
-    # Watermark logo：cfg.watermark.enabled=true 且 assets.logo 指向的檔案實際存在才會 wire。
-    # 兩條件任一不符 → wm_rel_str=None，後面 wm_input_idx 也是 None，filter 自動 no-op。
+    # 節目封面 overlay：cfg.watermark.enabled=true 且封面 / logo 檔案實際存在才會 wire。
+    # 取圖優先 assets.cover（節目封面），退回 assets.logo；皆無 → wm_rel_str=None，filter 自動 no-op。
+    # 既有 overlay 邏輯只疊在「正片段」（intro/outro 不碰），天生符合「錄影開始後才放封面」。
     wm_cfg = cfg.get("watermark") or {}
     wm_rel_str: str | None = None
     if wm_cfg.get("enabled"):
-        try:
-            logo_path = ep.asset_path("logo")
-            if logo_path.exists():
-                wm_rel_str = (
-                    str(logo_path.relative_to(cwd)) if logo_path.is_relative_to(cwd) else str(logo_path)
-                )
-            else:
-                print(f"⚠ watermark.enabled=true 但找不到 {logo_path}，自動跳過 overlay", file=sys.stderr)
-        except KeyError:
-            print("⚠ watermark.enabled=true 但 assets.logo 未設定，自動跳過 overlay", file=sys.stderr)
+        overlay_path: Path | None = None
+        for asset_key in ("cover", "logo"):
+            try:
+                p = ep.asset_path(asset_key)
+            except KeyError:
+                continue
+            if p.exists():
+                overlay_path = p
+                break
+        if overlay_path is not None:
+            wm_rel_str = (
+                str(overlay_path.relative_to(cwd)) if overlay_path.is_relative_to(cwd) else str(overlay_path)
+            )
+        else:
+            print(
+                "⚠ watermark.enabled=true 但找不到 assets.cover / assets.logo，自動跳過封面 overlay",
+                file=sys.stderr,
+            )
 
     if output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
@@ -849,11 +1182,13 @@ def prepare_assembly(
             wm_next = 6 if audio_rel_str else 5
             wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_yt_multicam(
-                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                render_cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
+                speed_factor=speed_factor,
+                overlay_ass_rel=overlay_ass_rel,
             )
             hw = _hwaccel_args(enc)
             cmd = [
@@ -888,6 +1223,7 @@ def prepare_assembly(
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
+                speed_factor=speed_factor,
             )
             hw = _hwaccel_args(enc)
             cmd = [
@@ -918,11 +1254,12 @@ def prepare_assembly(
             wm_next = 3 if audio_rel_str else 2
             wm_input_idx = wm_next if wm_rel_str else None
             fc = build_filter_complex_reels_multicam(
-                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                render_cfg, main_dur=main_dur, srt_rel=srt_rel,
                 segments=segments, sync_offset_b=sync_offset_b,
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
+                speed_factor=speed_factor,
             )
             hw = _hwaccel_args(enc)
             cmd = [
@@ -954,6 +1291,7 @@ def prepare_assembly(
                 audio_input_idx=audio_input_idx,
                 audio_sync_offset=audio_sync_offset,
                 wm_input_idx=wm_input_idx,
+                speed_factor=speed_factor,
             )
             hw = _hwaccel_args(enc)
             cmd = [
@@ -981,6 +1319,14 @@ def prepare_assembly(
         cmd[insert_at:insert_at] = ["-t", str(preview_sec)]
         total_dur = min(total_dur, float(preview_sec))
 
+    # sidecar 字幕（輸出字幕與影片）：把源字幕映射到成品時間軸（收刪段 → ÷倍速 → +片頭偏移）。
+    # YT 正片接在片頭後 → intro_offset=intro_duration；Reels 無片頭 = 0。呼叫端跑完 ffmpeg 成功才落檔。
+    sidecar_srt: dict | None = None
+    if subtitle_mode == "sidecar":
+        intro_offset = float(cfg["assets"]["intro_duration"]) if output_kind == "yt" else 0.0
+        content = build_sidecar_srt(all_cards, removed_intervals, speed_factor, intro_offset)
+        sidecar_srt = {"path": out.with_suffix(".srt"), "content": content}
+
     return {
         "cmd": cmd,
         "cwd": cwd,
@@ -989,6 +1335,8 @@ def prepare_assembly(
         "main_dur": main_dur,
         "total_dur": total_dur,
         "output_kind": output_kind,
+        "sidecar_srt": sidecar_srt,
+        "prebake": prebakes,
     }
 
 
@@ -1009,6 +1357,70 @@ def _original_to_mp4_time(t_src: float, deletion_intervals: list[tuple[float, fl
         else:
             break
     return max(0.0, t_src - deleted_before)
+
+
+def _removed_intervals_from_segments(
+    segments: list[dict], main_dur_src: float
+) -> list[tuple[float, float]]:
+    """從 multicam segment plan（保留段）算出「被移除區間」= [0, main_dur_src] 內的補集。
+
+    segment_plan 已內建 deletions + head/tail trim，保留段是源時間軸上「會出現在成品」的區間；
+    其補集（段與段之間的縫、第一段前、最後段後）就是被剪掉的部分，
+    餵給 _original_to_mp4_time 即可把源時間映射到 multicam 正片時間軸（與單機共用同一套邏輯）。
+    """
+    removed: list[tuple[float, float]] = []
+    prev = 0.0
+    for seg in sorted(segments, key=lambda s: float(s["start"])):
+        s, e = float(seg["start"]), float(seg["end"])
+        if s > prev:
+            removed.append((prev, s))
+        prev = max(prev, e)
+    if prev < main_dur_src:
+        removed.append((prev, main_dur_src))
+    return removed
+
+
+def map_src_to_output_time(
+    t_src: float,
+    removed_intervals: list[tuple[float, float]],
+    speed: float,
+    intro_offset: float,
+) -> float:
+    """源字幕時間軸 → 最終成品時間軸（sidecar .srt 用）。
+
+    三步轉換，與影片走的完全是同一套：
+      1. 收掉被刪段 / 頭尾 trim（_original_to_mp4_time）→ 正片時間軸
+      2. ÷ speed（倍速；影片 setpts=PTS/speed 把正片壓短同樣倍率）
+      3. + intro_offset（YT 正片接在片頭之後；Reels 無片頭 = 0）
+
+    這就是「倍速後單獨輸出字幕也不跑掉」的關鍵：影片加速多少，.srt 同步壓縮多少。
+    """
+    t_body = _original_to_mp4_time(t_src, removed_intervals)
+    return intro_offset + t_body / (speed or 1.0)
+
+
+def build_sidecar_srt(
+    cards: list[dict],
+    removed_intervals: list[tuple[float, float]],
+    speed: float,
+    intro_offset: float,
+) -> str:
+    """把源時間軸字幕卡映射到成品時間軸，回一份重新編號的 SRT 字串（sidecar 模式用）。
+
+    落在被刪除區間內的卡 → start/end 都映射到同一點 → 長度≈0 → 丟掉（與影片把該段剪掉一致）。
+    """
+    from podcast_toolkit import srt_io
+
+    out_cards: list[dict] = []
+    for c in cards:
+        s = map_src_to_output_time(float(c["start"]), removed_intervals, speed, intro_offset)
+        e = map_src_to_output_time(float(c["end"]), removed_intervals, speed, intro_offset)
+        if e - s <= 0.01:
+            continue
+        out_cards.append({**c, "start": s, "end": e})
+    for i, c in enumerate(out_cards, 1):
+        c["idx"] = i
+    return srt_io.serialize(out_cards)
 
 
 def extract_reels_clips(
@@ -1064,7 +1476,6 @@ def extract_reels_clips(
     cards = srt_io.parse(srt_path.read_text(encoding="utf-8"))
     by_idx = {c["idx"]: c for c in cards}
 
-    deletions = list(cfg.get("deletions") or [])
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
@@ -1073,7 +1484,8 @@ def extract_reels_clips(
         raise AssembleError(f"找不到正片以量總時長：{main_video}", exit_code=3)
     main_dur = ffprobe_duration(main_video)
 
-    deletion_intervals = build_deletion_intervals(srt_path, deletions) if deletions else []
+    # 刪段時間版（cuts，或舊 deletions[idx] 用當下 cards 換算）
+    deletion_intervals = list(cut_intervals_from_cfg(cfg, cards))
     if head_trim > 0:
         deletion_intervals.append((0.0, head_trim))
     if tail_trim > 0:
@@ -1159,9 +1571,13 @@ def run_clips(episode_dir: Path, clip_names: list[str] | None = None, force: boo
 
 
 def run(episode_dir: Path, dry_run: bool = False, force: bool = False,
-        output_kind: str = "yt") -> int:
+        output_kind: str = "yt", subtitle_mode: str = "burn",
+        overlay_srt: Path | None = None, out_override: Path | None = None) -> int:
     try:
-        plan = prepare_assembly(episode_dir, output_kind=output_kind, force=force)
+        plan = prepare_assembly(
+            episode_dir, output_kind=output_kind, force=force, subtitle_mode=subtitle_mode,
+            overlay_srt=overlay_srt, out_override=out_override,
+        )
     except AssembleError as e:
         print(f"✗ {e}", file=sys.stderr)
         return e.exit_code
@@ -1187,6 +1603,12 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False,
     # 成功才把 tmp_out rename 到 out
     if tmp_out.exists():
         tmp_out.replace(out)
+
+    # sidecar 模式：影片成功後才把對齊好的字幕 .srt 落在成品旁
+    sidecar = plan.get("sidecar_srt")
+    if sidecar:
+        sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
+        print(f"✅ 字幕：{sidecar['path']}")
 
     print(f"✅ 完成：{out}")
     return 0

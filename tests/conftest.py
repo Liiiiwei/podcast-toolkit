@@ -5,6 +5,19 @@ import pytest
 import yaml
 
 
+@pytest.fixture(autouse=True)
+def _isolate_user_config(tmp_path, monkeypatch):
+    """把 ~/.podcast-toolkit/config.json / typo-dict.json 導到隔離 tmp。
+
+    否則測試（例如 /api/episode/new、/api/episodes/open 會呼叫 add_recent）會寫進
+    使用者真實的 config，污染 recent_episodes 清單、把真集擠掉。late-bound lambda
+    在路由呼叫當下才查 api 模組 global，所以在 build_app 之前 setattr 就能生效。
+    """
+    from podcast_toolkit.web import api
+    monkeypatch.setattr(api, "CONFIG_PATH", tmp_path / "_pcfg_config.json")
+    monkeypatch.setattr(api, "TYPO_DICT_PATH", tmp_path / "_pcfg_typo.json")
+
+
 SAMPLE_SRT = """\
 1
 00:00:00,000 --> 00:00:04,200

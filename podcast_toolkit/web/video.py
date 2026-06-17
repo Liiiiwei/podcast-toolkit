@@ -13,7 +13,11 @@ def range_response(path: Path, range_header: str | None, media_type: str = "vide
     size = path.stat().st_size
 
     if not range_header:
-        return FileResponse(path, media_type=media_type)
+        # no-store：編輯流程會換掉/就地重壓鏡頭影片檔，瀏覽器若快取住舊檔，換來源後預覽
+        # 還會播到舊畫面（得清快取/開無痕才看得到新檔）。媒體都從本機磁碟服務，不快取無妨。
+        return FileResponse(
+            path, media_type=media_type, headers={"cache-control": "no-store"}
+        )
 
     m = _RANGE_RE.match(range_header.strip())
     if not m:
@@ -51,5 +55,7 @@ def range_response(path: Path, range_header: str | None, media_type: str = "vide
             "content-range": f"bytes {start}-{end}/{size}",
             "content-length": str(length),
             "accept-ranges": "bytes",
+            # 同上：換鏡頭來源 / 就地重壓後，避免 range 請求吃到舊快取
+            "cache-control": "no-store",
         },
     )

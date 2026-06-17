@@ -120,6 +120,10 @@ def merge(defaults: dict, episode: dict) -> dict:
         "name": episode.get("name"),
         "main_video": episode.get("main_video"),
         "main_srt": episode.get("main_srt"),
+        # 字幕來源 override：cam-modal 手選哪份 .srt 進最終合成 / 編輯器下拉回顯；
+        # 不設 → active_srt() fallback _v2.srt。先前漏列此 key → 寫進 yaml 也讀不回 cfg，
+        # 導致 cam-modal 切字幕檔「存了卻跳回舊值」、最終合成也永遠讀 _v2.srt。
+        "srt_path": episode.get("srt_path"),
         "cameras": dict(cameras),
         "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
         "audio": episode.get("audio"),
@@ -129,7 +133,20 @@ def merge(defaults: dict, episode: dict) -> dict:
         "force_join": set(episode.get("force_join") or []),
         "crop_yt": episode.get("crop_yt"),
         "crop_reels": episode.get("crop_reels"),
+        # 節目封面 overlay 開關（沿用 watermark 機制：只疊正片、右上角）；defaults + episode 逐 key 合併
+        "watermark": {**(defaults.get("watermark") or {}), **(episode.get("watermark") or {})},
+        # 正片倍速（只加速正片，片頭尾不動）：{enabled, factor}
+        "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
+        # 畫面拉正旋轉（per cam，度數）：{a, b}
+        "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
+        # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段
+        "camera_rule": {
+            **(defaults.get("camera_rule") or {}),
+            **(episode.get("camera_rule") or {}),
+        },
         "deletions": list(episode.get("deletions") or []),
+        # 時間版刪段（與字幕脫鉤）：[[start, end], ...] 秒；assemble.cut_intervals_from_cfg 優先吃它
+        "cuts": list(episode.get("cuts") or []),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
         # Reels 片段截取：list of {name, start_card, end_card}
