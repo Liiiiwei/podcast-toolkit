@@ -10,9 +10,21 @@
   - `proofread.py`：provider 抽象（claude_code 本地 / gemini API / off），`auto` 解析（claude CLI 在→本地；否則 gemini key；否則跳過 → **非 CC 使用者零影響**）
   - 四條規則（同音錯字 / 專名詞庫 / 子句空格 / 去填充詞）+ 安全閘（QA：擋掉短卡被換長句的捏造）
   - 分塊呼叫 `claude -p --output-format json`、只改文字、先備份 `.pre-proofread.bak`
+  - **效能/穩定（沈奕妤 1235 卡實跑暴露）**：
+    - 分塊**並行**（`ThreadPoolExecutor`，`max_workers`）— 每塊在等模型回應，並行把牆鐘時間壓掉數倍（~20 分→~3 分）
+    - **跳過已刪卡**（不浪費模型時間校對等下要砍的；本集 861/1235）
+    - **單塊失敗不拖垮全部**（逾時/壞 JSON → 記下、套其餘成功塊）
+    - `--model` 旗標（bulk 校對用 sonnet 比 Opus 預設快很多）；defaults 補 `max_workers: 4`
+  - 實測沈奕妤：修 118 卡（去 嗯/啊/呃/哎 填充詞、简→繁 輕松→輕鬆/復制→複製、詞庫），QA 還原 0
 - [ ] **AP2. 自動鏡頭對應**（分軌集）：speakers.json（idx→speaker）經 speaker→camera 映射推出 cameras_mapping；episode.yaml 可設 `speaker_camera_mapping` override
-- [ ] **AP3. 自動去頭去尾**：補 `detect_tail_silence()`（對稱 head 版）；結合頭尾靜音 + 首末字幕卡時間推 head/tail trim
-- [ ] **AP4. 編排**：`podcast auto <集>`（串 AP1–AP3，可 `--no-*` 關個別步驟）+ Web「✨ 一鍵自動」背景 job + 進度條
+  - **單軌集不適用**（沒有分軌講者資料）；`auto.py._run_camera` 已留 hook：偵到 speakers.json 才 import `autocamera` 跑，否則優雅略過
+- [x] **AP3. 自動去頭去尾** ✅ `autotrim.py`
+  - `silencedetect.py` 補 `parse_duration` / `parse_tail_silence` / `detect_tail_silence`（解析 ffmpeg Duration + 尾段一路靜音到檔尾）
+  - 只補「沒設過」的 head/tail_trim_sec（`force` 才重測覆寫），safe round-trip 寫回 episode.yaml（保留 deletions 等欄位）
+  - **`-vn` 修正**：silencedetect 是 audio filter，但沒加 -vn 時 ffmpeg 仍把整段 4K 視訊解碼丟 null（36 分片數分鐘白工）→ 加 `-vn` 只解音訊，降到 ~5 秒。**連帶修好 UI 智慧建議 trim head 在大檔上很慢的問題**
+  - 沈奕妤實測：head 42.7 手動值保留、尾段偵測為 0（內容到片尾，無尾可去）
+- [x] **AP4. 編排** ✅ `podcast auto <集>`（串 AP1→AP2→AP3，`--no-proofread/--no-camera/--no-trim`、`--provider`、`--force`）
+  - [ ] Web「✨ 一鍵自動」背景 job + 進度條（下一步）
 
 ## 抽屜（drawer）a11y
 

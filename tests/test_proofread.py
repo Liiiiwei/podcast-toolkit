@@ -140,3 +140,48 @@ def test_run_missing_srt_returns_3(tmp_path):
         yaml.safe_dump({"date": 20260601, "name": "空集"}, allow_unicode=True),
         encoding="utf-8")
     assert proofread.run(ep, provider="claude_code") == 3     # 沒 _v2.srt → exit 3
+
+
+def test_run_skips_deleted_cards(tmp_episode_dir, monkeypatch):
+    import yaml
+    yp = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yp.read_text(encoding="utf-8"))
+    d["deletions"] = [2]                                      # 第 2 卡標刪除
+    yp.write_text(yaml.safe_dump(d, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    seen: list[int] = []
+
+    def fake(cards_, glossary, *, cfg, progress=None):
+        seen.extend(c["idx"] for c in cards_)
+        return {}
+
+    monkeypatch.setitem(proofread.PROVIDERS, "claude_code", fake)
+    proofread.run(tmp_episode_dir, provider="claude_code")
+    assert 2 not in seen                                      # 已刪卡不送校對
+    assert {1, 3, 4} <= set(seen)                             # 其餘照常
+
+
+def test_run_claude_code_resilient_to_partial_failure(monkeypatch):
+    cards = [{"idx": i, "text": f"卡{i}"} for i in range(1, 7)]   # 6 卡 / chunk 2 → 3 塊
+
+    def fake_chunk(chunk, glossary, *, model, timeout, context):
+        if chunk[0]["idx"] == 1:                              # 第一塊故意失敗
+            raise proofread.ProofreadError("假裝逾時")
+        return {str(chunk[0]["idx"]): "修好"}
+
+    monkeypatch.setattr(proofread, "_claude_one_chunk", fake_chunk)
+    monkeypatch.setattr(proofread.shutil, "which", lambda n: "/x/claude")
+    out = proofread._run_claude_code(
+        cards, [], cfg={"proofread": {"chunk_size": 2, "max_workers": 3}})
+    assert out == {3: "修好", 5: "修好"}                       # 失敗塊跳過,其餘照樣回
+
+
+def test_run_claude_code_all_fail_raises(monkeypatch):
+    def fake_chunk(*a, **k):
+        raise proofread.ProofreadError("全掛")
+
+    monkeypatch.setattr(proofread, "_claude_one_chunk", fake_chunk)
+    monkeypatch.setattr(proofread.shutil, "which", lambda n: "/x/claude")
+    with pytest.raises(proofread.ProofreadError):
+        proofread._run_claude_code(
+            [{"idx": 1, "text": "a"}], [], cfg={"proofread": {"chunk_size": 1}})

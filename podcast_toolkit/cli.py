@@ -23,7 +23,27 @@ def cmd_resegment(args):
 
 def cmd_proofread(args):
     from podcast_toolkit import proofread
-    return proofread.run(Path(args.path), provider=args.provider, force=args.force)
+    return proofread.run(
+        Path(args.path), provider=args.provider, model=args.model, force=args.force,
+    )
+
+
+def cmd_auto(args):
+    from podcast_toolkit import auto
+    return auto.run(
+        Path(args.path),
+        do_proofread=not args.no_proofread,
+        do_camera=not args.no_camera,
+        do_trim=not args.no_trim,
+        provider=args.provider,
+        model=args.model,
+        force=args.force,
+    )
+
+
+def cmd_ingest_breeze(args):
+    from podcast_toolkit import ingest_breeze
+    return ingest_breeze.run(Path(args.path), srt=args.srt, force=args.force)
 
 
 def cmd_merge_per_mic(args):
@@ -83,8 +103,43 @@ def build_parser():
         "--provider", choices=["claude_code", "gemini", "off"], default=None,
         help="覆寫設定的校對 provider（預設讀 episode.yaml / defaults.yaml 的 proofread.provider=auto）",
     )
+    pp.add_argument(
+        "--model", default=None,
+        help="覆寫校對模型（claude_code 用 claude --model，如 sonnet / opus / haiku；gemini 用 model id）",
+    )
     pp.add_argument("--force", action="store_true", help="保留參數一致性（校對一律就地覆寫並備份）")
     pp.set_defaults(func=cmd_proofread)
+
+    pao = sub.add_parser(
+        "auto",
+        help="一鍵自動後製：校對字幕 + 對應鏡頭 + 去頭去尾（盡量自動，只剩人工確認）",
+    )
+    pao.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pao.add_argument("--no-proofread", action="store_true", help="跳過字幕校對")
+    pao.add_argument("--no-camera", action="store_true", help="跳過鏡頭對應")
+    pao.add_argument("--no-trim", action="store_true", help="跳過去頭去尾")
+    pao.add_argument(
+        "--provider", choices=["claude_code", "gemini", "off"], default=None,
+        help="覆寫校對 provider（預設 auto：本地 Claude Code → Gemini key → 跳過）",
+    )
+    pao.add_argument(
+        "--model", default=None,
+        help="覆寫校對模型（如 sonnet / opus / haiku）；校對是 bulk 任務，sonnet 比預設快很多",
+    )
+    pao.add_argument("--force", action="store_true", help="重跑（含重測頭尾靜音、覆寫既有 trim）")
+    pao.set_defaults(func=cmd_auto)
+
+    pib = sub.add_parser(
+        "ingest-breeze",
+        help="匯入 Breeze ASR 字幕(含講者 [MicN])→ 去標籤寫 _final_v2.srt + speakers.json",
+    )
+    pib.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pib.add_argument(
+        "--srt", default=None,
+        help="指定 Breeze SRT 路徑（預設自動找集內 *含講者*.srt / *最終字幕*.srt）",
+    )
+    pib.add_argument("--force", action="store_true", help="保留參數一致性（一律就地覆寫並備份）")
+    pib.set_defaults(func=cmd_ingest_breeze)
 
     pm = sub.add_parser(
         "merge-per-mic",

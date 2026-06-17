@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from podcast_toolkit import srt_io
@@ -95,8 +96,35 @@ def _merge_corrections(dst: dict, raw: dict) -> None:
             continue
 
 
+def _claude_one_chunk(chunk, glossary, *, model, timeout, context) -> dict:
+    """跑單塊 ``claude -p ... --output-format json``,回 {idx: 修正} dict。失敗丟 ProofreadError。"""
+    prompt = build_prompt(chunk, glossary, context=context)
+    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    if model:
+        cmd += ["--model", str(model)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise ProofreadError(f"claude -p 逾時({timeout}s)") from e
+    if proc.returncode != 0:
+        raise ProofreadError(
+            f"claude -p 失敗(rc={proc.returncode}):{proc.stderr.strip()[:300]}"
+        )
+    try:
+        env = json.loads(proc.stdout)
+    except json.JSONDecodeError as e:
+        raise ProofreadError(f"claude 回應不是 JSON 信封:{proc.stdout[:200]}") from e
+    if env.get("is_error"):
+        raise ProofreadError(f"claude 回報錯誤:{str(env.get('result', ''))[:300]}")
+    return _extract_json_object(str(env.get("result", "")))
+
+
 def _run_claude_code(cards, glossary, *, cfg, progress=None) -> dict:
-    """本地 Claude Code:每塊 shell 呼叫 ``claude -p ... --output-format json``。"""
+    """本地 Claude Code:分塊 ``claude -p``,多塊**並行**跑。
+
+    每塊大半時間在等模型回應(I/O bound),並行能把 1000+ 卡的牆鐘時間壓掉數倍。
+    單塊失敗(逾時 / 非 JSON)不拖垮全部——記下來、回其餘已成功塊的修正(部分校對 > 零校對)。
+    """
     if not shutil.which("claude"):
         raise ProofreadError(
             "找不到 claude CLI(本地 Claude Code)。請先安裝 Claude Code,"
@@ -107,31 +135,37 @@ def _run_claude_code(cards, glossary, *, cfg, progress=None) -> dict:
     model = pcfg.get("model")  # None → 用 Claude Code 預設模型
     timeout = int(pcfg.get("timeout_sec") or 300)
     context = pcfg.get("context") or ""
+    workers = max(1, int(pcfg.get("max_workers") or 4))
+
+    chunks = list(_chunks(cards, size))
+    if not chunks:
+        return {}
 
     out: dict[int, str] = {}
-    chunks = list(_chunks(cards, size))
-    for n, chunk in enumerate(chunks, 1):
-        prompt = build_prompt(chunk, glossary, context=context)
-        cmd = ["claude", "-p", prompt, "--output-format", "json"]
-        if model:
-            cmd += ["--model", str(model)]
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired as e:
-            raise ProofreadError(f"claude -p 第 {n}/{len(chunks)} 塊逾時({timeout}s)") from e
-        if proc.returncode != 0:
-            raise ProofreadError(
-                f"claude -p 第 {n}/{len(chunks)} 塊失敗(rc={proc.returncode}):{proc.stderr.strip()[:300]}"
-            )
-        try:
-            env = json.loads(proc.stdout)
-        except json.JSONDecodeError as e:
-            raise ProofreadError(f"claude 回應不是 JSON 信封:{proc.stdout[:200]}") from e
-        if env.get("is_error"):
-            raise ProofreadError(f"claude 回報錯誤:{str(env.get('result', ''))[:300]}")
-        _merge_corrections(out, _extract_json_object(str(env.get("result", ""))))
-        if progress:
-            progress(n / len(chunks) * 100.0)
+    failures: list[str] = []
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(workers, len(chunks))) as ex:
+        futs = [
+            ex.submit(_claude_one_chunk, ch, glossary,
+                      model=model, timeout=timeout, context=context)
+            for ch in chunks
+        ]
+        for fut in as_completed(futs):
+            done += 1
+            try:
+                _merge_corrections(out, fut.result())
+            except ProofreadError as e:
+                failures.append(str(e))
+            if progress:
+                progress(done / len(chunks) * 100.0)
+
+    if failures and not out:
+        raise ProofreadError(f"校對全部 {len(chunks)} 塊都失敗:{failures[0]}")
+    if failures:
+        print(
+            f"⚠ 校對 {len(failures)}/{len(chunks)} 塊失敗,已套用其餘成功塊:{failures[0][:150]}",
+            file=sys.stderr,
+        )
     return out
 
 
@@ -231,8 +265,12 @@ def proofread_cards(cards, glossary, cfg, *, provider=None, progress=None):
     return prov, applied, reverted
 
 
-def run(episode_dir, *, provider=None, force=False, progress=None) -> int:
-    """CLI 進入點:讀 _v2.srt → 校對 → 備份 → 寫回。回傳 exit code。"""
+def run(episode_dir, *, provider=None, model=None, force=False, progress=None) -> int:
+    """CLI 進入點:讀 _v2.srt → 校對 → 備份 → 寫回。回傳 exit code。
+
+    model 覆寫 provider 的模型(claude_code 用 ``claude --model``;gemini 用 model id);
+    None → 用 episode.yaml / defaults.yaml 的 proofread.model(再 None → provider 預設)。
+    """
     from podcast_toolkit.episode import Episode
 
     ep = Episode(Path(episode_dir))
@@ -246,10 +284,20 @@ def run(episode_dir, *, provider=None, force=False, progress=None) -> int:
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     glossary = cfg.get("glossary") or []
 
+    # 跳過已標刪除的卡:不浪費模型時間校對等下要砍掉的內容(大集省可觀)
+    deletions = {int(d) for d in (cfg.get("deletions") or []) if str(d).strip().isdigit()}
+    target_cards = [c for c in cards if c["idx"] not in deletions]
+    if deletions:
+        print(f"校對範圍:{len(target_cards)} 卡(跳過 {len(cards) - len(target_cards)} 張已刪卡)")
+
+    pcfg_override = {
+        **(cfg.get("proofread") or {}),
+        **({"provider": provider} if provider else {}),
+        **({"model": model} if model else {}),
+    }
     try:
         prov, applied, reverted = proofread_cards(
-            cards, glossary, {**cfg, "proofread": {**(cfg.get("proofread") or {}),
-                                                    **({"provider": provider} if provider else {})}},
+            target_cards, glossary, {**cfg, "proofread": pcfg_override},
             progress=progress,
         )
     except ProofreadError as e:
