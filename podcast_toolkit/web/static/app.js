@@ -2488,8 +2488,6 @@ function stepCard(dir) {
   if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
-const playBtn = $("#play-btn");
-playBtn.addEventListener("click", togglePlay);
 // 由影片事件統一更新圖示，避免 click handler 與程式化 play/pause 不同步
 function setPlayIcon(name) {
   const html = window.Icons
