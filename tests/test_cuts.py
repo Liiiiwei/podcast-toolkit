@@ -92,8 +92,20 @@ def test_cut_pad_first_card_clamps_left_to_zero():
 
 
 def test_cut_pad_last_card_no_right_neighbor():
+    """最後一張卡：右側沒有鄰卡 → 不往片尾外吃（右界 = 卡尾本身）。"""
     out = assemble.cut_intervals_from_cfg({"deletions": [3], "cut_pad": 0.5}, GAPPED)
-    assert out == [(9.5, 13.5)]
+    assert out == [(9.5, 13.0)]
+
+
+def test_cut_pad_fill_to_neighbor_with_large_pad():
+    """預設大 cut_pad（吃滿間隙）：刪中間卡 → 間隙全吃到兩鄰卡語音邊界、不咬語音；
+    首/尾卡那一側沒鄰卡 → 不往片頭/片尾外吃。"""
+    # 刪卡2 → 吃滿 [3,10]（卡1尾~卡3頭）
+    assert assemble.cut_intervals_from_cfg({"deletions": [2], "cut_pad": 3600}, GAPPED) == [(3.0, 10.0)]
+    # 刪卡3（最後）→ 左吃到卡2尾 8.0、右不外吃（13.0）
+    assert assemble.cut_intervals_from_cfg({"deletions": [3], "cut_pad": 3600}, GAPPED) == [(8.0, 13.0)]
+    # 刪卡1（最前）→ 左不外吃（0.0）、右吃到卡2頭 5.0
+    assert assemble.cut_intervals_from_cfg({"deletions": [1], "cut_pad": 3600}, GAPPED) == [(0.0, 5.0)]
 
 
 def test_cut_pad_consecutive_deletes_merge_through_gap():
@@ -105,7 +117,7 @@ def test_cut_pad_consecutive_deletes_merge_through_gap():
 def test_cut_pad_kept_card_between_deletes_not_merged():
     """刪卡1+卡3、保留卡2 → 不併（間隙有保留卡），各自 pad 夾到卡2邊界。"""
     out = assemble.cut_intervals_from_cfg({"deletions": [1, 3], "cut_pad": 0.5}, GAPPED)
-    assert out == [(0.0, 3.5), (9.5, 13.5)]
+    assert out == [(0.0, 3.5), (9.5, 13.0)]  # 卡3 為末卡、右側不外吃
 
 
 def test_config_merge_cut_pad_default_and_override():

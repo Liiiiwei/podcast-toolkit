@@ -89,7 +89,8 @@ def _pad_and_merge_cuts(
 
     保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
     語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
-    pad 給很大 → 把整個間隙吃到鄰卡語音邊界；給小 → 溫和留點呼吸。
+    pad 給很大 → 把整個間隙吃到鄰卡語音邊界（預設行為）；給小 → 溫和留點呼吸。
+    某一側沒有鄰卡（片頭/片尾側）→ 該側不外吃（頭尾留給 head/tail trim 處理）。
     """
     intervals = sorted(intervals)
     if pad <= 0 or not intervals:
@@ -118,15 +119,14 @@ def _pad_and_merge_cuts(
         else:
             pre.append([s, e])
 
-    # 各段往前後延伸 pad，夾在保留卡語音邊界內（部分被切的卡用 min(ce,s)/max(cs,e) 夾住存活語音）
+    # 各段往前後延伸 pad，夾在保留卡語音邊界內（部分被切的卡用 min(ce,s)/max(cs,e) 夾住存活語音）。
+    # 某側沒有鄰卡 → 該側界 = s/e 本身（不往片頭/片尾外吃）。
     out: list[tuple[float, float]] = []
     for s, e in pre:
-        left_limit, right_limit = 0.0, e + pad
-        for cs, ce in kept:
-            if cs < s - 1e-6:
-                left_limit = max(left_limit, min(ce, s))
-            if ce > e + 1e-6:
-                right_limit = min(right_limit, max(cs, e))
+        lefts = [min(ce, s) for cs, ce in kept if cs < s - 1e-6]
+        rights = [max(cs, e) for cs, ce in kept if ce > e + 1e-6]
+        left_limit = max(lefts) if lefts else s
+        right_limit = min(rights) if rights else e
         ns = max(s - pad, left_limit, 0.0)
         ne = min(e + pad, right_limit)
         out.append((ns, max(ne, ns)))
