@@ -24,6 +24,18 @@ from typing import Callable, Optional
 from podcast_toolkit.episode import Episode
 
 
+def _config_gemini_key() -> str:
+    """讀全域設定 ~/.podcast-toolkit/config.json 的 gemini_api_key（GUI「設定」存這裡）。
+    讓只在編輯器設過金鑰、沒設環境變數的使用者，CLI / GUI 的 subtitle 路徑也拿得到 key
+    （proofread.py 已是 env or config，這裡對齊它，補上唯一只讀 env 的缺口）。"""
+    import json
+    p = Path.home() / ".podcast-toolkit" / "config.json"
+    try:
+        return (json.loads(p.read_text(encoding="utf-8")) or {}).get("gemini_api_key", "") or ""
+    except Exception:
+        return ""
+
+
 # 標點清單：半形 + 全形 + 中英文常見句末符號 + 刪節號
 # 後處理用：移除字幕文字中所有標點（Gemini 不一定服從 prompt，這裡兜底）
 _PUNCT_PATTERN = re.compile(
@@ -203,11 +215,11 @@ def transcribe(audio_path: Path, prompt: str, model: str) -> str:
         print("    pip3 install --user google-genai", file=sys.stderr)
         raise
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY") or _config_gemini_key()
     if not api_key:
         raise RuntimeError(
-            "缺少 GEMINI_API_KEY 環境變數。\n"
-            "  export GEMINI_API_KEY='your-key-here'\n"
+            "缺少 GEMINI API key。\n"
+            "  在編輯器「設定」貼上，或 export GEMINI_API_KEY='your-key-here'\n"
             "  申請：https://aistudio.google.com/apikey"
         )
 
