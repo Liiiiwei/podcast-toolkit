@@ -15,10 +15,10 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/config")
     def get_config():
         cfg = ctx.load_config()
-        # xai 已從設定面板下架；舊 config 殘留 "xai" 一律回退 gemini
-        provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
-        if provider not in transcribe_mod.PROVIDERS or provider == "xai":
-            provider = "gemini"
+        # 零雲端金鑰：對外只暴露本地 whisper_mlx；雲端/未知 provider 一律收斂成 whisper_mlx
+        provider = (cfg.get("transcribe") or {}).get("provider") or "whisper_mlx"
+        if provider not in transcribe_mod.PROVIDERS or provider in ("xai", "gemini", "openai"):
+            provider = "whisper_mlx"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
@@ -53,9 +53,9 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 raise HTTPException(status_code=400, detail="episode_roots 必須是字串陣列")
             cfg["episode_roots"] = [r.strip() for r in roots if r.strip()]
         ctx.save_config(cfg)
-        out_provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
-        if out_provider == "xai":
-            out_provider = "gemini"
+        out_provider = (cfg.get("transcribe") or {}).get("provider") or "whisper_mlx"
+        if out_provider not in transcribe_mod.PROVIDERS or out_provider in ("xai", "gemini", "openai"):
+            out_provider = "whisper_mlx"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
             "has_gemini_api_key": bool(cfg.get("gemini_api_key")),

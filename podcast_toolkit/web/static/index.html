@@ -633,24 +633,15 @@
             </div>
           </div>
 
-          <label class="modal-label">STT 供應商</label>
+          <label class="modal-label">轉字幕（STT）</label>
           <div class="modal-row modal-row-inline">
-            <label class="modal-radio">
-              <input
-                type="radio"
-                name="settings-provider"
-                value="gemini"
-                id="settings-provider-gemini"
-              />
+            <!-- 雲端 STT（Gemini/OpenAI）已下架：本產品零雲端金鑰。DOM 隱藏保留以相容既有 app.js 邏輯 -->
+            <label class="modal-radio" style="display: none">
+              <input type="radio" name="settings-provider" value="gemini" id="settings-provider-gemini" />
               Google Gemini
             </label>
-            <label class="modal-radio">
-              <input
-                type="radio"
-                name="settings-provider"
-                value="openai"
-                id="settings-provider-openai"
-              />
+            <label class="modal-radio" style="display: none">
+              <input type="radio" name="settings-provider" value="openai" id="settings-provider-openai" />
               OpenAI（whisper-1）
             </label>
             <label class="modal-radio">
@@ -664,64 +655,30 @@
             </label>
           </div>
           <div class="modal-hint">
-            本地 Whisper 用 Apple Silicon 跑
-            mlx-community/whisper-large-v3-turbo， 免 API key、不打雲端，但 25
-            分鐘 podcast 大約跑 15-25 分鐘。 需先
+            轉字幕走本地路線、<b>免 API key</b>：① <b>Breeze</b>（推薦）用本地 Breeze-ASR-25 產含講者字幕 →
+            <code>podcast ingest-breeze</code> 匯入（會自動接著本地校對）；② <b>本地 Whisper（mlx）</b>
+            Apple Silicon 跑 whisper-large-v3-turbo，免金鑰不打雲端，25 分鐘 podcast 約 15-25 分鐘，需先
             <code>pip3 install --user mlx-whisper</code>。
           </div>
 
-          <label class="modal-label">Gemini API key</label>
-          <div class="modal-row">
-            <input
-              type="password"
-              id="settings-gemini-key"
-              placeholder="AIza..."
-              autocomplete="off"
-            />
-            <button
-              id="settings-show-gemini"
-              type="button"
-              class="btn btn-icon"
-              title="顯示/隱藏"
-              aria-label="顯示或隱藏"
-            >
-              <span data-icon="eye"></span>
-            </button>
-          </div>
-          <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
-          <div class="modal-hint">
-            從
-            <a href="https://aistudio.google.com/apikey" target="_blank"
-              >aistudio.google.com/apikey</a
-            >
-            取得，存於 ~/.podcast-toolkit/config.json
-          </div>
-
-          <label class="modal-label modal-label-spaced">OpenAI API key</label>
-          <div class="modal-row">
-            <input
-              type="password"
-              id="settings-openai-key"
-              placeholder="sk-..."
-              autocomplete="off"
-            />
-            <button
-              id="settings-show-openai"
-              type="button"
-              class="btn btn-icon"
-              title="顯示/隱藏"
-              aria-label="顯示或隱藏"
-            >
-              <span data-icon="eye"></span>
-            </button>
-          </div>
-          <div class="modal-hint" id="settings-openai-status">尚未設定</div>
-          <div class="modal-hint">
-            從
-            <a href="https://platform.openai.com/api-keys" target="_blank"
-              >platform.openai.com/api-keys</a
-            >
-            取得（注意：不是 ChatGPT Plus 訂閱，API 另計費）
+          <!-- 雲端 API key 欄位已下架（零雲端金鑰）：DOM 隱藏保留以相容 app.js（不再對外暴露） -->
+          <div hidden>
+            <label class="modal-label">Gemini API key</label>
+            <div class="modal-row">
+              <input type="password" id="settings-gemini-key" placeholder="AIza..." autocomplete="off" />
+              <button id="settings-show-gemini" type="button" class="btn btn-icon" title="顯示/隱藏" aria-label="顯示或隱藏">
+                <span data-icon="eye"></span>
+              </button>
+            </div>
+            <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
+            <label class="modal-label modal-label-spaced">OpenAI API key</label>
+            <div class="modal-row">
+              <input type="password" id="settings-openai-key" placeholder="sk-..." autocomplete="off" />
+              <button id="settings-show-openai" type="button" class="btn btn-icon" title="顯示/隱藏" aria-label="顯示或隱藏">
+                <span data-icon="eye"></span>
+              </button>
+            </div>
+            <div class="modal-hint" id="settings-openai-status">尚未設定</div>
           </div>
         </div>
         <div class="modal-actions">

@@ -42,8 +42,17 @@ def cmd_auto(args):
 
 
 def cmd_ingest_breeze(args):
-    from podcast_toolkit import ingest_breeze
-    return ingest_breeze.run(Path(args.path), srt=args.srt, force=args.force)
+    from podcast_toolkit import ingest_breeze, proofread
+    from podcast_toolkit.episode import Episode
+    path = Path(args.path)
+    rc = ingest_breeze.run(path, srt=args.srt, force=args.force)
+    # 接上後處理：Breeze 路線原本只去 [MicN] 直出、不跑校對 → 字幕沒被校對（同音/術語/glossary）。
+    # 匯入成功後，有裝 claude 就自動接著本地校對；沒裝（resolve_provider 回 None）就安靜跳過。
+    if rc == 0 and not args.no_proofread:
+        if proofread.resolve_provider(Episode(path).cfg):
+            print("→ 接著跑本地校對 proofread …")
+            proofread.run(path)
+    return rc
 
 
 def cmd_merge_per_mic(args):
@@ -104,15 +113,15 @@ def build_parser():
     pr.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pr.set_defaults(func=cmd_resegment)
 
-    pp = sub.add_parser("proofread", help="字幕語意校對（本地 Claude Code / Gemini，就地改 _v2.srt）")
+    pp = sub.add_parser("proofread", help="字幕語意校對（本地 Claude Code，就地改 _v2.srt）")
     pp.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pp.add_argument(
-        "--provider", choices=["claude_code", "gemini", "off"], default=None,
+        "--provider", choices=["claude_code", "off"], default=None,
         help="覆寫設定的校對 provider（預設讀 episode.yaml / defaults.yaml 的 proofread.provider=auto）",
     )
     pp.add_argument(
         "--model", default=None,
-        help="覆寫校對模型（claude_code 用 claude --model，如 sonnet / opus / haiku；gemini 用 model id）",
+        help="覆寫校對模型（claude --model，如 sonnet / opus / haiku）",
     )
     pp.add_argument("--force", action="store_true", help="保留參數一致性（校對一律就地覆寫並備份）")
     pp.set_defaults(func=cmd_proofread)
@@ -126,8 +135,8 @@ def build_parser():
     pao.add_argument("--no-camera", action="store_true", help="跳過鏡頭對應")
     pao.add_argument("--no-trim", action="store_true", help="跳過去頭去尾")
     pao.add_argument(
-        "--provider", choices=["claude_code", "gemini", "off"], default=None,
-        help="覆寫校對 provider（預設 auto：本地 Claude Code → Gemini key → 跳過）",
+        "--provider", choices=["claude_code", "off"], default=None,
+        help="覆寫校對 provider（預設 auto：本地 Claude Code → 跳過）",
     )
     pao.add_argument(
         "--model", default=None,
@@ -146,6 +155,8 @@ def build_parser():
         help="指定 Breeze SRT 路徑（預設自動找集內 *含講者*.srt / *最終字幕*.srt）",
     )
     pib.add_argument("--force", action="store_true", help="保留參數一致性（一律就地覆寫並備份）")
+    pib.add_argument("--no-proofread", action="store_true",
+                     help="匯入後不自動跑本地校對（預設：有 claude 就接著校對）")
     pib.set_defaults(func=cmd_ingest_breeze)
 
     pm = sub.add_parser(

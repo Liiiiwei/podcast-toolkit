@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import difflib
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -169,33 +168,8 @@ def _run_claude_code(cards, glossary, *, cfg, progress=None) -> dict:
     return out
 
 
-def _run_gemini(cards, glossary, *, cfg, progress=None) -> dict:
-    """Gemini API:給沒有 Claude Code 的使用者。同一套 prompt,逐塊 generate_content。"""
-    try:
-        from google import genai
-    except ImportError as e:
-        raise ProofreadError("缺少 google-genai 套件;pip3 install --user google-genai") from e
-    api_key = os.environ.get("GEMINI_API_KEY") or (cfg.get("gemini_api_key") or "")
-    if not api_key:
-        raise ProofreadError("未設定 GEMINI_API_KEY(校對 provider=gemini 需要)")
-    pcfg = cfg.get("proofread") or {}
-    size = int(pcfg.get("chunk_size") or 150)
-    model = pcfg.get("model") or "gemini-2.5-flash"
-    context = pcfg.get("context") or ""
-
-    client = genai.Client(api_key=api_key)
-    out: dict[int, str] = {}
-    chunks = list(_chunks(cards, size))
-    for n, chunk in enumerate(chunks, 1):
-        prompt = build_prompt(chunk, glossary, context=context)
-        resp = client.models.generate_content(model=model, contents=[prompt])
-        _merge_corrections(out, _extract_json_object(resp.text or ""))
-        if progress:
-            progress(n / len(chunks) * 100.0)
-    return out
-
-
-PROVIDERS = {"claude_code": _run_claude_code, "gemini": _run_gemini}
+# 零雲端金鑰：Gemini 校對已移除，proofread 只走本地 claude -p（沒裝就跳過）。
+PROVIDERS = {"claude_code": _run_claude_code}
 
 
 def resolve_provider(cfg: dict) -> str | None:
@@ -206,11 +180,9 @@ def resolve_provider(cfg: dict) -> str | None:
         return None
     if p in PROVIDERS:
         return p
-    # auto:本地 Claude Code 優先,其次 Gemini key,都沒有就跳過
+    # auto:本地 Claude Code（claude -p）；沒裝就跳過校對（零雲端金鑰，不走 Gemini）
     if shutil.which("claude"):
         return "claude_code"
-    if os.environ.get("GEMINI_API_KEY") or cfg.get("gemini_api_key"):
-        return "gemini"
     return None
 
 

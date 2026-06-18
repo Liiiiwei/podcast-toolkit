@@ -60,20 +60,18 @@ def test_qa_filter_skips_noop_and_empty():
 
 def test_resolve_provider_explicit_and_auto(monkeypatch):
     assert proofread.resolve_provider({"proofread": {"provider": "off"}}) is None
-    assert proofread.resolve_provider({"proofread": {"provider": "gemini"}}) == "gemini"
 
     # auto + 有 claude CLI → claude_code
     monkeypatch.setattr(proofread.shutil, "which",
                         lambda n: "/x/claude" if n == "claude" else None)
     assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "claude_code"
+    assert proofread.resolve_provider({"proofread": {"provider": "claude_code"}}) == "claude_code"
 
-    # auto + 無 claude + 有 gemini key → gemini
+    # 零雲端金鑰：auto + 無 claude → None（不再回退 Gemini，即使有 key 也跳過）
     monkeypatch.setattr(proofread.shutil, "which", lambda n: None)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert proofread.resolve_provider(
-        {"proofread": {"provider": "auto"}, "gemini_api_key": "k"}) == "gemini"
-
-    # auto + 什麼引擎都沒有 → None(非 CC 使用者且沒 key:安靜跳過)
+        {"proofread": {"provider": "auto"}, "gemini_api_key": "k"}) is None
     assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) is None
 
 

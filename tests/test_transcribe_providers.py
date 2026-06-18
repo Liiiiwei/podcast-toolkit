@@ -156,35 +156,32 @@ def test_get_config_returns_both_keys_and_provider(monkeypatch, app_client):
     body = r.json()
     assert body["has_xai_api_key"] is True
     assert body["has_gemini_api_key"] is True
-    assert body["provider"] == "gemini"
+    # 零雲端金鑰：雲端 provider（gemini）對外收斂成本地 whisper_mlx
+    assert body["provider"] == "whisper_mlx"
 
 
-def test_get_config_provider_defaults_to_gemini(monkeypatch, app_client):
-    # xai 已從設定面板下架；空 config 預設 provider 回退 gemini
+def test_get_config_provider_defaults_to_whisper_mlx(monkeypatch, app_client):
+    # 零雲端金鑰：空 config 預設 provider = 本地 whisper_mlx（不再是 gemini）
     from podcast_toolkit.web import api as api_mod
     monkeypatch.setattr(api_mod, "_load_config", lambda: {})
     body = app_client.get("/api/config").json()
     assert body["has_xai_api_key"] is False
     assert body["has_gemini_api_key"] is False
-    assert body["provider"] == "gemini"
+    assert body["provider"] == "whisper_mlx"
 
 
-def test_post_config_saves_gemini_key_and_provider(monkeypatch, app_client):
+def test_post_config_saves_provider_whisper_mlx(monkeypatch, app_client):
+    # 零雲端金鑰：產品路線存本地 whisper_mlx provider
     saved = {}
     from podcast_toolkit.web import api as api_mod
     monkeypatch.setattr(api_mod, "_load_config", lambda: {})
     monkeypatch.setattr(api_mod, "_save_config", lambda d: saved.update(d))
 
-    r = app_client.post("/api/config", json={
-        "gemini_api_key": "g-NEW",
-        "provider": "gemini",
-    })
+    r = app_client.post("/api/config", json={"provider": "whisper_mlx"})
     assert r.status_code == 200
-    assert saved.get("gemini_api_key") == "g-NEW"
-    assert saved.get("transcribe", {}).get("provider") == "gemini"
+    assert saved.get("transcribe", {}).get("provider") == "whisper_mlx"
     body = r.json()
-    assert body["has_gemini_api_key"] is True
-    assert body["provider"] == "gemini"
+    assert body["provider"] == "whisper_mlx"
 
 
 def test_post_config_rejects_invalid_provider(monkeypatch, app_client):
