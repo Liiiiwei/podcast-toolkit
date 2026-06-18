@@ -63,6 +63,21 @@ def test_post_save_writes_files_and_keeps_server_alive(client, tmp_episode_dir):
     assert called["n"] == 0, "save 不應該觸發 shutdown(只有 /api/shutdown 才關 server)"
 
 
+def test_post_save_invalid_card_timings_returns_400(client):
+    """不合法 card_timings（end<=start / 非數字）→ 400 帶中文訊息，而非裸 500。
+    PR#3 拖拉時間軸會送 card_timings，使用者拖成負/零時長就該拿到 400 而非 Internal Server Error。"""
+    r = client.post(
+        "/api/save",
+        json={"card_timings": {"5": {"start": 10.0, "end": 5.0}}, "cards": []},
+    )
+    assert r.status_code == 400
+    r2 = client.post(
+        "/api/save",
+        json={"card_timings": {"5": {"start": "abc", "end": 9.0}}, "cards": []},
+    )
+    assert r2.status_code == 400
+
+
 def test_post_shutdown_calls_callback(client, tmp_episode_dir):
     called = {"n": 0}
     from podcast_toolkit.web.api import build_app

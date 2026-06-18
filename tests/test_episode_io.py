@@ -71,6 +71,19 @@ def test_save_state_writes_crop_and_deletions_to_yaml(tmp_episode_dir):
     assert new_yaml["deletions"] == [2, 4]
 
 
+def test_load_state_returns_cuts_from_yaml(tmp_episode_dir):
+    """B1 時間版刪段（cuts）：存得進也要讀得回，否則前端看不到也砍不掉已存的 cuts
+    （它們在合成時仍會生效 → 看不到又移不掉）。對抗式驗收抓到的讀半條鏈缺口。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + "cuts:\n  - [3.0, 4.0]\n  - [10.5, 12.0]\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    state = episode_io.load_state(ep)
+    assert state["cuts"] == [[3.0, 4.0], [10.5, 12.0]]
+
+
 def test_save_state_reorder_keeps_srt_time_monotonic(tmp_episode_dir):
     """回歸：拖拉換位置（time_overrides 把卡移過鄰居）存檔後，_v2.srt 必須仍時間單調、
     重新編號跟畫面（前端也依 start 排）一致。少了 always-sort 會寫出非單調 SRT →

@@ -89,9 +89,9 @@ def _pad_and_merge_cuts(
 
     保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
     語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
-    pad = 每側「最多」吃的雜音秒數；殘留停頓 = 間隙 − min(間隙, 2·pad)：間隙 > 2·pad 處留下
-    自然停頓（不壓平，刻意的大停頓會被尊重），≤ 2·pad 處整段吃掉。預設小值（0.15s）留呼吸、
-    不趕；給很大 → 吃滿到鄰卡邊界（殘留 0、貼死，會趕）。
+    pad = 每側「最多」吃的雜音秒數（左右各自獨立 cap、pad 不跨側挪用）；每側殘留 = 該側間隙 −
+    min(該側間隙, pad)：某側間隙 > pad 處留下自然停頓（不壓平，刻意的大停頓會被尊重），≤ pad 處
+    該側整段吃掉。預設小值（0.15s）留呼吸、不趕；給很大 → 吃滿到鄰卡邊界（殘留 0、貼死，會趕）。
     某一側沒有鄰卡（片頭/片尾側）→ 該側不外吃（頭尾留給 head/tail trim 處理）。
     """
     intervals = sorted(intervals)
@@ -1197,6 +1197,11 @@ def prepare_assembly(
 
     # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
     main_dur = main_dur / speed_factor
+
+    # 防呆：刪段/頭尾 trim 把正片砍到 0（或全刪）→ main_dur<=0 會讓 fade=t=out:st=main_dur-0.5
+    # 變負、multicam segments 變空，ffmpeg 不是報錯就是默默產壞檔。明確報錯勝過輸出壞片。
+    if main_dur <= 0:
+        raise AssembleError("刪段／頭尾 trim 後正片長度為 0，請至少保留一段內容", exit_code=1)
 
     # tmp_out 寫在 work/，成功後由呼叫端 rename 到 out
     # 保留 .mp4 結尾，否則 ffmpeg 從 .tmp 副檔名無法判斷輸出格式

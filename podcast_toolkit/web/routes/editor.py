@@ -18,7 +18,12 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.post("/api/save")
     def save(payload: dict):
         ep = ctx.require_ep()
-        episode_io.save_state(ep, payload)
+        try:
+            episode_io.save_state(ep, payload)
+        except ValueError as e:
+            # 不合法的 card_timings（end<=start / 非數字）等 → 400 帶中文訊息，而非裸 500。
+            # save_state 在寫任何檔案前就 raise，所以無檔案損壞之虞。
+            raise HTTPException(status_code=400, detail=str(e))
         # 重新 init Episode 讓 cfg 反映剛寫入的 yaml；否則 GET /api/episode
         # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
         holder["ep"] = Episode(ep.dir)

@@ -217,6 +217,9 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cover_enabled": bool((ep.cfg.get("watermark") or {}).get("enabled")),
         "speed": dict(ep.cfg.get("speed") or {}),
         "deletions": list(ep.cfg.get("deletions") or []),
+        # 時間版刪段（B1）：save_state 寫得進、這裡也要讀得回，否則前端看不到也砍不掉
+        # 已存的 cuts（它們在合成時仍會生效 → 看不到又移不掉）。
+        "cuts": list(ep.cfg.get("cuts") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
