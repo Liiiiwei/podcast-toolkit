@@ -84,12 +84,14 @@ def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
 def _pad_and_merge_cuts(
     intervals: list[tuple[float, float]], v2_cards: list[dict], pad: float
 ) -> list[tuple[float, float]]:
-    """把每個刪除區間往前後各延伸 pad 秒，吃掉講話前後間隙裡的雜音（換氣/雜聲/底噪）；
+    """把每個刪除區間往前後各「最多」吃掉 pad 秒的邊緣雜音（換氣/吸氣/底噪）；
     但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。pad<=0 → 原樣返回。
 
     保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
     語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
-    pad 給很大 → 把整個間隙吃到鄰卡語音邊界（預設行為）；給小 → 溫和留點呼吸。
+    pad = 每側「最多」吃的雜音秒數；殘留停頓 = 間隙 − min(間隙, 2·pad)：間隙 > 2·pad 處留下
+    自然停頓（不壓平，刻意的大停頓會被尊重），≤ 2·pad 處整段吃掉。預設小值（0.15s）留呼吸、
+    不趕；給很大 → 吃滿到鄰卡邊界（殘留 0、貼死，會趕）。
     某一側沒有鄰卡（片頭/片尾側）→ 該側不外吃（頭尾留給 head/tail trim 處理）。
     """
     intervals = sorted(intervals)

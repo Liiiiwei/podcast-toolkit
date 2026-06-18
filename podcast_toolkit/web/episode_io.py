@@ -6,6 +6,36 @@ import yaml
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.resegment import _HALF_SENTENCE_TAIL
+from podcast_toolkit.whisper_guard import GuardConfig, WhisperGuard
+
+
+def _flag_review(
+    cards: list[dict],
+    rcfg: dict,
+    guard: WhisperGuard,
+) -> list[dict]:
+    """重算 resegment.py 寫進 _resegment_review.txt 的兩條「待複查」旗標，
+    讓前端不用開文字檔就能在卡片上看到 ⚠：
+
+    - half_sentence：句子斷在連接詞/介詞上（像沒講完），判斷對齊 resegment.py。
+    - repetition：whisper 重複幻覺（guard.is_repetitive）。
+
+    與 _flag_suspicious_pause 並列、用獨立欄位（needs_review / review_reasons），
+    刻意不塞進 suspicious_pause，避免紅卡批次刪除 toolbar 誤收這些卡。
+    in-place 加欄位後回傳同一份 cards。
+    """
+    dangle = tuple(rcfg.get("dangle_endings") or ())
+    for c in cards:
+        txt = (c.get("text") or "").replace("\n", "").strip()
+        reasons: list[str] = []
+        if len(txt) >= 4 and (txt[-1] in _HALF_SENTENCE_TAIL or (dangle and txt.endswith(dangle))):
+            reasons.append("half_sentence")
+        if guard.is_repetitive(txt):
+            reasons.append("repetition")
+        c["needs_review"] = bool(reasons)
+        c["review_reasons"] = reasons
+    return cards
 
 
 def _flag_suspicious_pause(
@@ -157,11 +187,21 @@ def load_state(ep: Episode) -> dict[str, Any]:
     else:
         cam_a_rel = ""
     if cards:
+        rcfg = ep.cfg.get("resegment") or {}
         _flag_suspicious_pause(
             cards,
             ep.cfg.get("suspicious_pause") or {},
-            ep.cfg.get("resegment", {}).get("reaction_words") or [],
+            rcfg.get("reaction_words") or [],
         )
+        # resegment 的「待複查」旗標（半句結尾 / 重複幻覺）→ 前端卡片顯示 ⚠
+        guard = WhisperGuard(
+            GuardConfig(
+                char_loop_min_repeats=(rcfg.get("whisper_guard") or {}).get(
+                    "char_loop_min_repeats", 3
+                )
+            )
+        )
+        _flag_review(cards, rcfg, guard)
     # 空集（init 完但沒放母帶）main_video 解析後可能不存在；前端拿這個旗標決定要不要
     # 顯示「請放檔案到 01_母帶/」的 empty banner，並跳過 <video> 自動 fetch。
     try:
@@ -442,10 +482,11 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
-    # 單卡時間微調：{ "<idx>": {start, end} }；serialize 前覆寫對應卡的 start/end
-    raw_time = payload.get("time_overrides") or {}
-    time_overrides: dict[int, tuple[float, float]] = {}
-    for k, v in raw_time.items():
+    # 單卡時間微調：兩個來源都收進 composite-key（idx, part）dict：
+    #  (a) time_overrides payload（int idx，舊版拖拉）— 非法值靜默跳過
+    #  (b) card_timings payload（composite "5" / "5:1"）— 後端權威驗證，非法 raise（轉 400）
+    time_overrides: dict[tuple[int, int], tuple[float, float]] = {}
+    for k, v in (payload.get("time_overrides") or {}).items():
         if not isinstance(v, dict):
             continue
         try:
@@ -456,9 +497,22 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         if e <= s:  # 終點不得早於起點，丟掉非法值
             continue
         try:
-            time_overrides[int(k)] = (max(0.0, s), e)
+            time_overrides[(int(k), 0)] = (max(0.0, s), e)
         except (TypeError, ValueError):
             continue
+    for k, v in (payload.get("card_timings") or {}).items():
+        if not isinstance(v, dict):
+            continue
+        try:
+            st = float(v.get("start"))
+            en = float(v.get("end"))
+        except (TypeError, ValueError):
+            raise ValueError(f"字幕時間不是數字：{k} → {v!r}")
+        if not (st >= 0 and st < en):
+            raise ValueError(
+                f"字幕時間不合法（需 0 ≤ 開始 < 結束）：{k} → {st:.3f}–{en:.3f}"
+            )
+        time_overrides[_parse_composite_id(k)] = (st, en)
 
     # 新增字卡：[{start, end, text}]；append 進現有卡、依時間排序後一起重編號
     new_cards: list[dict] = []
@@ -484,7 +538,7 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         # 套用時間微調（在 serialize 前改 card.start/end；切過的卡 override 會當 t0/t1 重算 sub-card）
         if time_overrides:
             for c in cards:
-                ov = time_overrides.get(int(c["idx"]))
+                ov = time_overrides.get((int(c["idx"]), 0))
                 if ov:
                     c["start"], c["end"] = ov
         # 插入新字卡：給暫時 idx（接在最大 idx 後）；serialize_with_map 會重編號
@@ -497,14 +551,14 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         # SRT、重載後整份錯位（症狀：「時間整個跑掉」）。輸入已排序時重排為 no-op，安全。
         cards.sort(key=lambda c: float(c["start"]))
         new_text, idx_map = srt_io.serialize_with_map(
-            cards, overrides=overrides, splits=splits
+            cards, overrides=overrides, splits=splits, time_overrides=time_overrides
         )
         v2.write_text(new_text, encoding="utf-8")
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
     elif overrides or splits or time_overrides or new_cards:
         raise FileNotFoundError(
-            f"找不到 {v2.name}，無法套用字幕文字修改；請先跑 podcast subtitle 產生字幕"
+            f"找不到 {v2.name}，無法套用字幕文字／時間修改；請先跑 podcast subtitle 產生字幕"
         )
 
     def _translate(key: Any) -> int | None:

@@ -1356,6 +1356,42 @@ dialog.modal::backdrop {
   white-space: pre-wrap;
   font-family: var(--font-mono);
 }
+.modal-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+/* 鍵盤快捷鍵總覽：左欄按鍵、右欄說明 */
+.shortcuts-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  align-items: center;
+}
+.shortcuts-list dt {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+.shortcuts-list dd {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.shortcuts-list kbd {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  color: var(--text);
+}
 .modal-body {
   font-size: var(--text-base);
   display: flex;
@@ -2066,6 +2102,48 @@ dialog.modal::backdrop {
   padding: 4px 10px;
   font-size: var(--text-xs);
 }
+/* 待複查卡導覽 toolbar：warning 黃色系，與紅卡批次刪除 toolbar（danger 紅）區隔 */
+.review-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 7px 10px;
+  margin-bottom: var(--space-sm);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+.review-toolbar.hidden {
+  display: none;
+}
+.review-toolbar .review-flag-icon {
+  display: inline-flex;
+  color: var(--warning);
+}
+.review-toolbar .review-count {
+  color: var(--warning);
+  font-weight: 600;
+  font-size: var(--text-base);
+}
+.review-toolbar .review-label {
+  color: var(--text-dim);
+  flex: 1;
+}
+.review-toolbar .btn {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+.review-toolbar .btn.active {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--warning-soft);
+}
+/* 只看待複查篩選：隱藏非 hit 卡與子卡群組標頭 */
+#cards-list.filter-review .card:not(.review-hit),
+#cards-list.filter-review .card-sub-origin {
+  display: none;
+}
 
 .card {
   display: grid;
@@ -2275,6 +2353,28 @@ dialog.modal::backdrop {
   font-family: var(--font-mono);
   cursor: help;
 }
+.card-split-warn svg {
+  vertical-align: -1px;
+}
+/* resegment 待複查旗標：半句結尾（warning 黃）/ 重複幻覺（danger 紅）。
+   掛在時間欄、與 split 警告同欄；不改卡片底色避免和 .card.suspicious 紅底打架。 */
+.card-review-flag {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--warning);
+  cursor: help;
+}
+.card-review-flag.severe {
+  color: var(--danger);
+}
+.card-review-flag svg {
+  flex: none;
+}
 .card-split-pace {
   color: var(--text-faint);
   font-size: 10px;
@@ -2365,6 +2465,82 @@ dialog.modal::backdrop {
     transparent 4px,
     transparent 8px
   );
+}
+
+/* === 字幕時間軸（拖卡片邊緣改進/出時間）=== */
+.card-timeline-wrap {
+  margin: 6px 0 2px 0;
+}
+.card-timeline-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-sm);
+  margin-bottom: 3px;
+}
+.card-timeline-title {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  font-weight: 500;
+}
+.card-timeline-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.card-timeline {
+  position: relative;
+  width: 100%;
+  height: 26px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.tl-block {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  box-sizing: border-box;
+  cursor: pointer;
+  overflow: hidden;
+}
+.tl-block:hover {
+  border-color: var(--accent);
+}
+.tl-block.edited {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.tl-block.deleted {
+  opacity: 0.4;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--surface-raised),
+    var(--surface-raised) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+/* 左右拖把：寬一點好抓，hover / 拖拉中顯示 accent */
+.tl-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.tl-handle-l {
+  left: -1px;
+}
+.tl-handle-r {
+  right: -1px;
+}
+.tl-handle:hover {
+  background: var(--accent);
+  opacity: 0.5;
 }
 .card-text {
   color: var(--text);

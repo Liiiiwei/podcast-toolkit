@@ -148,3 +148,40 @@ def test_split_does_not_shift_later_cards_times():
     # (4) idx_map 翻譯正確：新卡 5 對應原卡 3（deletions/鏡頭標記靠這個搬家）
     assert idx_map[4] == (3, 0)
     assert idx_map[1] == (2, 0) and idx_map[3] == (2, 2)
+# --- 功能2A：time_overrides（手動拖拉改時間）---
+
+
+def test_time_override_on_unsplit_card():
+    """未切卡的時間被覆寫成新的 start/end。"""
+    cards = srt_io.parse(SAMPLE)
+    out = srt_io.serialize(cards, time_overrides={(2, 0): (5.0, 9.0)})
+    assert "00:00:05,000 --> 00:00:09,000" in out
+    # 第 1 卡沒被覆寫，維持原時間
+    assert "00:00:00,000 --> 00:00:04,200" in out
+
+
+def test_time_override_does_not_change_idx_map():
+    """時間覆寫不影響 idx_map（編號不變）。"""
+    cards = srt_io.parse(SAMPLE)
+    _, idx_map = srt_io.serialize_with_map(
+        cards, time_overrides={(1, 0): (1.0, 2.0)}
+    )
+    assert idx_map == [(1, 0), (2, 0)]
+
+
+def test_time_override_partial_on_split_keeps_char_alloc():
+    """切句 + 只覆寫其中一段時間 → 被覆寫段用手動值，未覆寫段仍走字數分配。"""
+    cards = srt_io.parse(SAMPLE)
+    # 第 2 卡（4.2–12.0）切成兩段，只手動改第 1 段（part 0）
+    text, idx_map = srt_io.serialize_with_map(
+        cards,
+        splits={2: ["前半段", "後半段"]},
+        time_overrides={(2, 0): (4.2, 6.0)},
+    )
+    assert idx_map == [(1, 0), (2, 0), (2, 1)]
+    # part 0 用手動值
+    assert "00:00:04,200 --> 00:00:06,000" in text
+    # part 1 沒被覆寫 → 仍是 allocate_split_times 算出的值（不等於手動段）
+    alloc = srt_io.allocate_split_times(4.2, 12.0, ["前半段", "後半段"])
+    p1_start = srt_io._s2ts(alloc[1][0])
+    assert p1_start in text
