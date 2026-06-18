@@ -301,6 +301,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     data.pop("crop", None)
 
     for key in ("crop_yt", "crop_reels"):
+        if key not in payload:
+            continue  # 局部存檔沒帶這個 key → 不動既有值（明確送 null/空才清除，避免靜默抹掉裁切）
         crop = payload.get(key)
         if crop:
             entry: dict[str, Any] = {
@@ -380,6 +382,8 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
 
     # head / tail trim：> 0 才寫，否則清掉避免噪音
     for key in ("head_trim_sec", "tail_trim_sec"):
+        if key not in payload:
+            continue  # 局部存檔沒帶這個 key → 不動既有值（避免靜默抹掉片頭/片尾 trim）
         val = float(payload.get(key) or 0)
         if val > 0:
             data[key] = val

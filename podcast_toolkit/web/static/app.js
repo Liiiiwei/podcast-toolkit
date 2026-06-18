@@ -329,14 +329,9 @@ function fmtTime(sec) {
 // 集中判斷「有沒有未儲存變動」，topbar chip / beforeunload / cancel / 換集 / 合成都用這個
 // 包含：刪除 / 改字 / 切句 / 裁切框。trim / cam mapping 走別的儲存通道不算進來
 function hasUnsavedChanges() {
-  return (
-    state.deletions.size > 0 ||
-    state.textOverrides.size > 0 ||
-    state.cardSplits.size > 0 ||
-    state.cardTimings.size > 0 ||
-    state.cropYt != null ||
-    state.cropReels != null
-  );
+  // 單一真相來源：與 unsavedCount() 對齊。先前漏算 timeOverrides/newCards/outputDirty，
+  // 導致「只做單卡時間微調或新增字卡」後，換集/關頁前的未存保護不觸發 → 默默丟失那些編輯。
+  return unsavedCount() > 0;
 }
 
 function unsavedCount() {
@@ -5524,8 +5519,12 @@ function _buildCamModalSavePayload() {
     cameras_mapping: Object.fromEntries(state.camerasMapping),
     speakers_mapping: Object.fromEntries(state.speakersMapping),
     splits: Object.fromEntries(state.cardSplits),
-    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt
-    card_timings: Object.fromEntries(state.cardTimings),
+    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt。
+    // 必須過 toDiskTime() 加回 audioSyncOffset（與主存檔 #save-btn 一致）；否則有外接音檔
+    // offset 的集，經 cam-modal 存檔會把字幕時間少加 offset、每存一次漂一個 offset。
+    card_timings: Object.fromEntries(
+      [...state.cardTimings.entries()].map(([k, t]) => [k, toDiskTime(t)]),
+    ),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,

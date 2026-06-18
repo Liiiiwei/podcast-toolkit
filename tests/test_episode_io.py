@@ -84,6 +84,24 @@ def test_load_state_returns_cuts_from_yaml(tmp_episode_dir):
     assert state["cuts"] == [[3.0, 4.0], [10.5, 12.0]]
 
 
+def test_save_state_partial_payload_preserves_crop_and_trim(tmp_episode_dir):
+    """局部存檔（payload 沒帶 crop_yt / head_trim_sec）不可靜默清掉既有裁切/片頭尾 trim。
+    對抗式驗收抓到的 footgun：未來任何 cuts-only 之類的局部存檔都不該抹掉這些欄位
+    （改成 key-presence：沒帶 key 就不動，明確送 null/空才清除）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "crop_yt:\n  x: 0.1\n  y: 0.0\n  width: 0.8\n  height: 1.0\n"
+        + "head_trim_sec: 16.8\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(ep, payload={"cuts": [[3.0, 4.0]], "cards": []})  # 局部存檔，不帶 crop/trim
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["crop_yt"] == {"x": 0.1, "y": 0.0, "width": 0.8, "height": 1.0}, "crop 被局部存檔抹掉了"
+    assert data["head_trim_sec"] == 16.8, "head_trim 被局部存檔抹掉了"
+
+
 def test_save_state_reorder_keeps_srt_time_monotonic(tmp_episode_dir):
     """回歸：拖拉換位置（time_overrides 把卡移過鄰居）存檔後，_v2.srt 必須仍時間單調、
     重新編號跟畫面（前端也依 start 排）一致。少了 always-sort 會寫出非單調 SRT →
