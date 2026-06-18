@@ -43,6 +43,15 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 raise HTTPException(status_code=400, detail="不支援預覽的副檔名")
         return video.range_response(target, request.headers.get("range"))
 
+    @app.get("/api/output-video")
+    def get_output_video(request: Request):
+        """直接串流成品 YT 完整版，不需要帶中文路徑。"""
+        ep = ctx.require_ep()
+        target = ep.output_yt_video()
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="成品不存在，請先渲染")
+        return video.range_response(target, request.headers.get("range"))
+
     @app.get("/api/audio")
     def get_audio(request: Request, path: str):
         ep = ctx.require_ep()
