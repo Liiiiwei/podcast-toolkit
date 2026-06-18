@@ -98,7 +98,7 @@ def test_cut_pad_last_card_no_right_neighbor():
 
 
 def test_cut_pad_fill_to_neighbor_with_large_pad():
-    """預設大 cut_pad（吃滿間隙）：刪中間卡 → 間隙全吃到兩鄰卡語音邊界、不咬語音；
+    """給很大的 cut_pad（吃滿間隙、非預設；預設是 0.15）：刪中間卡 → 間隙全吃到兩鄰卡語音邊界、不咬語音；
     首/尾卡那一側沒鄰卡 → 不往片頭/片尾外吃。"""
     # 刪卡2 → 吃滿 [3,10]（卡1尾~卡3頭）
     assert assemble.cut_intervals_from_cfg({"deletions": [2], "cut_pad": 3600}, GAPPED) == [(3.0, 10.0)]
@@ -123,6 +123,7 @@ def test_cut_pad_kept_card_between_deletes_not_merged():
 def test_config_merge_cut_pad_default_and_override():
     from podcast_toolkit import config
     defaults = config.load_defaults()
+    assert defaults["cut_pad"] == 0.15  # 出廠預設＝每側最多吃 0.15s（改了要有意識，別回到吃滿 3600）
     assert config.merge(defaults, {})["cut_pad"] == defaults.get("cut_pad")  # 用 defaults
     assert config.merge(defaults, {"cut_pad": 0})["cut_pad"] == 0.0  # episode 明確關閉
     assert config.merge(defaults, {"cut_pad": 0.4})["cut_pad"] == 0.4
