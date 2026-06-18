@@ -136,6 +136,9 @@ glossary:
 
 - `podcast init <path>` — 腳手架
 - `podcast resegment <path> [--force]` — 字幕重新斷句
+- `podcast proofread <path> [--provider claude_code|gemini|off]` — 字幕語意校對（預設用本地 Claude Code，不外聯 API；非 CC 使用者自動退回 Gemini / 跳過）
+- `podcast auto <path> [--no-proofread|--no-camera|--no-trim] [--provider ...] [--force]` — 一鍵自動後製：校對字幕 + 對應鏡頭（分軌集才有講者資料）+ 去頭去尾（偵測頭尾靜音補 trim），盡量自動只剩人工確認 + 輸出
+- `podcast ingest-breeze <path> [--srt ...]` — 匯入 Breeze ASR 字幕（含講者 `[MicN]`）：去標籤寫 `_final_v2.srt` + 拆 MicN→speaker 寫 `speakers.json`（本地轉錄前端的交接入口）
 - `podcast assemble <path> [--dry-run] [--force]` — 合成 YT 完整版（Reels 走 web 端 modal 勾選）
 - `podcast edit <path>` — 開瀏覽器視覺化編輯：裁切 / 刪段 / 改字
 
