@@ -3,15 +3,24 @@
 defaults.yaml 路徑相對於 toolkit_root；
 episode.yaml 內路徑欄位相對於 episode 資料夾。
 """
+import os
+import sys
 from pathlib import Path
 from typing import Optional
 import yaml
 
 
 def toolkit_root() -> Path:
-    """toolkit 安裝根目錄。
-    config.py 位在 <root>/podcast_toolkit/config.py，所以 parent.parent 是 root。
+    """toolkit 安裝根目錄（defaults.yaml / assets 所在）。
+    開發/editable：config.py 在 <root>/podcast_toolkit/config.py，parent.parent 是 root。
+    py2app 打包：資料檔放在 .app/Contents/Resources（py2app 會設 sys.frozen + 環境變數 RESOURCEPATH）。
     """
+    if getattr(sys, "frozen", False):
+        rp = os.environ.get("RESOURCEPATH")
+        if rp:
+            return Path(rp)
+        # 後備：從執行檔推 Contents/Resources（Contents/MacOS/python → ../Resources）
+        return Path(sys.executable).resolve().parent.parent / "Resources"
     return Path(__file__).resolve().parent.parent
 
 

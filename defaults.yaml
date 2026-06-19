@@ -47,7 +47,17 @@ gemini:
 #     sounds_like: ["可能誤聽 1", "可能誤聽 2"]   # 可省略
 #     note: "說明"                                  # 可省略
 # 也可直接寫純字串：- "Liwei Sia"
-common_glossary: []
+# 節目固定詞（節目名/主持人）：誤聽形式雜亂（孫美洲羅愛上班/阿文軒/莫老闆月球…），故只放 canonical、
+# 不做 sounds_like 硬替換——靠每集 ingest-breeze 後自動跑的本地 claude proofread 讀進 prompt、靠語境改。
+common_glossary:
+  - canonical: "我愛上班"
+    note: "節目名；ASR 常聽錯成『孫美洲羅愛上班』等"
+  - canonical: "郝慧川"
+    note: "主持人；ASR 常聽錯成『阿文軒』等"
+  - canonical: "岳啟儒"
+    note: "主持人本名；ASR 常聽錯（月球/啟儒…）"
+  - canonical: "惡魔老闆"
+    note: "岳啟儒的稱號；ASR 常聽錯成『莫老闆』等"
 
 subtitle_style:
   font_name: "Hiragino Sans GB"

@@ -25,7 +25,16 @@ DATA_FILES = [
         "podcast_toolkit/web/static/dashboard.css",
         "podcast_toolkit/web/static/dashboard.js",
     ]),
-    ("podcast_toolkit/assets", []),  # 留位給未來 intro/outro 包進來
+    # defaults.yaml + assets → Resources 根（bundle 內 toolkit_root() = Contents/Resources）。
+    # 少了它們：開單集會 load_defaults 找不到 defaults.yaml→500、合成找不到 intro/outro/封面。
+    ("", ["defaults.yaml"]),
+    ("assets", [
+        "assets/intro.mp4",
+        "assets/outro.mp3",
+        "assets/subscribe_card.png",
+        "assets/cover.png",
+        "assets/intro_music.m4a",
+    ]),
     # ffmpeg/ffprobe 內附（完全 turnkey 的 .app 用）：放一份 arm64+videotoolbox 靜態 build 到
     # assets/bin/，再取消下一行註解 → launcher 的 PATH prepend 會優先用它（裝過 brew ffmpeg
     # 的使用者不放也能跑）。
