@@ -14,7 +14,10 @@ class Episode:
         self.dir = Path(episode_dir).resolve()
         self.raw_episode = config.load_episode(self.dir)
         defaults = config.load_defaults()
-        self.cfg = config.merge(defaults, self.raw_episode)
+        # .glossary.json（web UI 寫的集詞庫）一併併入 cfg['glossary']，
+        # 否則 web 加的詞 proofread/resegment 讀不到（兩條 glossary 來源原本不互通）。
+        sidecar = config.load_episode_glossary_sidecar(self.dir)
+        self.cfg = config.merge(defaults, self.raw_episode, episode_glossary_sidecar=sidecar)
 
     @property
     def name(self) -> str:
