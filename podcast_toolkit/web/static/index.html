@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260615a" />
+    <link rel="stylesheet" href="/static/app.css?v=20260621f" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -252,14 +252,44 @@
             <div class="card-timeline-head">
               <span class="card-timeline-title">字幕時間軸</span>
               <span class="card-timeline-hint"
-                >拖卡片左右邊緣改進 / 出時間</span
+                >拖卡片左右邊緣改進 / 出時間 · Ctrl/⌘+滾輪縮放</span
               >
+              <div class="tl-zoom" role="group" aria-label="時間軸縮放">
+                <button
+                  type="button"
+                  class="tl-zoom-btn"
+                  id="tl-zoom-out"
+                  title="縮小時間軸"
+                  aria-label="縮小時間軸"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  class="tl-zoom-btn tl-zoom-fit"
+                  id="tl-zoom-fit"
+                  title="適合畫面寬度"
+                >
+                  適合
+                </button>
+                <button
+                  type="button"
+                  class="tl-zoom-btn"
+                  id="tl-zoom-in"
+                  title="放大時間軸（攤開字幕卡）"
+                  aria-label="放大時間軸"
+                >
+                  ＋
+                </button>
+              </div>
             </div>
-            <div
-              class="card-timeline"
-              id="card-timeline"
-              title="字幕時間軸：拖卡片左右邊緣調整字幕進 / 出時間"
-            ></div>
+            <div class="card-timeline-scroll" id="card-timeline-scroll">
+              <div
+                class="card-timeline"
+                id="card-timeline"
+                title="字幕時間軸：拖卡片左右邊緣調整字幕進 / 出時間"
+              ></div>
+            </div>
           </div>
           <div class="trim-controls">
             <button
@@ -370,21 +400,6 @@
             >
               <input type="checkbox" id="cover-toggle" />
               <span>節目封面</span>
-            </label>
-            <label class="toggle-chip" title="只加速正片，字幕自動同步">
-              <input type="checkbox" id="speed-toggle" />
-              <span>倍速</span>
-              <input
-                type="number"
-                id="speed-factor"
-                class="speed-factor"
-                min="1"
-                max="2"
-                step="0.05"
-                value="1.25"
-                disabled
-              />
-              <span class="rotate-unit">×</span>
             </label>
           </div>
           <div class="reels-clips-panel hidden" id="reels-clips-panel">
@@ -854,6 +869,42 @@
       </div>
     </dialog>
 
+    <!-- 合成設定 modal（輸出按鈕的「下一步」：先設倍速等輸出選項，再開始合成）-->
+    <dialog class="modal" id="assemble-setup-modal">
+      <div class="modal-head" id="assemble-setup-title">合成設定</div>
+      <div class="modal-body">
+        <label class="modal-label">輸出選項</label>
+        <!-- 不用 .modal-row：那條規則 (.modal-row input/select{flex:1}) 會綁架 chip 內的
+             checkbox 與倍率輸入框。純 div 讓 inline-flex 的 .toggle-chip 維持緊湊靠左。 -->
+        <div>
+          <label class="toggle-chip" title="只加速正片，字幕自動同步">
+            <input type="checkbox" id="speed-toggle" />
+            <span>倍速</span>
+            <input
+              type="number"
+              id="speed-factor"
+              class="speed-factor"
+              min="1"
+              max="2"
+              step="0.05"
+              value="1.25"
+              disabled
+            />
+            <span class="rotate-unit">×</span>
+          </label>
+        </div>
+        <div class="modal-hint">按「開始合成」會先儲存目前的修改，再開始輸出。</div>
+      </div>
+      <div class="modal-actions">
+        <button id="assemble-setup-cancel" type="button" class="btn btn-ghost">
+          取消
+        </button>
+        <button id="assemble-setup-start" type="button" class="btn btn-primary">
+          開始合成
+        </button>
+      </div>
+    </dialog>
+
     <!-- 合成進度 modal -->
     <dialog class="modal" id="assemble-modal">
       <div class="modal-head" id="assemble-title">準備合成</div>
@@ -1254,7 +1305,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260615a"></script>
-    <script src="/static/app.js?v=20260615a" type="module"></script>
+    <script src="/static/icons.js?v=20260621f"></script>
+    <script src="/static/app.js?v=20260621f" type="module"></script>
   </body>
 </html>

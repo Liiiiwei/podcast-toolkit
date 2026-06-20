@@ -32,6 +32,7 @@ const state = {
   // 時間軸拖拉改的字幕時間：composite key（int 或 "idx:part"）→ {start, end} 秒。
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
+  tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -1119,6 +1120,53 @@ function renderCardTimeline() {
     block.append(hL, hR);
     tl.appendChild(block);
   }
+  _applyTlZoomWidth();
+}
+
+// === 時間軸縮放（zoom + 橫向捲動）===
+// #card-timeline 寬度 = zoom×100%（其容器 .card-timeline-scroll 提供橫向捲動）。
+// 區塊仍用 left%/width% 定位 → 元素變寬時自動攤開，拖拉數學（吃 rect.width）不需改。
+const TL_ZOOM_MIN = 1;
+const TL_ZOOM_MAX = 60;
+const TL_ZOOM_STEP = 1.6; // 每按一次 ＋/− 的倍率
+
+function _applyTlZoomWidth() {
+  const tl = $("#card-timeline");
+  if (tl) tl.style.width = `${state.tlZoom * 100}%`;
+  const out = $("#tl-zoom-out");
+  const inn = $("#tl-zoom-in");
+  const fit = $("#tl-zoom-fit");
+  if (out) out.disabled = state.tlZoom <= TL_ZOOM_MIN + 1e-6;
+  if (inn) inn.disabled = state.tlZoom >= TL_ZOOM_MAX - 1e-6;
+  if (fit) fit.textContent = state.tlZoom > 1.01 ? `${state.tlZoom.toFixed(1)}×` : "適合";
+}
+
+// z：目標倍率（會 clamp）。anchorClientX：縮放錨點的螢幕 X（滑鼠位置）；
+// 沒給就以視窗中央為錨。縮放後把錨點對應的時間點維持在原位，手感才穩。
+function setTlZoom(z, { anchorClientX = null } = {}) {
+  z = Math.max(TL_ZOOM_MIN, Math.min(TL_ZOOM_MAX, z));
+  if (Math.abs(z - state.tlZoom) < 1e-6) return;
+  const scroll = $("#card-timeline-scroll");
+  const tl = $("#card-timeline");
+  let frac = 0.5;
+  let anchorOffset = scroll ? scroll.clientWidth / 2 : 0;
+  if (scroll && tl) {
+    const w = tl.offsetWidth || scroll.clientWidth || 1;
+    anchorOffset =
+      anchorClientX != null
+        ? anchorClientX - scroll.getBoundingClientRect().left
+        : scroll.clientWidth / 2;
+    frac = (scroll.scrollLeft + anchorOffset) / w;
+  }
+  state.tlZoom = z;
+  _applyTlZoomWidth();
+  if (scroll && tl) {
+    const newW = tl.offsetWidth || scroll.clientWidth * z;
+    scroll.scrollLeft = frac * newW - anchorOffset;
+  }
+  try {
+    localStorage.setItem("edit.tlZoom", String(z));
+  } catch (_) {}
 }
 
 function startTimelineDrag(e, r, edge) {
@@ -2586,6 +2634,30 @@ function setupExternalAudio() {
   ];
 }
 
+// 字幕時間軸縮放：還原上次倍率 + 綁 −/適合/＋ 與 Ctrl/⌘+滾輪
+(function initTlZoom() {
+  const v = parseFloat(localStorage.getItem("edit.tlZoom"));
+  if (v >= TL_ZOOM_MIN && v <= TL_ZOOM_MAX) state.tlZoom = v;
+})();
+$("#tl-zoom-in")?.addEventListener("click", () =>
+  setTlZoom(state.tlZoom * TL_ZOOM_STEP),
+);
+$("#tl-zoom-out")?.addEventListener("click", () =>
+  setTlZoom(state.tlZoom / TL_ZOOM_STEP),
+);
+$("#tl-zoom-fit")?.addEventListener("click", () => setTlZoom(1));
+$("#card-timeline-scroll")?.addEventListener(
+  "wheel",
+  (e) => {
+    // 只有按住 Ctrl/⌘ 才縮放；否則維持瀏覽器原生橫向捲動
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+    setTlZoom(state.tlZoom * factor, { anchorClientX: e.clientX });
+  },
+  { passive: false },
+);
+
 // 頭尾 trim 按鈕：用目前播放位置設值，再次按同位置 → 視為清除
 $("#trim-head-btn").addEventListener("click", () => {
   const v = $("#video");
@@ -3265,47 +3337,10 @@ function setBtnLabel(btn, iconName, text) {
   }
 }
 
-// 把按鈕切到 loading 狀態：左側 spinner + 「<label>… mm:ss」每秒跳動。
-// 用於自動對齊這類 30 秒到 3 分鐘的 ffmpeg + correlate 流程，避免使用者誤判卡住。
-// 回傳 stop()；呼叫端在最終狀態之前先 stop()，再用 setBtnLabel 接續顯示。
-function startBtnSpinner(btn, label = "計算中") {
-  if (!btn) return () => {};
-  const t0 = performance.now();
-  const render = () => {
-    const sec = Math.floor((performance.now() - t0) / 1000);
-    const mm = Math.floor(sec / 60);
-    const ss = String(sec % 60).padStart(2, "0");
-    btn.innerHTML = `<span class="spinner"></span><span>${label}… ${mm}:${ss}</span>`;
-  };
-  render();
-  const timer = setInterval(render, 1000);
-  return () => clearInterval(timer);
-}
-
-// 統一 modal 標題：icon + 文字 + 狀態色（success / danger / warning / accent）
-function setModalStatusTitle(elId, iconName, text, tone = "") {
-  const el = document.getElementById(elId);
-  if (!el) return;
-  const ico = window.Icons ? window.Icons.get(iconName, { size: 16 }) : "";
-  el.innerHTML = `${ico}<span>${text}</span>`;
-  el.classList.remove(
-    "tone-success",
-    "tone-danger",
-    "tone-warning",
-    "tone-accent",
-  );
-  if (tone) el.classList.add("tone-" + tone);
-}
-
-// init modal 的檔案列表用：icon + 檔名
-function _setInitRow(row, iconName, label) {
-  const ico = window.Icons ? window.Icons.get(iconName, { size: 14 }) : "";
-  row.innerHTML = `${ico}<span>${label}</span>`;
-}
-$("#save-btn").addEventListener("click", async () => {
-  $("#save-btn").disabled = true;
-  setSaveBtnLabel("save", "儲存中…");
-  const payload = {
+// 主儲存鈕與「合成設定 → 開始合成」共用的 /api/save payload 序列化。
+// 抽出來讓「合成的下一步」能用同一條已驗證的存檔路徑把倍速等輸出設定寫進 episode.yaml。
+function buildSavePayload() {
+  return {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
     // 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速；後端 key-presence 判斷要不要寫
@@ -3355,6 +3390,49 @@ $("#save-btn").addEventListener("click", async () => {
       end_card: c.end_card,
     })),
   };
+}
+
+// 把按鈕切到 loading 狀態：左側 spinner + 「<label>… mm:ss」每秒跳動。
+// 用於自動對齊這類 30 秒到 3 分鐘的 ffmpeg + correlate 流程，避免使用者誤判卡住。
+// 回傳 stop()；呼叫端在最終狀態之前先 stop()，再用 setBtnLabel 接續顯示。
+function startBtnSpinner(btn, label = "計算中") {
+  if (!btn) return () => {};
+  const t0 = performance.now();
+  const render = () => {
+    const sec = Math.floor((performance.now() - t0) / 1000);
+    const mm = Math.floor(sec / 60);
+    const ss = String(sec % 60).padStart(2, "0");
+    btn.innerHTML = `<span class="spinner"></span><span>${label}… ${mm}:${ss}</span>`;
+  };
+  render();
+  const timer = setInterval(render, 1000);
+  return () => clearInterval(timer);
+}
+
+// 統一 modal 標題：icon + 文字 + 狀態色（success / danger / warning / accent）
+function setModalStatusTitle(elId, iconName, text, tone = "") {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const ico = window.Icons ? window.Icons.get(iconName, { size: 16 }) : "";
+  el.innerHTML = `${ico}<span>${text}</span>`;
+  el.classList.remove(
+    "tone-success",
+    "tone-danger",
+    "tone-warning",
+    "tone-accent",
+  );
+  if (tone) el.classList.add("tone-" + tone);
+}
+
+// init modal 的檔案列表用：icon + 檔名
+function _setInitRow(row, iconName, label) {
+  const ico = window.Icons ? window.Icons.get(iconName, { size: 14 }) : "";
+  row.innerHTML = `${ico}<span>${label}</span>`;
+}
+$("#save-btn").addEventListener("click", async () => {
+  $("#save-btn").disabled = true;
+  setSaveBtnLabel("save", "儲存中…");
+  const payload = buildSavePayload();
   try {
     await postSave(payload);
     setSaveBtnLabel("check", "已儲存");
@@ -4932,25 +5010,13 @@ async function _pollAssembleOnce() {
 
 // 集中綁定 assemble 相關 listener，啟動時呼叫一次
 function setupAssembleButtons() {
+  let _pendingAssemble = null;
+
+  // 「下一步」：點合成 → 先開「合成設定」視窗（設倍速等輸出選項）→ 按「開始合成」才真的跑
   const launch = (targets, title, { previewSec = null } = {}) => {
-    if (hasUnsavedChanges()) {
-      if (
-        !confirm(
-          "有未儲存的修改，建議先按「完成並儲存」再合成。\n仍要直接合成嗎？（會用磁碟上的 _v2.srt）",
-        )
-      ) {
-        return;
-      }
-    }
-    _lastAssembleTitle = title;
-    resetAssembleModal();
-    $("#assemble-title").textContent = title;
-    showModal("assemble-modal");
-    // 預覽模式預設 force=true，方便反覆驗證 bitrate / 畫質不被「輸出已存在」擋下
-    startAssemble(targets, {
-      previewSec,
-      force: previewSec ? true : false,
-    });
+    _pendingAssemble = { targets, title, previewSec };
+    syncOutputControls(); // 把目前 state.speed 反映到設定視窗的控制項
+    showModal("assemble-setup-modal");
   };
 
   $("#assemble-yt-btn").addEventListener("click", () => {
@@ -4961,6 +5027,43 @@ function setupAssembleButtons() {
   });
   $("#assemble-preview-btn").addEventListener("click", () => {
     launch(["yt"], "合成 YT 前 5 分鐘預覽", { previewSec: 300 });
+  });
+
+  $("#assemble-setup-cancel").addEventListener("click", () => {
+    _pendingAssemble = null;
+    hideModal("assemble-setup-modal");
+  });
+
+  $("#assemble-setup-start").addEventListener("click", async () => {
+    if (!_pendingAssemble) return;
+    const { targets, title, previewSec } = _pendingAssemble;
+    const startBtn = $("#assemble-setup-start");
+    // 倍速等輸出設定要先寫進 episode.yaml，後端 assemble 才讀得到。
+    // 沿用主儲存通道（postSave）：一併存下目前所有修改，與舊「先存再合成」一致。
+    startBtn.disabled = true;
+    setBtnLabel(startBtn, null, "儲存中…");
+    try {
+      await postSave(buildSavePayload());
+      clearUndoStacks();
+      await loadEpisodeState();
+      renderCards();
+    } catch (e) {
+      alert(`儲存失敗，未開始合成：${e.message}`);
+      startBtn.disabled = false;
+      setBtnLabel(startBtn, null, "開始合成");
+      return;
+    }
+    startBtn.disabled = false;
+    setBtnLabel(startBtn, null, "開始合成");
+    hideModal("assemble-setup-modal");
+    _pendingAssemble = null;
+
+    _lastAssembleTitle = title;
+    resetAssembleModal();
+    $("#assemble-title").textContent = title;
+    showModal("assemble-modal");
+    // 預覽模式預設 force=true，方便反覆驗證 bitrate / 畫質不被「輸出已存在」擋下
+    startAssemble(targets, { previewSec, force: previewSec ? true : false });
   });
 
   $("#assemble-cancel").addEventListener("click", () => {
