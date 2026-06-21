@@ -107,6 +107,16 @@ speed:
   enabled: false
   factor: 1.25
 
+# 全片去空拍（偵測中段靜音→跳剪掉）。合成設定視窗可開關。預設關。
+# min_silence：停頓 >= 幾秒才剪（避免砍掉氣口/自然停頓）。
+# pad：每段靜音內縮幾秒留緩衝，不貼死語音（避免剪掉語音起音）。
+# noise_db：低於此音量（dB）算靜音；越接近 0 越嚴格（剪越少）。
+silence_trim:
+  enabled: false
+  min_silence: 0.8
+  pad: 0.15
+  noise_db: -30
+
 # 畫面拉正旋轉（補拍攝傾斜）。per cam 各自一個角度（度數，順時針為正），YT / Reels 共用。
 # 旋轉露出的黑角靠 crop 內縮裁掉（建議搭配 crop 使用）。
 rotate:

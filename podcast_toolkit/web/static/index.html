@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260621f" />
+    <link rel="stylesheet" href="/static/app.css?v=20260622a" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -893,6 +893,27 @@
             <span class="rotate-unit">×</span>
           </label>
         </div>
+        <div>
+          <label
+            class="toggle-chip"
+            title="偵測整集中段的停頓/空檔，輸出時自動跳剪掉（字幕/鏡頭自動跟著對齊）。能量門檻式偵測，可能誤剪刻意停頓/笑場——門檻越大剪越保守。"
+          >
+            <input type="checkbox" id="silence-toggle" />
+            <span>去空拍</span>
+            <span class="rotate-unit">停頓≥</span>
+            <input
+              type="number"
+              id="silence-min"
+              class="speed-factor"
+              min="0.3"
+              max="5"
+              step="0.1"
+              value="0.8"
+              disabled
+            />
+            <span class="rotate-unit">秒才剪</span>
+          </label>
+        </div>
         <div class="modal-hint">按「開始合成」會先儲存目前的修改，再開始輸出。</div>
       </div>
       <div class="modal-actions">
@@ -1305,7 +1326,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260621f"></script>
-    <script src="/static/app.js?v=20260621f" type="module"></script>
+    <script src="/static/icons.js?v=20260622a"></script>
+    <script src="/static/app.js?v=20260622a" type="module"></script>
   </body>
 </html>

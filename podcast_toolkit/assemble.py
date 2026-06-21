@@ -186,7 +186,8 @@ def _pad_and_merge_cuts(
 
 
 def cut_intervals_from_cfg(
-    cfg: dict, v2_cards: list[dict], deletions_override: list | None = None
+    cfg: dict, v2_cards: list[dict], deletions_override: list | None = None,
+    extra_intervals: list | None = None,
 ) -> list[tuple[float, float]]:
     """取得**時間版刪除區間**（_v2/源時間軸的秒數），與字幕脫鉤。
 
@@ -220,7 +221,22 @@ def cut_intervals_from_cfg(
         else:
             intervals = _from_idx(cfg.get("deletions") or [])
 
-    return _pad_and_merge_cuts(sorted(intervals), v2_cards, float(cfg.get("cut_pad") or 0))
+    cuts = _pad_and_merge_cuts(sorted(intervals), v2_cards, float(cfg.get("cut_pad") or 0))
+    if extra_intervals:
+        # 去空拍的靜音區間：已自帶緩衝、不再走 cut_pad 延伸（避免吃進鄰段語音），
+        # 只與刪段聯集後合併重疊。
+        allc = sorted(
+            list(cuts)
+            + [(float(min(a, b)), float(max(a, b))) for a, b in extra_intervals if a != b]
+        )
+        merged: list[list[float]] = [list(allc[0])]
+        for s, e in allc[1:]:
+            if s <= merged[-1][1] + 1e-6:
+                merged[-1][1] = max(merged[-1][1], e)
+            else:
+                merged.append([s, e])
+        cuts = [(s, e) for s, e in merged]
+    return cuts
 
 
 def filter_srt_by_intervals(
@@ -1042,6 +1058,25 @@ def prepare_assembly(
     ep = Episode(episode_dir)
     cfg = ep.cfg
 
+    # 去空拍（全片跳剪停頓）：偵測中段靜音 → 當額外刪除區間。與 cuts 同為 _v2 軸
+    # （偵測跑在外接音檔＝字幕時間軸；無外接音檔則用正片自身音軌）。每段內縮 pad
+    # 留緩衝不貼死語音；交給 cut_intervals_from_cfg 與既有刪段聯集，下游剪裁/字幕對齊照舊。
+    silence_cuts: list[tuple[float, float]] = []
+    _st = cfg.get("silence_trim") or {}
+    if _st.get("enabled"):
+        from podcast_toolkit.web.silencedetect import detect_silence_intervals
+        _min_sil = float(_st.get("min_silence") or 0.8)
+        _pad = float(_st["pad"]) if _st.get("pad") is not None else 0.15
+        _noise = float(_st.get("noise_db") or -30.0)
+        _apath = (cfg.get("audio") or {}).get("path")
+        _sil_media = ep.resolve_episode_path(_apath) if _apath else ep.main_video()
+        for _s, _e in detect_silence_intervals(
+            _sil_media, threshold_db=_noise, min_dur=_min_sil
+        ):
+            _ns, _ne = _s + _pad, _e - _pad
+            if _ne - _ns > 0.05:
+                silence_cuts.append((_ns, _ne))
+
     # 雙鏡頭判斷：cameras.b 有設且 cam A/B 檔案都存在 → 走 multicam
     cam_b_rel = (cfg.get("cameras") or {}).get("b")
     multicam = bool(cam_b_rel)
@@ -1187,7 +1222,9 @@ def prepare_assembly(
         srt_io.parse(v2_canon_path.read_text(encoding="utf-8"))
         if v2_canon_path.exists() else all_cards
     )
-    cut_intervals = cut_intervals_from_cfg(cfg, v2_canon_cards, deletions_override)
+    cut_intervals = cut_intervals_from_cfg(
+        cfg, v2_canon_cards, deletions_override, extra_intervals=silence_cuts
+    )
     # _v2 → cam-A 時間軸：與 srt 一樣 -sync 位移（segment_plan / 單機 deletion_intervals 同軸）
     if audio_file is not None and abs(audio_sync_offset) >= 0.001:
         cut_intervals = [
@@ -1607,7 +1644,9 @@ def extract_reels_clips(
     main_dur = ffprobe_duration(main_video)
 
     # 刪段時間版（cuts，或舊 deletions[idx] 用當下 cards 換算）
-    deletion_intervals = list(cut_intervals_from_cfg(cfg, cards))
+    deletion_intervals = list(
+        cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts)
+    )
     if head_trim > 0:
         deletion_intervals.append((0.0, head_trim))
     if tail_trim > 0:

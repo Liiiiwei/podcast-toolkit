@@ -187,6 +187,11 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
         "watermark": {**(defaults.get("watermark") or {}), **(episode.get("watermark") or {})},
         # 正片倍速（只加速正片，片頭尾不動）：{enabled, factor}
         "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
+        # 全片去空拍（偵測中段靜音→跳剪）：{enabled, min_silence, pad, noise_db}
+        "silence_trim": {
+            **(defaults.get("silence_trim") or {}),
+            **(episode.get("silence_trim") or {}),
+        },
         # 畫面拉正旋轉（per cam，度數）：{a, b}
         "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
         # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段

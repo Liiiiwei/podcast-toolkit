@@ -216,6 +216,7 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "rotate": dict(ep.cfg.get("rotate") or {}),
         "cover_enabled": bool((ep.cfg.get("watermark") or {}).get("enabled")),
         "speed": dict(ep.cfg.get("speed") or {}),
+        "silence_trim": dict(ep.cfg.get("silence_trim") or {}),
         "deletions": list(ep.cfg.get("deletions") or []),
         # 時間版刪段（B1）：save_state 寫得進、這裡也要讀得回，否則前端看不到也砍不掉
         # 已存的 cuts（它們在合成時仍會生效 → 看不到又移不掉）。
@@ -356,6 +357,21 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["speed"] = {"enabled": True, "factor": min(2.0, max(0.5, factor))}
         else:
             data.pop("speed", None)
+
+    # 全片去空拍：enabled 時寫 {enabled, min_silence}；關閉 → 移除整段（回退預設不去空拍）
+    if "silence_trim" in payload:
+        st = payload.get("silence_trim") or {}
+        if st.get("enabled"):
+            try:
+                min_sil = float(st.get("min_silence") or 0.8)
+            except (TypeError, ValueError):
+                min_sil = 0.8
+            data["silence_trim"] = {
+                "enabled": True,
+                "min_silence": min(5.0, max(0.3, min_sil)),
+            }
+        else:
+            data.pop("silence_trim", None)
 
     # deletions：先收原始 composite IDs，等 SRT 重編號完再翻譯成新 int idx
     raw_deletions = list(payload.get("deletions") or [])

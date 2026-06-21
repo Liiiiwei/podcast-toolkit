@@ -66,6 +66,8 @@ const state = {
   // 節目封面（右上角小徽章）開關 / 正片倍速 {enabled,factor} / 合成字幕模式
   coverEnabled: false,
   speed: { enabled: false, factor: 1.25 },
+  // 全片去空拍（偵測中段靜音→跳剪）：{enabled, minSilence 秒}。在合成設定視窗設、存進 episode.yaml
+  silenceTrim: { enabled: false, minSilence: 0.8 },
   subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
   // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
   outputDirty: false,
@@ -1967,6 +1969,11 @@ async function loadEpisodeState() {
   state.coverEnabled = !!data.cover_enabled;
   const sp = data.speed || {};
   state.speed = { enabled: !!sp.enabled, factor: Number(sp.factor) || 1.25 };
+  const stm = data.silence_trim || {};
+  state.silenceTrim = {
+    enabled: !!stm.enabled,
+    minSilence: Number(stm.min_silence) || 0.8,
+  };
   state.outputDirty = false;
   if (typeof syncOutputControls === "function") syncOutputControls();
   state.deletions = new Set(data.deletions || []);
@@ -3347,6 +3354,10 @@ function buildSavePayload() {
     rotate: { a: state.rotate.a, b: state.rotate.b },
     cover_enabled: state.coverEnabled,
     speed: { enabled: state.speed.enabled, factor: state.speed.factor },
+    silence_trim: {
+      enabled: state.silenceTrim.enabled,
+      min_silence: state.silenceTrim.minSilence,
+    },
     // deletions / cameras_mapping key 可能是 int（未切卡）或 "<idx>:<part>"（子卡）→ 不能用 int sort
     deletions: [...state.deletions],
     head_trim_sec: state.headTrimSec,
@@ -6507,6 +6518,13 @@ function syncOutputControls() {
     spf.value = String((state.speed && state.speed.factor) || 1.25);
     spf.disabled = !(state.speed && state.speed.enabled);
   }
+  const sil = document.querySelector("#silence-toggle");
+  const silMin = document.querySelector("#silence-min");
+  if (sil) sil.checked = !!(state.silenceTrim && state.silenceTrim.enabled);
+  if (silMin) {
+    silMin.value = String((state.silenceTrim && state.silenceTrim.minSilence) || 0.8);
+    silMin.disabled = !(state.silenceTrim && state.silenceTrim.enabled);
+  }
   const sm = document.querySelector("#subtitle-mode-select");
   if (sm) sm.value = state.subtitleMode || "burn";
   syncOverlayControls();
@@ -6609,6 +6627,27 @@ function setupOutputControls() {
       v = Math.round(Math.max(0.5, Math.min(2, v)) * 100) / 100;
       state.speed.factor = v;
       spf.value = String(v);
+      state.outputDirty = true;
+      renderTopbar();
+    });
+
+  // 去空拍開關 + 最短停頓門檻
+  const sil = document.querySelector("#silence-toggle");
+  const silMin = document.querySelector("#silence-min");
+  if (sil)
+    sil.addEventListener("change", () => {
+      state.silenceTrim.enabled = sil.checked;
+      if (silMin) silMin.disabled = !sil.checked;
+      state.outputDirty = true;
+      renderTopbar();
+    });
+  if (silMin)
+    silMin.addEventListener("change", () => {
+      let v = Number(silMin.value);
+      if (!isFinite(v)) v = 0.8;
+      v = Math.round(Math.max(0.3, Math.min(5, v)) * 10) / 10;
+      state.silenceTrim.minSilence = v;
+      silMin.value = String(v);
       state.outputDirty = true;
       renderTopbar();
     });
