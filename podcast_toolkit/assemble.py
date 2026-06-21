@@ -8,8 +8,48 @@ import json
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
 from podcast_toolkit.episode import Episode
+
+
+def _has_subtitles_filter(ffmpeg_path: str) -> bool:
+    """該 ffmpeg build 有沒有 subtitles 濾鏡（= 有沒有編進 libass）。"""
+    try:
+        out = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-h", "filter=subtitles"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout
+    except Exception:
+        return False
+    return "Filter subtitles" in out
+
+
+@lru_cache(maxsize=1)
+def ffmpeg_bin() -> str:
+    """挑「真的有 subtitles 濾鏡（libass）」的 ffmpeg，不靠 PATH 順序。
+
+    踩雷：Homebrew 的 ffmpeg 常沒 --enable-libass（無 subtitles 濾鏡），而啟動器/launcher
+    把 /opt/homebrew/bin 前插 PATH → bare "ffmpeg" 會選到它 → 燒字幕合成整條 filtergraph
+    爆「No such filter: subtitles」。逐一挑含 subtitles 的 build；都沒有才退回 PATH 上的 ffmpeg
+    （非燒字幕的操作仍可跑）。"""
+    candidates: list[str] = []
+    which = shutil.which("ffmpeg")
+    if which:
+        candidates.append(which)
+    candidates += [
+        str(Path.home() / ".local" / "bin" / "ffmpeg"),
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+    ]
+    seen: set[str] = set()
+    for c in candidates:
+        if not c or c in seen or not Path(c).exists():
+            continue
+        seen.add(c)
+        if _has_subtitles_filter(c):
+            return c
+    return which or "ffmpeg"
 
 
 def ffprobe_duration(path: Path) -> float:
@@ -400,7 +440,7 @@ def build_leveled_cmd(src: str, out: str, angle: float, enc: dict) -> list[str]:
     bitrate = enc.get("leveled_video_bitrate", "60M")
     venc += ["-b:v", bitrate, "-maxrate", bitrate, "-bufsize", bitrate, "-pix_fmt", enc["pix_fmt"]]
     return [
-        "ffmpeg", "-y",
+        ffmpeg_bin(), "-y",
         *hw, "-i", src,
         "-vf", f"rotate={float(angle)}*PI/180:ow=iw:oh=ih",
         *venc, "-an",
@@ -990,6 +1030,14 @@ def prepare_assembly(
         raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
     if not shutil.which("ffprobe"):
         raise AssembleError("找不到 ffprobe（隨 ffmpeg 安裝）")
+    # 燒字幕需要 libass；若挑不到含 subtitles 濾鏡的 ffmpeg，提早給清楚錯誤
+    # （否則 ffmpeg 會在 filtergraph 噴「No such filter: subtitles」很難懂）。
+    if burn_subs and not _has_subtitles_filter(ffmpeg_bin()):
+        raise AssembleError(
+            "ffmpeg 缺 subtitles 濾鏡（沒編 libass），無法燒字幕。"
+            "請裝含 libass 的 ffmpeg（例如 evermeet 靜態版放 ~/.local/bin，"
+            "或用 brew 重裝含 libass 的 ffmpeg）。"
+        )
 
     ep = Episode(episode_dir)
     cfg = ep.cfg
@@ -1266,7 +1314,7 @@ def prepare_assembly(
             )
             hw = _hwaccel_args(enc)
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin(), "-y",
                 *hw, "-i", str(intro),
                 *hw, "-i", main_rel,
                 *hw, "-i", cam_b_rel_str,
@@ -1301,7 +1349,7 @@ def prepare_assembly(
             )
             hw = _hwaccel_args(enc)
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin(), "-y",
                 *hw, "-i", str(intro),
                 *hw, "-i", main_rel,
                 "-loop", "1", "-t", str(outro_dur), "-i", str(outro_image),
@@ -1337,7 +1385,7 @@ def prepare_assembly(
             )
             hw = _hwaccel_args(enc)
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin(), "-y",
                 *hw, "-i", main_rel,
                 *hw, "-i", cam_b_rel_str,
             ]
@@ -1369,7 +1417,7 @@ def prepare_assembly(
             )
             hw = _hwaccel_args(enc)
             cmd = [
-                "ffmpeg", "-y",
+                ffmpeg_bin(), "-y",
                 *hw, "-i", main_rel,
             ]
             if audio_rel_str:
@@ -1606,7 +1654,7 @@ def extract_reels_clips(
             raise AssembleError(f"片段已存在：{out_path}（加 --force 覆寫）", exit_code=1)
 
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_bin(), "-y",
             "-ss", f"{t_mp4_start:.3f}",
             "-to", f"{t_mp4_end:.3f}",
             "-i", str(reels_mp4),

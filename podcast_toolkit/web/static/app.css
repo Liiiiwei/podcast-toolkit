@@ -2486,6 +2486,42 @@ dialog.modal::backdrop {
   font-size: 10px;
   color: var(--text-faint);
 }
+/* zoom 控制：靠右，− / 適合 / ＋ */
+.tl-zoom {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  gap: 2px;
+}
+.tl-zoom-btn {
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.tl-zoom-btn.tl-zoom-fit {
+  min-width: 34px;
+  font-size: 10px;
+}
+.tl-zoom-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.tl-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* 捲動視窗：時間軸放大後內層比畫面寬，這層負責橫向捲動 */
+.card-timeline-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
 .card-timeline {
   position: relative;
   width: 100%;
