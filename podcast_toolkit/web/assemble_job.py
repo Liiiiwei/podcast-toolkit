@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import threading
+from collections import deque
 from pathlib import Path
 from subprocess import PIPE, Popen
 from time import monotonic
@@ -241,6 +242,22 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
 
     threading.Thread(target=_watchdog, daemon=True).start()
 
+    # 並行排空 stderr：ffmpeg 的 stderr 是 PIPE，若不即時讀走，長片（尤其 4K）累積的
+    # warning 會塞滿 ~64KB pipe 緩衝 → ffmpeg 阻塞在 stderr 寫入 → 不再吐 -progress →
+    # watchdog 誤判卡死把健康渲染砍掉（曾踩雷：已寫 ~957MB 仍被誤殺）。留尾 50 行給錯誤訊息。
+    stderr_lines: deque[str] = deque(maxlen=50)
+
+    def _drain_stderr() -> None:
+        try:
+            assert proc.stderr is not None
+            for sline in proc.stderr:
+                stderr_lines.append(sline)
+        except Exception:
+            pass
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -269,14 +286,9 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
     finally:
         wd_stop.set()
 
-    stderr_tail = ""
-    try:
-        assert proc.stderr is not None
-        stderr_tail = proc.stderr.read() or ""
-    except Exception:
-        pass
-
     returncode = proc.wait()
+    stderr_thread.join(timeout=2.0)
+    stderr_tail = "".join(stderr_lines)
     if returncode == 0 and tmp_out.exists():
         # 成功才覆寫舊輸出；最終 state=done 由 _run_queue 統一設
         tmp_out.replace(out_path)
