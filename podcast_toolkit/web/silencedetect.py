@@ -143,3 +143,49 @@ def detect_tail_silence(
         media_path, threshold_db=threshold_db, min_dur=min_dur, timeout=timeout
     )
     return parse_tail_silence(stderr, parse_duration(stderr))
+
+
+def parse_silence_intervals(stderr: str) -> list[tuple[float, float]]:
+    """從 silencedetect stderr 抓出**全部** (silence_start, silence_end) 配對（秒）。
+
+    用於「全片去空拍」：要整片每一段靜音，而非只頭/尾。silence_start 沒對應到
+    silence_end（靜音延續到 EOF）的開放區間直接丟棄（中段去空拍不處理片尾開放段，
+    片尾留給 tail_trim）。filter 端已用 d={min_dur} 過濾，這裡拿到的都已 >= 門檻。
+    """
+    intervals: list[tuple[float, float]] = []
+    cur_start: float | None = None
+    for line in stderr.splitlines():
+        if "silence_start:" in line:
+            try:
+                cur_start = float(line.split("silence_start:")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                cur_start = None
+        elif "silence_end:" in line and cur_start is not None:
+            try:
+                end_str = line.split("silence_end:")[1].strip().split("|")[0].strip()
+                end = float(end_str.split()[0])
+            except (ValueError, IndexError):
+                cur_start = None
+                continue
+            if end > cur_start:
+                intervals.append((cur_start, end))
+            cur_start = None
+    return intervals
+
+
+def detect_silence_intervals(
+    media_path: Path,
+    *,
+    threshold_db: float = -30.0,
+    min_dur: float = 0.8,
+    timeout: float = 900.0,
+) -> list[tuple[float, float]]:
+    """跑 ffmpeg silencedetect 找**整片所有**靜音區間（秒），給「全片去空拍」用。
+
+    回 [(start, end), ...]（媒體自身時間軸）。只含 >= min_dur 的靜音（filter 端已過濾）。
+    整片解碼較久（-vn 已只解音訊），timeout 給長一點。
+    """
+    stderr = _run_silencedetect(
+        media_path, threshold_db=threshold_db, min_dur=min_dur, timeout=timeout
+    )
+    return parse_silence_intervals(stderr)

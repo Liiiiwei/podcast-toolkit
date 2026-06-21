@@ -3,11 +3,15 @@
 defaults.yaml 路徑相對於 toolkit_root；
 episode.yaml 內路徑欄位相對於 episode 資料夾。
 """
+import json
 import os
 import sys
 from pathlib import Path
 from typing import Optional
 import yaml
+
+# web UI 寫的集詞庫 sidecar（與 web/shared.py 的常數同名；此處 inline 以免 config→web 循環依賴）
+EPISODE_GLOSSARY_FILENAME = ".glossary.json"
 
 
 def toolkit_root() -> Path:
@@ -57,6 +61,39 @@ def normalize_glossary(items: list) -> list:
     return out
 
 
+def load_episode_glossary_sidecar(episode_dir: Path) -> list:
+    """讀 <episode_dir>/.glossary.json（web UI 寫的集詞庫）。檔不存在/壞掉 → []。
+    回傳 raw list，交給 normalize_glossary 統一格式。"""
+    path = Path(episode_dir) / EPISODE_GLOSSARY_FILENAME
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def dedup_glossary(items: list) -> list:
+    """以 canonical 為主鍵去重：sounds_like 取聯集、note 保留最後一個非空。
+    讓 common + episode.yaml + .glossary.json 三來源合併後不重複、不漏 sounds_like。"""
+    order = []
+    by_key = {}
+    for it in items:
+        key = it["canonical"]
+        if key not in by_key:
+            by_key[key] = {"canonical": key, "sounds_like": list(it["sounds_like"]), "note": it["note"]}
+            order.append(key)
+        else:
+            cur = by_key[key]
+            for s in it["sounds_like"]:
+                if s not in cur["sounds_like"]:
+                    cur["sounds_like"].append(s)
+            if it["note"]:
+                cur["note"] = it["note"]
+    return [by_key[k] for k in order]
+
+
 def glossary_to_fixes(glossary: list) -> list:
     """把 normalized glossary 的 sounds_like → canonical 展開成 fix pairs。
     給 resegment 當保險絲：就算 Gemini 沒照 prompt 寫對，事後也會強制替換。
@@ -70,7 +107,7 @@ def glossary_to_fixes(glossary: list) -> list:
     return pairs
 
 
-def merge(defaults: dict, episode: dict) -> dict:
+def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) -> dict:
     """合併 defaults 與 episode：
     - 純量：episode 覆寫 defaults
     - dict：逐 key 合併
@@ -94,9 +131,13 @@ def merge(defaults: dict, episode: dict) -> dict:
         main_video = episode.get("main_video")
         cameras = {"a": main_video} if main_video else {}
 
-    glossary = normalize_glossary(
-        list(defaults.get("common_glossary") or []) + list(episode.get("glossary") or [])
-    )
+    # 三來源合併：defaults common_glossary + episode.yaml glossary + .glossary.json(web sidecar)。
+    # 以 canonical 去重(sounds_like 取聯集)，讓 web 加的詞也進 cfg['glossary'] → proofread/resegment 都讀得到。
+    glossary = dedup_glossary(normalize_glossary(
+        list(defaults.get("common_glossary") or [])
+        + list(episode.get("glossary") or [])
+        + list(episode_glossary_sidecar or [])
+    ))
     user_fixes = list(defaults.get("common_fixes") or []) + list(episode.get("fixes") or [])
     auto_fixes = glossary_to_fixes(glossary)
 
@@ -146,6 +187,11 @@ def merge(defaults: dict, episode: dict) -> dict:
         "watermark": {**(defaults.get("watermark") or {}), **(episode.get("watermark") or {})},
         # 正片倍速（只加速正片，片頭尾不動）：{enabled, factor}
         "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
+        # 全片去空拍（偵測中段靜音→跳剪）：{enabled, min_silence, pad, noise_db}
+        "silence_trim": {
+            **(defaults.get("silence_trim") or {}),
+            **(episode.get("silence_trim") or {}),
+        },
         # 畫面拉正旋轉（per cam，度數）：{a, b}
         "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
         # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段
