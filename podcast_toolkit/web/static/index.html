@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260622a" />
+    <link rel="stylesheet" href="/static/app.css?v=20260622b" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -21,35 +21,6 @@
           >
             <span data-icon="arrow-left"></span>
             <span>列表</span>
-          </button>
-          <div class="ep-switch-wrap">
-            <button
-              id="ep-switch-btn"
-              type="button"
-              class="btn btn-ghost"
-              title="換集：快速切換最近的集（不離開頁面）"
-              aria-haspopup="true"
-              aria-expanded="false"
-            >
-              <span data-icon="folder-open"></span>
-              <span>換集</span>
-              <span class="ep-switch-caret">▾</span>
-            </button>
-            <div
-              class="ep-switch-menu"
-              id="ep-switch-menu"
-              role="menu"
-              hidden
-            ></div>
-          </div>
-          <button
-            id="ep-new-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="新建集"
-          >
-            <span data-icon="calendar-plus"></span>
-            <span>新建</span>
           </button>
         </div>
         <div class="topbar-group">
@@ -238,12 +209,18 @@
               <div
                 class="trim-handle head"
                 id="trim-handle-head"
-                title="拖曳設定片頭"
+                tabindex="0"
+                role="slider"
+                aria-label="片頭裁切點，鍵盤 ← → 微調"
+                title="拖曳或鍵盤 ← → 微調（Shift=0.5s、Cmd=1s）"
               ></div>
               <div
                 class="trim-handle tail"
                 id="trim-handle-tail"
-                title="拖曳設定片尾"
+                tabindex="0"
+                role="slider"
+                aria-label="片尾裁切點，鍵盤 ← → 微調"
+                title="拖曳或鍵盤 ← → 微調（Shift=0.5s、Cmd=1s）"
               ></div>
               <div class="trim-tooltip" id="trim-tooltip" hidden></div>
             </div>
@@ -320,6 +297,15 @@
             >
               <span data-icon="rotate-ccw"></span>
               <span>重設</span>
+            </button>
+            <button
+              id="trim-play-head"
+              type="button"
+              class="btn btn-ghost"
+              title="從片頭起點開始播放（不是當下位置）"
+            >
+              <span data-icon="play"></span>
+              <span>從頭播</span>
             </button>
             <button
               id="trim-suggest-btn"
@@ -537,7 +523,7 @@
         </section>
       </div>
 
-      <section class="drawer" id="drawer">
+      <section class="drawer collapsed" id="drawer">
         <div class="drawer-header">
           <div class="drawer-tabs" role="tablist" aria-label="抽屜分頁">
             <button
@@ -1326,7 +1312,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260622a"></script>
-    <script src="/static/app.js?v=20260622a" type="module"></script>
+    <script src="/static/icons.js?v=20260622b"></script>
+    <script src="/static/app.js?v=20260622b" type="module"></script>
   </body>
 </html>

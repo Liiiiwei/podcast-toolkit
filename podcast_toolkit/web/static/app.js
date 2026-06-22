@@ -2432,9 +2432,12 @@ function autoPauseAtTailTrim() {
 
 // 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
 // 相鄰區間（gap < 0.05s）合併，避免 seek 完馬上又被踢一次。
+// 防 Whisper word-timestamp 把相鄰 cue end/start 排成重疊：刪除區間 end 不得吃進下一張未刪除卡，
+// 否則播放會跳過明明沒被刪的卡（issue: 00:38-00:48 卡無故被預覽跳過）。
 function deletionIntervals() {
+  const cards = expandedCards();
   const raw = [];
-  for (const r of expandedCards()) {
+  for (const r of cards) {
     if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
   }
   raw.sort((a, b) => a[0] - b[0]);
@@ -2444,12 +2447,25 @@ function deletionIntervals() {
     if (last && s <= last[1] + 0.05) last[1] = Math.max(last[1], e);
     else merged.push([s, e]);
   }
-  return merged;
+  const keepStarts = cards
+    .filter((r) => !state.deletions.has(r.key))
+    .map((r) => r.start)
+    .sort((a, b) => a - b);
+  for (const seg of merged) {
+    const nextKeep = keepStarts.find((s) => s > seg[0]);
+    if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
+  }
+  return merged.filter((seg) => seg[1] > seg[0] + 0.01);
 }
 
 // 把 t 算到下一個 keep 區間的起點：在 deleted 區間內 → 跳到區間末端；
 // 不在則回 t 本身。用於 play / timeupdate 時把預覽對齊到最終輸出時間軸。
+// 守門：若 t 正落在某張保留卡的 [start, end) 內，一律不跳 — 處理 Whisper
+// word_timestamp 把保留卡起點推到刪除卡之前的 overlap 情境（issue: 00:38-00:48 卡被跳）。
 function nextKeepTime(t) {
+  for (const r of expandedCards()) {
+    if (!state.deletions.has(r.key) && t >= r.start && t < r.end) return t;
+  }
   for (const [s, e] of deletionIntervals()) {
     if (t >= s && t < e) return e;
   }
@@ -2814,6 +2830,47 @@ $("#trim-handle-tail").addEventListener("pointerdown", (e) => {
   startTrimDrag("tail", e);
 });
 
+// 鍵盤微調：focus 在把手上時 ← → 走 0.1s、Shift+← → 走 0.5s、Cmd/Ctrl+← → 走 1s。
+// 拖曳精度受 seek bar 像素 / 影片時長比例限制（30 min 在 600px ≈ 3s/px），鍵盤是唯一可以 ±0.1s 精準的路徑。
+function nudgeTrim(kind, deltaSec) {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  if (!dur) return;
+  const MIN_REMAIN = 0.5;
+  pushUndo();
+  if (kind === "head") {
+    const maxHead = dur - (state.tailTrimSec || 0) - MIN_REMAIN;
+    const next = Math.max(0, Math.min(state.headTrimSec + deltaSec, maxHead));
+    state.headTrimSec = Math.round(next * 10) / 10;
+  } else {
+    const maxTail = dur - (state.headTrimSec || 0) - MIN_REMAIN;
+    const next = Math.max(0, Math.min(state.tailTrimSec + deltaSec, maxTail));
+    state.tailTrimSec = Math.round(next * 10) / 10;
+  }
+  renderTrimControls();
+  renderTopbar();
+}
+function attachTrimKeyboardNudge(handleId, kind) {
+  $(handleId).addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const step = e.metaKey || e.ctrlKey ? 1.0 : e.shiftKey ? 0.5 : 0.1;
+    const sign = e.key === "ArrowLeft" ? -1 : 1;
+    nudgeTrim(kind, step * sign);
+  });
+}
+attachTrimKeyboardNudge("#trim-handle-head", "head");
+attachTrimKeyboardNudge("#trim-handle-tail", "tail");
+
+// 從片頭起點播放（不是當下位置）— 預覽頭尾切完的效果
+$("#trim-play-head").addEventListener("click", () => {
+  const v = $("#video");
+  const dur = v.duration || 0;
+  if (!dur) return;
+  v.currentTime = state.headTrimSec || 0;
+  v.play().catch(() => {});
+});
+
 // C5：智慧建議 — POST /api/detect-silence；結果顯示在 hint，按下 hint 套用
 $("#trim-suggest-btn").addEventListener("click", async () => {
   const btn = $("#trim-suggest-btn");
@@ -2936,12 +2993,12 @@ function setupDrawer() {
     });
   }
 
-  // 還原上次狀態
+  // 還原上次狀態：預設收合（HTML 已帶 collapsed），只有使用者上次手動展開過（"0"）才打開
   try {
     const savedTab = localStorage.getItem(KEY_TAB);
     if (savedTab) showTab(savedTab);
-    if (localStorage.getItem(KEY_COLLAPSED) === "1") {
-      drawer.classList.add("collapsed");
+    if (localStorage.getItem(KEY_COLLAPSED) === "0") {
+      drawer.classList.remove("collapsed");
     }
   } catch (_) {}
 }
@@ -6265,7 +6322,7 @@ async function openEpSwitchMenu() {
   menu.appendChild(pick);
 }
 
-$("#ep-switch-btn").addEventListener("click", (e) => {
+$("#ep-switch-btn")?.addEventListener("click", (e) => {
   e.stopPropagation();
   if (_epMenuOpen) closeEpSwitchMenu();
   else openEpSwitchMenu();
@@ -6386,7 +6443,7 @@ async function submitNewEpisode() {
   }
 }
 
-$("#ep-new-btn").addEventListener("click", openNewEpModal);
+$("#ep-new-btn")?.addEventListener("click", openNewEpModal);
 
 // 插入一張新字卡：預設接在「上一張卡之後、且不與前後卡重疊」→ 出現空白卡、自動捲到並 focus 文字
 $("#card-insert-btn").addEventListener("click", () => {

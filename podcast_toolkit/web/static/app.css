@@ -799,6 +799,11 @@ h2 {
     0 0 0 4px var(--accent-ring),
     0 1px 4px rgba(0, 0, 0, 0.5);
 }
+/* 鍵盤 focus 才顯描邊（滑鼠點不顯），讓 ← → 微調時看得出哪顆把手有焦點 */
+.trim-handle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 /* 拖曳中的浮動時間提示，跟著拖把走 */
 .trim-tooltip {
   position: absolute;
@@ -2517,10 +2522,27 @@ dialog.modal::backdrop {
   opacity: 0.4;
   cursor: default;
 }
-/* 捲動視窗：時間軸放大後內層比畫面寬，這層負責橫向捲動 */
+/* 捲動視窗：時間軸放大後內層比畫面寬，這層負責橫向捲動。
+   細捲軸 + 預留高度：避免 macOS 原生捲軸浮在時間軸上「遮擋」字幕塊操作。 */
 .card-timeline-scroll {
   overflow-x: auto;
   overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--border-strong) transparent;
+}
+.card-timeline-scroll::-webkit-scrollbar {
+  height: 7px;
+}
+.card-timeline-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.card-timeline-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+.card-timeline-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
 }
 .card-timeline {
   position: relative;
