@@ -75,6 +75,33 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         holder["ep"] = Episode(ep.dir)
         return {"ok": True, "mics": dict(sorted(mics.items()))}
 
+    @app.post("/api/cameras-suggest")
+    def cameras_suggest_route():
+        """依分軌 speakers + camera_rule 自動推時間版 A/B 切換點，覆蓋 cameras.json（先備份 .bak）。
+        需要 speakers.json（分軌集才有）；切點放交接靜默中點。回傳切換點數。"""
+        ep = ctx.require_ep()
+        if not ep.output_v2_speakers_json().exists():
+            raise HTTPException(
+                status_code=400,
+                detail="這集沒有分軌講者資料（speakers.json）；請先用「分軌轉錄」產生講者，才能依講者自動推鏡頭。",
+            )
+        from podcast_toolkit import cameras_suggest
+
+        rc = cameras_suggest.run(ep, force=True)
+        if rc != 0:
+            raise HTTPException(status_code=400, detail="自動推鏡頭失敗（缺字幕或講者資料）。")
+        holder["ep"] = Episode(ep.dir)
+        import json
+
+        cj = ep.output_v2_cameras_json()
+        count = 0
+        if cj.exists():
+            try:
+                count = len((json.loads(cj.read_text(encoding="utf-8")) or {}).get("transitions", []))
+            except (ValueError, OSError):
+                count = 0
+        return {"ok": True, "count": count}
+
     @app.post("/api/shutdown")
     def cancel():
         threading.Timer(0.3, ctx.shutdown).start()

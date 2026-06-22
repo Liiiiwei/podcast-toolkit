@@ -5723,11 +5723,51 @@ function openCamModal() {
     }
   }
 
+  // 依講者推 A/B：分軌集（有 mics）才顯示；要有 speakers 才能按
+  const suggestRow = $("#cam-suggest-row");
+  if (suggestRow) {
+    const hasMics = state.mics && Object.keys(state.mics).length > 0;
+    const hasSpeakers = state.speakersMapping && state.speakersMapping.size > 0;
+    suggestRow.hidden = !hasMics;
+    const sgBtn = $("#cam-suggest-btn");
+    const sgHint = $("#cam-suggest-hint");
+    if (sgBtn) sgBtn.disabled = !hasSpeakers;
+    if (sgHint)
+      sgHint.textContent = hasSpeakers
+        ? "會覆蓋現有 A/B 切換（先自動備份）"
+        : "需先用「分軌轉錄」產生講者，才能推鏡頭";
+  }
+
   showModal("cam-modal");
 }
 
 $("#cam-btn").addEventListener("click", openCamModal);
 $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
+
+// 依分軌講者 + camera_rule 自動推 A/B 切換點（覆蓋 cameras.json，先備份）。
+$("#cam-suggest-btn")?.addEventListener("click", async () => {
+  const btn = $("#cam-suggest-btn");
+  const hint = $("#cam-suggest-hint");
+  btn.disabled = true;
+  if (hint) hint.textContent = "推算中…";
+  try {
+    const r = await fetch("/api/cameras-suggest", { method: "POST" });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.detail || `HTTP ${r.status}`);
+    }
+    const d = await r.json();
+    await loadEpisodeState();
+    renderCards();
+    renderTopbar();
+    if (hint) hint.textContent = `已推出 ${d.count} 個 A/B 切換點（可手動微調例外）`;
+  } catch (e) {
+    if (hint) hint.textContent = "";
+    alert(`推鏡頭失敗：${e.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // T23b: 自動對齊（音訊互相關）。前端只負責叫 endpoint + 把結果填回 input；
 // 寫 yaml 仍走「儲存」按鈕，避免 race + 跟現有設計一致。

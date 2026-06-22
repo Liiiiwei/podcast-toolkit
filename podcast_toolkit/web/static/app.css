@@ -2042,6 +2042,19 @@ dialog.modal::backdrop {
   font-size: var(--text-xs);
   color: var(--text-faint);
 }
+/* cam-modal：依講者推 A/B 那排 */
+.cam-suggest-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-md);
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--border);
+}
+.cam-suggest-hint {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
 
 .init-block {
   margin-bottom: 12px;
