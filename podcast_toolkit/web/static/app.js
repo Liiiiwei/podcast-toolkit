@@ -5186,6 +5186,9 @@ function setupAssembleButtons() {
   $("#assemble-reels-btn").addEventListener("click", () => {
     launch(["reels"], "合成 Reels 9:16 短版");
   });
+  $("#assemble-mp3-btn")?.addEventListener("click", () => {
+    launch(["mp3"], "輸出原速 MP3（純音訊）");
+  });
   $("#assemble-preview-btn").addEventListener("click", () => {
     launch(["yt"], "合成 YT 前 5 分鐘預覽", { previewSec: 300 });
   });

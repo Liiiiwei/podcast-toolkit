@@ -88,7 +88,7 @@ def start_job(
     if not targets:
         raise ValueError("targets 不能為空")
     for t in targets:
-        if t not in ("yt", "reels"):
+        if t not in ("yt", "reels", "mp3"):
             raise ValueError(f"未知 target={t}")
 
     with _LOCK:
@@ -98,6 +98,13 @@ def start_job(
     # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）
     plans = []
     for t in targets:
+        # 原速 MP3：純音訊 + 含片頭尾 + 套編輯但不加速；走 yt 管線的 audio_only 分支。
+        if t == "mp3":
+            plans.append(prepare_assembly(
+                ep.dir, output_kind="yt", force=force, preview_sec=preview_sec,
+                audio_only=True,
+            ))
+            continue
         # 字幕模式 per-target 政策：sidecar / overlay（成品時間軸操作）只套在 yt；
         # reels（IG/TikTok/Shorts 不吃外掛 .srt）一律硬燒，否則成品完全沒字。
         # 核心 prepare_assembly 仍支援任意 (output_kind, subtitle_mode) 組合（CLI / 測試），
