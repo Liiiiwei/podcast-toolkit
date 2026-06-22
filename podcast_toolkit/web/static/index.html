@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260622g" />
+    <link rel="stylesheet" href="/static/app.css?v=20260622h" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -1173,6 +1173,15 @@
       <div class="modal-head" id="transcribe-title">準備轉字幕</div>
       <div class="modal-body">
         <div id="transcribe-msg">…</div>
+        <div id="transcribe-breeze-row">
+          <button type="button" id="transcribe-breeze-btn" class="btn btn-primary">
+            <span data-icon="mic"></span>
+            <span>一鍵 Breeze 轉字幕（推薦）</span>
+          </button>
+          <div class="transcribe-breeze-hint">
+            本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 → 校對，一次完成、免 API key。最久的是轉錄，請耐心等。
+          </div>
+        </div>
         <details id="transcribe-advanced" class="modal-advanced" hidden>
           <summary>進階：分軌轉錄</summary>
           <div class="modal-body-text">
@@ -1359,7 +1368,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260622g"></script>
-    <script src="/static/app.js?v=20260622g" type="module"></script>
+    <script src="/static/icons.js?v=20260622h"></script>
+    <script src="/static/app.js?v=20260622h" type="module"></script>
   </body>
 </html>

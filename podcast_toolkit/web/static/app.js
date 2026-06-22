@@ -4214,6 +4214,10 @@ const TRANSCRIBE_PHASE_BUCKET = {
   stt: "upload",
   upload: "upload",
   resegment: "resegment",
+  // 一鍵 Breeze：三段對到三桶（pills 會在 breeze 時隱藏，只用桶推進度條 %）
+  "breeze-asr": "compress",
+  ingest: "upload",
+  proofread: "resegment",
 };
 const bucketOfPhase = (phase) => TRANSCRIBE_PHASE_BUCKET[phase] || phase;
 const TRANSCRIBE_PHASE_LABELS = {
@@ -4223,6 +4227,9 @@ const TRANSCRIBE_PHASE_LABELS = {
   stt: "語音辨識中",
   upload: "上傳並等待 STT",
   resegment: "重新切句",
+  "breeze-asr": "Breeze 轉錄中（最久，請耐心等，勿關分頁）",
+  ingest: "匯入字幕（去講者標籤 → 講者表）",
+  proofread: "本地校對（同音字／術語）",
 };
 let _transcribePollTimer = null;
 
@@ -4259,6 +4266,43 @@ function computeOverallPercent(phase, percent) {
   return idx * (100 / 3) + Math.max(0, Math.min(100, percent)) / 3;
 }
 
+// 一鍵 Breeze 轉字幕：Breeze ASR → 匯入講者 → 校對，整條龍背景跑，共用 transcribe 進度 UI。
+async function startBreezeTranscribe() {
+  $("#transcribe-title").textContent = "Breeze 轉字幕中…";
+  $("#transcribe-msg").innerHTML =
+    "本地 Breeze 轉錄各軌 → 自動標講者 → 匯入 → 校對，一次跑完。<br>" +
+    '<em style="color:#888;font-size:12px">轉錄那段最久，請保留分頁、不要關閉。</em>';
+  const adv = $("#transcribe-advanced");
+  if (adv) adv.hidden = true;
+  $("#transcribe-progress").hidden = false;
+  // Breeze 階段跟 STT 三顆 pill 對不上 → 隱藏 pills，只用進度條 + 文字標籤
+  const pills = document.querySelector("#transcribe-progress .phase-pills");
+  if (pills) pills.hidden = true;
+  $("#transcribe-fill").style.width = "0%";
+  $("#transcribe-percent").textContent = "0%";
+  $("#transcribe-phase-label").textContent = "啟動 Breeze…";
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  if (go) go.disabled = true;
+  if (cancel) cancel.disabled = true;
+  try {
+    const r = await fetch("/api/transcribe/breeze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok && r.status !== 202) {
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body.detail || `HTTP ${r.status}`);
+    }
+  } catch (e) {
+    finishTranscribe({ ok: false, error: e.message });
+    return;
+  }
+  stopTranscribePoll();
+  _transcribePollTimer = setInterval(pollTranscribe, 500);
+}
+
 async function runTranscribe(file) {
   $("#transcribe-title").textContent = "轉字幕中…";
   $("#transcribe-msg").innerHTML =
@@ -4266,6 +4310,8 @@ async function runTranscribe(file) {
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
   $("#transcribe-advanced").hidden = true;
   $("#transcribe-progress").hidden = false;
+  const _pillsT = document.querySelector("#transcribe-progress .phase-pills");
+  if (_pillsT) _pillsT.hidden = false; // Breeze 會藏 pills，單軌轉錄要還原
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動中…";
@@ -4343,6 +4389,10 @@ async function resumeTranscribeIfRunning() {
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動中…";
   renderTranscribePhasePills(s.phase || null, "running");
+  // Breeze 模式：STT pills 對不上 Breeze 階段 → 隱藏，只用進度條 + 文字
+  const _pills = document.querySelector("#transcribe-progress .phase-pills");
+  if (_pills) _pills.hidden = s.mode === "breeze";
+  if (s.mode === "breeze") $("#transcribe-title").textContent = "Breeze 轉字幕中…";
   const goBtn = $("#transcribe-go");
   const cancelBtn = $("#transcribe-cancel");
   if (goBtn) goBtn.disabled = true;
@@ -6860,6 +6910,7 @@ function setupOutputControls() {
 
 setupVersionTabs();
 setupCaptionSize();
+$("#transcribe-breeze-btn")?.addEventListener("click", startBreezeTranscribe);
 setupReelsClips();
 setupAssembleButtons();
 setupOutputControls();

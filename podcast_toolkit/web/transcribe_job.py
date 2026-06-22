@@ -327,3 +327,115 @@ def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> Non
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
     setj(state="done", phase="srt-merge", percent=100.0, out_srt=out_srt_rel)
+
+
+# ── 一鍵 Breeze 轉字幕：Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對 ──
+
+def _breeze_dir() -> Path | None:
+    """Breeze-ASR-25 專案路徑：config.json 的 breeze_dir 優先，否則試常見位置。
+    認得的條件 = 該資料夾下有 make_subtitle.py。找不到回 None。"""
+    import json
+
+    cands: list[Path] = []
+    cfg_path = Path.home() / ".podcast-toolkit" / "config.json"
+    try:
+        raw = (
+            (json.loads(cfg_path.read_text(encoding="utf-8")) or {}).get("breeze_dir")
+            if cfg_path.exists()
+            else None
+        )
+    except (ValueError, OSError):
+        raw = None
+    if raw:
+        cands.append(Path(str(raw)).expanduser())
+    cands.append(Path.home() / "Developer" / "breeze subtitle" / "Breeze-ASR-25")
+    for c in cands:
+        if (c / "make_subtitle.py").is_file():
+            return c
+    return None
+
+
+def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[str, Any]:
+    """一鍵 Breeze：Breeze ASR 產含講者字幕 → ingest_breeze → 本地校對。整條龍背景跑。"""
+    global _CURRENT_JOB, _HEARTBEAT
+    bdir = _breeze_dir()
+    if bdir is None:
+        raise RuntimeError(
+            "找不到 Breeze 專案（make_subtitle.py）；請在 ~/.podcast-toolkit/config.json 設 breeze_dir 指向 Breeze-ASR-25 資料夾。"
+        )
+    with _LOCK:
+        if _STATE["state"] == "running":
+            raise RuntimeError("已有轉字幕正在進行中")
+        _CURRENT_JOB += 1
+        job = _CURRENT_JOB
+        _HEARTBEAT = monotonic()
+        _reset_locked(
+            state="running", mode="breeze", phase="breeze-asr",
+            percent=0.0, started_at=monotonic(),
+        )
+    worker = threading.Thread(
+        target=_run_breeze, args=(ep, bdir, guest or "", terms or "", job), daemon=True,
+    )
+    worker.start()
+    return {"ok": True}
+
+
+def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> None:
+    """背景 worker：Breeze ASR → ingest_breeze → proofread → done/error。"""
+    import subprocess
+    from time import sleep
+
+    from podcast_toolkit import ingest_breeze, proofread
+
+    def setj(**kwargs) -> None:
+        _set_job(job, **kwargs)
+
+    # 1) Breeze ASR：make_subtitle.py（--quiet 給 UI；自己找 Track*-Mic*.wav）
+    py = bdir / ".venv" / "bin" / "python"
+    py_str = str(py) if py.exists() else "python3"
+    cmd = [
+        py_str, str(bdir / "make_subtitle.py"),
+        "--dir", str(ep.dir),
+        "--guest", guest, "--terms", terms, "--quiet",
+    ]
+    errf = ep.subdir("work") / "_breeze_stderr.log"
+    try:
+        setj(phase="breeze-asr", percent=0.0)
+        with open(errf, "w", encoding="utf-8") as ef:
+            proc = subprocess.Popen(cmd, cwd=str(bdir), stdout=subprocess.DEVNULL, stderr=ef)
+            while proc.poll() is None:
+                setj(phase="breeze-asr")  # 心跳，避免 30 分鐘 watchdog 誤殺
+                sleep(10)
+        if proc.returncode != 0:
+            tail = ""
+            try:
+                tail = errf.read_text(encoding="utf-8", errors="replace")[-600:]
+            except OSError:
+                pass
+            setj(state="error", error=f"Breeze 轉錄失敗（rc={proc.returncode}）：{tail}")
+            return
+    except Exception as e:
+        setj(state="error", error=f"Breeze 轉錄啟動失敗：{e}")
+        return
+
+    # 2) 匯入 Breeze 含講者 SRT → _v2.srt + speakers.json（去 [MicN]、MicN→speaker）
+    setj(phase="ingest", percent=0.0)
+    try:
+        rc = ingest_breeze.run(ep.dir, force=True)
+    except Exception as e:
+        setj(state="error", error=f"匯入 Breeze 字幕失敗：{e}")
+        return
+    if rc != 0:
+        setj(state="error", error="匯入 Breeze 字幕失敗：找不到含講者 SRT（Breeze 沒產出？）")
+        return
+
+    # 3) 本地校對（有引擎才跑；失敗不擋，字幕已匯入）
+    try:
+        if proofread.resolve_provider(ep.cfg):
+            setj(phase="proofread", percent=0.0)
+            proofread.run(ep.dir)
+    except Exception:
+        pass
+
+    out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
+    setj(state="done", phase="proofread", percent=100.0, out_srt=out_srt_rel)
