@@ -519,3 +519,19 @@ body {
     grid-template-columns: 1fr;
   }
 }
+
+/* 設定視窗：集數根目錄「選資料夾」按鈕那排 */
+.roots-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm, 8px);
+  margin-top: 6px;
+}
+.roots-actions .btn-sm {
+  flex: 0 0 auto;
+}
+.roots-hint {
+  font-size: var(--text-xs, 12px);
+  color: var(--text-dim, #888);
+  line-height: 1.4;
+}

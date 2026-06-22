@@ -5,7 +5,7 @@
     <title>Podcast Toolkit</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/static/tokens.css" />
-    <link rel="stylesheet" href="/static/dashboard.css" />
+    <link rel="stylesheet" href="/static/dashboard.css?v=20260622g" />
   </head>
   <body class="theme-dark">
     <header class="dash-topbar">
@@ -93,6 +93,16 @@
           rows="4"
           placeholder="~/Downloads&#10;~/Podcasts"
         ></textarea>
+        <div class="roots-actions">
+          <button type="button" class="btn btn-ghost btn-sm" id="roots-pick-btn">
+            <span data-icon="folder-open"></span>
+            <span>選資料夾…</span>
+          </button>
+          <span class="roots-hint">
+            建議選 Downloads／Desktop／Documents <strong>以外</strong>的資料夾，避開
+            macOS 權限問題（這幾個受保護資料夾常讓背景程式讀不到 → 集顯示「損毀」）。
+          </span>
+        </div>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="settings-cancel-2">
@@ -137,7 +147,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js"></script>
-    <script src="/static/dashboard.js"></script>
+    <script src="/static/icons.js?v=20260622g"></script>
+    <script src="/static/dashboard.js?v=20260622g"></script>
   </body>
 </html>

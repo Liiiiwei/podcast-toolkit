@@ -129,6 +129,23 @@ async function openEpisode(path, cardEl) {
   }
 }
 
+// 設定視窗「選資料夾…」：跳系統原生選資料夾 → 把路徑加進 roots-input（去重），免打字。
+async function pickRootFolder() {
+  const btn = document.getElementById("roots-pick-btn");
+  const input = document.getElementById("roots-input");
+  await withButton(btn, async () => {
+    const r = await fetch("/api/episode/pick", { method: "POST" });
+    const data = await r.json();
+    if (data.cancelled || !data.path) return;
+    const existing = input.value
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!existing.includes(data.path)) existing.push(data.path);
+    input.value = existing.join("\n");
+  });
+}
+
 async function pickFolder() {
   const btn = document.getElementById("open-folder-btn");
   await withButton(btn, async () => {
@@ -291,6 +308,9 @@ document
 document
   .getElementById("settings-save")
   .addEventListener("click", saveSettings);
+document
+  .getElementById("roots-pick-btn")
+  .addEventListener("click", pickRootFolder);
 document
   .getElementById("new-ep-create")
   .addEventListener("click", createNewEpisode);
