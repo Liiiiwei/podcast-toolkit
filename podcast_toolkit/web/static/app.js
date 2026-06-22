@@ -52,6 +52,8 @@ const state = {
   camSyncOffsetB: 0, // 秒；cam B 相對 cam A 的對齊偏移
   // 分軌 mic：mics = {a, b, ...}（單軌集為空 dict）；前端據此判斷要不要渲染 speaker UI
   mics: {},
+  // 鏡頭規則（分軌設定 modal 用）：{home, feature:{speaker:cam}, min_sec}；feature 有的 speaker = 來賓
+  cameraRule: {},
   // 字幕卡 idx -> speaker key（"a" / "b" / ...），來自 srt_merge 產出的 speakers.json sidecar
   // 同 camerasMapping 形狀，但 speaker 不做 carry-forward（每張卡都有明確 speaker）
   speakersMapping: new Map(),
@@ -2051,6 +2053,7 @@ async function loadEpisodeState() {
   // 分軌 speaker mapping：mics 同 cameras 形狀；speaker 不做 carry-forward（每張卡都明確標記）
   // 合法 speaker = mics 的 key set；mics 為空（單軌集）→ 不收任何 mapping
   state.mics = data.mics || {};
+  state.cameraRule = data.camera_rule || {};
   const validSpeakers = new Set(Object.keys(state.mics));
   state.speakersMapping = new Map(
     Object.entries(data.speakers_mapping || {})
@@ -4437,7 +4440,7 @@ async function finishTranscribe({ ok, out_srt, error }) {
 // === 分軌設定 modal（yaml 沒設 mics 但有多軌音檔時跳這條） ===
 // 流程：列出 audioCandidates → 三個 dropdown 對應 a/b/c → 預設用 Track*.wav 順序自動配
 //   → 儲存 → POST /api/episode/mics → 重載 episode → 進分軌轉錄 modal
-const MIC_SETUP_SPEAKERS = ["a", "b", "c"];
+const MIC_SETUP_SPEAKERS = ["a", "b", "c", "d"];
 
 function guessMicAssignment(candidates) {
   // 嘗試從檔名抓 Track[1-3] / Mic[1-3] / Track 1 / Track-1 數字，依序配 a/b/c
@@ -4486,9 +4489,16 @@ function renderMicSetupList(candidates, assignment) {
         .replace(/"/g, "&quot;");
       options.push(`<option value="${safe}"${selected}>${safe}</option>`);
     }
+    // 角色：feature 裡有這軌 = 來賓，否則主持（沿用已存的 camera_rule 回填）
+    const feature = (state.cameraRule && state.cameraRule.feature) || {};
+    const role = feature[sp] ? "guest" : "host";
     row.innerHTML = `
       <span class="mic-setup-row-key">軌 ${sp}</span>
       <select class="mic-setup-row-select" data-speaker="${sp}">${options.join("")}</select>
+      <select class="mic-setup-row-role" data-speaker="${sp}" title="主持一律全景（cam A）；來賓連續講滿門檻秒數才切特寫（cam B）">
+        <option value="host"${role === "host" ? " selected" : ""}>主持</option>
+        <option value="guest"${role === "guest" ? " selected" : ""}>來賓</option>
+      </select>
     `;
     list.appendChild(row);
   }
@@ -4506,6 +4516,17 @@ function collectMicSetupAssignment() {
     if (val) out[sp] = val;
   });
   return out;
+}
+
+// 收角色：只收「有指派音檔」的軌（沒設檔的軌角色沒意義）。host/guest → 後端生成 camera_rule。
+function collectMicSetupRoles() {
+  const mics = collectMicSetupAssignment();
+  const roles = {};
+  document.querySelectorAll(".mic-setup-row-role").forEach((sel) => {
+    const sp = sel.dataset.speaker;
+    if (mics[sp]) roles[sp] = sel.value === "guest" ? "guest" : "host";
+  });
+  return roles;
 }
 
 function updateMicSetupConflicts() {
@@ -4537,6 +4558,12 @@ function openMicSetup() {
   $("#mic-setup-detected-count").textContent = String(candidates.length);
   const assignment = guessMicAssignment(candidates);
   renderMicSetupList(candidates, assignment);
+  // min_sec 回填已存的 camera_rule（沒設預設 15）
+  const minSecInput = $("#mic-setup-min-sec");
+  if (minSecInput) {
+    const m = Number((state.cameraRule || {}).min_sec);
+    minSecInput.value = String(m > 0 ? m : 15);
+  }
 
   const go = $("#mic-setup-go");
   const cancel = $("#mic-setup-cancel");
@@ -4556,6 +4583,9 @@ async function saveMicSetup() {
     alert("至少要設定一軌");
     return;
   }
+  const roles = collectMicSetupRoles();
+  const minSecRaw = Number(($("#mic-setup-min-sec") || {}).value);
+  const minSec = Number.isFinite(minSecRaw) && minSecRaw > 0 ? minSecRaw : 15;
   const go = $("#mic-setup-go");
   const cancel = $("#mic-setup-cancel");
   go.disabled = true;
@@ -4566,7 +4596,7 @@ async function saveMicSetup() {
     const r = await fetch("/api/episode/mics", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mics }),
+      body: JSON.stringify({ mics, roles, min_sec: minSec }),
     });
     if (!r.ok) {
       const body = await r.json().catch(() => ({}));

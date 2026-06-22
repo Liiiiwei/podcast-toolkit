@@ -232,6 +232,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # T23a：雙鏡頭資訊（單機集 cameras 只有 a；前端要知道 b 在不在）
         "cameras": dict(ep.cfg.get("cameras") or {}),
         "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
+        # 鏡頭規則（home/feature:{speaker:cam}/min_sec）：分軌設定 modal 回填角色用
+        "camera_rule": dict(ep.cfg.get("camera_rule") or {}),
         "audio": ep.cfg.get("audio"),
         # 鏡頭已改時間版切換點（與字幕脫鉤）；載入時吸附到當下卡 → idx→cam 給前端顯示。
         # 換字幕後吸附到新斷句最近的卡，前端維持「卡 key」介面不變。
@@ -276,15 +278,33 @@ def _parse_composite_id(key: Any) -> tuple[int, int]:
     return int(s), 0
 
 
-def save_mics_config(ep: Episode, mics: dict[str, str]) -> None:
+def save_mics_config(
+    ep: Episode,
+    mics: dict[str, str],
+    roles: dict[str, str] | None = None,
+    min_sec: float | None = None,
+) -> None:
     """把 mics 設定（speaker → path）寫進 episode.yaml 的 mics: 區塊。
 
     只動 mics 欄位，其他欄位保持原樣（safe_load → 改 → safe_dump）。
     不檢查路徑是否存在 — 那是呼叫端的責任（api 層先檢過了）。
+
+    給 roles（{speaker: "host"|"guest"}）時，一併生成 camera_rule（簡化版）：
+    cam A = home（全景，主持一律留 A）；標 guest 的軌 → cam B（來賓特寫）；
+    來賓連續講滿 min_sec 秒才切到 B。來賓軌號每集不同 → 由 roles 動態決定，不寫死。
     """
     yaml_path = ep.dir / "episode.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     data["mics"] = {sp: mics[sp] for sp in sorted(mics)}
+    if roles is not None:
+        guests = sorted(
+            sp for sp, r in roles.items() if r == "guest" and sp in mics
+        )
+        data["camera_rule"] = {
+            "home": "a",
+            "feature": {sp: "b" for sp in guests},
+            "min_sec": float(min_sec) if min_sec else 15.0,
+        }
     yaml_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",

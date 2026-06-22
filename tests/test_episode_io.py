@@ -512,6 +512,30 @@ def _add_mics_to_yaml(tmp_episode_dir, mic_keys=("a", "b")):
     )
 
 
+def test_save_mics_config_roles_generate_camera_rule(tmp_episode_dir):
+    """給 roles → 生成簡化版 camera_rule：home=a（全景）、來賓軌→cam b、min_sec 可調。
+    來賓軌號每集不同（這裡是 c）→ 由 roles 動態決定，不寫死。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_mics_config(
+        ep,
+        {"a": "01_母帶/a.wav", "b": "01_母帶/b.wav", "c": "01_母帶/c.wav"},
+        roles={"a": "host", "b": "host", "c": "guest"},
+        min_sec=12,
+    )
+    import yaml
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["camera_rule"] == {"home": "a", "feature": {"c": "b"}, "min_sec": 12.0}
+
+
+def test_save_mics_config_without_roles_leaves_camera_rule_untouched(tmp_episode_dir):
+    """不給 roles（純存 mics）→ 不寫 camera_rule，沿用既有/預設。"""
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_mics_config(ep, {"a": "01_母帶/a.wav"})
+    import yaml
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "camera_rule" not in data
+
+
 def test_load_state_returns_empty_mics_when_not_set(tmp_episode_dir):
     """沒設 mics → state.mics 是空 dict（前端據此判斷是不是分軌集）。"""
     ep = Episode(tmp_episode_dir)

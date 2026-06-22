@@ -2003,6 +2003,45 @@ dialog.modal::backdrop {
   border-color: var(--danger, #c00);
   background: var(--danger-soft, #fee);
 }
+/* 角色下拉（主持/來賓）：寬度固定，跟在檔案下拉後面 */
+.mic-setup-row-role {
+  flex: 0 0 auto;
+  width: 84px;
+  font-size: var(--text-sm);
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.mic-setup-row-role:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+/* 來賓切特寫門檻秒數 */
+.mic-setup-rule {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.mic-setup-min-sec {
+  width: 56px;
+  font-size: var(--text-sm);
+  padding: 4px 6px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-align: center;
+}
+.mic-setup-rule-note {
+  margin-top: 4px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
 
 .init-block {
   margin-bottom: 12px;
