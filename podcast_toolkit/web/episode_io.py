@@ -664,17 +664,21 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
 
     # 分軌 speaker sidecar：使用者在前端手動改 speaker tag 後一併存回。
     # valid speaker keys 由 episode.yaml.mics 決定（不是寫死 a/b），保留三人以上集的擴充空間。
+    #
+    # 只有「確實設了 mics」的分軌集才由編輯器管理 speakers.json。沒有 mics 的集（單軌 /
+    # yaml 未設 mics 卻有孤兒 sidecar）一律不碰：前端會把 speakersMapping 過濾成空
+    # （validSpeakers 為空），若照寫就會 cameras_io.save({}) → 把既有 speakers.json 誤刪。
+    # 這正是「有 speakers.json 但 yaml 沒 mics 的集，一存檔講者資料就不見」的 bug。
     valid_speakers = set((ep.cfg.get("mics") or {}).keys())
-    new_speakers_mapping: dict[int, str] = {}
-    for k, v in (payload.get("speakers_mapping") or {}).items():
-        if valid_speakers and v not in valid_speakers:
-            continue
-        if not valid_speakers and not isinstance(v, str):
-            continue
-        try:
-            nid = _translate(k)
-        except (TypeError, ValueError):
-            continue
-        if nid is not None:
-            new_speakers_mapping[nid] = str(v)
-    cameras_io.save(ep.output_v2_speakers_json(), new_speakers_mapping)
+    if valid_speakers:
+        new_speakers_mapping: dict[int, str] = {}
+        for k, v in (payload.get("speakers_mapping") or {}).items():
+            if v not in valid_speakers:
+                continue
+            try:
+                nid = _translate(k)
+            except (TypeError, ValueError):
+                continue
+            if nid is not None:
+                new_speakers_mapping[nid] = str(v)
+        cameras_io.save(ep.output_v2_speakers_json(), new_speakers_mapping)

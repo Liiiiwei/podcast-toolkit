@@ -580,6 +580,24 @@ def test_save_state_empty_speakers_mapping_removes_sidecar(tmp_episode_dir):
     assert not sidecar.exists()
 
 
+def test_save_state_no_mics_preserves_existing_speakers_sidecar(tmp_episode_dir):
+    """回歸：集沒有 mics 區塊但有 speakers.json（分軌資料的孤兒 sidecar）時，存檔
+    不該把它刪掉。先前 bug：前端把 speakersMapping 過濾成空 → save({}) → 誤刪 sidecar。"""
+    sidecar = tmp_episode_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    sidecar.write_text('{"1": "a", "2": "c"}', encoding="utf-8")
+    ep = Episode(tmp_episode_dir)  # 沒呼叫 _add_mics_to_yaml → 無 mics
+    episode_io.save_state(
+        ep,
+        payload={
+            "crop_yt": None, "crop_reels": None, "deletions": [], "cards": [],
+            "speakers_mapping": {},  # 前端在無 mics 時送的就是空
+        },
+    )
+    assert sidecar.exists(), "無 mics 的集存檔不該刪掉既有 speakers.json"
+    import json
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == {"1": "a", "2": "c"}
+
+
 def test_save_state_filters_speakers_not_in_mics(tmp_episode_dir):
     """mics 只有 a / b → 前端送來 c 或 None 要被濾掉，sidecar 不能寫入垃圾值。"""
     _add_mics_to_yaml(tmp_episode_dir, ("a", "b"))
