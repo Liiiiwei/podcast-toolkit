@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260622b" />
+    <link rel="stylesheet" href="/static/app.css?v=20260622d" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -347,6 +347,16 @@
                 <span data-icon="rotate-ccw"></span>
                 <span>重設</span>
               </button>
+              <div
+                class="caption-size"
+                id="caption-size"
+                title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
+              >
+                <span class="caption-size-label" data-icon="type" data-icon-size="13"></span>
+                <button type="button" id="cap-size-dec" class="cap-size-btn" aria-label="字幕縮小">−</button>
+                <span class="cap-size-val" id="cap-size-val">—</span>
+                <button type="button" id="cap-size-inc" class="cap-size-btn" aria-label="字幕放大">＋</button>
+              </div>
             </div>
           </div>
           <div class="framing-row">
@@ -464,9 +474,9 @@
             <span id="sus-checked-count" class="sus-label">已勾 0</span>
           </div>
           <div class="srt-shift-row" id="srt-shift-row" hidden>
-            <label class="srt-shift-label" title="正值 = 字幕往後移（字幕目前出現太早）；負值 = 字幕往前移（字幕目前出現太晚）">
+            <label class="srt-shift-label" title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。">
               <span data-icon="clock"></span>
-              <span>字幕偏移（秒）</span>
+              <span>字幕偏移（秒，不改原檔）</span>
             </label>
             <input
               type="number"
@@ -1312,7 +1322,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260622b"></script>
-    <script src="/static/app.js?v=20260622b" type="module"></script>
+    <script src="/static/icons.js?v=20260622d"></script>
+    <script src="/static/app.js?v=20260622d" type="module"></script>
   </body>
 </html>

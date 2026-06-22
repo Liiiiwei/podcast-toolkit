@@ -1114,10 +1114,16 @@ def prepare_assembly(
         if not audio_file.exists():
             raise AssembleError(f"找不到外接音檔：{audio_file}", exit_code=3)
         audio_sync_offset = float(audio_cfg.get("sync_offset") or 0.0)
-        if abs(audio_sync_offset) >= 0.001:
-            shifted_srt = ep.subdir("work") / "_v2_aligned.srt"
-            shift_srt(srt, shifted_srt, -audio_sync_offset)
-            srt = shifted_srt
+
+    # 字幕時間軸總位移（非破壞性，shift 到 work 暫存檔，原 srt 不動）：
+    #   -audio_sync_offset：把外接音檔時間軸的字幕對回 cam A（見上）
+    #   +subtitle_offset_sec：使用者在 UI 設的非破壞性字幕偏移（正值=字幕往後延）
+    subtitle_offset = float(cfg.get("subtitle_offset_sec") or 0.0)
+    srt_total_shift = -audio_sync_offset + subtitle_offset
+    if abs(srt_total_shift) >= 0.001:
+        shifted_srt = ep.subdir("work") / "_v2_aligned.srt"
+        shift_srt(srt, shifted_srt, srt_total_shift)
+        srt = shifted_srt
 
     # 輸出路徑分支
     if output_kind == "yt":

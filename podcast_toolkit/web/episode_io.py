@@ -223,6 +223,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cuts": list(ep.cfg.get("cuts") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
+        # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
+        "subtitle_offset_sec": float(ep.cfg.get("subtitle_offset_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
@@ -471,6 +473,37 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["srt_path"] = srt_path
         else:
             data.pop("srt_path", None)
+
+    # 字幕字級：只調 font_size override（不整段覆寫 subtitle_style）。等於 defaults →
+    # 移除 font_size，避免 yaml 殘留跟預設相同的冗餘值。YT 與 Reels 各自存。
+    if "subtitle_style" in payload or "subtitle_style_reels" in payload:
+        from podcast_toolkit import config as _config
+        _defaults = _config.load_defaults()
+        for _key in ("subtitle_style", "subtitle_style_reels"):
+            if _key not in payload:
+                continue
+            _fs = (payload.get(_key) or {}).get("font_size")
+            if _fs in (None, ""):
+                continue
+            _fs = int(round(float(_fs)))
+            _default_fs = int(float((_defaults.get(_key) or {}).get("font_size") or 0))
+            _block = dict(data.get(_key) or {})
+            if _fs == _default_fs:
+                _block.pop("font_size", None)
+            else:
+                _block["font_size"] = _fs
+            if _block:
+                data[_key] = _block
+            else:
+                data.pop(_key, None)
+
+    # 非破壞性字幕偏移（秒）：存參數而非覆寫 srt；預覽 + 合成都套。0 → 移除 key。
+    if "subtitle_offset_sec" in payload:
+        sub_off = float(payload.get("subtitle_offset_sec") or 0)
+        if abs(sub_off) >= 1e-6:
+            data["subtitle_offset_sec"] = sub_off
+        else:
+            data.pop("subtitle_offset_sec", None)
 
     # 外接音檔 + 同步偏移；用 key-presence 區分「沒動 UI」vs「明確清空」
     if "audio" in payload:

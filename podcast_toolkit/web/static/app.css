@@ -45,9 +45,11 @@ h2 {
 }
 .topbar {
   display: grid;
-  grid-template-columns: minmax(auto, 1fr) auto minmax(auto, 1fr);
+  /* 左右兩側 auto = 各取內容實際寬度（不再被 1fr 卡到半寬導致右側按鈕擠成兩行）；
+     中間 minmax(0,1fr) 吸收剩餘空間，標題太長就 ellipsis（見 .title）。 */
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 10px 16px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -55,8 +57,8 @@ h2 {
 .topbar-left {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
+  flex-wrap: nowrap;
   justify-self: start;
 }
 .topbar-center {
@@ -70,8 +72,8 @@ h2 {
 .topbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+  gap: 10px;
+  flex-wrap: nowrap;
   justify-self: end;
 }
 /* 按鈕分群：群組間用細分隔線、群組內維持緊密間距 */
@@ -518,6 +520,47 @@ h2 {
 .crop-ratios .ratio-btn.active {
   color: var(--accent);
   border-color: var(--accent);
+}
+/* 字幕字級調整：跟 crop 比例按鈕同一排，左邊用細分隔線隔開 */
+.caption-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-strong);
+}
+.caption-size-label {
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+}
+.cap-size-btn {
+  min-width: 24px;
+  height: 28px;
+  padding: 0 6px;
+  font-size: var(--text-sm);
+  line-height: 1;
+  color: var(--text-dim);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cap-size-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.cap-size-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cap-size-val {
+  min-width: 22px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 
 /* === 輸出設定列：旋轉拉正 / 節目封面 / 倍速 === */

@@ -69,6 +69,8 @@ const state = {
   // 全片去空拍（偵測中段靜音→跳剪）：{enabled, minSilence 秒}。在合成設定視窗設、存進 episode.yaml
   silenceTrim: { enabled: false, minSilence: 0.8 },
   subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
+  // 非破壞性字幕偏移（秒）：存 episode.yaml，預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
+  subtitleOffsetSec: 0,
   // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
   outputDirty: false,
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
@@ -467,6 +469,41 @@ function applyCaptionFontSize() {
   overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
 }
 
+// === 字幕字級調整（crop 比例旁）：依目前分頁調 YT / Reels 各自的 subtitle_style.font_size ===
+// 直接改 state 裡的 style 物件 + 即時預覽；存檔時 buildSavePayload 帶上、save_state 寫進 yaml。
+function activeSubtitleStyle() {
+  return state.activeVersion === "reels"
+    ? state.subtitleStyleReels
+    : state.subtitleStyleYt;
+}
+function renderCaptionSizeControl() {
+  const valEl = $("#cap-size-val");
+  if (!valEl) return;
+  const style = activeSubtitleStyle();
+  const fs = style && Number(style.font_size);
+  valEl.textContent = fs ? String(Math.round(fs)) : "—";
+  const dec = $("#cap-size-dec");
+  const inc = $("#cap-size-inc");
+  if (dec) dec.disabled = !fs;
+  if (inc) inc.disabled = !fs;
+}
+function nudgeCaptionSize(delta) {
+  const style = activeSubtitleStyle();
+  const cur = style && Number(style.font_size);
+  if (!cur) return;
+  const next = Math.max(12, Math.min(200, Math.round(cur + delta)));
+  if (next === cur) return;
+  style.font_size = next;
+  state.outputDirty = true; // 進「未儲存」計數，按「完成並儲存」才落地
+  applyCaptionFontSize();
+  renderCaptionSizeControl();
+  renderTopbar();
+}
+function setupCaptionSize() {
+  $("#cap-size-dec")?.addEventListener("click", () => nudgeCaptionSize(-2));
+  $("#cap-size-inc")?.addEventListener("click", () => nudgeCaptionSize(2));
+}
+
 // 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
 // 「先 rotate 源、再從軸對齊矩形 crop」語意。crop-frame / caption-overlay 不旋轉（維持軸對齊）。
 function applyRotationPreview() {
@@ -717,12 +754,13 @@ function expandedCards() {
   return out;
 }
 
-// 時間軸還原：把畫面上（cam A 軸，已被 loadEpisodeState 減過 audioSyncOffset）的時間
-// 加回 +audioSyncOffset，還原成磁碟 _v2.srt 的「外接音檔時間軸」。存檔送 time_overrides /
-// new_cards 前用，讓「存→重載」對稱（載入 -offset、存檔 +offset），避免時間每存一次就漂一次。
-// 沒外接音檔 / offset=0 → 原值回傳（no-op）。
+// 時間軸還原：把畫面上的時間還原成磁碟 _v2.srt 的時間。必須跟 loadEpisodeState 的位移對稱：
+//   載入：display = disk − audioSyncOffset + subtitleOffsetSec
+//   存檔：disk = display + audioSyncOffset − subtitleOffsetSec
+// 非破壞性字幕偏移是「顯示/合成層」的位移，不該被存進卡片磁碟時間；少減回去 → 拖一張卡存一次就漂一個偏移量。
+// 沒外接音檔且偏移=0 → 原值回傳（no-op）。
 function toDiskTime(t) {
-  const off = state.audioSyncOffset || 0;
+  const off = (state.audioSyncOffset || 0) - (state.subtitleOffsetSec || 0);
   return {
     start: Math.round((t.start + off) * 100) / 100,
     end: Math.round((t.end + off) * 100) / 100,
@@ -2040,9 +2078,14 @@ async function loadEpisodeState() {
     ? data.srt_candidates
     : [];
   // 字幕風格 + 輸出解析度：給 caption preview 用，讓預覽字體跟 ffmpeg 輸出等比
-  state.subtitleStyleYt = data.subtitle_style || null;
-  state.subtitleStyleReels =
-    data.subtitle_style_reels || data.subtitle_style || null;
+  // 拷貝一份（不共用 reels=yt 的同一物件），字級才能各調各的、互不影響
+  state.subtitleStyleYt = data.subtitle_style ? { ...data.subtitle_style } : null;
+  state.subtitleStyleReels = data.subtitle_style_reels
+    ? { ...data.subtitle_style_reels }
+    : data.subtitle_style
+      ? { ...data.subtitle_style }
+      : null;
+  renderCaptionSizeControl();
   const parseRes = (s) => {
     const [w, h] = String(s || "")
       .split("x")
@@ -2059,20 +2102,29 @@ async function loadEpisodeState() {
     w: 1080,
     h: 1920,
   };
-  // 字幕時間軸對齊：原始字幕是 cam A 時間軸；外接音檔比 cam A 慢 sync_offset 秒
-  // → 字幕 start/end 都要往前推 -audioSyncOffset，讓字幕顯示時機跟外接音檔同步
-  if (state.audioPath && state.audioSyncOffset) {
-    const shift = -state.audioSyncOffset;
+  state.subtitleOffsetSec = Number(data.subtitle_offset_sec || 0);
+  // 字幕時間軸總位移（與合成端 prepare_assembly 同邏輯，預覽才會跟輸出一致）：
+  //   -audioSyncOffset：外接音檔比 cam A 慢 sync_offset 秒 → 字幕往前推對齊
+  //   +subtitleOffsetSec：使用者設的非破壞性偏移（正值=字幕往後延）
+  // 只動「顯示用」的 state.cards，不改磁碟 _v2.srt。
+  const audioShift =
+    state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
+  const totalShift = audioShift + (state.subtitleOffsetSec || 0);
+  if (Math.abs(totalShift) > 1e-6) {
     state.cards = state.cards
       .map((c) => ({
         ...c,
-        start: Math.max(0, (c.start || 0) + shift),
-        end: (c.end || 0) + shift,
+        start: Math.max(0, (c.start || 0) + totalShift),
+        end: (c.end || 0) + totalShift,
       }))
       .filter((c) => c.end > 0);
   }
-  // 字幕偏移工具列：有字幕才顯示
+  // 字幕偏移工具列：有字幕才顯示；input 顯示目前已存的絕對偏移值（可改、設 0 = 清除）
   $("#srt-shift-row").hidden = state.cards.length === 0;
+  const srtShiftInput = $("#srt-shift-input");
+  if (srtShiftInput && document.activeElement !== srtShiftInput) {
+    srtShiftInput.value = state.subtitleOffsetSec ? String(state.subtitleOffsetSec) : "";
+  }
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
   applyMainVideoMissingUI();
@@ -2145,31 +2197,34 @@ function setupSusToolbar() {
 function setupSrtShift() {
   $("#srt-shift-btn").addEventListener("click", async () => {
     const input = $("#srt-shift-input");
-    const offset = Number(input.value);
-    if (!offset) {
-      alert("請輸入非零的偏移秒數");
+    // 絕對值語意：input 即「目前偏移」。空白 / 0 = 清除偏移（回原時間）。非破壞性：只存 yaml。
+    const raw = input.value.trim();
+    const offset = raw === "" ? 0 : Number(raw);
+    if (!Number.isFinite(offset)) {
+      alert("偏移秒數必須是數字（可正可負，0 = 清除）");
       return;
+    }
+    if (offset === (state.subtitleOffsetSec || 0)) {
+      return; // 沒變更，免存
     }
     const btn = $("#srt-shift-btn");
     btn.disabled = true;
     try {
-      const r = await fetch("/api/shift-srt", {
+      // 走 /api/save 局部存檔（key-presence）：只寫 subtitle_offset_sec，不動 srt / 其他欄位
+      const r = await fetch("/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ offset_sec: offset }),
+        body: JSON.stringify({ subtitle_offset_sec: offset }),
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
         throw new Error(d.detail || `HTTP ${r.status}`);
       }
-      const d = await r.json();
-      input.value = "";
-      // 重載字幕讓 preview 立即反映新時間
+      // 重載讓 preview 依新偏移重算顯示時間（磁碟 _v2.srt 維持原狀）
       await loadEpisodeState();
       renderCards();
       renderTopbar();
       renderCaption();
-      alert(`套用完成：${d.card_count} 張字幕位移了 ${offset > 0 ? "+" : ""}${offset} 秒`);
     } catch (e) {
       alert(`套用失敗：${e.message}`);
     } finally {
@@ -3209,6 +3264,9 @@ function setupVersionTabs() {
       });
       renderCropInfo();
       renderReelsClips();
+      // 切版本 → 字幕風格/字級隨之改變：重算預覽字體 + 更新字級控制顯示
+      applyCaptionFontSize();
+      renderCaptionSizeControl();
       // 同步 ratio 按鈕到 active 版本的狀態
       document.querySelectorAll(".ratio-btn").forEach((b) => {
         b.classList.toggle(
@@ -3411,6 +3469,11 @@ function buildSavePayload() {
     rotate: { a: state.rotate.a, b: state.rotate.b },
     cover_enabled: state.coverEnabled,
     speed: { enabled: state.speed.enabled, factor: state.speed.factor },
+    // 字幕字級：只送 font_size，後端跟 defaults 比對 → 等於預設就移除 override、保持 yaml 乾淨
+    subtitle_style: { font_size: Number(state.subtitleStyleYt?.font_size) || null },
+    subtitle_style_reels: {
+      font_size: Number(state.subtitleStyleReels?.font_size) || null,
+    },
     silence_trim: {
       enabled: state.silenceTrim.enabled,
       min_silence: state.silenceTrim.minSilence,
@@ -6723,6 +6786,7 @@ function setupOutputControls() {
 }
 
 setupVersionTabs();
+setupCaptionSize();
 setupReelsClips();
 setupAssembleButtons();
 setupOutputControls();
