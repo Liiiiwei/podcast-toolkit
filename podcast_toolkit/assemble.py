@@ -1386,20 +1386,26 @@ def prepare_assembly(
             )
 
     if audio_only:
-        # 原速 MP3：純音訊。input 0=intro、1=主音訊（外接優先，否則 cam A）、2=outro 音檔。
+        # 原速 MP3：純音訊，音訊一律用外接 mix 音檔（不用影片內建聲音）。
+        # input 0=intro、1=mix、2=outro 音檔。
+        if not audio_rel_str:
+            raise AssembleError(
+                "原速 MP3 需要外接 mix 音檔（不用影片內建聲音）；"
+                "請先在「鏡頭與音檔對齊」指定外接音檔。",
+                exit_code=3,
+            )
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
         intro = ep.asset_path("intro")
         outro_audio = ep.asset_path("outro_audio")
-        main_audio_src_rel = audio_rel_str if audio_rel_str else main_rel
         fc = build_audio_only(
             cfg, main_dur=main_dur, removed_intervals=removed_intervals,
-            audio_sync_offset=(audio_sync_offset if audio_rel_str else 0.0),
+            audio_sync_offset=audio_sync_offset,
         )
         cmd = [
             ffmpeg_bin(), "-y",
             "-i", str(intro),
-            "-i", main_audio_src_rel,
+            "-i", audio_rel_str,
             "-i", str(outro_audio),
             "-filter_complex", fc,
             "-map", "[a]", "-vn",
