@@ -90,7 +90,15 @@ def suggest_camera_cuts(
         seg_dur = float(ordered[j]["end"]) - float(ordered[i]["start"])
         want = feature_cam[spk] if (spk in feature_cam and seg_dur >= min_sec) else home_cam
         if want != current:
-            out.append({"t": float(ordered[i]["start"]), "cam": want})
+            # 切點放在「上一段結束 → 這段開始」之間的靜默中點，不綁字幕卡邊界：
+            # 在交接空檔切鏡頭比卡在某個字上自然。卡相連（無間隙）則退回這段 start。
+            this_start = float(ordered[i]["start"])
+            if i > 0:
+                prev_end = float(ordered[i - 1]["end"])
+                t = (prev_end + this_start) / 2 if prev_end < this_start else this_start
+            else:
+                t = this_start
+            out.append({"t": round(t, 3), "cam": want})
             current = want
         i = j + 1
     return out
