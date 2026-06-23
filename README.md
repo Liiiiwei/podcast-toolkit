@@ -1,174 +1,243 @@
 # podcast-toolkit
 
-剪輯 podcast「我愛上班」的 CLI 工具。
+把 podcast 的**原始錄影 + 錄音**，一路做成可以上架的**成品影片（YT 完整版 / Reels 直式）和音檔（MP3）**的工具。
 
-## 安裝（macOS）
+> 你不用會寫程式。裝好之後，幾乎所有事情都在**瀏覽器裡點一點**就完成（轉字幕、校字幕、選鏡頭、裁切、輸出）。下面從零教到輸出。
+
+---
+
+## 這個工具幫你做什麼？
+
+一集 podcast 從錄完到上架，要經過這些事，這個工具把它們串起來、大部分自動化：
+
+```
+錄好的素材（2 台相機 + 幾軌麥克風 + 一軌混音）
+   │
+   ▼  ① 轉字幕   ── 一鍵 Breeze（本地 AI 聽打，免上網、免金鑰），自動標誰在講話
+   ▼  ② 校字幕   ── 自動校對 + 你在編輯器裡改錯字
+   ▼  ③ 設定    ── 裁切畫面、切頭尾、字幕大小、要不要加速、要不要去掉空拍停頓
+   ▼  ④ 鏡頭    ── 一鍵「依講者推 A/B」：來賓講話自動切特寫、主持回全景
+   ▼  ⑤ 輸出    ── YT 完整版.mp4 / Reels 短版.mp4 / 原速 MP3（純音訊）
+```
+
+全部在瀏覽器介面操作，**不用打指令**（進階者也保留了 CLI）。
+
+---
+
+## 名詞先看懂（新手必讀）
+
+| 名詞 | 白話解釋 |
+|---|---|
+| **集（episode）** | 一集節目。每集是一個資料夾，命名習慣 `YYYYMMDD 集名`，例如 `20260629 留白計畫 王奕翔`。 |
+| **母帶 / 素材** | 你錄的原始檔（相機 mp4、麥克風 wav）。放在集資料夾的 `01_母帶/`。 |
+| **混音（Stereo Mix）** | 把所有麥克風混在一起的那一軌（`Stereo Mix.wav`）。最終影片/MP3 的聲音用這軌（音質最好），不是用相機內建的爛聲音。 |
+| **分軌 / mic 軌** | 每個人各自一軌麥克風（Track1/2/3）。用來「分別聽打 → 知道每句話是誰講的」。 |
+| **字幕軌 / 字幕卡** | 聽打出來的字幕，一句一張「卡」。編輯器裡就是一張張可以改字、改時間的卡片。 |
+| **講者（speaker）** | 這句話是誰講的（a/b/c…）。分軌轉字幕會自動標。 |
+| **鏡頭 A / B** | 雙機拍攝：cam A 通常是「全景」（看得到全部人），cam B 通常是「來賓特寫」。 |
+| **裁切（crop）** | 把畫面框小一點、重新構圖（例如去掉天花板、桌上雜物）。 |
+| **頭尾 trim** | 切掉開頭的試音閒聊、結尾的收場空白。 |
+| **去空拍 / 跳剪** | 自動偵測中間「沒人講話的停頓」，輸出時跳過，讓節奏更緊。 |
+| **倍速** | 只加速「正片」（片頭片尾不動），例如 1.15 倍，影片更精簡。 |
+| **合成 / 輸出（assemble）** | 把上面所有設定燒進影片，產生最終 mp4 / mp3。 |
+
+---
+
+## 安裝（第一次拿到電腦才要做，只做一次）
 
 ```bash
 cd ~/Projects
 git clone https://github.com/Liiiiwei/podcast-toolkit.git
 cd podcast-toolkit
 ./install.sh
-podcast --help
 ```
 
-`install.sh` 自動檢查 Python 3.9+、Homebrew、裝 ffmpeg、裝 pyyaml 等套件、建 `podcast` symlink，並**本機生成雙擊啟動 app 到 `/Applications/Podcast.app`**（本機生成 → 無 quarantine、不會被 Gatekeeper 攔），裝完直接雙擊開介面。
+`install.sh` 會自動：檢查 Python 3.9+、裝 ffmpeg、裝必要套件、建立 `podcast` 指令，並在 `/Applications/` 生成一個**可以雙擊打開的 `Podcast.app`**（本機生成，不會被 macOS 攔）。
 
-選裝：本機 whisper 轉錄字幕（模型約 3GB）
+**轉字幕引擎（二選一，本地、免金鑰）：**
 
-```bash
-pip3 install --user openai-whisper
-# 跑：python3 -m whisper <audio.mp4> --model large-v3 --language zh --output_format srt
-```
+- **Breeze（推薦）**：台灣腔最準、會標講者。需要另一個本地專案 [Breeze-ASR-25](https://github.com/mtkresearch/Breeze-ASR-25)，預設放在 `~/Developer/breeze subtitle/Breeze-ASR-25`（也可在設定指定路徑）。
+- **本機 Whisper（mlx）**：Apple Silicon 跑，免金鑰。`pip3 install --user mlx-whisper`。
 
-其他系統請手動跟著上面四步走（pip3 install pyyaml、brew/apt install ffmpeg、`ln -s "$(pwd)/bin/podcast" /usr/local/bin/podcast`）。
+> 這個工具**零雲端金鑰**：不需要 OpenAI / Gemini 等 API key，聲音不會上傳到雲端。
 
-## 怎麼打開來用
+---
 
-> 第一次拿到電腦的人，請先跑過一次上面的「安裝」。裝完之後，以後每次要用，照下面做就好。
+## 怎麼打開來用（每次要用都這樣）
 
-**最簡單的方法：**
+**最快：**
+1. 按住鍵盤 `⌘`（command）不放，再按一下空白鍵 → 跳出搜尋框。
+2. 打「Podcast」→ 按 Enter。
+3. 等 2～5 秒，瀏覽器會自己打開介面。
 
-1. 按鍵盤左下角的 `⌘`（command）鍵不放，再按一下空白鍵 → 螢幕中間會跳出一個搜尋框。
-2. 在框裡打「Podcast」這幾個字。
-3. 看到 Podcast 的圖示後，按一下鍵盤的 Enter（換行鍵）。
-4. 等一下下（大概 2～5 秒），瀏覽器會自己打開，就可以開始用了。
+**用滑鼠：** Finder（藍白笑臉）→ 應用程式 → 連點兩下 **Podcast**。
 
-**也可以這樣（喜歡用滑鼠的話）：**
+**狀況排除：**
+- 瀏覽器沒跳出來？再打開一次 Podcast 就好，它會自己接上。
+- 想更快開？第一次開後，Dock 上會出現 Podcast 圖示，右鍵 →「在 Dock 中保留」。
+- 用完關掉瀏覽器分頁即可。
 
-1. 點螢幕下方工具列最左邊的「Finder」（藍白笑臉圖示）。
-2. 左邊欄位點「應用程式」。
-3. 在裡面找到 **Podcast**，連點兩下。
+> 進階者：終端機打 `podcast ui` 開同一個介面。搬動專案資料夾後重跑 `./install.sh` 即可修好。
 
-**遇到狀況怎麼辦：**
+---
 
-- **等了一下瀏覽器沒跳出來？** 再打開一次 Podcast 就好（重複上面的步驟），它會自己接上、幫你打開瀏覽器。
-- **想之後更快打開？** 第一次打開後，工具列（Dock）上會出現 Podcast 圖示，在它上面按右鍵 →「選項」→ 點「在 Dock 中保留」。以後點工具列那顆圖示就能開。
-- **用完要關？** 直接把瀏覽器分頁關掉就好；不想讓它一直在背景跑的話，在工具列的 Podcast 圖示按右鍵 →「結束」。
+## 做一集：從頭到尾（照順序做）
 
-> 進階使用者：也可以在「終端機」輸入 `podcast ui` 開同一個畫面；其他指令（`podcast init / resegment / assemble …`）一樣保留。
-> 如果之後把專案資料夾搬到別的位置，重跑一次 `./install.sh` 就會修好。
+打開介面後，先看到的是 **Dashboard（集數列表）**。
 
-## 工作流
+### 第 0 步：把集資料夾準備好
 
-```bash
-# 1. 在 ~/Downloads/ 建集資料夾（命名：YYYYMMDD 集名）
-mkdir "$HOME/Downloads/20260601 新集名"
+1. 在 `~/Downloads/` 建一個資料夾，命名 `YYYYMMDD 集名`（例如 `20260629 留白計畫 王奕翔`）。
+2. Dashboard 右上「**新建集**」會幫你建好子資料夾結構，或用 Dashboard 的「**開資料夾**」選現有資料夾。
+3. 子資料夾結構（init 自動建）：
+   - `01_母帶/` — 放原始檔：兩台相機 mp4、各軌麥克風 wav、`Stereo Mix.wav`。
+   - `03_成品/` — 字幕、最終影片會放這。
+   - `04_工作檔/` — 中間暫存。
 
-# 2. 跑 init 建子目錄 + 範本（片頭片尾共用 toolkit/assets/ 內的 intro / outro / subscribe_card，不在每集資料夾內複製）
-podcast init "$HOME/Downloads/20260601 新集名"
+> **音檔放哪？** 相機 mp4 + 麥克風 wav + Stereo Mix 都放 `01_母帶/`。
 
-# 3. 把錄音放進 01_母帶/
-#    字幕可選兩條路：
-#    (a) 本機 whisper：python3 -m whisper ... → 03_成品/新集名_final.srt
-#    (b) 跑 edit 後在瀏覽器按「轉字幕」→ STT 三選一：xAI Grok / Gemini 2.5 Flash / OpenAI Whisper-1
-#        在右上「設定」modal 填對應 api key；每家都吃詞庫提詞偏值（見下方「詞庫」段）
+### 第 1 步：轉字幕（一鍵 Breeze）
 
-# 4. 跑 resegment 重新斷句（用 (b) 走 web 轉字幕已內建這步）
-podcast resegment "$HOME/Downloads/20260601 新集名"
+1. Dashboard **點這集** → 進編輯器。新集會顯示「需轉字幕」。
+2. 點「轉字幕」→ 按 **「一鍵 Breeze 轉字幕（推薦）」**。
+3. 它會**背景一次跑完整條龍**，你只要等：
+   ```
+   Breeze 聽打各軌 mic（最久，依片長約 20–60 分）
+     → 自動標講者（Mic1/2/3 → a/b/c）
+     → 匯入成字幕卡 + 講者表
+     → 本地校對（自動修同音字/術語）
+   ```
+4. **不用一軌一軌按**，一鍵全包。跑完字幕卡 + 講者著色就出現了。
 
-# 5. 人工檢查 04_工作檔/_resegment_review.txt，必要時改 episode.yaml 的 force_break/force_join 重跑（重跑要加 --force 蓋掉舊 v2.srt）
+> 沒有 Breeze 專案的話，也可以用本機 Whisper（mlx）轉，但不會標講者。
 
-# 5.5 (可選) 視覺化編輯：裁切畫框 / 刪段 / 改字
-podcast edit "$HOME/Downloads/20260601 新集名"
+### 第 2 步：校字幕（改錯字）
 
-# 6. 跑 assemble 合成
-#    CLI：預設 YT 完整版；web 端可勾 YT 完整版 / Reels 直式 / 多鏡頭（搭配 cam B 來源）
-podcast assemble "$HOME/Downloads/20260601 新集名"
-```
+- 自動校對已經修掉大部分。剩下的**專有名詞**（人名、品牌、地名）AI 容易聽錯，你在編輯器裡：
+  - 直接點字幕卡的文字改字。
+  - 改完按「完成並儲存」。
+- 字幕卡上方有「**字幕偏移（秒）**」：整份字幕往前/後移，**不改原檔**（預覽和輸出都會套用）。對得不準時用。
 
-## episode.yaml 欄位
+### 第 3 步：分軌角色 →（為了自動鏡頭）
 
-| 欄位 | 必填 | 說明 |
-|------|------|------|
-| `date` | 是 | 集日期 YYYYMMDD（init 自動填） |
-| `name` | 是 | 集名（init 自動填） |
-| `main_video` | 是 | 正片 mp4，路徑相對於集資料夾，可用 `{name}` |
-| `main_srt` | 是 | 原始字幕 srt，同上 |
-| `crop_yt` | 否 | YT 完整版裁切框 `{x,y,width,height}`（0-1 比例，web edit 設） |
-| `crop_reels` | 否 | Reels 直式裁切框（同上） |
-| `deletions` | 否 | 要刪掉的 segment idx 列表 |
-| `fixes` | 否 | 本集 whisper 誤聽錯字 `[[找, 改], ...]` |
-| `card_fixes` | 否 | 合併後跨段落錯字（同格式） |
-| `force_break` | 否 | 強制斷句的 whisper 段落 index 列表 |
-| `force_join` | 否 | 強制合併的 whisper 段落 index 列表 |
-| `resegment` | 否 | 覆寫 toolkit defaults（極少用） |
-| `cameras` | 否 | 多鏡頭：`{a: 主鏡頭路徑, b: 副鏡頭路徑}`，舊集只有 `main_video` 時自動視為 cameras.a |
-| `head_trim_sec` | 否 | 從正片開頭裁掉的秒數（不影響字幕時軸；assemble 階段才裁） |
-| `tail_trim_sec` | 否 | 從正片結尾裁掉的秒數（同上） |
-| `glossary` | 否 | 本集詞庫（見下方「詞庫」段）；會與 toolkit `common_glossary` 合併 |
-| `subtitle_style` | 否 | YT 字幕樣式覆寫（合進 defaults.subtitle_style） |
-| `subtitle_style_reels` | 否 | Reels 字幕樣式覆寫（合進 defaults.subtitle_style_reels） |
+如果是雙機 + 分軌、想要自動切鏡頭：
 
-## defaults.yaml
+1. 轉字幕區「進階：分軌轉錄」→「設定並啟用分軌轉錄」。
+2. 每軌指定對應的音檔 + 標 **主持 / 來賓**，並設「來賓講滿幾秒切特寫」（預設 15 秒）。
+3. 存檔 → 自動生成鏡頭規則（`camera_rule`）：**主持→全景 cam A、來賓→特寫 cam B**。來賓軌號每集不同也沒關係，由你標的角色決定。
 
-全域預設值，改了會影響所有集。主要區段：
+### 第 4 步：設定畫面（鏡頭/裁切/頭尾/字級/倍速/去空拍）
 
-- `resegment` — 斷句長度 / dangle endings / reaction words
-- `suspicious_pause` — 編輯介面標紅「可疑空拍卡」門檻
-- `gemini` — Gemini STT 字幕格式規則（會注入 prompt）
-- `common_glossary` — 全域詞庫（見下方「詞庫」段）
-- `subtitle_style` — YT 16:9 字幕樣式（font/size/outline/shadow/margin）
-- `subtitle_style_reels` — Reels 9:16 字幕樣式（手機豎屏 + 動作列遮擋專用，缺欄位自動回退到 subtitle_style）
-- `watermark` — 影片浮水印 logo overlay（assemble 階段 ffmpeg 燒上去；enabled=false 時整段 no-op）
-- `assets` — 片頭片尾 / 浮水印 logo 路徑（toolkit/assets/）
-- `encode` — ffmpeg 編碼參數（codec、crf、preset、resolution、framerate）
+點右上「**鏡頭與音檔對齊**」和編輯器各處設定：
 
-## 詞庫
+- **外接 mix 音檔**：選 `Stereo Mix.wav`（最終聲音用混音，不是相機聲）。
+- **依講者推 A/B**（鏡頭視窗裡的按鈕）：依講者 + 規則自動生成 A/B 切換點（來賓講滿門檻→特寫，講完回全景）。切點放在交接的靜默中點，比較自然。事後仍可在字幕卡上手動微調個別段落。
+- **裁切框 crop**：上方版本分頁切 YT / Reels，雙擊影片區拉裁切框重新構圖。
+- **字幕字級**：在 crop 比例按鈕旁的 `字幕 − [值] ＋`，依目前 YT / Reels 分頁各調各的，即時預覽。
+- **頭尾 trim**：seek bar 兩端的把手可拖（或鍵盤 ←→ 微調），切掉開頭試音、結尾收場。
+- **倍速 / 去空拍 / 封面浮水印**：在「合成設定」視窗裡開關（倍速例如 1.15、去空拍偵測 ≥0.8 秒的停頓跳剪）。
 
-把固定的專有名詞、暱稱、人名統一寫成「詞庫」，STT 階段以 prompt 偏值降低誤聽，後處理階段把誤聽自動改正。三層合併：
+### 第 5 步：輸出
 
-1. `defaults.yaml` 的 `common_glossary` — toolkit 全域共用
-2. web 端「字典」分頁的全域字典 — 跨集共用、可即時編輯
-3. `episode.yaml` 的 `glossary` — 只影響本集
+頂部右側三顆輸出按鈕：
 
-格式：
+- **合成 YT** → `03_成品/{集名}_YT完整版.mp4`（16:9，含片頭片尾、字幕燒入、套用所有設定）。
+- **合成 Reels** → `{集名}_Reels.mp4`（9:16 直式短版，無片頭片尾）。
+- **原速 MP3** → `{集名}_原速.mp3`（純音訊：套用刪段/trim/去空拍 + 含片頭片尾，但**不加速**，給 podcast 音訊版）。
+- 「5 分鐘預覽」：先合成前 5 分鐘驗證設定（檔名加 `.preview`，不蓋正式檔）。**輸出 55 分鐘完整版前，建議先跑這個確認頭尾切點/裁切/鏡頭對不對。**
+
+> 合成會先把你目前的編輯存檔再跑。雙機 + 字幕 + 倍速的 55 分鐘完整版，硬體編碼約 15 分鐘。
+
+---
+
+## 集放哪裡 + 一個重要的權限坑
+
+### 設定「集數根目錄」
+
+Dashboard 右上「**設定**」→「**集數根目錄**」→ 按「**選資料夾…**」用系統視窗選（不用打路徑）。預設掃 `~/Downloads`，可設多個。
+
+### ⚠️ macOS 權限坑（很常見，先知道）
+
+`~/Downloads`、`~/Desktop`、`~/Documents` 是 macOS **受保護資料夾**。背景服務（這個工具的 server）**跑久了會失去存取權**，症狀：
+
+- Dashboard 顯示「**沒有權限讀取：/Users/.../Downloads**」
+- 集全部變「**損毀**」、點不進去
+
+**這不是檔案壞了**（Finder 看得到），是 server 行程掉了權限。解法：
+
+- **治標**：重新打開 Podcast（重啟 server）。
+- **治本（建議）**：把集資料夾移到**非受保護的資料夾**（例如 `~/podcasts/`），再用「選資料夾」把集數根目錄指過去 → 從此不再卡權限。
+
+---
+
+## 進階參考
+
+### `episode.yaml` 欄位（每集一個設定檔，介面會幫你寫，通常不用手改）
+
+| 欄位 | 說明 |
+|---|---|
+| `date` / `name` | 集日期 / 集名（建集自動填） |
+| `cameras` | 雙機 `{a: 主鏡頭, b: 副鏡頭}`；只有單機就只有 a |
+| `camera_sync_offset` | cam B 相對 cam A 的對齊偏移（秒） |
+| `audio` | 外接 mix 音檔 `{path, sync_offset}`（最終聲音來源） |
+| `mics` | 分軌 `{a: 軌路徑, b:…}`（分軌轉字幕用） |
+| `camera_rule` | 自動鏡頭規則 `{home, feature:{講者:鏡頭}, min_sec}`（分軌角色設定自動生成） |
+| `crop_yt` / `crop_reels` | 裁切框 `{x,y,width,height}`（0–1 比例） |
+| `head_trim_sec` / `tail_trim_sec` | 切頭 / 切尾秒數 |
+| `speed` | 倍速 `{enabled, factor}`（只加速正片） |
+| `silence_trim` | 去空拍 `{enabled, min_silence, pad, noise_db}` |
+| `subtitle_offset_sec` | 非破壞性字幕偏移（秒，不改 srt 原檔） |
+| `subtitle_style` / `subtitle_style_reels` | 字幕樣式（字級等），合進 defaults |
+| `srt_path` | 指定最終要燒哪份字幕（預設用編輯器的 `_final_v2.srt`） |
+| `glossary` | 本集詞庫（見下） |
+
+> **字幕主檔是 `03_成品/{集名}_final_v2.srt`**：編輯器永遠編這份、合成也燒這份。`srt_path` 只是「指定燒哪份」的覆寫。
+
+### 詞庫（讓 AI 少聽錯專有名詞）
+
+把固定的人名、品牌、暱稱寫成詞庫，轉字幕時當提詞、校對時自動修正。三層合併：`defaults.yaml` 的 `common_glossary`（全域）＋ web「字典」分頁（跨集）＋ `episode.yaml` 的 `glossary`（本集）。
 
 ```yaml
 glossary:
-  - canonical: "Liwei Sia"
-    sounds_like: ["你為夏", "你為下"]
-    note: "節目主持人"
-  - "我愛上班"   # 純字串 = 只當提詞、不展開誤聽
+  - canonical: "王奕翔"
+    sounds_like: ["王逸祥"]   # 多字唯一才做硬替換
+    note: "來賓"
+  - "留白計畫"                # 純字串 = 只當提詞、不硬改
 ```
 
-## 指令
+### CLI 指令（進階；介面都做得到，這些是給自動化/批次用）
 
-- `podcast init <path>` — 腳手架
-- `podcast resegment <path> [--force]` — 字幕重新斷句
-- `podcast proofread <path> [--provider claude_code|gemini|off]` — 字幕語意校對（預設用本地 Claude Code，不外聯 API；非 CC 使用者自動退回 Gemini / 跳過）
-- `podcast auto <path> [--no-proofread|--no-camera|--no-trim] [--provider ...] [--force]` — 一鍵自動後製：校對字幕 + 對應鏡頭（分軌集才有講者資料）+ 去頭去尾（偵測頭尾靜音補 trim），盡量自動只剩人工確認 + 輸出
-- `podcast ingest-breeze <path> [--srt ...]` — 匯入 Breeze ASR 字幕（含講者 `[MicN]`）：去標籤寫 `_final_v2.srt` + 拆 MicN→speaker 寫 `speakers.json`（本地轉錄前端的交接入口）
-- `podcast assemble <path> [--dry-run] [--force]` — 合成 YT 完整版（Reels 走 web 端 modal 勾選）
-- `podcast edit <path>` — 開瀏覽器視覺化編輯：裁切 / 刪段 / 改字
+- `podcast init <集>` — 建子資料夾 + 範本
+- `podcast ingest-breeze <集>` — 匯入 Breeze 含講者字幕 → `_final_v2.srt` + `speakers.json`（web 的「一鍵 Breeze」內部也走這步）
+- `podcast suggest-cameras <集>` — 依講者 + `camera_rule` 推 A/B 切換點（web「依講者推 A/B」走這步）
+- `podcast resegment <集> [--force]` — 字幕重新斷句
+- `podcast proofread <集>` — 本地校對（Claude Code；沒裝就跳過）
+- `podcast auto <集>` — 一鍵自動後製（校對 + 推鏡頭 + 去頭尾）
+- `podcast assemble <集> [--force]` — 合成 YT 完整版
+- `podcast edit <集>` / `podcast ui` — 開瀏覽器介面
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 
-## 回歸測試
+### `defaults.yaml`（全域預設，改了影響所有集）
+
+主要區段：`subtitle_style` / `subtitle_style_reels`（字幕樣式）、`camera_rule`（鏡頭規則預設）、`silence_trim`（去空拍預設）、`speed`（倍速）、`watermark`（封面浮水印）、`assets`（片頭片尾路徑）、`encode`（編碼參數：codec / crf / resolution `1920x1080` / framerate `30000/1001`）。
+
+---
+
+## 遇到問題
+
+| 症狀 | 原因 / 解法 |
+|---|---|
+| 集顯示「損毀」、「沒有權限讀取 Downloads」 | macOS 權限坑（見上）。重啟 Podcast，或把集移出 Downloads。 |
+| 改了字幕/設定「存了沒反映」 | server 在跑舊碼或舊快取。關掉重開 Podcast；瀏覽器硬重整。 |
+| 一鍵 Breeze 報「找不到音檔」 | Breeze 找不到 mic/混音。確認音檔在 `01_母帶/`、`Stereo Mix.wav` 和 `Track*-Mic*.wav` 命名正確。 |
+| 輸出聲音怪 | 確認「鏡頭與音檔對齊」選了外接 `Stereo Mix.wav`、且 sync offset 對。 |
+
+---
+
+## 回歸測試（開發者）
 
 ```bash
-bash tests/regression.sh
+python3 -m pytest tests/ -q          # 全套單元/整合測試
+bash tests/regression.sh             # 用既有集 diff 確保改動不破壞行為
 ```
-
-用「過嗨乳牛」這集 diff 確保 toolkit 改動不會破壞既有行為。
-
-## podcast edit 手動驗收
-
-1. `podcast edit <path>` → 瀏覽器自動開、影片可播
-2. 新集沒字幕時前端引導「轉字幕」→ 按下去走 xAI Grok STT → 自動跑 resegment → 字幕變句子層（不會一字一段）
-3. YT / Reels 影片版本 tab 切換 → 各自獨立的裁切框
-4. 雙擊影片區出現裁切框 → 拖角縮放、拖中心移動
-5. 比例按鈕（9:16 / 4:5 / 16:9 / 自訂）→ 點下去裁切框立刻切到對應比例
-6. 啟用裁切後 → 字幕 overlay 自動鎖在裁切框內、不會跑出框外
-7. 📁 開啟集資料夾 → 跳 macOS 原生 Finder 選資料夾 → 直接切到該集
-8. 點字幕卡時間欄 → 影片跳到對應時間
-9. inline 改錯字 → 失焦後文字變橘色底線
-10. ✕ 刪卡 → 卡片變灰、再點 ↺ 還原
-11. 「完成並儲存」→ 頁面變「✅ 已儲存」、CLI exit 0、`episode.yaml` 與 `_v2.srt` 真的有改
-12. 「合成」modal 勾 YT + Reels → queue 進度條依序跑兩個 target，輸出 `_YT完整版.mp4` 與 `_Reels.mp4`（1080×1920）
-13. 檔案列表 group-by 七大區塊（母帶 / 片頭片尾 / 成品 / 工作檔 ...）、折疊狀態存 localStorage
-14. 底部抽屜（drawer）：「專案檔案 / 字典」分頁切換 + 右側收合按鈕 → 收合 / 展開狀態與當前分頁存 localStorage、重新整理後還原
-
-## Roadmap（未做）
-
-- `podcast podcast-audio` — 純音檔輸出（mp3 320k，-16 LUFS）

@@ -223,6 +223,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "cuts": list(ep.cfg.get("cuts") or []),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
+        # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
+        "subtitle_offset_sec": float(ep.cfg.get("subtitle_offset_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
@@ -230,6 +232,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # T23a：雙鏡頭資訊（單機集 cameras 只有 a；前端要知道 b 在不在）
         "cameras": dict(ep.cfg.get("cameras") or {}),
         "camera_sync_offset": dict(ep.cfg.get("camera_sync_offset") or {}),
+        # 鏡頭規則（home/feature:{speaker:cam}/min_sec）：分軌設定 modal 回填角色用
+        "camera_rule": dict(ep.cfg.get("camera_rule") or {}),
         "audio": ep.cfg.get("audio"),
         # 鏡頭已改時間版切換點（與字幕脫鉤）；載入時吸附到當下卡 → idx→cam 給前端顯示。
         # 換字幕後吸附到新斷句最近的卡，前端維持「卡 key」介面不變。
@@ -274,15 +278,33 @@ def _parse_composite_id(key: Any) -> tuple[int, int]:
     return int(s), 0
 
 
-def save_mics_config(ep: Episode, mics: dict[str, str]) -> None:
+def save_mics_config(
+    ep: Episode,
+    mics: dict[str, str],
+    roles: dict[str, str] | None = None,
+    min_sec: float | None = None,
+) -> None:
     """把 mics 設定（speaker → path）寫進 episode.yaml 的 mics: 區塊。
 
     只動 mics 欄位，其他欄位保持原樣（safe_load → 改 → safe_dump）。
     不檢查路徑是否存在 — 那是呼叫端的責任（api 層先檢過了）。
+
+    給 roles（{speaker: "host"|"guest"}）時，一併生成 camera_rule（簡化版）：
+    cam A = home（全景，主持一律留 A）；標 guest 的軌 → cam B（來賓特寫）；
+    來賓連續講滿 min_sec 秒才切到 B。來賓軌號每集不同 → 由 roles 動態決定，不寫死。
     """
     yaml_path = ep.dir / "episode.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     data["mics"] = {sp: mics[sp] for sp in sorted(mics)}
+    if roles is not None:
+        guests = sorted(
+            sp for sp, r in roles.items() if r == "guest" and sp in mics
+        )
+        data["camera_rule"] = {
+            "home": "a",
+            "feature": {sp: "b" for sp in guests},
+            "min_sec": float(min_sec) if min_sec else 15.0,
+        }
     yaml_path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
@@ -472,6 +494,37 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop("srt_path", None)
 
+    # 字幕字級：只調 font_size override（不整段覆寫 subtitle_style）。等於 defaults →
+    # 移除 font_size，避免 yaml 殘留跟預設相同的冗餘值。YT 與 Reels 各自存。
+    if "subtitle_style" in payload or "subtitle_style_reels" in payload:
+        from podcast_toolkit import config as _config
+        _defaults = _config.load_defaults()
+        for _key in ("subtitle_style", "subtitle_style_reels"):
+            if _key not in payload:
+                continue
+            _fs = (payload.get(_key) or {}).get("font_size")
+            if _fs in (None, ""):
+                continue
+            _fs = int(round(float(_fs)))
+            _default_fs = int(float((_defaults.get(_key) or {}).get("font_size") or 0))
+            _block = dict(data.get(_key) or {})
+            if _fs == _default_fs:
+                _block.pop("font_size", None)
+            else:
+                _block["font_size"] = _fs
+            if _block:
+                data[_key] = _block
+            else:
+                data.pop(_key, None)
+
+    # 非破壞性字幕偏移（秒）：存參數而非覆寫 srt；預覽 + 合成都套。0 → 移除 key。
+    if "subtitle_offset_sec" in payload:
+        sub_off = float(payload.get("subtitle_offset_sec") or 0)
+        if abs(sub_off) >= 1e-6:
+            data["subtitle_offset_sec"] = sub_off
+        else:
+            data.pop("subtitle_offset_sec", None)
+
     # 外接音檔 + 同步偏移；用 key-presence 區分「沒動 UI」vs「明確清空」
     if "audio" in payload:
         audio_payload = payload.get("audio") or {}
@@ -631,17 +684,21 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
 
     # 分軌 speaker sidecar：使用者在前端手動改 speaker tag 後一併存回。
     # valid speaker keys 由 episode.yaml.mics 決定（不是寫死 a/b），保留三人以上集的擴充空間。
+    #
+    # 只有「確實設了 mics」的分軌集才由編輯器管理 speakers.json。沒有 mics 的集（單軌 /
+    # yaml 未設 mics 卻有孤兒 sidecar）一律不碰：前端會把 speakersMapping 過濾成空
+    # （validSpeakers 為空），若照寫就會 cameras_io.save({}) → 把既有 speakers.json 誤刪。
+    # 這正是「有 speakers.json 但 yaml 沒 mics 的集，一存檔講者資料就不見」的 bug。
     valid_speakers = set((ep.cfg.get("mics") or {}).keys())
-    new_speakers_mapping: dict[int, str] = {}
-    for k, v in (payload.get("speakers_mapping") or {}).items():
-        if valid_speakers and v not in valid_speakers:
-            continue
-        if not valid_speakers and not isinstance(v, str):
-            continue
-        try:
-            nid = _translate(k)
-        except (TypeError, ValueError):
-            continue
-        if nid is not None:
-            new_speakers_mapping[nid] = str(v)
-    cameras_io.save(ep.output_v2_speakers_json(), new_speakers_mapping)
+    if valid_speakers:
+        new_speakers_mapping: dict[int, str] = {}
+        for k, v in (payload.get("speakers_mapping") or {}).items():
+            if v not in valid_speakers:
+                continue
+            try:
+                nid = _translate(k)
+            except (TypeError, ValueError):
+                continue
+            if nid is not None:
+                new_speakers_mapping[nid] = str(v)
+        cameras_io.save(ep.output_v2_speakers_json(), new_speakers_mapping)

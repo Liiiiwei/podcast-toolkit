@@ -33,16 +33,21 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     def post_episode_mics(payload: dict):
         """寫 mics 設定到 episode.yaml。前端在開分軌轉錄前發現 yaml 沒設 mics 時呼叫。
 
-        payload: {"mics": {"a": "01_母帶/Track1.wav", "b": "...", "c": "..."}}
-        - speaker key 必須是 a/b/c
+        payload: {
+          "mics": {"a": "01_母帶/Track1.wav", "b": "...", "c": "..."},
+          "roles": {"a": "host", "b": "host", "c": "guest"},  # optional
+          "min_sec": 15,                                       # optional
+        }
+        - speaker key 必須是 a/b/c/d（三~四軌）
         - path 是相對 episode 根的相對路徑（用既有 audio_candidates 同款格式）
         - 檔案必須存在，且要落在 episode 資料夾內（防 ../ 逸出）
+        - 給 roles 時一併寫 camera_rule（cam A=全景 home、guest 軌→cam B）
         """
         ep = ctx.require_ep()
         mics = payload.get("mics") or {}
         if not isinstance(mics, dict) or not mics:
             raise HTTPException(status_code=400, detail="mics 必須是 {speaker: path} 物件")
-        allowed = {"a", "b", "c"}
+        allowed = {"a", "b", "c", "d"}
         for sp, path in mics.items():
             if sp not in allowed:
                 raise HTTPException(status_code=400, detail=f"speaker {sp!r} 不在允許範圍 {sorted(allowed)}")
@@ -51,9 +56,51 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             target = validate_episode_path(ep, path, detail_prefix=f"{sp} ")
             if not target.is_file():
                 raise HTTPException(status_code=404, detail=f"{sp} 找不到檔案：{path}")
-        episode_io.save_mics_config(ep, mics)
+        roles = payload.get("roles")
+        if roles is not None:
+            if not isinstance(roles, dict):
+                raise HTTPException(status_code=400, detail="roles 必須是 {speaker: host|guest} 物件")
+            for sp, role in roles.items():
+                if sp not in allowed:
+                    raise HTTPException(status_code=400, detail=f"roles 的 speaker {sp!r} 不在允許範圍")
+                if role not in ("host", "guest"):
+                    raise HTTPException(status_code=400, detail=f"role {role!r} 必須是 host 或 guest")
+        min_sec = payload.get("min_sec")
+        if min_sec is not None:
+            try:
+                min_sec = float(min_sec)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="min_sec 必須是數字")
+        episode_io.save_mics_config(ep, mics, roles=roles, min_sec=min_sec)
         holder["ep"] = Episode(ep.dir)
         return {"ok": True, "mics": dict(sorted(mics.items()))}
+
+    @app.post("/api/cameras-suggest")
+    def cameras_suggest_route():
+        """依分軌 speakers + camera_rule 自動推時間版 A/B 切換點，覆蓋 cameras.json（先備份 .bak）。
+        需要 speakers.json（分軌集才有）；切點放交接靜默中點。回傳切換點數。"""
+        ep = ctx.require_ep()
+        if not ep.output_v2_speakers_json().exists():
+            raise HTTPException(
+                status_code=400,
+                detail="這集沒有分軌講者資料（speakers.json）；請先用「分軌轉錄」產生講者，才能依講者自動推鏡頭。",
+            )
+        from podcast_toolkit import cameras_suggest
+
+        rc = cameras_suggest.run(ep, force=True)
+        if rc != 0:
+            raise HTTPException(status_code=400, detail="自動推鏡頭失敗（缺字幕或講者資料）。")
+        holder["ep"] = Episode(ep.dir)
+        import json
+
+        cj = ep.output_v2_cameras_json()
+        count = 0
+        if cj.exists():
+            try:
+                count = len((json.loads(cj.read_text(encoding="utf-8")) or {}).get("transitions", []))
+            except (ValueError, OSError):
+                count = 0
+        return {"ok": True, "count": count}
 
     @app.post("/api/shutdown")
     def cancel():

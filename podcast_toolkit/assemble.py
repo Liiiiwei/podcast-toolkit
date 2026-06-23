@@ -665,6 +665,41 @@ def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
     return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
+def build_audio_only(
+    cfg: dict,
+    main_dur: float,
+    removed_intervals: list[tuple[float, float]] | None = None,
+    audio_sync_offset: float = 0.0,
+) -> str:
+    """純音訊（原速 MP3）：intro 音 + 正片音（去除 removed_intervals、不加速）+ outro 音 concat。
+
+    音訊一律單軌（cam A 原音或外接音檔），與鏡頭 A/B 切換無關 → 單機 / 雙機共用這條。
+    input 約定：[0]=intro、[1]=主音訊來源、[2]=outro 音檔。removed_intervals 是源（cam A）
+    時間軸的剪除區間（刪段 + 頭尾 trim + 去空拍）；外接音檔先 align 對到 cam A 軸再剪。
+    main_dur = 剪完的正片長度（原速），給 afade 收尾計時。
+    """
+    enc = cfg["encode"]
+    sr = enc["audio_sample_rate"]
+    intro_dur = cfg["assets"]["intro_duration"]
+    intro_fade_out = cfg["assets"]["intro_fade_out"]
+    align_a = _build_audio_align_filter(audio_sync_offset)
+    select_a = ""
+    if removed_intervals:
+        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in removed_intervals)
+        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+    return (
+        f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
+        f"[1:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"[2:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
+        f"afade=t=in:st=0:d=0.5[a2];"
+        # concat 後再 aresample 重新切幀：aselect/concat 產生的不規則幀會讓 libmp3lame 噴
+        # 「inadequate AVFrame plane padding」（PCM 外接音檔特別容易中），aresample 重配幀緩衝修掉。
+        f"[a0][a1][a2]concat=n=3:v=0:a=1,aresample={sr}[a]"
+    )
+
+
 def _multicam_segments(
     segments: list[dict],
     *,
@@ -1003,6 +1038,7 @@ def prepare_assembly(
     overlay_srt: Path | None = None,
     out_override: Path | None = None,
     deletions_override: list | None = None,
+    audio_only: bool = False,
 ) -> dict:
     """檢查資產 → 算出 ffmpeg 命令、cwd、輸出路徑、總時長。
 
@@ -1041,6 +1077,9 @@ def prepare_assembly(
             raise AssembleError("overlay 模式目前只支援 output_kind='yt'")
     # overlay / sidecar 都不燒「來源時間軸」字幕；overlay 改在最後一段疊成品時間軸字幕
     burn_subs = subtitle_mode == "burn"
+    # 原速 MP3：純音訊輸出 → 不燒字幕、不需 libass，永遠原速（force speed=1.0，見下）
+    if audio_only:
+        burn_subs = False
 
     if not shutil.which("ffmpeg"):
         raise AssembleError("找不到 ffmpeg，請 brew install ffmpeg")
@@ -1114,10 +1153,16 @@ def prepare_assembly(
         if not audio_file.exists():
             raise AssembleError(f"找不到外接音檔：{audio_file}", exit_code=3)
         audio_sync_offset = float(audio_cfg.get("sync_offset") or 0.0)
-        if abs(audio_sync_offset) >= 0.001:
-            shifted_srt = ep.subdir("work") / "_v2_aligned.srt"
-            shift_srt(srt, shifted_srt, -audio_sync_offset)
-            srt = shifted_srt
+
+    # 字幕時間軸總位移（非破壞性，shift 到 work 暫存檔，原 srt 不動）：
+    #   -audio_sync_offset：把外接音檔時間軸的字幕對回 cam A（見上）
+    #   +subtitle_offset_sec：使用者在 UI 設的非破壞性字幕偏移（正值=字幕往後延）
+    subtitle_offset = float(cfg.get("subtitle_offset_sec") or 0.0)
+    srt_total_shift = -audio_sync_offset + subtitle_offset
+    if abs(srt_total_shift) >= 0.001:
+        shifted_srt = ep.subdir("work") / "_v2_aligned.srt"
+        shift_srt(srt, shifted_srt, srt_total_shift)
+        srt = shifted_srt
 
     # 輸出路徑分支
     if output_kind == "yt":
@@ -1128,6 +1173,10 @@ def prepare_assembly(
     # 抽換字幕等情境：另存到指定檔名，不蓋原成品
     if out_override is not None:
         out = Path(out_override)
+
+    # 原速 MP3：純音訊，輸出 03_成品/{name}_原速.mp3（套編輯 + 含片頭尾、不加速）
+    if audio_only:
+        out = ep.subdir("output") / f"{ep.name}_原速.mp3"
 
     # preview 模式：檔名插 .preview 避免覆蓋正式成品（驗證 bitrate 用，反覆跑不影響交付檔）
     if preview_sec and preview_sec > 0:
@@ -1162,6 +1211,9 @@ def prepare_assembly(
         except (TypeError, ValueError):
             speed_factor = 1.0
         speed_factor = min(2.0, max(0.5, speed_factor))
+    # 原速 MP3：永遠原速（main_dur 不除倍速、afade 計時直接用未加速長度）
+    if audio_only:
+        speed_factor = 1.0
 
     # 字幕卡（源時間軸）：sidecar 模式拿來映射成成品時間軸；multicam 段規劃也共用這份 parse
     from podcast_toolkit import srt_io
@@ -1175,7 +1227,8 @@ def prepare_assembly(
     # 主合成前建好；角度/來源沒變就重用，YT/Reels/重輸出共享。只在 multicam 啟用（單機後續再補）。
     render_cfg = cfg
     prebakes: list[dict] = []
-    if multicam:
+    # 原速 MP3 只取音訊，不需旋轉拉正 proxy（旋轉不影響音訊）→ 跳過 prebake 省掉建 proxy 的時間
+    if multicam and not audio_only:
         work_dir = ep.subdir("work")
         new_rot = dict(cfg.get("rotate") or {})
         main_video, pb_a, baked_a = _maybe_leveled(work_dir, main_video, "a", _rotate_for(cfg, "a"), enc)
@@ -1332,7 +1385,36 @@ def prepare_assembly(
                 file=sys.stderr,
             )
 
-    if output_kind == "yt":
+    if audio_only:
+        # 原速 MP3：純音訊，音訊一律用外接 mix 音檔（不用影片內建聲音）。
+        # input 0=intro、1=mix、2=outro 音檔。
+        if not audio_rel_str:
+            raise AssembleError(
+                "原速 MP3 需要外接 mix 音檔（不用影片內建聲音）；"
+                "請先在「鏡頭與音檔對齊」指定外接音檔。",
+                exit_code=3,
+            )
+        intro_dur = cfg["assets"]["intro_duration"]
+        outro_dur = cfg["assets"]["outro_duration"]
+        intro = ep.asset_path("intro")
+        outro_audio = ep.asset_path("outro_audio")
+        fc = build_audio_only(
+            cfg, main_dur=main_dur, removed_intervals=removed_intervals,
+            audio_sync_offset=audio_sync_offset,
+        )
+        cmd = [
+            ffmpeg_bin(), "-y",
+            "-i", str(intro),
+            "-i", audio_rel_str,
+            "-i", str(outro_audio),
+            "-filter_complex", fc,
+            "-map", "[a]", "-vn",
+            "-c:a", "libmp3lame", "-q:a", "2",
+            "-ar", str(enc["audio_sample_rate"]),
+            tmp_out_rel,
+        ]
+        total_dur = intro_dur + main_dur + outro_dur
+    elif output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
         if multicam:
@@ -1473,7 +1555,8 @@ def prepare_assembly(
         total_dur = main_dur
 
     # preview 模式：在 -movflags 前插 -t，截斷整段輸出（含 intro+正片+outro 全鏈路）為前 N 秒
-    if preview_sec and preview_sec > 0:
+    # （audio_only 的 MP3 cmd 沒有 -movflags，也不走 preview）
+    if preview_sec and preview_sec > 0 and not audio_only:
         insert_at = cmd.index("-movflags")
         cmd[insert_at:insert_at] = ["-t", str(preview_sec)]
         total_dur = min(total_dur, float(preview_sec))
@@ -1493,7 +1576,7 @@ def prepare_assembly(
         "tmp_out": tmp_out,
         "main_dur": main_dur,
         "total_dur": total_dur,
-        "output_kind": output_kind,
+        "output_kind": "mp3" if audio_only else output_kind,
         "sidecar_srt": sidecar_srt,
         "prebake": prebakes,
     }

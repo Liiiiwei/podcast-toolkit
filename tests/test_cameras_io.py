@@ -150,6 +150,16 @@ def test_suggest_camera_cuts_back_to_home_after_turn():
     assert trans == [{"t": 0.0, "cam": "b"}, {"t": 20.0, "cam": "a"}]
 
 
+def test_suggest_camera_cuts_places_at_gap_midpoint():
+    """切點落在交接靜默中點，不綁字幕卡 start（脫鉤字幕卡時間）。"""
+    # a 講到 3.0 → 停頓到 4.0 → c 從 4.0 連講到 26.0（22s ≥ 15）
+    cards = _cards((1, 0.0, 3.0), (2, 4.0, 26.0))
+    trans = cameras_io.suggest_camera_cuts(
+        {1: "a", 2: "c"}, cards, feature_cam={"c": "b"}, min_sec=15
+    )
+    assert trans == [{"t": 3.5, "cam": "b"}]  # (3.0 + 4.0) / 2，不是卡 start 4.0
+
+
 def test_suggest_camera_cuts_empty():
     assert cameras_io.suggest_camera_cuts({}, _cards((1, 0.0, 4.0))) == []
 

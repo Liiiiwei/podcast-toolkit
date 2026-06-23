@@ -119,6 +119,29 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             status_code=202,
         )
 
+    @app.post("/api/transcribe/breeze")
+    def post_transcribe_breeze(payload: dict | None = None):
+        """一鍵 Breeze 轉字幕：背景跑 Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對。
+
+        payload(皆選填): {"guest": "來賓姓名", "terms": "詞,詞"}。
+        terms 沒給 → 用集詞庫 canonical 當提示詞；免 API key（本地引擎）。
+        """
+        ep = ctx.require_ep()
+        payload = payload or {}
+        guest = (payload.get("guest") or "").strip()
+        terms = (payload.get("terms") or "").strip()
+        if not terms:
+            gl = ep.cfg.get("glossary") or []
+            terms = "、".join(
+                str(g.get("canonical")) for g in gl if isinstance(g, dict) and g.get("canonical")
+            )
+        try:
+            info = transcribe_job.start_breeze_job(ep, guest=guest, terms=terms)
+        except RuntimeError as e:
+            code = 409 if "已有" in str(e) else 400
+            raise HTTPException(status_code=code, detail=str(e))
+        return JSONResponse({"ok": True, **info}, status_code=202)
+
     @app.get("/api/transcribe/status")
     def get_transcribe_status():
         return JSONResponse(transcribe_job.get_status())

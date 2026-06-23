@@ -206,6 +206,9 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
         "cut_pad": float(episode.get("cut_pad", defaults.get("cut_pad", 0)) or 0),
         "head_trim_sec": float(episode.get("head_trim_sec") or 0),
         "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
+        # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。漏列此 key 會像 srt_path
+        # 一樣「寫進 yaml 卻讀不回 cfg」，導致存了沒生效。
+        "subtitle_offset_sec": float(episode.get("subtitle_offset_sec") or 0),
         # Reels 片段截取：list of {name, start_card, end_card}
         # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
         "reels_clips": list(episode.get("reels_clips") or []),

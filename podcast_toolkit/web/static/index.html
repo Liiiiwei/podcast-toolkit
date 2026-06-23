@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260622a" />
+    <link rel="stylesheet" href="/static/app.css?v=20260622h" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -21,35 +21,6 @@
           >
             <span data-icon="arrow-left"></span>
             <span>列表</span>
-          </button>
-          <div class="ep-switch-wrap">
-            <button
-              id="ep-switch-btn"
-              type="button"
-              class="btn btn-ghost"
-              title="換集：快速切換最近的集（不離開頁面）"
-              aria-haspopup="true"
-              aria-expanded="false"
-            >
-              <span data-icon="folder-open"></span>
-              <span>換集</span>
-              <span class="ep-switch-caret">▾</span>
-            </button>
-            <div
-              class="ep-switch-menu"
-              id="ep-switch-menu"
-              role="menu"
-              hidden
-            ></div>
-          </div>
-          <button
-            id="ep-new-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="新建集"
-          >
-            <span data-icon="calendar-plus"></span>
-            <span>新建</span>
           </button>
         </div>
         <div class="topbar-group">
@@ -159,6 +130,15 @@
             <span>合成 Reels</span>
           </button>
           <button
+            id="assemble-mp3-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="輸出原速度 MP3：成品音訊（套用刪段／頭尾 trim／去空拍）+ 含片頭片尾，但不加速、純音訊。給 podcast 音訊版用。"
+          >
+            <span data-icon="mic"></span>
+            <span>原速 MP3</span>
+          </button>
+          <button
             id="assemble-preview-btn"
             type="button"
             class="btn btn-ghost"
@@ -238,12 +218,18 @@
               <div
                 class="trim-handle head"
                 id="trim-handle-head"
-                title="拖曳設定片頭"
+                tabindex="0"
+                role="slider"
+                aria-label="片頭裁切點，鍵盤 ← → 微調"
+                title="拖曳或鍵盤 ← → 微調（Shift=0.5s、Cmd=1s）"
               ></div>
               <div
                 class="trim-handle tail"
                 id="trim-handle-tail"
-                title="拖曳設定片尾"
+                tabindex="0"
+                role="slider"
+                aria-label="片尾裁切點，鍵盤 ← → 微調"
+                title="拖曳或鍵盤 ← → 微調（Shift=0.5s、Cmd=1s）"
               ></div>
               <div class="trim-tooltip" id="trim-tooltip" hidden></div>
             </div>
@@ -322,6 +308,15 @@
               <span>重設</span>
             </button>
             <button
+              id="trim-play-head"
+              type="button"
+              class="btn btn-ghost"
+              title="從片頭起點開始播放（不是當下位置）"
+            >
+              <span data-icon="play"></span>
+              <span>從頭播</span>
+            </button>
+            <button
               id="trim-suggest-btn"
               type="button"
               class="btn btn-ghost"
@@ -361,6 +356,16 @@
                 <span data-icon="rotate-ccw"></span>
                 <span>重設</span>
               </button>
+              <div
+                class="caption-size"
+                id="caption-size"
+                title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
+              >
+                <span class="caption-size-label" data-icon="type" data-icon-size="13"></span>
+                <button type="button" id="cap-size-dec" class="cap-size-btn" aria-label="字幕縮小">−</button>
+                <span class="cap-size-val" id="cap-size-val">—</span>
+                <button type="button" id="cap-size-inc" class="cap-size-btn" aria-label="字幕放大">＋</button>
+              </div>
             </div>
           </div>
           <div class="framing-row">
@@ -478,9 +483,9 @@
             <span id="sus-checked-count" class="sus-label">已勾 0</span>
           </div>
           <div class="srt-shift-row" id="srt-shift-row" hidden>
-            <label class="srt-shift-label" title="正值 = 字幕往後移（字幕目前出現太早）；負值 = 字幕往前移（字幕目前出現太晚）">
+            <label class="srt-shift-label" title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。">
               <span data-icon="clock"></span>
-              <span>字幕偏移（秒）</span>
+              <span>字幕偏移（秒，不改原檔）</span>
             </label>
             <input
               type="number"
@@ -537,7 +542,7 @@
         </section>
       </div>
 
-      <section class="drawer" id="drawer">
+      <section class="drawer collapsed" id="drawer">
         <div class="drawer-header">
           <div class="drawer-tabs" role="tablist" aria-label="抽屜分頁">
             <button
@@ -995,6 +1000,19 @@
     <dialog class="modal modal-wide" id="cam-modal">
       <div class="modal-head">鏡頭與音檔對齊</div>
       <div class="modal-body">
+        <!-- 依分軌講者自動推 A/B（分軌集才顯示；需先有 speakers.json）-->
+        <div class="cam-suggest-row" id="cam-suggest-row" hidden>
+          <button
+            id="cam-suggest-btn"
+            type="button"
+            class="btn btn-ghost"
+            title="依分軌講者 + 角色設定自動推 A/B 切換點：主持→全景 cam A、來賓連續講滿門檻秒數→特寫 cam B，切點放在交接靜默中點。會覆蓋現有鏡頭切換（先自動備份 .bak），之後仍可在字幕卡上手動微調例外。"
+          >
+            <span data-icon="sparkles"></span>
+            <span>依講者推 A/B</span>
+          </button>
+          <span class="cam-suggest-hint" id="cam-suggest-hint"></span>
+        </div>
         <!-- 「最終合成總覽」：使用者一眼看見哪 4 檔會被組進 03_成品 -->
         <div class="cam-overview">
           <div class="cam-overview-head">
@@ -1155,6 +1173,15 @@
       <div class="modal-head" id="transcribe-title">準備轉字幕</div>
       <div class="modal-body">
         <div id="transcribe-msg">…</div>
+        <div id="transcribe-breeze-row">
+          <button type="button" id="transcribe-breeze-btn" class="btn btn-primary">
+            <span data-icon="mic"></span>
+            <span>一鍵 Breeze 轉字幕（推薦）</span>
+          </button>
+          <div class="transcribe-breeze-hint">
+            本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 → 校對，一次完成、免 API key。最久的是轉錄，請耐心等。
+          </div>
+        </div>
         <details id="transcribe-advanced" class="modal-advanced" hidden>
           <summary>進階：分軌轉錄</summary>
           <div class="modal-body-text">
@@ -1312,6 +1339,21 @@
           <code>mics:</code>。
         </div>
         <div id="mic-setup-list" class="mic-setup-list"></div>
+        <div class="mic-setup-rule" title="主持一律待在 cam A（全景）；來賓連續講滿這個秒數，才把那整段切到 cam B（特寫），講完回 A。">
+          <span>來賓講滿</span>
+          <input
+            type="number"
+            id="mic-setup-min-sec"
+            class="mic-setup-min-sec"
+            value="15"
+            min="1"
+            step="1"
+          />
+          <span>秒才切特寫（cam B）</span>
+        </div>
+        <div class="modal-body-text mic-setup-rule-note">
+          角色決定鏡頭：<b>主持</b>＝全景 cam A、<b>來賓</b>＝特寫 cam B。轉完字幕後在編輯器按「依講者推 A/B」即可套用。
+        </div>
         <div class="modal-hint" id="mic-setup-warn" hidden>
           ⚠ 同一個檔被指派到多軌，請調整。
         </div>
@@ -1326,7 +1368,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260622a"></script>
-    <script src="/static/app.js?v=20260622a" type="module"></script>
+    <script src="/static/icons.js?v=20260622h"></script>
+    <script src="/static/app.js?v=20260622h" type="module"></script>
   </body>
 </html>

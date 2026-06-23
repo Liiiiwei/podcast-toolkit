@@ -43,6 +43,25 @@ def test_filter_complex_yt_no_crop_no_deletions(monkeypatch):
     assert "select=" not in fc
 
 
+def test_build_audio_only_concat_and_cut():
+    """原速 MP3 純音訊：intro 音 + 正片音（去 removed_intervals）+ outro 音 concat；
+    結尾要有 aresample 重切幀（修 libmp3lame 對 PCM 外接音檔的 plane padding 報錯）。"""
+    fc = assemble.build_audio_only(
+        BASE_CFG, main_dur=80.0, removed_intervals=[(3.0, 5.0)],
+    )
+    assert "concat=n=3:v=0:a=1" in fc          # intro + main + outro，純音訊（v=0）
+    assert "aselect='not(between(t,3.000,5.000))'" in fc  # 套刪除區間
+    assert "aresample=48000[a]" in fc          # 收尾重切幀
+    assert "[0:v]" not in fc and "scale=" not in fc      # 沒有任何視訊處理
+
+
+def test_build_audio_only_no_cuts_no_aselect():
+    """沒有刪除區間 → 不加 aselect（整段正片音）。"""
+    fc = assemble.build_audio_only(BASE_CFG, main_dur=80.0, removed_intervals=[])
+    assert "aselect" not in fc
+    assert "concat=n=3:v=0:a=1" in fc
+
+
 def test_filter_complex_yt_with_crop_adds_crop_filter():
     cfg = {**BASE_CFG, "crop_yt": {"x": 0.1, "y": 0.05, "width": 0.8, "height": 0.9}}
     fc = assemble.build_filter_complex_yt(cfg, main_dur=100.0, srt_rel="x.srt")
