@@ -45,7 +45,8 @@ def cmd_ingest_breeze(args):
     from podcast_toolkit import ingest_breeze, proofread
     from podcast_toolkit.episode import Episode
     path = Path(args.path)
-    rc = ingest_breeze.run(path, srt=args.srt, force=args.force)
+    rc = ingest_breeze.run(path, srt=args.srt, force=args.force,
+                           cleanup=not args.no_cleanup)
     # 接上後處理：Breeze 路線原本只去 [MicN] 直出、不跑校對 → 字幕沒被校對（同音/術語/glossary）。
     # 匯入成功後，有裝 claude 就自動接著本地校對；沒裝（resolve_provider 回 None）就安靜跳過。
     if rc == 0 and not args.no_proofread:
@@ -157,6 +158,8 @@ def build_parser():
     pib.add_argument("--force", action="store_true", help="保留參數一致性（一律就地覆寫並備份）")
     pib.add_argument("--no-proofread", action="store_true",
                      help="匯入後不自動跑本地校對（預設：有 claude 就接著校對）")
+    pib.add_argument("--no-cleanup", action="store_true",
+                     help="匯入後不自動跑講者平滑 + 去甩尾（預設：自動清理）")
     pib.set_defaults(func=cmd_ingest_breeze)
 
     pm = sub.add_parser(
