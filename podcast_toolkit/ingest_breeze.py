@@ -18,7 +18,7 @@ from pathlib import Path
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.subtitle_cleanup import destrand_cards, smooth_speakers
+from podcast_toolkit.subtitle_cleanup import smooth_speakers
 
 # 行首 [Mic1] / [Mic 1] / [郝慧川] 之類的講者標籤
 _LABEL_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*")
@@ -84,8 +84,9 @@ def ingest(srt_path, *, mic_map=None) -> tuple[list[dict], dict[int, str]]:
 def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True) -> int:
     """CLI 進入點:Breeze SRT → 寫 _final_v2.srt + speakers.json(先備份既有)。回 exit code。
 
-    cleanup=True(預設):匯入後自動跑講者平滑 + 去甩尾(subtitle_cleanup)——
-    修逐卡麥能量翻錯標(同一人切成不同講者)+ 斷句把句尾名詞甩到下一卡。對沒問題的集是 no-op。
+    cleanup=True(預設):匯入後跑講者平滑(smooth_speakers)——修逐卡麥能量翻錯標
+    (同一人切成不同講者)。依語句重切(reflow)需 proofread 加的空格,故由呼叫端在
+    proofread 之後跑 subtitle_cleanup.reflow_episode,不在這裡。對沒問題的集是 no-op。
     """
     ep = Episode(Path(episode_dir))
     src = Path(srt) if srt else find_breeze_srt(ep.dir)
@@ -99,9 +100,7 @@ def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True) -> in
         return 1
 
     if cleanup:
-        # 講者平滑要先做（去掉短 blip）→ 去甩尾才用乾淨的講者判斷「同講者才挪」
-        speakers = smooth_speakers(cards, speakers)
-        destrand_cards(cards, speakers)
+        speakers = smooth_speakers(cards, speakers)   # 修麥能量翻錯標的短 blip
 
     v2 = ep.output_v2_srt()
     spk_path = ep.output_v2_speakers_json()

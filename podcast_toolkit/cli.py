@@ -53,6 +53,12 @@ def cmd_ingest_breeze(args):
         if proofread.resolve_provider(Episode(path).cfg):
             print("→ 接著跑本地校對 proofread …")
             proofread.run(path)
+    # 依語句重切要在 proofread 之後（需 proofread 加的空格當語句邊界）
+    if rc == 0 and not args.no_cleanup:
+        from podcast_toolkit.subtitle_cleanup import reflow_episode
+        n = reflow_episode(path)
+        if n:
+            print(f"→ 依語句重切（reflow）：{n} 卡")
     return rc
 
 

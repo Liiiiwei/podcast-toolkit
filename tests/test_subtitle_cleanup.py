@@ -1,7 +1,9 @@
 """講者平滑 + 去甩尾（subtitle_cleanup）測試。"""
 from __future__ import annotations
 
-from podcast_toolkit.subtitle_cleanup import destrand_cards, smooth_speakers
+from podcast_toolkit.subtitle_cleanup import (
+    destrand_cards, reflow_by_phrases, smooth_speakers,
+)
 
 
 def _cards(*spans):
@@ -92,3 +94,44 @@ def test_destrand_cascades_left_to_right():
     assert cards[0]["text"] == "一切的起點"
     assert cards[1]["text"] == "那再到量能"
     assert cards[2]["text"] == "然後"
+
+
+# ---- reflow_by_phrases ----
+
+def test_reflow_splits_at_cjk_spaces_joins_across_cards():
+    """連續同講者：空格在流行/機器人後切；送餐|機器人(卡邊界無空格)接起來。"""
+    cards = _cards((0.0, 3.0, "其實區塊鏈很流行 然後什麼送餐"),
+                   (3.0, 6.0, "機器人 那個時候也剛冒出來"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == [
+        "其實區塊鏈很流行", "然後什麼送餐機器人", "那個時候也剛冒出來"]
+    assert [c["idx"] for c in new] == [1, 2, 3]
+
+
+def test_reflow_protects_ascii_adjacent_spaces():
+    """英/數旁的空格不算語句邊界（line pay 不拆）；只有兩中文字間才斷。"""
+    cards = _cards((0.0, 4.0, "用 line pay 付款 然後走"))
+    new, _ = reflow_by_phrases(cards, {1: "c"})
+    assert [c["text"] for c in new] == ["用 line pay 付款", "然後走"]
+
+
+def test_reflow_different_speaker_not_joined():
+    cards = _cards((0.0, 3.0, "我問你"), (3.0, 6.0, "題目"))
+    new, ns = reflow_by_phrases(cards, {1: "a", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["我問你", "題目"]
+    assert ns == {1: "a", 2: "c"}
+
+
+def test_reflow_pause_breaks_run():
+    """同講者但間隔 > gap（真停頓）→ 不併。"""
+    cards = _cards((0.0, 3.0, "第一句"), (5.0, 8.0, "第二句"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["第一句", "第二句"]
+
+
+def test_reflow_subsplit_long_phrase():
+    """超過 max_w 的無空格中文串 → 硬切成 ≤max_w，內容不丟。"""
+    cards = _cards((0.0, 4.0, "一二三四五六七八九十甲乙丙丁戊己庚辛"))
+    new, _ = reflow_by_phrases(cards, {1: "c"}, max_w=16)
+    assert all(len(c["text"]) <= 16 for c in new)
+    assert "".join(c["text"] for c in new) == "一二三四五六七八九十甲乙丙丁戊己庚辛"
