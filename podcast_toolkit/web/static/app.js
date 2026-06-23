@@ -1044,6 +1044,14 @@ function computeEffectiveSpeaker(key) {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+// 講者顯示標籤：用數字 1/2/3，避免跟 A/B 鏡頭混淆。
+// 內部 key 仍是 a/b/c（speakers.json、CSS 顏色 class speaker-a/b/c 都不動），只改「看到的字」。
+// a→1 b→2 c→3 d→4…；非單字母 key 退回原樣大寫。
+function speakerLabel(sp) {
+  if (!sp) return "";
+  return /^[a-z]$/.test(sp) ? String(sp.charCodeAt(0) - 96) : sp.toUpperCase();
+}
+
 // 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
 // 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
 // 而且切過的卡會 carry 到自己的後續 sub-card）。
@@ -1350,7 +1358,7 @@ function renderSpeakerRuler() {
       : "speaker-ruler-seg speaker-ruler-gap";
     const w = ((s.end - s.start) / total) * 100;
     seg.style.width = `${w}%`;
-    const label = s.sp ? s.sp.toUpperCase() : "（無 speaker）";
+    const label = s.sp ? `講者 ${speakerLabel(s.sp)}` : "（無 speaker）";
     seg.title = `${label} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
     seg.addEventListener("click", () => {
       $("#video").currentTime = s.start;
@@ -1554,8 +1562,8 @@ function renderCards() {
       div.classList.add("card-has-speaker", `speaker-${sp}`);
       const tag = document.createElement("div");
       tag.className = `card-speaker-tag speaker-${sp}`;
-      tag.textContent = sp.toUpperCase();
-      tag.title = `講者：${sp.toUpperCase()}（來自分軌 SRT，要改去 sidecar）`;
+      tag.textContent = speakerLabel(sp);
+      tag.title = `講者 ${speakerLabel(sp)}（來自分軌 SRT，要改去 sidecar）`;
       time.appendChild(tag);
     }
     // sub-card 加 duration 提示：直接看到「這段切了多少秒」+ 尾段空窗警告
