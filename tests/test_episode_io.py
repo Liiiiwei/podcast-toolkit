@@ -1174,3 +1174,30 @@ def test_save_card_timings_negative_start_raises(tmp_episode_dir):
             ep,
             payload={"cards": [], "card_timings": {"2": {"start": -1.0, "end": 5.0}}},
         )
+
+
+def test_load_state_has_speaker_tags_from_speakers_json(tmp_episode_dir):
+    """Breeze 匯入產生 speakers.json → load_state 標 has_speaker_tags=True
+    （前端據此渲染講者標/兩行；mics 為空也成立）。"""
+    from podcast_toolkit import cameras_io
+
+    ep = Episode(tmp_episode_dir)
+    cameras_io.save(ep.output_v2_speakers_json(), {1: "a", 2: "b"})
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["has_speaker_tags"] is True
+
+
+def test_load_state_has_speaker_tags_false_without_speakers(tmp_episode_dir):
+    """純單軌集（無 speakers.json、yaml 無旗標）→ False，維持單行不渲染講者標。"""
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["has_speaker_tags"] is False
+
+
+def test_load_state_has_speaker_tags_from_yaml_flag(tmp_episode_dir):
+    """即使沒 speakers.json，yaml 明確設 has_speaker_tags:true 也透出（cfg 路徑）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["has_speaker_tags"] = True
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["has_speaker_tags"] is True

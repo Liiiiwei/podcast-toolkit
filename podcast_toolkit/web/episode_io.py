@@ -242,6 +242,11 @@ def load_state(ep: Episode) -> dict[str, Any]:
         ),
         # 分軌 mic 設定（前端拿來決定要不要渲染 speaker tag / ruler；空 dict = 單軌集）
         "mics": dict(ep.cfg.get("mics") or {}),
+        # Breeze 分軌集標記：cfg 明確設了 has_speaker_tags，或集已有 speakers.json
+        # （ingest-breeze 寫的）→ 視為有講者標，前端渲染 speaker tag / 兩行。
+        # 與 mics 正交：Breeze 集 mics 為空但有 speakers.json。
+        "has_speaker_tags": bool(ep.cfg.get("has_speaker_tags"))
+        or ep.output_v2_speakers_json().exists(),
         # 已存在的分軌 SRT（04_工作檔/{name}_mic_{speaker}.srt）— UI 勾選 modal 用來顯示「已轉/未轉」
         "mic_srt_existing": sorted(
             sp for sp in (ep.cfg.get("mics") or {})

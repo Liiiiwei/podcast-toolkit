@@ -1306,8 +1306,9 @@ function endTimelineDrag(e) {
 function renderSpeakerRuler() {
   const ruler = $("#speaker-ruler");
   if (!ruler) return;
-  const hasMics = state.mics && Object.keys(state.mics).length > 0;
-  if (!hasMics || !state.cards.length) {
+  const showSpeakers =
+    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
+  if (!showSpeakers || !state.cards.length) {
     ruler.hidden = true;
     ruler.innerHTML = "";
     return;
@@ -1362,10 +1363,12 @@ function renderSpeakerRuler() {
 function renderCaption() {
   const overlay = $("#caption-overlay");
   const t = $("#video").currentTime;
-  // 分軌啟用 → 找所有 active 卡分行（兩人同時講話 → 上下兩行 + speaker 著色）
-  // 單軌集 → 退回單張卡的純文字（舊行為）
-  const hasMics = state.mics && Object.keys(state.mics).length > 0;
-  if (!hasMics) {
+  // 有講者標（分軌 mics 或 Breeze speakers.json）→ 找所有 active 卡分行
+  //   （兩人同時講話 → 上下兩行 + speaker 著色；分講者切卡的集多半每刻單卡 = 單行帶著色）
+  // 純單軌無講者 → 退回單張卡的純文字（舊行為）
+  const showTwoLine =
+    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
+  if (!showTwoLine) {
     const r = activeCardAt(t);
     if (!r || state.deletions.has(r.key)) {
       overlay.textContent = "";
@@ -2051,10 +2054,15 @@ async function loadEpisodeState() {
       .filter(([_, v]) => v === "a" || v === "b"),
   );
   // 分軌 speaker mapping：mics 同 cameras 形狀；speaker 不做 carry-forward（每張卡都明確標記）
-  // 合法 speaker = mics 的 key set；mics 為空（單軌集）→ 不收任何 mapping
+  // 合法 speaker = mics 的 key ∪ speakers_mapping 實際出現的 value。
+  // Breeze 集 mics 為空、但 speakers.json 有逐卡講者 → 靠後者放行（has_speaker_tags=true）。
   state.mics = data.mics || {};
+  state.hasSpeakerTags = !!data.has_speaker_tags;
   state.cameraRule = data.camera_rule || {};
-  const validSpeakers = new Set(Object.keys(state.mics));
+  const validSpeakers = new Set([
+    ...Object.keys(state.mics),
+    ...Object.values(data.speakers_mapping || {}),
+  ]);
   state.speakersMapping = new Map(
     Object.entries(data.speakers_mapping || {})
       .map(([k, v]) => [Number(k), v])
