@@ -1170,7 +1170,37 @@ function renderCardTimeline() {
     block.append(hL, hR);
     tl.appendChild(block);
   }
+  // 播放頭：跟著影片時間移動的豎線（updateTimelinePlayhead 每次 timeupdate 定位）
+  const ph = document.createElement("div");
+  ph.className = "tl-playhead";
+  ph.id = "tl-playhead";
+  tl.appendChild(ph);
   _applyTlZoomWidth();
+  updateTimelinePlayhead($("#video").currentTime);
+}
+
+// 三邊同步：影片時間 → 時間軸播放頭位置 + 高亮當前 block（縮放時自動捲到可見）
+function updateTimelinePlayhead(t) {
+  const tl = $("#card-timeline");
+  const ph = $("#tl-playhead");
+  if (!tl || !ph) return;
+  const t0 = parseFloat(tl.dataset.t0 || "0");
+  const total = parseFloat(tl.dataset.total || "1");
+  const pct = Math.max(0, Math.min(100, ((t - t0) / total) * 100));
+  ph.style.left = `${pct}%`;
+  // 縮放後（內層比視窗寬）→ 播放頭跑出可視範圍就自動捲動，維持在中間附近
+  const scroll = tl.closest(".card-timeline-scroll");
+  if (scroll && tl.offsetWidth > scroll.clientWidth + 1) {
+    const x = (pct / 100) * tl.offsetWidth;
+    if (x < scroll.scrollLeft + 40 || x > scroll.scrollLeft + scroll.clientWidth - 40) {
+      scroll.scrollLeft = x - scroll.clientWidth / 2;
+    }
+  }
+  // re-render 會重建 block → 當前高亮掉了就補回（_lastActiveKey 由 timeupdate 維護）
+  if (_lastActiveKey != null && !tl.querySelector(".tl-block.playing")) {
+    const blk = tl.querySelector(`.tl-block[data-key="${_lastActiveKey}"]`);
+    if (blk) blk.classList.add("playing");
+  }
 }
 
 // === 時間軸縮放（zoom + 橫向捲動）===
@@ -2585,7 +2615,7 @@ $("#video").addEventListener("timeupdate", () => {
   const activeKey = activeCard ? String(activeCard.key) : null;
   if (activeKey !== _lastActiveKey) {
     document
-      .querySelectorAll(".card.playing")
+      .querySelectorAll(".card.playing, .tl-block.playing")
       .forEach((el) => el.classList.remove("playing"));
     if (activeKey != null) {
       const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
@@ -2595,9 +2625,13 @@ $("#video").addEventListener("timeupdate", () => {
         const editing = document.activeElement?.classList?.contains("card-text");
         if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
+      // 時間軸：同步高亮當前 block（三邊同步）
+      const blk = document.querySelector(`.tl-block[data-key="${activeKey}"]`);
+      if (blk) blk.classList.add("playing");
     }
     _lastActiveKey = activeKey;
   }
+  updateTimelinePlayhead(t); // 播放頭每幀都動（不只換卡時）
   renderCaption();
 });
 
