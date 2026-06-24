@@ -42,11 +42,18 @@ def cmd_auto(args):
 
 
 def cmd_ingest_breeze(args):
-    from podcast_toolkit import ingest_breeze, proofread
+    from podcast_toolkit import ingest_breeze, proofread, glossary_candidates
     from podcast_toolkit.episode import Episode
     path = Path(args.path)
     rc = ingest_breeze.run(path, srt=args.srt, force=args.force,
                            cleanup=not args.no_cleanup)
+    # 校對前先偵測『模糊字候選』：此時 _final_v2.srt 還是原始匯入稿（同音/漏抓尚未被校對掩蓋），
+    # 餵過卻消失的專名（茄芷袋/Wazaiii/酷學營）在這裡才看得到。產清單給人 curate 進詞庫。
+    if rc == 0 and not args.no_suggest:
+        try:
+            glossary_candidates.generate(path)
+        except Exception as e:  # 偵測是加值步驟，壞了不該擋住匯入/校對
+            print(f"（模糊字偵測略過：{e}）")
     # 接上後處理：Breeze 路線原本只去 [MicN] 直出、不跑校對 → 字幕沒被校對（同音/術語/glossary）。
     # 匯入成功後，有裝 claude 就自動接著本地校對；沒裝（resolve_provider 回 None）就安靜跳過。
     if rc == 0 and not args.no_proofread:
@@ -60,6 +67,21 @@ def cmd_ingest_breeze(args):
         if n:
             print(f"→ 依語句重切（reflow）：{n} 卡")
     return rc
+
+
+def cmd_glossary_suggest(args):
+    from podcast_toolkit import glossary_candidates
+    try:
+        glossary_candidates.generate(Path(args.path), srt=args.srt)
+    except Exception as e:
+        print(f"✗ 模糊字偵測失敗：{e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_glossary_review(args):
+    from podcast_toolkit import glossary_candidates
+    return glossary_candidates.review(Path(args.path))
 
 
 def cmd_merge_per_mic(args):
@@ -166,7 +188,24 @@ def build_parser():
                      help="匯入後不自動跑本地校對（預設：有 claude 就接著校對）")
     pib.add_argument("--no-cleanup", action="store_true",
                      help="匯入後不自動跑講者平滑 + 去甩尾（預設：自動清理）")
+    pib.add_argument("--no-suggest", action="store_true",
+                     help="匯入後不偵測模糊字候選（預設：產 _glossary_candidates.md）")
     pib.set_defaults(func=cmd_ingest_breeze)
+
+    pgs = sub.add_parser(
+        "glossary-suggest",
+        help="偵測字幕裡的模糊/不確定字 → 產待確認詞清單（_glossary_candidates.md）",
+    )
+    pgs.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pgs.add_argument("--srt", default=None, help="指定要偵測的 SRT（預設：_final_v2.srt）")
+    pgs.set_defaults(func=cmd_glossary_suggest)
+
+    pgr = sub.add_parser(
+        "glossary-review",
+        help="逐條勾選模糊字候選 → 加進該集 .glossary.json（下次轉錄/校對生效）",
+    )
+    pgr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pgr.set_defaults(func=cmd_glossary_review)
 
     pm = sub.add_parser(
         "merge-per-mic",
