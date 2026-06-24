@@ -437,5 +437,12 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
     except Exception:
         pass
 
+    # 4) 依語句重切（要在 proofread 之後，需其加的空格當語句邊界；失敗不擋）
+    try:
+        from podcast_toolkit.subtitle_cleanup import reflow_episode
+        reflow_episode(ep.dir)
+    except Exception:
+        pass
+
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
     setj(state="done", phase="proofread", percent=100.0, out_srt=out_srt_rel)

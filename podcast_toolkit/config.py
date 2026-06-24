@@ -178,6 +178,9 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
         "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
         "audio": episode.get("audio"),
         "mics": dict(episode.get("mics") or {}),
+        # Breeze 分軌集標記：有逐卡講者標 → 前端渲染 speaker tag / 兩行。
+        # 與「有無 mic 音檔路徑(mics)」正交：Breeze 集有講者標但沒 mic 路徑。
+        "has_speaker_tags": bool(episode.get("has_speaker_tags") or False),
         "per_mic": {**(defaults.get("per_mic") or {}), **(episode.get("per_mic") or {})},
         "force_break": set(episode.get("force_break") or []),
         "force_join": set(episode.get("force_join") or []),

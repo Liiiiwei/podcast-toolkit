@@ -256,3 +256,15 @@ def test_merge_per_mic_episode_overrides_defaults_per_key():
     assert cfg["per_mic"]["vad_threshold"] == 0.05  # overridden
     assert cfg["per_mic"]["vad_min_speech_sec"] == 0.3  # default
     assert cfg["per_mic"]["vad_pad_sec"] == 0.15  # default
+
+
+def test_merge_has_speaker_tags_missing_is_false():
+    """沒設 → False（白名單預設；單軌集不渲染講者標）。"""
+    cfg = config.merge(DEFAULTS, {"name": "t"})
+    assert cfg["has_speaker_tags"] is False
+
+
+def test_merge_has_speaker_tags_present_is_preserved():
+    """yaml 設 has_speaker_tags:true → 寫得進讀得回（修白名單後）。"""
+    cfg = config.merge(DEFAULTS, {"name": "t", "has_speaker_tags": True})
+    assert cfg["has_speaker_tags"] is True

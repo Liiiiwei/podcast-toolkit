@@ -45,7 +45,8 @@ def cmd_ingest_breeze(args):
     from podcast_toolkit import ingest_breeze, proofread, glossary_candidates
     from podcast_toolkit.episode import Episode
     path = Path(args.path)
-    rc = ingest_breeze.run(path, srt=args.srt, force=args.force)
+    rc = ingest_breeze.run(path, srt=args.srt, force=args.force,
+                           cleanup=not args.no_cleanup)
     # 校對前先偵測『模糊字候選』：此時 _final_v2.srt 還是原始匯入稿（同音/漏抓尚未被校對掩蓋），
     # 餵過卻消失的專名（茄芷袋/Wazaiii/酷學營）在這裡才看得到。產清單給人 curate 進詞庫。
     if rc == 0 and not args.no_suggest:
@@ -59,6 +60,12 @@ def cmd_ingest_breeze(args):
         if proofread.resolve_provider(Episode(path).cfg):
             print("→ 接著跑本地校對 proofread …")
             proofread.run(path)
+    # 依語句重切要在 proofread 之後（需 proofread 加的空格當語句邊界）
+    if rc == 0 and not args.no_cleanup:
+        from podcast_toolkit.subtitle_cleanup import reflow_episode
+        n = reflow_episode(path)
+        if n:
+            print(f"→ 依語句重切（reflow）：{n} 卡")
     return rc
 
 
@@ -179,6 +186,8 @@ def build_parser():
     pib.add_argument("--force", action="store_true", help="保留參數一致性（一律就地覆寫並備份）")
     pib.add_argument("--no-proofread", action="store_true",
                      help="匯入後不自動跑本地校對（預設：有 claude 就接著校對）")
+    pib.add_argument("--no-cleanup", action="store_true",
+                     help="匯入後不自動跑講者平滑 + 去甩尾（預設：自動清理）")
     pib.add_argument("--no-suggest", action="store_true",
                      help="匯入後不偵測模糊字候選（預設：產 _glossary_candidates.md）")
     pib.set_defaults(func=cmd_ingest_breeze)

@@ -86,3 +86,18 @@ def test_run_writes_v2_and_speakers_with_backup(tmp_episode_dir):
 def test_run_missing_srt_returns_3(tmp_episode_dir):
     # 集資料夾沒有任何 Breeze 字幕 → exit 3
     assert ingest_breeze.run(tmp_episode_dir, srt=str(tmp_episode_dir / "nope.srt")) == 3
+
+
+def test_ingest_preserves_overlapping_cards(tmp_path):
+    """時間交疊、不同 [MicN] 的兩張卡 → ingest 各自保留 + 講者分開。
+    這是「不同講者不同行」的資料基礎：交疊不被壓平、speaker 不混。"""
+    srt = ("1\n00:00:12,400 --> 00:00:14,000\n[Mic1] 你有買嗎\n\n"
+           "2\n00:00:13,500 --> 00:00:15,200\n[Mic2] 對啊我買了\n")
+    p = tmp_path / "ov_含講者.srt"
+    p.write_text(srt, encoding="utf-8")
+    cards, speakers = ingest_breeze.ingest(p)
+    assert len(cards) == 2
+    assert [c["text"] for c in cards] == ["你有買嗎", "對啊我買了"]   # 各卡單一講者，不混
+    # 交疊時間原樣保留（card1 結束 14.0 > card2 開始 13.5）
+    assert cards[0]["end"] == 14.0 and cards[1]["start"] == 13.5
+    assert speakers == {1: "a", 2: "b"}                            # 兩講者分開的 key

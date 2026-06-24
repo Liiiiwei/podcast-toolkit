@@ -1044,6 +1044,14 @@ function computeEffectiveSpeaker(key) {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+// 講者顯示標籤：用數字 1/2/3，避免跟 A/B 鏡頭混淆。
+// 內部 key 仍是 a/b/c（speakers.json、CSS 顏色 class speaker-a/b/c 都不動），只改「看到的字」。
+// a→1 b→2 c→3 d→4…；非單字母 key 退回原樣大寫。
+function speakerLabel(sp) {
+  if (!sp) return "";
+  return /^[a-z]$/.test(sp) ? String(sp.charCodeAt(0) - 96) : sp.toUpperCase();
+}
+
 // 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
 // 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
 // 而且切過的卡會 carry 到自己的後續 sub-card）。
@@ -1162,7 +1170,37 @@ function renderCardTimeline() {
     block.append(hL, hR);
     tl.appendChild(block);
   }
+  // 播放頭：跟著影片時間移動的豎線（updateTimelinePlayhead 每次 timeupdate 定位）
+  const ph = document.createElement("div");
+  ph.className = "tl-playhead";
+  ph.id = "tl-playhead";
+  tl.appendChild(ph);
   _applyTlZoomWidth();
+  updateTimelinePlayhead($("#video").currentTime);
+}
+
+// 三邊同步：影片時間 → 時間軸播放頭位置 + 高亮當前 block（縮放時自動捲到可見）
+function updateTimelinePlayhead(t) {
+  const tl = $("#card-timeline");
+  const ph = $("#tl-playhead");
+  if (!tl || !ph) return;
+  const t0 = parseFloat(tl.dataset.t0 || "0");
+  const total = parseFloat(tl.dataset.total || "1");
+  const pct = Math.max(0, Math.min(100, ((t - t0) / total) * 100));
+  ph.style.left = `${pct}%`;
+  // 縮放後（內層比視窗寬）→ 播放頭跑出可視範圍就自動捲動，維持在中間附近
+  const scroll = tl.closest(".card-timeline-scroll");
+  if (scroll && tl.offsetWidth > scroll.clientWidth + 1) {
+    const x = (pct / 100) * tl.offsetWidth;
+    if (x < scroll.scrollLeft + 40 || x > scroll.scrollLeft + scroll.clientWidth - 40) {
+      scroll.scrollLeft = x - scroll.clientWidth / 2;
+    }
+  }
+  // re-render 會重建 block → 當前高亮掉了就補回（_lastActiveKey 由 timeupdate 維護）
+  if (_lastActiveKey != null && !tl.querySelector(".tl-block.playing")) {
+    const blk = tl.querySelector(`.tl-block[data-key="${_lastActiveKey}"]`);
+    if (blk) blk.classList.add("playing");
+  }
 }
 
 // === 時間軸縮放（zoom + 橫向捲動）===
@@ -1306,8 +1344,9 @@ function endTimelineDrag(e) {
 function renderSpeakerRuler() {
   const ruler = $("#speaker-ruler");
   if (!ruler) return;
-  const hasMics = state.mics && Object.keys(state.mics).length > 0;
-  if (!hasMics || !state.cards.length) {
+  const showSpeakers =
+    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
+  if (!showSpeakers || !state.cards.length) {
     ruler.hidden = true;
     ruler.innerHTML = "";
     return;
@@ -1349,7 +1388,7 @@ function renderSpeakerRuler() {
       : "speaker-ruler-seg speaker-ruler-gap";
     const w = ((s.end - s.start) / total) * 100;
     seg.style.width = `${w}%`;
-    const label = s.sp ? s.sp.toUpperCase() : "（無 speaker）";
+    const label = s.sp ? `講者 ${speakerLabel(s.sp)}` : "（無 speaker）";
     seg.title = `${label} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
     seg.addEventListener("click", () => {
       $("#video").currentTime = s.start;
@@ -1362,10 +1401,12 @@ function renderSpeakerRuler() {
 function renderCaption() {
   const overlay = $("#caption-overlay");
   const t = $("#video").currentTime;
-  // 分軌啟用 → 找所有 active 卡分行（兩人同時講話 → 上下兩行 + speaker 著色）
-  // 單軌集 → 退回單張卡的純文字（舊行為）
-  const hasMics = state.mics && Object.keys(state.mics).length > 0;
-  if (!hasMics) {
+  // 有講者標（分軌 mics 或 Breeze speakers.json）→ 找所有 active 卡分行
+  //   （兩人同時講話 → 上下兩行 + speaker 著色；分講者切卡的集多半每刻單卡 = 單行帶著色）
+  // 純單軌無講者 → 退回單張卡的純文字（舊行為）
+  const showTwoLine =
+    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
+  if (!showTwoLine) {
     const r = activeCardAt(t);
     if (!r || state.deletions.has(r.key)) {
       overlay.textContent = "";
@@ -1551,8 +1592,8 @@ function renderCards() {
       div.classList.add("card-has-speaker", `speaker-${sp}`);
       const tag = document.createElement("div");
       tag.className = `card-speaker-tag speaker-${sp}`;
-      tag.textContent = sp.toUpperCase();
-      tag.title = `講者：${sp.toUpperCase()}（來自分軌 SRT，要改去 sidecar）`;
+      tag.textContent = speakerLabel(sp);
+      tag.title = `講者 ${speakerLabel(sp)}（來自分軌 SRT，要改去 sidecar）`;
       time.appendChild(tag);
     }
     // sub-card 加 duration 提示：直接看到「這段切了多少秒」+ 尾段空窗警告
@@ -2051,10 +2092,15 @@ async function loadEpisodeState() {
       .filter(([_, v]) => v === "a" || v === "b"),
   );
   // 分軌 speaker mapping：mics 同 cameras 形狀；speaker 不做 carry-forward（每張卡都明確標記）
-  // 合法 speaker = mics 的 key set；mics 為空（單軌集）→ 不收任何 mapping
+  // 合法 speaker = mics 的 key ∪ speakers_mapping 實際出現的 value。
+  // Breeze 集 mics 為空、但 speakers.json 有逐卡講者 → 靠後者放行（has_speaker_tags=true）。
   state.mics = data.mics || {};
+  state.hasSpeakerTags = !!data.has_speaker_tags;
   state.cameraRule = data.camera_rule || {};
-  const validSpeakers = new Set(Object.keys(state.mics));
+  const validSpeakers = new Set([
+    ...Object.keys(state.mics),
+    ...Object.values(data.speakers_mapping || {}),
+  ]);
   state.speakersMapping = new Map(
     Object.entries(data.speakers_mapping || {})
       .map(([k, v]) => [Number(k), v])
@@ -2489,28 +2535,37 @@ function autoPauseAtTailTrim() {
 }
 
 // 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
-// 相鄰區間（gap < 0.05s）合併，避免 seek 完馬上又被踢一次。
+// 連續被刪的卡併成整段（中間沒保留卡就跨停頓一起併），跟後端輸出一致 → 預覽不會播出碎片。
 // 防 Whisper word-timestamp 把相鄰 cue end/start 排成重疊：刪除區間 end 不得吃進下一張未刪除卡，
 // 否則播放會跳過明明沒被刪的卡（issue: 00:38-00:48 卡無故被預覽跳過）。
 function deletionIntervals() {
   const cards = expandedCards();
   const raw = [];
+  const kept = [];
   for (const r of cards) {
     if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
+    else kept.push([r.start, r.end]);
   }
   raw.sort((a, b) => a[0] - b[0]);
+  // 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
+  // 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
   const merged = [];
   for (const [s, e] of raw) {
     const last = merged[merged.length - 1];
-    if (last && s <= last[1] + 0.05) last[1] = Math.max(last[1], e);
-    else merged.push([s, e]);
+    if (last) {
+      const pe = last[1];
+      const gapHasKept = kept.some(([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6);
+      if (s <= pe + 0.05 || !gapHasKept) {
+        last[1] = Math.max(pe, e);
+        continue;
+      }
+    }
+    merged.push([s, e]);
   }
-  const keepStarts = cards
-    .filter((r) => !state.deletions.has(r.key))
-    .map((r) => r.start)
-    .sort((a, b) => a - b);
+  // 夾到下一張保留卡起點（不吃進保留語音；處理 word_timestamp overlap）
+  const keepStarts = kept.map(([s]) => s).sort((a, b) => a - b);
   for (const seg of merged) {
-    const nextKeep = keepStarts.find((s) => s > seg[0]);
+    const nextKeep = keepStarts.find((s) => s > seg[0] + 1e-6);
     if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
   }
   return merged.filter((seg) => seg[1] > seg[0] + 0.01);
@@ -2560,7 +2615,7 @@ $("#video").addEventListener("timeupdate", () => {
   const activeKey = activeCard ? String(activeCard.key) : null;
   if (activeKey !== _lastActiveKey) {
     document
-      .querySelectorAll(".card.playing")
+      .querySelectorAll(".card.playing, .tl-block.playing")
       .forEach((el) => el.classList.remove("playing"));
     if (activeKey != null) {
       const el = document.querySelector(`.card[data-idx="${activeKey}"]`);
@@ -2570,9 +2625,13 @@ $("#video").addEventListener("timeupdate", () => {
         const editing = document.activeElement?.classList?.contains("card-text");
         if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
+      // 時間軸：同步高亮當前 block（三邊同步）
+      const blk = document.querySelector(`.tl-block[data-key="${activeKey}"]`);
+      if (blk) blk.classList.add("playing");
     }
     _lastActiveKey = activeKey;
   }
+  updateTimelinePlayhead(t); // 播放頭每幀都動（不只換卡時）
   renderCaption();
 });
 

@@ -2281,6 +2281,7 @@ dialog.modal::backdrop {
 .card.playing {
   border-color: var(--accent);
   background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent); /* 左側 accent 條，播放時一眼看到 */
 }
 .card.deleted {
   opacity: 0.5;
@@ -2675,6 +2676,24 @@ dialog.modal::backdrop {
     transparent 4px,
     transparent 8px
   );
+}
+/* 正在播放的 block：accent 邊框 + 外圈，跟 edited(accent-soft) 區隔 */
+.tl-block.playing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  z-index: 2;
+}
+/* 播放頭：跟著影片時間移動的豎線（left% 由 updateTimelinePlayhead 設定）*/
+.tl-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent);
+  pointer-events: none;
+  z-index: 5;
 }
 /* 左右拖把：寬一點好抓，hover / 拖拉中顯示 accent */
 .tl-handle {
