@@ -2505,28 +2505,37 @@ function autoPauseAtTailTrim() {
 }
 
 // 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
-// 相鄰區間（gap < 0.05s）合併，避免 seek 完馬上又被踢一次。
+// 連續被刪的卡併成整段（中間沒保留卡就跨停頓一起併），跟後端輸出一致 → 預覽不會播出碎片。
 // 防 Whisper word-timestamp 把相鄰 cue end/start 排成重疊：刪除區間 end 不得吃進下一張未刪除卡，
 // 否則播放會跳過明明沒被刪的卡（issue: 00:38-00:48 卡無故被預覽跳過）。
 function deletionIntervals() {
   const cards = expandedCards();
   const raw = [];
+  const kept = [];
   for (const r of cards) {
     if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
+    else kept.push([r.start, r.end]);
   }
   raw.sort((a, b) => a[0] - b[0]);
+  // 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
+  // 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
   const merged = [];
   for (const [s, e] of raw) {
     const last = merged[merged.length - 1];
-    if (last && s <= last[1] + 0.05) last[1] = Math.max(last[1], e);
-    else merged.push([s, e]);
+    if (last) {
+      const pe = last[1];
+      const gapHasKept = kept.some(([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6);
+      if (s <= pe + 0.05 || !gapHasKept) {
+        last[1] = Math.max(pe, e);
+        continue;
+      }
+    }
+    merged.push([s, e]);
   }
-  const keepStarts = cards
-    .filter((r) => !state.deletions.has(r.key))
-    .map((r) => r.start)
-    .sort((a, b) => a - b);
+  // 夾到下一張保留卡起點（不吃進保留語音；處理 word_timestamp overlap）
+  const keepStarts = kept.map(([s]) => s).sort((a, b) => a - b);
   for (const seg of merged) {
-    const nextKeep = keepStarts.find((s) => s > seg[0]);
+    const nextKeep = keepStarts.find((s) => s > seg[0] + 1e-6);
     if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
   }
   return merged.filter((seg) => seg[1] > seg[0] + 0.01);
