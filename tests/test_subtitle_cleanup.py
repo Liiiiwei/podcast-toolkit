@@ -135,3 +135,26 @@ def test_reflow_subsplit_long_phrase():
     new, _ = reflow_by_phrases(cards, {1: "c"}, max_w=16)
     assert all(len(c["text"]) <= 16 for c in new)
     assert "".join(c["text"] for c in new) == "一二三四五六七八九十甲乙丙丁戊己庚辛"
+
+
+def test_reflow_subsplit_keeps_cjk_ascii_terms_intact():
+    """超過 max_w 觸發硬切時，混排詞（胚 pae / 很多 idea）不可被空格切碎。
+
+    硬切點只准落在「兩中文字之間」，所以「中文–空格–英/數」邊界（_subsplit 早期
+    只擋 ascii↔ascii 與 的得地，會在此切開 → 留白計畫 王奕翔集 把品牌名切成碎卡）
+    現在會往左退到合法中文邊界，品牌名/英文詞整段保留。"""
+    # 兩個 case 都做成「一張卡、單一語句（無兩中文字間空格）、長度 > max_w」→ 必走 _subsplit
+    cards = _cards((0.0, 4.0, "中文字一二三四五六七八九十甲乙胚 pae丙丁戊己"))
+    new, _ = reflow_by_phrases(cards, {1: "c"}, max_w=16)
+    assert all(len(c["text"]) <= 16 for c in new)
+    texts = [c["text"] for c in new]
+    assert any("胚 pae" in t for t in texts), texts          # 胚 與 pae 不被拆開
+    assert not any(t in ("胚", "pae") for t in texts), texts  # 沒有單獨的碎卡
+
+    cards2 = _cards((0.0, 4.0, "前面這是一段比較長的中文字句很多 idea 出現之後接更多字"))
+    new2, _ = reflow_by_phrases(cards2, {1: "c"}, max_w=16)
+    assert all(len(c["text"]) <= 16 for c in new2)
+    texts2 = [c["text"] for c in new2]
+    # idea 整段保留、且左右空格沒被當邊界拆掉（永遠是「 idea 」貼在某張卡裡）
+    assert any(" idea " in t for t in texts2), texts2
+    assert not any(t in ("idea", "很多", "出現") for t in texts2), texts2
