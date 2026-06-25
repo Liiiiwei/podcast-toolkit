@@ -108,9 +108,9 @@ def _run_silencedetect(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except FileNotFoundError as e:
-        raise RuntimeError(f"找不到 ffmpeg：{e}")
+        raise RuntimeError(f"找不到 ffmpeg：{e}") from e
     except subprocess.TimeoutExpired:
-        raise RuntimeError(f"ffmpeg silencedetect 超時（>{timeout}s）")
+        raise RuntimeError(f"ffmpeg silencedetect 超時（>{timeout}s）") from None
     return result.stderr
 
 

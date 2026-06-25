@@ -48,7 +48,7 @@ def extract_audio_pcm(
     try:
         proc = subprocess.run(cmd, capture_output=True, check=False)
     except OSError as e:
-        raise RuntimeError(f"音訊抽取失敗：subprocess 起不來 {e}")
+        raise RuntimeError(f"音訊抽取失敗：subprocess 起不來 {e}") from e
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace")[-500:]
         raise RuntimeError(f"音訊抽取失敗：ffmpeg 回傳 {proc.returncode}\n{stderr}")

@@ -53,7 +53,6 @@ select = [
 ignore = [
     "E731",  # lambda 指派在本專案常用於小 callback
     # TODO（技術債，逐步清）：
-    "B904",   # raise ... from e：28 處既有 raise 待補 exception chain
     "UP006",  # typing.Dict/List → dict/list：等型別現代化一次處理
     "UP035",  # 同上（deprecated typing import）
     "E741",   # 模糊變數名（l 等）：需要安全重新命名

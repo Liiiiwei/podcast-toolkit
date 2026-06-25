@@ -23,7 +23,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         except ValueError as e:
             # 不合法的 card_timings（end<=start / 非數字）等 → 400 帶中文訊息，而非裸 500。
             # save_state 在寫任何檔案前就 raise，所以無檔案損壞之虞。
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         # 重新 init Episode 讓 cfg 反映剛寫入的 yaml；否則 GET /api/episode
         # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
         holder["ep"] = Episode(ep.dir)
@@ -70,7 +70,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 min_sec = float(min_sec)
             except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail="min_sec 必須是數字")
+                raise HTTPException(status_code=400, detail="min_sec 必須是數字") from None
         episode_io.save_mics_config(ep, mics, roles=roles, min_sec=min_sec)
         holder["ep"] = Episode(ep.dir)
         return {"ok": True, "mics": dict(sorted(mics.items()))}
@@ -120,7 +120,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             head_sec = silencedetect.detect_head_silence(main)
         except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
         return JSONResponse({"head_silence_sec": head_sec})
 
     @app.post("/api/shift-srt")
@@ -132,7 +132,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             offset_sec = float(payload.get("offset_sec") or 0)
         except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="offset_sec 必須是數字")
+            raise HTTPException(status_code=400, detail="offset_sec 必須是數字") from None
         if offset_sec == 0:
             raise HTTPException(status_code=400, detail="offset_sec 不能為 0")
         v2 = ep.output_v2_srt()
@@ -186,7 +186,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 offset_sec = audio_align.auto_align(cam_a, audio_file)
             except RuntimeError as e:
-                raise HTTPException(status_code=500, detail=str(e))
+                raise HTTPException(status_code=500, detail=str(e)) from e
             return {"ok": True, "offset_sec": offset_sec}
 
         cam_b_rel = (payload.get("cam_b_path") or "").strip() or cameras.get("b")
@@ -198,7 +198,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             offset_sec = audio_align.auto_align(cam_a, cam_b)
         except RuntimeError as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e)) from e
         return {"ok": True, "offset_sec": offset_sec}
 
     @app.post("/api/manual-align")
@@ -209,5 +209,5 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             offset_sec, deltas = audio_align.compute_manual_offset(events)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         return {"ok": True, "offset_sec": offset_sec, "deltas": deltas}

@@ -76,7 +76,7 @@ def validate_episode_path(ep: Episode, rel: str, *, detail_prefix: str = "") -> 
     except ValueError:
         raise HTTPException(
             status_code=400, detail=f"{detail_prefix}路徑必須在集資料夾內"
-        )
+        ) from None
     return target
 
 

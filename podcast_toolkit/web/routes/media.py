@@ -119,7 +119,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             target.relative_to(ep.dir.resolve())
         except ValueError:
-            raise HTTPException(status_code=400, detail="路徑必須在集資料夾內")
+            raise HTTPException(status_code=400, detail="路徑必須在集資料夾內") from None
         if not target.exists():
             raise HTTPException(status_code=404, detail=f"找不到：{target}")
         # 若是檔案就用 -R reveal in Finder；資料夾直接開
@@ -127,5 +127,5 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             subprocess.run(cmd, check=True)
         except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            raise HTTPException(status_code=500, detail=f"無法開啟：{e}")
+            raise HTTPException(status_code=500, detail=f"無法開啟：{e}") from e
         return JSONResponse({"ok": True})

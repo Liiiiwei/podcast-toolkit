@@ -48,7 +48,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             new_ep = Episode(target)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}")
+            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}") from e
         holder["ep"] = new_ep
         dashboard_mod.add_recent(ctx.get_config_path(), str(target))
         return JSONResponse({"ok": True})
@@ -88,7 +88,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             )
         except FileNotFoundError:
             print("[pick] osascript not found", flush=True)
-            raise HTTPException(status_code=500, detail="找不到 osascript（需 macOS）")
+            raise HTTPException(status_code=500, detail="找不到 osascript（需 macOS）") from None
         except subprocess.TimeoutExpired:
             print("[pick] osascript timeout (300s)", flush=True)
             return JSONResponse({"path": None, "cancelled": True})
@@ -126,7 +126,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                     "is_dir": child.is_dir(),
                 })
         except PermissionError:
-            raise HTTPException(status_code=403, detail=f"沒有權限讀取：{target}")
+            raise HTTPException(status_code=403, detail=f"沒有權限讀取：{target}") from None
         date, name = ep_init.parse_folder_name(target)
         has_yaml = (target / "episode.yaml").is_file()
         print(
@@ -157,7 +157,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             code = ep_init.run(target)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"init 失敗：{e}")
+            raise HTTPException(status_code=500, detail=f"init 失敗：{e}") from e
         if code != 0:
             raise HTTPException(status_code=500, detail=f"init 回傳非 0：{code}")
         return JSONResponse({"ok": True, "path": str(target)})
@@ -200,13 +200,13 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             code = ep_init.run(target)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"init 失敗：{e}")
+            raise HTTPException(status_code=500, detail=f"init 失敗：{e}") from e
         if code != 0:
             raise HTTPException(status_code=500, detail=f"init 回傳非 0：{code}")
         try:
             new_ep = Episode(target)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"無法載入新集：{e}")
+            raise HTTPException(status_code=500, detail=f"無法載入新集：{e}") from e
         holder["ep"] = new_ep
         # 與 open_episode 一致：新建集也要進 recent，這樣即使集落在 roots 之外
         # dashboard 仍能看到。
@@ -237,7 +237,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             new_ep = Episode(new_dir)
         except Exception as e:
             print(f"[switch] Episode() failed: {e!r}", flush=True)
-            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}")
+            raise HTTPException(status_code=400, detail=f"無法載入 episode：{e}") from e
         holder["ep"] = new_ep
         print(f"[switch] ok → name={new_ep.name!r} dir={new_ep.dir}", flush=True)
         return JSONResponse({

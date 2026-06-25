@@ -588,7 +588,7 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             st = float(v.get("start"))
             en = float(v.get("end"))
         except (TypeError, ValueError):
-            raise ValueError(f"字幕時間不是數字：{k} → {v!r}")
+            raise ValueError(f"字幕時間不是數字：{k} → {v!r}") from None
         if not (st >= 0 and st < en):
             raise ValueError(
                 f"字幕時間不合法（需 0 ≤ 開始 < 結束）：{k} → {st:.3f}–{en:.3f}"

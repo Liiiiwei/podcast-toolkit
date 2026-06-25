@@ -81,7 +81,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             )
         except RuntimeError as e:
             # 已有 job 在跑
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=str(e)) from e
 
         return JSONResponse(
             {"ok": True, "src_path": info["src_path"]},
@@ -112,7 +112,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             info = transcribe_job.start_per_mic_job(ep, speakers=speakers, force=True)
         except RuntimeError as e:
             # 已有 job 在跑 / 不認得的 speaker / mics 沒設
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=str(e)) from e
 
         return JSONResponse(
             {"ok": True, "speakers": info["speakers"]},
@@ -139,7 +139,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             info = transcribe_job.start_breeze_job(ep, guest=guest, terms=terms)
         except RuntimeError as e:
             code = 409 if "已有" in str(e) else 400
-            raise HTTPException(status_code=code, detail=str(e))
+            raise HTTPException(status_code=code, detail=str(e)) from e
         return JSONResponse({"ok": True, **info}, status_code=202)
 
     @app.get("/api/transcribe/status")
@@ -180,7 +180,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             backups = transcribe_job._backup_existing_srts(ep)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"備份原 SRT 失敗：{e}")
+            raise HTTPException(status_code=500, detail=f"備份原 SRT 失敗：{e}") from e
 
         # 使用者指定的來源 → 覆寫成 main_srt（resegment.run 固定吃 ep.main_srt()）
         if src_path is not None and src_path != main_srt.resolve():
@@ -190,7 +190,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         try:
             rc = resegment.run(ep.dir, force=True)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"重新斷句失敗：{e}")
+            raise HTTPException(status_code=400, detail=f"重新斷句失敗：{e}") from e
         if rc != 0:
             raise HTTPException(status_code=400, detail=f"重新斷句失敗 (rc={rc})")
 

@@ -27,7 +27,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 preview_sec = int(preview_sec_raw)
             except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail="preview_sec 必須是正整數")
+                raise HTTPException(status_code=400, detail="preview_sec 必須是正整數") from None
             if preview_sec <= 0:
                 preview_sec = None
         # subtitle_mode：burn=字幕燒進畫面（預設）、sidecar=影片不燒+另存對齊 .srt、overlay=抽換字幕
@@ -52,7 +52,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 overlay_shift_ms = int(payload.get("overlay_shift_ms") or 0)
             except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail="overlay_shift_ms 必須是整數（毫秒）")
+                raise HTTPException(status_code=400, detail="overlay_shift_ms 必須是整數（毫秒）") from None
         try:
             info = assemble_job.start_job(
                 ep, targets=targets, force=force, preview_sec=preview_sec,
@@ -63,12 +63,12 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         except AssembleError as e:
             # 資產缺失 / 輸出存在 / 找不到 ffmpeg
             # 注意：AssembleError 繼承 RuntimeError，必須先攔
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except RuntimeError as e:
             # 已有 job 在跑
-            raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=409, detail=str(e)) from e
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         return JSONResponse({
             "ok": True,
             "targets": info["targets"],
@@ -98,9 +98,9 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 force=force,
             )
         except AssembleError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=400, detail=str(e)) from e
         except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"ffmpeg 失敗：exit {e.returncode}")
+            raise HTTPException(status_code=500, detail=f"ffmpeg 失敗：exit {e.returncode}") from e
         # 路徑轉相對 ep.dir 給前端 reveal/preview
         out = []
         for r in results:
