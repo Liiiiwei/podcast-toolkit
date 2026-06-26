@@ -151,7 +151,9 @@ function snapshotEditState() {
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
-    timeOverrides: new Map([...state.timeOverrides].map(([k, v]) => [k, { ...v }])),
+    timeOverrides: new Map(
+      [...state.timeOverrides].map(([k, v]) => [k, { ...v }]),
+    ),
     newCards: state.newCards.map((c) => ({ ...c })),
     cardTimings: new Map([...state.cardTimings].map(([k, v]) => [k, { ...v }])),
   };
@@ -787,7 +789,11 @@ function setCardTime(c, start, end) {
     pushUndo();
     state.timeOverrides.delete(c.idx);
   } else {
-    if (cur && Math.abs(cur.start - start) < 0.005 && Math.abs(cur.end - end) < 0.005) {
+    if (
+      cur &&
+      Math.abs(cur.start - start) < 0.005 &&
+      Math.abs(cur.end - end) < 0.005
+    ) {
       return;
     }
     pushUndo();
@@ -854,7 +860,8 @@ function newCardTimeTarget(nc) {
     set: (s, e) => {
       s = Math.max(0, Math.round(s * 100) / 100);
       e = Math.max(s + 0.1, Math.round(e * 100) / 100);
-      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005) return;
+      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005)
+        return;
       pushUndo();
       nc.start = s;
       nc.end = e;
@@ -927,9 +934,7 @@ function buildTimeToolbar(target) {
     val,
   );
   if (target.reset) {
-    bar.append(
-      mk("還原", "清除這張卡的時間微調", () => target.reset()),
-    );
+    bar.append(mk("還原", "清除這張卡的時間微調", () => target.reset()));
   }
   const t0 = target.get();
   val.textContent = `${t0.start.toFixed(2)} → ${t0.end.toFixed(2)}s`;
@@ -1194,7 +1199,10 @@ function updateTimelinePlayhead(t) {
   const scroll = tl.closest(".card-timeline-scroll");
   if (scroll && tl.offsetWidth > scroll.clientWidth + 1) {
     const x = (pct / 100) * tl.offsetWidth;
-    if (x < scroll.scrollLeft + 40 || x > scroll.scrollLeft + scroll.clientWidth - 40) {
+    if (
+      x < scroll.scrollLeft + 40 ||
+      x > scroll.scrollLeft + scroll.clientWidth - 40
+    ) {
       scroll.scrollLeft = x - scroll.clientWidth / 2;
     }
   }
@@ -1220,7 +1228,9 @@ function _applyTlZoomWidth() {
   const fit = $("#tl-zoom-fit");
   if (out) out.disabled = state.tlZoom <= TL_ZOOM_MIN + 1e-6;
   if (inn) inn.disabled = state.tlZoom >= TL_ZOOM_MAX - 1e-6;
-  if (fit) fit.textContent = state.tlZoom > 1.01 ? `${state.tlZoom.toFixed(1)}×` : "適合";
+  if (fit)
+    fit.textContent =
+      state.tlZoom > 1.01 ? `${state.tlZoom.toFixed(1)}×` : "適合";
 }
 
 // z：目標倍率（會 clamp）。anchorClientX：縮放錨點的螢幕 X（滑鼠位置）；
@@ -1559,12 +1569,17 @@ function renderCards() {
     const timeVal = document.createElement("span");
     timeVal.className = "card-time-val";
     timeVal.style.whiteSpace = "pre";
-    timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+    // 卡號（SRT idx）顯示在時間上方，方便對照外部清單／溝通「第幾卡」。
+    // 切過的卡只在第一段顯示母卡號，其餘 part 留空，避免同一號重複印在每段。
+    const showIdx = !isSub || partIdx === 0;
+    timeVal.textContent =
+      (showIdx ? `#${c.idx}\n` : "") + `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
     time.appendChild(timeVal);
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
-    if (!isSub && state.timeOverrides.has(c.idx)) div.classList.add("time-dirty");
+    if (!isSub && state.timeOverrides.has(c.idx))
+      div.classList.add("time-dirty");
     // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
     if (!isSub) {
       // 拖曳換位置把手：拖一張卡 → 設時間 override 移到新位置。後端 always-sort 修正後，
@@ -1626,8 +1641,9 @@ function renderCards() {
           const warn = document.createElement("div");
           warn.className = "card-split-warn";
           warn.innerHTML =
-            (window.Icons ? window.Icons.get("alert-triangle", { size: 10 }) : "") +
-            ` ${trailing.toFixed(1)}s`;
+            (window.Icons
+              ? window.Icons.get("alert-triangle", { size: 10 })
+              : "") + ` ${trailing.toFixed(1)}s`;
           warn.title = `斷句後尾段空窗 ${trailing.toFixed(1)} 秒沒分配字幕，可能漏字或斷句配速太快`;
           time.appendChild(warn);
         }
@@ -2130,7 +2146,9 @@ async function loadEpisodeState() {
     : [];
   // 字幕風格 + 輸出解析度：給 caption preview 用，讓預覽字體跟 ffmpeg 輸出等比
   // 拷貝一份（不共用 reels=yt 的同一物件），字級才能各調各的、互不影響
-  state.subtitleStyleYt = data.subtitle_style ? { ...data.subtitle_style } : null;
+  state.subtitleStyleYt = data.subtitle_style
+    ? { ...data.subtitle_style }
+    : null;
   state.subtitleStyleReels = data.subtitle_style_reels
     ? { ...data.subtitle_style_reels }
     : data.subtitle_style
@@ -2174,7 +2192,9 @@ async function loadEpisodeState() {
   $("#srt-shift-row").hidden = state.cards.length === 0;
   const srtShiftInput = $("#srt-shift-input");
   if (srtShiftInput && document.activeElement !== srtShiftInput) {
-    srtShiftInput.value = state.subtitleOffsetSec ? String(state.subtitleOffsetSec) : "";
+    srtShiftInput.value = state.subtitleOffsetSec
+      ? String(state.subtitleOffsetSec)
+      : "";
   }
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
@@ -2556,7 +2576,9 @@ function deletionIntervals() {
     const last = merged[merged.length - 1];
     if (last) {
       const pe = last[1];
-      const gapHasKept = kept.some(([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6);
+      const gapHasKept = kept.some(
+        ([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6,
+      );
       if (s <= pe + 0.05 || !gapHasKept) {
         last[1] = Math.max(pe, e);
         continue;
@@ -2624,8 +2646,10 @@ $("#video").addEventListener("timeupdate", () => {
       if (el) {
         el.classList.add("playing");
         // 正在編輯某張卡的文字時不自動捲走，否則邊播邊改會被一直拉到播放卡、打斷編輯
-        const editing = document.activeElement?.classList?.contains("card-text");
-        if (!editing) el.scrollIntoView({ block: "center", behavior: "smooth" });
+        const editing =
+          document.activeElement?.classList?.contains("card-text");
+        if (!editing)
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
       }
       // 時間軸：同步高亮當前 block（三邊同步）
       const blk = document.querySelector(`.tl-block[data-key="${activeKey}"]`);
@@ -3534,7 +3558,9 @@ function buildSavePayload() {
     cover_enabled: state.coverEnabled,
     speed: { enabled: state.speed.enabled, factor: state.speed.factor },
     // 字幕字級：只送 font_size，後端跟 defaults 比對 → 等於預設就移除 override、保持 yaml 乾淨
-    subtitle_style: { font_size: Number(state.subtitleStyleYt?.font_size) || null },
+    subtitle_style: {
+      font_size: Number(state.subtitleStyleYt?.font_size) || null,
+    },
     subtitle_style_reels: {
       font_size: Number(state.subtitleStyleReels?.font_size) || null,
     },
@@ -3751,10 +3777,7 @@ function renderFileItem(f) {
       ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
       : `請先到設定面板填 ${providerLabel} API key`;
     action.addEventListener("click", () => requestTranscribe(f));
-  } else if (
-    f.path.toLowerCase().endsWith(".srt") &&
-    !f.is_main_srt_backup
-  ) {
+  } else if (f.path.toLowerCase().endsWith(".srt") && !f.is_main_srt_backup) {
     // 自帶字幕：直接拿這份 .srt 跑斷句 + 改錯字 + 反幻覺（不跑雲端 STT）
     action = document.createElement("button");
     action.className = "file-stt";
@@ -4226,7 +4249,12 @@ function requestResegment(srcPath) {
   cancel.hidden = false;
   cancel.disabled = false;
   cancel.textContent = "取消";
-  setModalStatusTitle("transcribe-title", "scissors", "重新斷句（不轉 STT）", "accent");
+  setModalStatusTitle(
+    "transcribe-title",
+    "scissors",
+    "重新斷句（不轉 STT）",
+    "accent",
+  );
   $("#transcribe-msg").innerHTML =
     `來源字幕：<code>${srcPath}</code><br><br>` +
     `直接用這份字幕重新斷句 + 改錯字 + 反幻覺，覆寫 <code>_v2.srt</code>，<strong>不會呼叫雲端 STT</strong>。<br>` +
@@ -4453,7 +4481,8 @@ async function resumeTranscribeIfRunning() {
   // Breeze 模式：STT pills 對不上 Breeze 階段 → 隱藏，只用進度條 + 文字
   const _pills = document.querySelector("#transcribe-progress .phase-pills");
   if (_pills) _pills.hidden = s.mode === "breeze";
-  if (s.mode === "breeze") $("#transcribe-title").textContent = "Breeze 轉字幕中…";
+  if (s.mode === "breeze")
+    $("#transcribe-title").textContent = "Breeze 轉字幕中…";
   const goBtn = $("#transcribe-go");
   const cancelBtn = $("#transcribe-cancel");
   if (goBtn) goBtn.disabled = true;
@@ -5144,7 +5173,9 @@ async function startAssemble(
       const ovShift = document.querySelector("#overlay-shift-ms");
       const ovKeep = document.querySelector("#overlay-keep-all");
       body.overlay_srt = ovSel ? ovSel.value : "";
-      body.overlay_shift_ms = ovShift ? Math.round(Number(ovShift.value) || 0) : 0;
+      body.overlay_shift_ms = ovShift
+        ? Math.round(Number(ovShift.value) || 0)
+        : 0;
       body.overlay_keep_all = ovKeep ? !!ovKeep.checked : false;
       if (!body.overlay_srt) {
         throw new Error("抽換字幕：請先在「字幕」旁選一份字幕檔");
@@ -5874,7 +5905,8 @@ $("#cam-suggest-btn")?.addEventListener("click", async () => {
     await loadEpisodeState();
     renderCards();
     renderTopbar();
-    if (hint) hint.textContent = `已推出 ${d.count} 個 A/B 切換點（可手動微調例外）`;
+    if (hint)
+      hint.textContent = `已推出 ${d.count} 個 A/B 切換點（可手動微調例外）`;
   } catch (e) {
     if (hint) hint.textContent = "";
     alert(`推鏡頭失敗：${e.message}`);
@@ -6725,7 +6757,9 @@ $("#card-insert-btn").addEventListener("click", () => {
   renderTopbar();
   renderCaption();
   requestAnimationFrame(() => {
-    const el = document.querySelector(`#cards-list .card[data-idx="new:${tempId}"]`);
+    const el = document.querySelector(
+      `#cards-list .card[data-idx="new:${tempId}"]`,
+    );
     if (el) {
       el.scrollIntoView({ block: "center", behavior: "smooth" });
       const txt = el.querySelector(".card-text");
@@ -6747,7 +6781,10 @@ $("#card-insert-btn").addEventListener("click", () => {
   const targetCard = (e) => {
     const card = e.target.closest && e.target.closest(".card");
     if (!card) return null;
-    if (card.classList.contains("card-sub") || card.classList.contains("card-new")) {
+    if (
+      card.classList.contains("card-sub") ||
+      card.classList.contains("card-new")
+    ) {
       return null;
     }
     return card;
@@ -6826,7 +6863,9 @@ function syncOutputControls() {
   const silMin = document.querySelector("#silence-min");
   if (sil) sil.checked = !!(state.silenceTrim && state.silenceTrim.enabled);
   if (silMin) {
-    silMin.value = String((state.silenceTrim && state.silenceTrim.minSilence) || 0.8);
+    silMin.value = String(
+      (state.silenceTrim && state.silenceTrim.minSilence) || 0.8,
+    );
     silMin.disabled = !(state.silenceTrim && state.silenceTrim.enabled);
   }
   const sm = document.querySelector("#subtitle-mode-select");

@@ -94,7 +94,10 @@
             hidden
             title="抽換字幕：選一份已對齊成品時間軸的字幕檔（例如從 YT 下載修正後的 .srt），在合成最後一段直接燒上。鏡頭/刪段/倍速照舊，另存成新檔不蓋原成品。提前(ms) 可整份微調字幕快慢。"
           >
-            <select id="overlay-srt-select" title="要燒的字幕檔（集資料夾內）"></select>
+            <select
+              id="overlay-srt-select"
+              title="要燒的字幕檔（集資料夾內）"
+            ></select>
             <label class="overlay-shift-label"
               >提前<input
                 id="overlay-shift-ms"
@@ -108,7 +111,11 @@
             <label
               class="overlay-keep-label"
               title="勾選＝合成時不套用 yaml 的刪段，保留全部內容，對齊外部字幕的完整時間軸（外部字幕通常來自未刪減的完整版）。若取消，會套用你目前的刪段，外部字幕在刪點之後可能會慢出現。"
-              ><input id="overlay-keep-all" type="checkbox" checked />保留全部內容</label
+              ><input
+                id="overlay-keep-all"
+                type="checkbox"
+                checked
+              />保留全部內容</label
             >
           </span>
           <button
@@ -361,10 +368,28 @@
                 id="caption-size"
                 title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
               >
-                <span class="caption-size-label" data-icon="type" data-icon-size="13"></span>
-                <button type="button" id="cap-size-dec" class="cap-size-btn" aria-label="字幕縮小">−</button>
+                <span
+                  class="caption-size-label"
+                  data-icon="type"
+                  data-icon-size="13"
+                ></span>
+                <button
+                  type="button"
+                  id="cap-size-dec"
+                  class="cap-size-btn"
+                  aria-label="字幕縮小"
+                >
+                  −
+                </button>
                 <span class="cap-size-val" id="cap-size-val">—</span>
-                <button type="button" id="cap-size-inc" class="cap-size-btn" aria-label="字幕放大">＋</button>
+                <button
+                  type="button"
+                  id="cap-size-inc"
+                  class="cap-size-btn"
+                  aria-label="字幕放大"
+                >
+                  ＋
+                </button>
               </div>
             </div>
           </div>
@@ -395,7 +420,11 @@
                 value="0"
               />
               <span class="rotate-unit">°</span>
-              <button id="rotate-reset" type="button" class="btn btn-ghost btn-sm">
+              <button
+                id="rotate-reset"
+                type="button"
+                class="btn btn-ghost btn-sm"
+              >
                 歸零
               </button>
             </div>
@@ -483,7 +512,10 @@
             <span id="sus-checked-count" class="sus-label">已勾 0</span>
           </div>
           <div class="srt-shift-row" id="srt-shift-row" hidden>
-            <label class="srt-shift-label" title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。">
+            <label
+              class="srt-shift-label"
+              title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。"
+            >
               <span data-icon="clock"></span>
               <span>字幕偏移（秒，不改原檔）</span>
             </label>
@@ -657,11 +689,21 @@
           <div class="modal-row modal-row-inline">
             <!-- 雲端 STT（Gemini/OpenAI）已下架：本產品零雲端金鑰。DOM 隱藏保留以相容既有 app.js 邏輯 -->
             <label class="modal-radio" style="display: none">
-              <input type="radio" name="settings-provider" value="gemini" id="settings-provider-gemini" />
+              <input
+                type="radio"
+                name="settings-provider"
+                value="gemini"
+                id="settings-provider-gemini"
+              />
               Google Gemini
             </label>
             <label class="modal-radio" style="display: none">
-              <input type="radio" name="settings-provider" value="openai" id="settings-provider-openai" />
+              <input
+                type="radio"
+                name="settings-provider"
+                value="openai"
+                id="settings-provider-openai"
+              />
               OpenAI（whisper-1）
             </label>
             <label class="modal-radio">
@@ -675,9 +717,12 @@
             </label>
           </div>
           <div class="modal-hint">
-            轉字幕走本地路線、<b>免 API key</b>：① <b>Breeze</b>（推薦）用本地 Breeze-ASR-25 產含講者字幕 →
-            <code>podcast ingest-breeze</code> 匯入（會自動接著本地校對）；② <b>本地 Whisper（mlx）</b>
-            Apple Silicon 跑 whisper-large-v3-turbo，免金鑰不打雲端，25 分鐘 podcast 約 15-25 分鐘，需先
+            轉字幕走本地路線、<b>免 API key</b>：① <b>Breeze</b>（推薦）用本地
+            Breeze-ASR-25 產含講者字幕 →
+            <code>podcast ingest-breeze</code> 匯入（會自動接著本地校對）；②
+            <b>本地 Whisper（mlx）</b>
+            Apple Silicon 跑 whisper-large-v3-turbo，免金鑰不打雲端，25 分鐘
+            podcast 約 15-25 分鐘，需先
             <code>pip3 install --user mlx-whisper</code>。
           </div>
 
@@ -685,16 +730,38 @@
           <div hidden>
             <label class="modal-label">Gemini API key</label>
             <div class="modal-row">
-              <input type="password" id="settings-gemini-key" placeholder="AIza..." autocomplete="off" />
-              <button id="settings-show-gemini" type="button" class="btn btn-icon" title="顯示/隱藏" aria-label="顯示或隱藏">
+              <input
+                type="password"
+                id="settings-gemini-key"
+                placeholder="AIza..."
+                autocomplete="off"
+              />
+              <button
+                id="settings-show-gemini"
+                type="button"
+                class="btn btn-icon"
+                title="顯示/隱藏"
+                aria-label="顯示或隱藏"
+              >
                 <span data-icon="eye"></span>
               </button>
             </div>
             <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
             <label class="modal-label modal-label-spaced">OpenAI API key</label>
             <div class="modal-row">
-              <input type="password" id="settings-openai-key" placeholder="sk-..." autocomplete="off" />
-              <button id="settings-show-openai" type="button" class="btn btn-icon" title="顯示/隱藏" aria-label="顯示或隱藏">
+              <input
+                type="password"
+                id="settings-openai-key"
+                placeholder="sk-..."
+                autocomplete="off"
+              />
+              <button
+                id="settings-show-openai"
+                type="button"
+                class="btn btn-icon"
+                title="顯示/隱藏"
+                aria-label="顯示或隱藏"
+              >
                 <span data-icon="eye"></span>
               </button>
             </div>
@@ -919,7 +986,9 @@
             <span class="rotate-unit">秒才剪</span>
           </label>
         </div>
-        <div class="modal-hint">按「開始合成」會先儲存目前的修改，再開始輸出。</div>
+        <div class="modal-hint">
+          按「開始合成」會先儲存目前的修改，再開始輸出。
+        </div>
       </div>
       <div class="modal-actions">
         <button id="assemble-setup-cancel" type="button" class="btn btn-ghost">
@@ -1174,12 +1243,17 @@
       <div class="modal-body">
         <div id="transcribe-msg">…</div>
         <div id="transcribe-breeze-row">
-          <button type="button" id="transcribe-breeze-btn" class="btn btn-primary">
+          <button
+            type="button"
+            id="transcribe-breeze-btn"
+            class="btn btn-primary"
+          >
             <span data-icon="mic"></span>
             <span>一鍵 Breeze 轉字幕（推薦）</span>
           </button>
           <div class="transcribe-breeze-hint">
-            本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 → 校對，一次完成、免 API key。最久的是轉錄，請耐心等。
+            本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 →
+            校對，一次完成、免 API key。最久的是轉錄，請耐心等。
           </div>
         </div>
         <details id="transcribe-advanced" class="modal-advanced" hidden>
@@ -1318,11 +1392,7 @@
         </dl>
       </div>
       <div class="modal-actions">
-        <button
-          id="shortcuts-close"
-          type="button"
-          class="btn btn-primary"
-        >
+        <button id="shortcuts-close" type="button" class="btn btn-primary">
           知道了
         </button>
       </div>
@@ -1339,7 +1409,10 @@
           <code>mics:</code>。
         </div>
         <div id="mic-setup-list" class="mic-setup-list"></div>
-        <div class="mic-setup-rule" title="主持一律待在 cam A（全景）；來賓連續講滿這個秒數，才把那整段切到 cam B（特寫），講完回 A。">
+        <div
+          class="mic-setup-rule"
+          title="主持一律待在 cam A（全景）；來賓連續講滿這個秒數，才把那整段切到 cam B（特寫），講完回 A。"
+        >
           <span>來賓講滿</span>
           <input
             type="number"
@@ -1352,7 +1425,8 @@
           <span>秒才切特寫（cam B）</span>
         </div>
         <div class="modal-body-text mic-setup-rule-note">
-          角色決定鏡頭：<b>主持</b>＝全景 cam A、<b>來賓</b>＝特寫 cam B。轉完字幕後在編輯器按「依講者推 A/B」即可套用。
+          角色決定鏡頭：<b>主持</b>＝全景 cam A、<b>來賓</b>＝特寫 cam
+          B。轉完字幕後在編輯器按「依講者推 A/B」即可套用。
         </div>
         <div class="modal-hint" id="mic-setup-warn" hidden>
           ⚠ 同一個檔被指派到多軌，請調整。
@@ -1369,6 +1443,6 @@
     </dialog>
 
     <script src="/static/icons.js?v=20260623d"></script>
-    <script src="/static/app.js?v=20260623d" type="module"></script>
+    <script src="/static/app.js?v=20260626a" type="module"></script>
   </body>
 </html>
