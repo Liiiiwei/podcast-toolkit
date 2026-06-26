@@ -848,3 +848,29 @@ def test_prepare_assembly_multicam_no_rotate_no_prebake(tmp_episode_full_multica
     """沒設旋轉角 → 無預烤（行為照舊，回歸保護）。"""
     plan = prepare_assembly(tmp_episode_full_multicam, output_kind="yt", force=True)
     assert plan["prebake"] == []
+
+
+# --- _chunked_select：剪除區間切塊串接，避免單一 not(...) 運算式過長讓 ffmpeg 解析失敗 ---
+
+
+def test_chunked_select_empty_returns_blank():
+    assert assemble._chunked_select([], audio=True) == ""
+    assert assemble._chunked_select(None, audio=False) == ""
+
+
+def test_chunked_select_single_interval_format():
+    assert (assemble._chunked_select([(0.0, 1.0)], audio=False)
+            == "select='not(between(t,0.000,1.000))',setpts=N/FRAME_RATE/TB,")
+    assert (assemble._chunked_select([(0.0, 1.0)], audio=True)
+            == "aselect='not(between(t,0.000,1.000))',asetpts=N/SR/TB,")
+
+
+def test_chunked_select_splits_many_intervals():
+    """silence_trim 開啟時剪除區間可達上百段：必須切成多個 (a)select 串接，不能塞進單一
+    not(...) 巨型運算式（會讓 ffmpeg expression parser 失敗、Cannot allocate memory）。"""
+    intervals = [(i * 2.0, i * 2.0 + 1.0) for i in range(60)]
+    out = assemble._chunked_select(intervals, audio=True)
+    assert out.count("aselect='not(") == 3        # 60 段 / chunk 25 → 3 段（關鍵：> 1，不是一大條）
+    assert out.count("between(t,") == 60           # 區間一段不漏
+    assert out.count("asetpts=") == 1              # 收尾只重切幀一次
+    assert out.endswith(",asetpts=N/SR/TB,")

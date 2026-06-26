@@ -543,11 +543,9 @@ def build_filter_complex_yt(
     prep_part = _crop_part_str(cfg.get("crop_yt"), res_w, res_h, _rotate_for(cfg, "a"))
 
     # 刪除區間：select / aselect filter（跳過 deletion 時間段）
-    select_v, select_a = "", ""
-    if deletion_intervals:
-        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in deletion_intervals)
-        select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
-        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+    # 切塊串接，避免單一 not(...) 運算式過長讓 ffmpeg 解析失敗（見 _chunked_select）
+    select_v = _chunked_select(deletion_intervals, audio=False)
+    select_a = _chunked_select(deletion_intervals, audio=True)
 
     # 主音訊來源：外接音檔（含對齊）或 cam A 原音
     if audio_input_idx is not None:
@@ -618,11 +616,9 @@ def build_filter_complex_reels(
     # rotate（cam A 拉正）→ crop_reels 源像素裁切 → scale 到 1080×1920；無 crop 時純 scale
     prep_part = _crop_part_str(cfg.get("crop_reels"), res_w, res_h, _rotate_for(cfg, "a"))
 
-    select_v, select_a = "", ""
-    if deletion_intervals:
-        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in deletion_intervals)
-        select_v = f"select='not({ranges})',setpts=N/FRAME_RATE/TB,"
-        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+    # 切塊串接，避免單一 not(...) 運算式過長讓 ffmpeg 解析失敗（見 _chunked_select）
+    select_v = _chunked_select(deletion_intervals, audio=False)
+    select_a = _chunked_select(deletion_intervals, audio=True)
 
     # 主音訊來源：外接音檔（含對齊）或主影片原音
     if audio_input_idx is not None:
@@ -665,6 +661,24 @@ def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
     return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
+def _chunked_select(intervals, *, audio):
+    """把剪除區間切成數塊、串接多個 (a)select，避免單一 not(between+…) 運算式過長
+    讓 ffmpeg 的 expression parser 失敗（Cannot allocate memory / Error initializing filters）。
+    silence_trim 開啟時剪除區間可達上百段，一條 not(...) 就會爆；切塊後每條運算式都短。
+    (a)select 不重設 PTS → 每塊的 t 都還是原始時間軸，移除各塊聯集後，最後一次 (a)setpts 重切幀。
+    回傳空字串表示沒有要剪的區間。"""
+    if not intervals:
+        return ""
+    sel = "aselect" if audio else "select"
+    reset = "asetpts=N/SR/TB" if audio else "setpts=N/FRAME_RATE/TB"
+    chunk = 25
+    parts = []
+    for i in range(0, len(intervals), chunk):
+        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in intervals[i:i + chunk])
+        parts.append(f"{sel}='not({ranges})'")
+    return ",".join(parts) + f",{reset},"
+
+
 def build_audio_only(
     cfg: dict,
     main_dur: float,
@@ -683,10 +697,8 @@ def build_audio_only(
     intro_dur = cfg["assets"]["intro_duration"]
     intro_fade_out = cfg["assets"]["intro_fade_out"]
     align_a = _build_audio_align_filter(audio_sync_offset)
-    select_a = ""
-    if removed_intervals:
-        ranges = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b in removed_intervals)
-        select_a = f"aselect='not({ranges})',asetpts=N/SR/TB,"
+    # 切塊串接，避免單一 not(...) 運算式過長讓 ffmpeg 解析失敗（見 _chunked_select）
+    select_a = _chunked_select(removed_intervals, audio=True)
     return (
         f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
