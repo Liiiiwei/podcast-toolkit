@@ -874,3 +874,24 @@ def test_chunked_select_splits_many_intervals():
     assert out.count("between(t,") == 60           # 區間一段不漏
     assert out.count("asetpts=") == 1              # 收尾只重切幀一次
     assert out.endswith(",asetpts=N/SR/TB,")
+
+
+# --- _merge_intervals / _original_to_mp4_time：重疊區間不可重複扣 ---
+
+
+def test_merge_intervals_collapses_overlap_and_adjacent():
+    # head_trim (0,3) 與開頭 silence (0.5,2) 重疊 → 併成單一 (0,3)
+    assert assemble._merge_intervals([(0.0, 3.0), (0.5, 2.0)]) == [(0.0, 3.0)]
+    # 相鄰（尾接頭）也併
+    assert assemble._merge_intervals([(0.0, 1.0), (1.0, 2.0)]) == [(0.0, 2.0)]
+    # 不相交 → 維持兩段、依 start 排序
+    assert assemble._merge_intervals([(5.0, 6.0), (0.0, 1.0)]) == [(0.0, 1.0), (5.0, 6.0)]
+
+
+def test_original_to_mp4_time_overlap_counts_union_once():
+    """head_trim 與 silence 重疊時，位移應只算聯集一次（3s），不是相加（4.5s）。
+    沒先 _merge_intervals 的話 _original_to_mp4_time 會重複扣，reels clip 起點會偏早。"""
+    raw = [(0.0, 3.0), (0.5, 2.0)]            # 重疊：聯集只移除 3s
+    merged = assemble._merge_intervals(raw)
+    # t=10 在所有刪段之後：mp4 時間 = 10 - 3 = 7（不是 10 - 4.5 = 5.5）
+    assert assemble._original_to_mp4_time(10.0, merged) == pytest.approx(7.0)

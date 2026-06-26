@@ -1315,7 +1315,8 @@ def prepare_assembly(
             deletion_intervals.append((0.0, head_trim))
         if tail_trim > 0:
             deletion_intervals.append((main_dur - tail_trim, main_dur))
-        deletion_intervals = sorted(deletion_intervals)
+        # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ 映射位移才不會重複扣
+        deletion_intervals = _merge_intervals(deletion_intervals)
         removed_intervals = deletion_intervals
 
         if burn_subs and cut_intervals:
@@ -1579,6 +1580,22 @@ def prepare_assembly(
     }
 
 
+def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """把重疊／相鄰的區間併成不重疊的聯集（依 start 排序後掃描）。
+
+    必須在餵給 _original_to_mp4_time 前先併：該函式是「逐段加總被刪長度」算位移，
+    重疊區間會被各扣一次（母片 ffmpeg 的 select='not(A+B)' 是布林聯集只算一次，兩邊就會兜不攏）。
+    head_trim 區間常與開頭的 cut／silence 重疊，故 append 完頭尾 trim 必須再 merge。
+    """
+    out: list[tuple[float, float]] = []
+    for a, b in sorted(intervals):
+        if out and a <= out[-1][1] + 1e-9:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
 def _original_to_mp4_time(t_src: float, deletion_intervals: list[tuple[float, float]]) -> float:
     """source 時間軸 → rendered Reels mp4 時間軸（扣掉前面被刪掉的總長度）。
 
@@ -1757,7 +1774,8 @@ def extract_reels_clips(
         deletion_intervals.append((0.0, head_trim))
     if tail_trim > 0:
         deletion_intervals.append((main_dur - tail_trim, main_dur))
-    deletion_intervals = sorted(deletion_intervals)
+    # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ clip 換算位移才不會重複扣
+    deletion_intervals = _merge_intervals(deletion_intervals)
 
     if clip_names is not None:
         wanted = set(clip_names)
