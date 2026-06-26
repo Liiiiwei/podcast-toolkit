@@ -126,21 +126,21 @@ def destrand_cards(
 
 def _subsplit(chars: list, max_w: int) -> list[tuple[int, int]]:
     """單一語句（無 CJK 空格）超過 max_w 字 → jieba-free 硬切成 ≤max_w 段。
-    切點往左退開「英/數字串中間」與「的/得/地 之後」，避免切斷詞或甩尾。"""
+
+    只在「兩側皆中文字」的邊界切（與 reflow 的空格規則同源），切點再往左退開
+    「的/得/地 之後」的甩尾。英/數字串、以及「中文–空格–英/數」這種混排詞
+    （胚 pae / 很多 idea / line pay）的內部邊界一律不切，故品牌名/英文詞不會被切碎。
+    窗內找不到合法的兩中文字邊界，才退而在 max_w 處硬切。"""
     out: list[tuple[int, int]] = []
     i, n = 0, len(chars)
     while i < n:
         if n - i <= max_w:
             out.append((i, n))
             break
-        end = i + max_w
-        b = end
+        b = i + max_w
         while b > i + 1:
             prev_ch, next_ch = chars[b - 1][0], chars[b][0]
-            mid_word = (prev_ch.isascii() and prev_ch.isalnum()
-                        and next_ch.isascii() and next_ch.isalnum())
-            strand = prev_ch in "的得地"
-            if not mid_word and not strand:
+            if _is_cjk(prev_ch) and _is_cjk(next_ch) and prev_ch not in "的得地":
                 break
             b -= 1
         end = b if b > i + 1 else i + max_w

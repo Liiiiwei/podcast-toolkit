@@ -1097,24 +1097,9 @@ def prepare_assembly(
     ep = Episode(episode_dir)
     cfg = ep.cfg
 
-    # 去空拍（全片跳剪停頓）：偵測中段靜音 → 當額外刪除區間。與 cuts 同為 _v2 軸
-    # （偵測跑在外接音檔＝字幕時間軸；無外接音檔則用正片自身音軌）。每段內縮 pad
-    # 留緩衝不貼死語音；交給 cut_intervals_from_cfg 與既有刪段聯集，下游剪裁/字幕對齊照舊。
-    silence_cuts: list[tuple[float, float]] = []
-    _st = cfg.get("silence_trim") or {}
-    if _st.get("enabled"):
-        from podcast_toolkit.web.silencedetect import detect_silence_intervals
-        _min_sil = float(_st.get("min_silence") or 0.8)
-        _pad = float(_st["pad"]) if _st.get("pad") is not None else 0.15
-        _noise = float(_st.get("noise_db") or -30.0)
-        _apath = (cfg.get("audio") or {}).get("path")
-        _sil_media = ep.resolve_episode_path(_apath) if _apath else ep.main_video()
-        for _s, _e in detect_silence_intervals(
-            _sil_media, threshold_db=_noise, min_dur=_min_sil
-        ):
-            _ns, _ne = _s + _pad, _e - _pad
-            if _ne - _ns > 0.05:
-                silence_cuts.append((_ns, _ne))
+    # 去空拍（全片跳剪停頓）：偵測中段靜音 → 當額外刪除區間，交給 cut_intervals_from_cfg
+    # 與既有刪段聯集，下游剪裁/字幕對齊照舊。詳見 _silence_cuts_from_cfg。
+    silence_cuts = _silence_cuts_from_cfg(ep)
 
     # 雙鏡頭判斷：cameras.b 有設且 cam A/B 檔案都存在 → 走 multicam
     cam_b_rel = (cfg.get("cameras") or {}).get("b")
@@ -1665,6 +1650,31 @@ def build_sidecar_srt(
     return srt_io.serialize(out_cards)
 
 
+def _silence_cuts_from_cfg(ep) -> list[tuple[float, float]]:
+    """偵測中段靜音 → 當額外刪除區間（_v2 軸）；silence_trim.enabled 關閉則回空。
+
+    偵測跑在外接音檔（＝字幕時間軸），無外接音檔則用正片自身音軌；每段內縮 pad
+    留緩衝不貼死語音。主合成與 reels clip 換算共用，確保兩邊刪段聯集一致。
+    """
+    cfg = ep.cfg
+    out: list[tuple[float, float]] = []
+    _st = cfg.get("silence_trim") or {}
+    if _st.get("enabled"):
+        from podcast_toolkit.web.silencedetect import detect_silence_intervals
+        _min_sil = float(_st.get("min_silence") or 0.8)
+        _pad = float(_st["pad"]) if _st.get("pad") is not None else 0.15
+        _noise = float(_st.get("noise_db") or -30.0)
+        _apath = (cfg.get("audio") or {}).get("path")
+        _sil_media = ep.resolve_episode_path(_apath) if _apath else ep.main_video()
+        for _s, _e in detect_silence_intervals(
+            _sil_media, threshold_db=_noise, min_dur=_min_sil
+        ):
+            _ns, _ne = _s + _pad, _e - _pad
+            if _ne - _ns > 0.05:
+                out.append((_ns, _ne))
+    return out
+
+
 def extract_reels_clips(
     episode_dir: Path,
     clip_names: list[str] | None = None,
@@ -1726,7 +1736,8 @@ def extract_reels_clips(
         raise AssembleError(f"找不到正片以量總時長：{main_video}", exit_code=3)
     main_dur = ffprobe_duration(main_video)
 
-    # 刪段時間版（cuts，或舊 deletions[idx] 用當下 cards 換算）
+    # 刪段時間版（cuts + 靜音剪段，與主合成同源；reels 母片已扣掉故 clip 換算需一致）
+    silence_cuts = _silence_cuts_from_cfg(ep)
     deletion_intervals = list(
         cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts)
     )

@@ -2659,6 +2659,9 @@ dialog.modal::backdrop {
   box-sizing: border-box;
   cursor: pointer;
   overflow: hidden;
+  /* 寬度 ∝ 時長（inline width%）；像素級下限保證極短卡仍可見可點，
+     且不像百分比下限會隨 zoom 放大、把長短全夾成等寬 */
+  min-width: 2px;
 }
 .tl-block:hover {
   border-color: var(--accent);

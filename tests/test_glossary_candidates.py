@@ -158,7 +158,8 @@ def test_corrupt_glossary_backed_up_not_lost(tmp_path):
 def test_ignore_filters_candidates(tmp_path, monkeypatch):
     # 假一個最小 episode：generate 走 Episode → 需要 episode.yaml + _final_v2.srt
     (tmp_path / "episode.yaml").write_text("name: t\ndate: 1\nglossary:\n  - canonical: 茄芷袋\n", encoding="utf-8")
-    out = tmp_path / "03_成品"; out.mkdir()
+    out = tmp_path / "03_成品"
+    out.mkdir()
     (out / "t_final_v2.srt").write_text("1\n00:00:00,000 --> 00:00:01,000\n今天天氣很好\n", encoding="utf-8")
     gc._save_ignore(tmp_path, {"茄芷袋"})
     cands = gc.generate(tmp_path, quiet=True)

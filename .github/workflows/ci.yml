@@ -16,8 +16,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install ffmpeg
-        run: brew install ffmpeg
+      - name: Install ffmpeg (含 libass 才能燒字幕)
+        run: |
+          # brew 的 ffmpeg 常沒編 libass（無 subtitles 濾鏡）→ 燒字幕的 assemble 測試會炸。
+          # 若 brew 版沒 libass，補一顆 evermeet 靜態版到 ~/.local/bin —— ffmpeg_bin() 的候選
+          # 路徑，它會優先挑「有 subtitles 濾鏡」那顆。ffprobe 不需 libass，用 brew 的即可。
+          brew install ffmpeg
+          echo "=== 診斷：which ffmpeg / brew 版有無 subtitles 濾鏡 ==="
+          which ffmpeg || true
+          ffmpeg -hide_banner -filters 2>/dev/null | grep -i subtitles || echo "brew ffmpeg 無 subtitles 濾鏡"
+          if ! ffmpeg -hide_banner -filters 2>/dev/null | grep -qi subtitles; then
+            echo "=== brew 版無 libass，補裝 evermeet 靜態 ffmpeg ==="
+            softwareupdate --install-rosetta --agree-to-license 2>/dev/null || true
+            mkdir -p ~/.local/bin
+            curl -fsSL https://evermeet.cx/ffmpeg/getrelease/zip -o /tmp/ffmpeg.zip
+            unzip -o /tmp/ffmpeg.zip -d ~/.local/bin
+            chmod +x ~/.local/bin/ffmpeg
+            ~/.local/bin/ffmpeg -hide_banner -filters 2>/dev/null | grep -i subtitles || echo "evermeet 仍無 subtitles 濾鏡"
+          fi
+          # 最終把關：至少一個 ffmpeg_bin() 候選含 subtitles 濾鏡，否則明確 fail 在此（而非 27 個測試）
+          python3 -c "import shutil,subprocess; from pathlib import Path; c=[shutil.which('ffmpeg'),str(Path.home()/'.local/bin/ffmpeg'),'/opt/homebrew/bin/ffmpeg','/usr/local/bin/ffmpeg']; ok=[x for x in c if x and Path(x).exists() and 'Filter subtitles' in subprocess.run([x,'-hide_banner','-h','filter=subtitles'],capture_output=True,text=True).stdout]; print('含 libass 的 ffmpeg:',ok); exit(0 if ok else 1)"
       - name: Install package
         run: pip install -e ".[dev]"
       - name: Ruff

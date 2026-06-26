@@ -1126,7 +1126,9 @@ let _tlDrag = null;
 
 function _tlSetBlockGeom(el, start, end, t0, total) {
   el.style.left = `${((start - t0) / total) * 100}%`;
-  el.style.width = `${Math.max(((end - start) / total) * 100, 0.3)}%`;
+  // 寬度嚴格 ∝ 時長；極短卡的可見/可點下限改用 CSS min-width（像素級）。
+  // 舊版用百分比下限（0.3% of total）會隨 zoom 一起放大，把幾乎所有卡夾成等寬。
+  el.style.width = `${((end - start) / total) * 100}%`;
 }
 
 function renderCardTimeline() {
