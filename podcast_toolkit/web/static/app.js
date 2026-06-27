@@ -1060,15 +1060,25 @@ function speakerLabel(sp) {
 // 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
 // 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
 // 而且切過的卡會 carry 到自己的後續 sub-card）。
-function computeEffectiveCamera(key) {
-  const rendered = expandedCards();
-  const pos = rendered.findIndex((r) => r.key === key);
-  if (pos < 0) return "a";
-  for (let i = pos; i >= 0; i--) {
-    const v = state.camerasMapping.get(rendered[i].key);
-    if (v === "a" || v === "b") return v;
+// 一次 O(n) carry-forward 把整列每張卡的「有效鏡頭」算進一張 Map，給整列共用。
+// 語意等同舊版 computeEffectiveCamera 的「往前找最近一筆 explicit a/b、找不到當 a」：
+// 順掃時維持 cur，遇 explicit 就更新，否則沿用 → 任一卡的 cur 即為其有效鏡頭。
+// 取代逐卡各自 O(n) 回掃（整列渲染原本是 O(n²)）。
+function buildEffectiveCameraMap(rendered) {
+  const map = new Map();
+  let cur = "a";
+  for (const r of rendered) {
+    const v = state.camerasMapping.get(r.key);
+    if (v === "a" || v === "b") cur = v;
+    map.set(r.key, cur);
   }
-  return "a";
+  return map;
+}
+
+// 單卡查詢（event-driven 的零星呼叫用，例如 timeupdate 疊 cam B overlay）。
+// 熱路徑（整列渲染／ruler）請改用 buildEffectiveCameraMap 一次算好再查，勿逐卡呼叫此函式。
+function computeEffectiveCamera(key) {
+  return buildEffectiveCameraMap(expandedCards()).get(key) ?? "a";
 }
 
 // 整集 A/B 分布 ruler：依 expandedCards + carry-forward 染色，按時長比例算寬度
@@ -1082,7 +1092,11 @@ function renderCamRuler() {
     ruler.innerHTML = "";
     return;
   }
-  const rendered = expandedCards().filter((r) => !state.deletions.has(r.key));
+  const all = expandedCards();
+  // 有效鏡頭沿用「含已刪卡」的全列 carry-forward（與舊版 computeEffectiveCamera 一致），
+  // 一次算好；ruler 本身只畫未刪段。
+  const camMap = buildEffectiveCameraMap(all);
+  const rendered = all.filter((r) => !state.deletions.has(r.key));
   if (!rendered.length) {
     ruler.hidden = true;
     ruler.innerHTML = "";
@@ -1097,7 +1111,7 @@ function renderCamRuler() {
   let curStart = t0;
   let curEnd = t0;
   for (const r of rendered) {
-    const cam = computeEffectiveCamera(r.key);
+    const cam = camMap.get(r.key) ?? "a";
     if (cam === curCam) {
       curEnd = r.end;
     } else {
@@ -1506,9 +1520,25 @@ function renderCards() {
   }
   const hasCamB = !!state.cameras && !!state.cameras.b;
   const rendered = expandedCards();
+  // 雙機集：一次 O(n) 算好整列有效鏡頭，迴圈內改 O(1) 查，取代逐卡兩次 O(n) 回掃
+  const camMap = hasCamB ? buildEffectiveCameraMap(rendered) : null;
+  // 效能：刪除鈕 icon 每卡一顆，先把兩種狀態的 SVG 各解析一次，之後逐卡 cloneNode
+  // 取代逐卡 innerHTML 重新 parse（長集 1458 卡時這是建置迴圈的主要成本）
+  let _delIconX = null;
+  let _delIconUndo = null;
+  if (window.Icons) {
+    const _tmp = document.createElement("div");
+    _tmp.innerHTML = window.Icons.get("x", { size: 14 });
+    _delIconX = _tmp.firstChild;
+    _tmp.innerHTML = window.Icons.get("rotate-ccw", { size: 14 });
+    _delIconUndo = _tmp.firstChild;
+  }
+  // 效能：整列卡先進 DocumentFragment，最後一次性掛上 #cards-list，
+  // 避免逐卡 appendChild 觸發 live-tree 重排
+  const frag = document.createDocumentFragment();
   for (const r of rendered) {
     if (r.newCard) {
-      renderNewCardRow(r, list);
+      renderNewCardRow(r, frag);
       continue;
     }
     const c = r.c;
@@ -1528,7 +1558,7 @@ function renderCards() {
         const origin = document.createElement("div");
         origin.className = "card-sub-origin";
         origin.textContent = `切自 #${c.idx}（原 ${(c.end - c.start).toFixed(1)}s ÷ ${parts.length} 段）`;
-        list.appendChild(origin);
+        frag.appendChild(origin);
       }
       if (partIdx === parts.length - 1) div.classList.add("card-sub-last");
     }
@@ -1538,7 +1568,7 @@ function renderCards() {
     if (cardNeedsReview(c)) div.classList.add("review-hit");
     // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
     if (hasCamB) {
-      const eff = computeEffectiveCamera(key);
+      const eff = camMap.get(key) ?? "a";
       div.classList.add(eff === "b" ? "cam-b" : "cam-a");
       div.classList.add("card-has-cam");
     }
@@ -1867,13 +1897,12 @@ function renderCards() {
     const del = document.createElement("button");
     del.className = "card-del";
     del.setAttribute("aria-label", state.deletions.has(key) ? "復原" : "刪除");
-    del.innerHTML = window.Icons
-      ? window.Icons.get(state.deletions.has(key) ? "rotate-ccw" : "x", {
-          size: 14,
-        })
-      : state.deletions.has(key)
-        ? "↺"
-        : "✕";
+    const _delIcon = state.deletions.has(key) ? _delIconUndo : _delIconX;
+    if (_delIcon) {
+      del.appendChild(_delIcon.cloneNode(true));
+    } else {
+      del.textContent = state.deletions.has(key) ? "↺" : "✕";
+    }
     del.addEventListener("click", () => {
       pushUndo();
       if (state.deletions.has(key)) {
@@ -1890,7 +1919,7 @@ function renderCards() {
     // 雙機集才有 A/B 膠囊；已刪除卡淡化但保留位置避免格線跳
     let camPill = null;
     if (hasCamB) {
-      const eff = computeEffectiveCamera(key);
+      const eff = camMap.get(key) ?? "a";
       camPill = document.createElement("div");
       camPill.className = "card-cam";
       if (state.deletions.has(key)) camPill.classList.add("muted");
@@ -1943,8 +1972,9 @@ function renderCards() {
       div.appendChild(buildTimeToolbar(cardTimeTarget(c)));
       div.classList.add("editing-time");
     }
-    list.appendChild(div);
+    frag.appendChild(div);
   }
+  list.appendChild(frag);
   renderSusToolbar();
   renderReviewToolbar();
   renderCamRuler();
