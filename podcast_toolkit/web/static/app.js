@@ -3735,14 +3735,13 @@ function setBtnLabel(btn, iconName, text) {
 
 // 主儲存鈕與「合成設定 → 開始合成」共用的 /api/save payload 序列化。
 // 抽出來讓「合成的下一步」能用同一條已驗證的存檔路徑把倍速等輸出設定寫進 episode.yaml。
-function buildSavePayload() {
-  return {
+function buildSavePayload({ withSpeed = false } = {}) {
+  const payload = {
     crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
     crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    // 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速；後端 key-presence 判斷要不要寫
+    // 旋轉拉正（per cam 度數）/ 節目封面開關；後端 key-presence 判斷要不要寫
     rotate: { a: state.rotate.a, b: state.rotate.b },
     cover_enabled: state.coverEnabled,
-    speed: { enabled: state.speed.enabled, factor: state.speed.factor },
     // 字幕字級：只送 font_size，後端跟 defaults 比對 → 等於預設就移除 override、保持 yaml 乾淨
     subtitle_style: {
       font_size: Number(state.subtitleStyleYt?.font_size) || null,
@@ -3797,6 +3796,16 @@ function buildSavePayload() {
       end_card: c.end_card,
     })),
   };
+  // 倍速只在「合成設定 modal」→「開始合成」時送（withSpeed=true）；改字卡的主存檔不送。
+  // 否則 state.speed.enabled 一旦 stale 成 false，改個字卡存檔就無聲無息把 episode.yaml 的
+  // speed 洗掉 → 影片變回原速（曾導致 53 分災難）。要關閉倍速請在合成 modal 取消勾選。
+  if (withSpeed) {
+    payload.speed = {
+      enabled: state.speed.enabled,
+      factor: state.speed.factor,
+    };
+  }
+  return payload;
 }
 
 // 把按鈕切到 loading 狀態：左側 spinner + 「<label>… mm:ss」每秒跳動。
@@ -5547,7 +5556,7 @@ function setupAssembleButtons() {
     startBtn.disabled = true;
     setBtnLabel(startBtn, null, "儲存中…");
     try {
-      await postSave(buildSavePayload());
+      await postSave(buildSavePayload({ withSpeed: true }));
       clearUndoStacks();
       await loadEpisodeState();
       renderCards();

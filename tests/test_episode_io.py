@@ -149,6 +149,27 @@ def test_save_state_writes_rotate_cover_speed(tmp_episode_dir):
     assert state["speed"]["enabled"] is True
 
 
+def test_save_state_speed_only_changes_when_in_payload(tmp_episode_dir):
+    """主存檔（改字卡）不帶 speed → 既有倍速保留；只有合成 modal 明確送才改。
+    根因回歸：buildSavePayload 主存檔曾恆帶 speed，state.speed 一旦 stale 成 false，
+    改個字卡存檔就 data.pop('speed') 把倍速洗掉 → 影片變回原速（53 分災難）。前端已改成
+    只有「合成設定 modal → 開始合成」送 speed（withSpeed=true）；後端守住 key-presence。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + "speed:\n  enabled: true\n  factor: 1.15\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    # 主存檔：payload 不帶 speed → 不可動既有倍速
+    episode_io.save_state(ep, payload={"cards": [], "cuts": [[3.0, 4.0]]})
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert data["speed"] == {"enabled": True, "factor": 1.15}, "主存檔把倍速洗掉了（53 分災難回歸）"
+    # 合成 modal 明確取消勾選（送 speed.enabled=false）→ 才清掉
+    episode_io.save_state(ep, payload={"cards": [], "speed": {"enabled": False}})
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "speed" not in data, "合成 modal 明確取消勾選時應清掉 speed"
+
+
 def test_save_state_writes_cuts_to_yaml(tmp_episode_dir):
     """時間版刪段 cuts 存進 yaml（排序、去零長度）；重 init 後 cfg 透傳得到。"""
     ep = Episode(tmp_episode_dir)
