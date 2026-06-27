@@ -298,6 +298,74 @@ h2 {
   left: -3px;
   right: -3px;
 }
+/* === 匯出選單（FIND-003：4 顆匯出鈕收合成單一「匯出 ▾」）=== */
+.export-menu {
+  position: relative;
+}
+.export-summary {
+  list-style: none;
+  user-select: none;
+}
+.export-summary::-webkit-details-marker {
+  display: none;
+}
+.export-caret {
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.export-menu[open] .export-caret {
+  transform: rotate(180deg);
+}
+.export-menu[open] > .export-summary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.export-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+.export-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-base);
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+.export-item [data-icon] {
+  color: var(--text-faint);
+  flex-shrink: 0;
+}
+.export-item:hover,
+.export-item:focus-visible {
+  background: var(--surface);
+  color: var(--accent);
+  outline: none;
+}
+.export-item:hover [data-icon],
+.export-item:focus-visible [data-icon] {
+  color: var(--accent);
+}
 .btn.pulse {
   animation: btn-pulse 1.2s ease-in-out infinite;
   box-shadow: 0 0 0 0 var(--accent-ring);

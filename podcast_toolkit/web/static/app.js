@@ -3665,16 +3665,13 @@ $("#save-btn").addEventListener("click", async () => {
     // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
     await loadEpisodeState();
     renderCards();
-    // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
-    const ytBtn = $("#assemble-yt-btn");
-    const reelsBtn = $("#assemble-reels-btn");
-    ytBtn.classList.add("pulse");
-    reelsBtn.classList.add("pulse");
-    ytBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
-    setTimeout(() => {
-      ytBtn.classList.remove("pulse");
-      reelsBtn.classList.remove("pulse");
-    }, 6000);
+    // 引導使用者按合成：合成鈕已收進「匯出 ▾」選單，改高亮 summary（按開選單挑版本）
+    const exportBtn = $("#export-menu-btn");
+    if (exportBtn) {
+      exportBtn.classList.add("pulse");
+      exportBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
+      setTimeout(() => exportBtn.classList.remove("pulse"), 6000);
+    }
     setTimeout(() => {
       setSaveBtnLabel("check", "完成並儲存");
       $("#save-btn").disabled = false;
@@ -5334,6 +5331,21 @@ function setupAssembleButtons() {
   $("#assemble-preview-btn").addEventListener("click", () => {
     launch(["yt"], "合成 YT 前 5 分鐘預覽", { previewSec: 300 });
   });
+
+  // 匯出選單收合：<details> 原生負責開合，這裡補「選了項目」「點選單外」就關閉
+  const exportMenu = $("#export-menu");
+  if (exportMenu) {
+    exportMenu
+      .querySelectorAll(".export-item")
+      .forEach((b) =>
+        b.addEventListener("click", () => exportMenu.removeAttribute("open")),
+      );
+    document.addEventListener("click", (e) => {
+      if (exportMenu.open && !exportMenu.contains(e.target)) {
+        exportMenu.removeAttribute("open");
+      }
+    });
+  }
 
   $("#assemble-setup-cancel").addEventListener("click", () => {
     _pendingAssemble = null;

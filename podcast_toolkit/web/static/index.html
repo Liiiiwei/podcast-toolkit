@@ -118,42 +118,59 @@
               />保留全部內容</label
             >
           </span>
-          <button
-            id="assemble-yt-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="合成 YT 16:9 完整版（含片頭片尾）"
-          >
-            <span data-icon="film"></span>
-            <span>合成 YT</span>
-          </button>
-          <button
-            id="assemble-reels-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="合成 Reels 9:16 短版（無片頭片尾）"
-          >
-            <span data-icon="smartphone"></span>
-            <span>合成 Reels</span>
-          </button>
-          <button
-            id="assemble-mp3-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="輸出原速度 MP3：成品音訊（套用刪段／頭尾 trim／去空拍）+ 含片頭片尾，但不加速、純音訊。給 podcast 音訊版用。"
-          >
-            <span data-icon="mic"></span>
-            <span>原速 MP3</span>
-          </button>
-          <button
-            id="assemble-preview-btn"
-            type="button"
-            class="btn btn-ghost"
-            title="合成 YT 前 5 分鐘給人對比 bitrate / 畫質用；輸出檔名加 .preview，不會覆蓋正式成品"
-          >
-            <span data-icon="gauge"></span>
-            <span>5 分鐘預覽</span>
-          </button>
+          <details class="export-menu" id="export-menu">
+            <summary
+              id="export-menu-btn"
+              class="btn btn-ghost export-summary"
+              title="匯出成品（合成 YT / Reels / 原速 MP3 / 5 分鐘預覽）"
+            >
+              <span data-icon="upload"></span>
+              <span>匯出</span>
+              <span data-icon="chevron-down" class="export-caret"></span>
+            </summary>
+            <div class="export-panel" role="menu">
+              <button
+                id="assemble-yt-btn"
+                type="button"
+                class="export-item"
+                role="menuitem"
+                title="合成 YT 16:9 完整版（含片頭片尾）"
+              >
+                <span data-icon="film"></span>
+                <span>合成 YT（16:9 完整版）</span>
+              </button>
+              <button
+                id="assemble-reels-btn"
+                type="button"
+                class="export-item"
+                role="menuitem"
+                title="合成 Reels 9:16 短版（無片頭片尾）"
+              >
+                <span data-icon="smartphone"></span>
+                <span>合成 Reels（9:16 短版）</span>
+              </button>
+              <button
+                id="assemble-mp3-btn"
+                type="button"
+                class="export-item"
+                role="menuitem"
+                title="輸出原速度 MP3：成品音訊（套用刪段／頭尾 trim／去空拍）+ 含片頭片尾，但不加速、純音訊。給 podcast 音訊版用。"
+              >
+                <span data-icon="mic"></span>
+                <span>原速 MP3（純音訊）</span>
+              </button>
+              <button
+                id="assemble-preview-btn"
+                type="button"
+                class="export-item"
+                role="menuitem"
+                title="合成 YT 前 5 分鐘給人對比 bitrate / 畫質用；輸出檔名加 .preview，不會覆蓋正式成品"
+              >
+                <span data-icon="gauge"></span>
+                <span>5 分鐘預覽</span>
+              </button>
+            </div>
+          </details>
         </div>
         <div class="topbar-group">
           <button id="cancel-btn" type="button" class="btn btn-ghost">
