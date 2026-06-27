@@ -284,8 +284,19 @@ h2 {
 }
 .btn-icon {
   padding: 7px;
-  width: 32px;
+  width: 34px;
   justify-content: center;
+  position: relative;
+}
+/* 透明命中區擴大到 ≥40px（WCAG 觸控目標），不改視覺尺寸；
+   左右 -3px 配合 .topbar-group 6px 間距剛好不重疊 */
+.btn-icon::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  left: -3px;
+  right: -3px;
 }
 .btn.pulse {
   animation: btn-pulse 1.2s ease-in-out infinite;
