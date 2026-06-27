@@ -21,6 +21,11 @@ def cmd_resegment(args):
     return resegment.run(Path(args.path), force=args.force)
 
 
+def cmd_check_seg(args):
+    from podcast_toolkit import seg_check
+    return seg_check.run(Path(args.path), limit=args.limit)
+
+
 def cmd_proofread(args):
     from podcast_toolkit import proofread
     return proofread.run(
@@ -141,6 +146,11 @@ def build_parser():
     pr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pr.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
     pr.set_defaults(func=cmd_resegment)
+
+    pcs = sub.add_parser("check-seg", help="斷句體檢：列出過長/掛尾連接詞/過短卡的卡號（純讀取，不改字幕）")
+    pcs.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pcs.add_argument("--limit", type=int, default=12, help="每類最多列幾筆範例（預設 12）")
+    pcs.set_defaults(func=cmd_check_seg)
 
     pp = sub.add_parser("proofread", help="字幕語意校對（本地 Claude Code，就地改 _v2.srt）")
     pp.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
