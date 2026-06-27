@@ -117,10 +117,10 @@ h2 {
 }
 .unsaved-badge {
   font-size: var(--text-xs);
-  color: var(--danger);
+  color: var(--warning);
   font-weight: 600;
-  background: rgba(239, 68, 68, 0.12);
-  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: var(--warning-soft);
+  border: 1px solid rgba(240, 185, 90, 0.35);
   border-radius: 999px;
   padding: 1px 8px;
   white-space: nowrap;
