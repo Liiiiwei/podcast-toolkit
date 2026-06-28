@@ -2015,7 +2015,16 @@ function renderSusToolbar() {
     if (!validIds.has(idx)) state.susChecked.delete(idx);
   }
   const checkedCount = state.susChecked.size;
-  $("#sus-checked-count").textContent = `已勾 ${checkedCount}`;
+  // 已勾數 + 大約移除秒數預覽（實際因 cut_pad 略大，標「約」）
+  const checkedEl = $("#sus-checked-count");
+  if (checkedCount > 0) {
+    const secs = checkedDeletionSeconds();
+    checkedEl.textContent = `已勾 ${checkedCount}·約 ${secs.toFixed(1)} 秒`;
+    checkedEl.title = "實際輸出因每側 cut_pad（0.15 秒）會略長於此預估值";
+  } else {
+    checkedEl.textContent = "已勾 0";
+    checkedEl.title = "";
+  }
   $("#sus-delete-checked").disabled = checkedCount === 0;
 
   // 「刪純反應詞」：只算 suspicious_reasons 命中 reaction_only 的紅卡，
@@ -2294,6 +2303,17 @@ function setupSusToolbar() {
 
   $("#sus-delete-checked").addEventListener("click", () => {
     if (state.susChecked.size === 0) return;
+    const count = state.susChecked.size;
+    const secs = checkedDeletionSeconds();
+    // 大批量（≥10 張或約 >30 秒）刪除前二次確認；雖可 undo，仍加道閘擋誤刪整批
+    if (
+      (count >= 10 || secs > 30) &&
+      !confirm(
+        `確定刪除已勾的 ${count} 張紅卡？約移除 ${secs.toFixed(1)} 秒內容（可復原）。`,
+      )
+    ) {
+      return;
+    }
     pushUndo();
     for (const idx of state.susChecked) state.deletions.add(idx);
     state.susChecked.clear();
@@ -2632,9 +2652,16 @@ function deletionIntervals() {
     if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
     else kept.push([r.start, r.end]);
   }
-  raw.sort((a, b) => a[0] - b[0]);
-  // 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
-  // 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
+  return mergeDeletionIntervals(raw, kept);
+}
+
+// 純函式：把 raw 刪除區間依「保留卡」邊界合併，回排序好、夾過界的整段。
+// 從 deletionIntervals 抽出來，讓批刪秒數預覽（checkedDeletionSeconds）共用同一套合併規則。
+// 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
+// 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
+function mergeDeletionIntervals(rawIntervals, keptIntervals) {
+  const raw = [...rawIntervals].sort((a, b) => a[0] - b[0]);
+  const kept = keptIntervals;
   const merged = [];
   for (const [s, e] of raw) {
     const last = merged[merged.length - 1];
@@ -2657,6 +2684,22 @@ function deletionIntervals() {
     if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
   }
   return merged.filter((seg) => seg[1] > seg[0] + 0.01);
+}
+
+// 已勾紅卡批刪後「大約移除幾秒」— 給 toolbar 預覽 + 刪除前二次確認用。
+// 用 mergeDeletionIntervals 跟實際刪除同套合併規則：已刪卡不算 raw 也不擋合併，
+// 連續勾選跨停頓會併成整段。實際輸出因 cut_pad（每側 0.15s）會略大於此值，故標「約」。
+function checkedDeletionSeconds() {
+  const raw = [];
+  const kept = [];
+  for (const r of expandedCards()) {
+    if (state.deletions.has(r.key)) continue; // 已刪：移出計算
+    if (state.susChecked.has(r.key)) raw.push([r.start, r.end]);
+    else kept.push([r.start, r.end]);
+  }
+  let total = 0;
+  for (const [s, e] of mergeDeletionIntervals(raw, kept)) total += e - s;
+  return total;
 }
 
 // 把 t 算到下一個 keep 區間的起點：在 deleted 區間內 → 跳到區間末端；
