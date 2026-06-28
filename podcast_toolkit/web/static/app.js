@@ -2018,6 +2018,22 @@ function renderSusToolbar() {
   $("#sus-checked-count").textContent = `已勾 ${checkedCount}`;
   $("#sus-delete-checked").disabled = checkedCount === 0;
 
+  // 「刪純反應詞」：只算 suspicious_reasons 命中 reaction_only 的紅卡，
+  // 數量寫進鈕標、無此類卡時禁用
+  const reactionCards = susCards.filter((c) =>
+    (c.suspicious_reasons || []).includes("reaction_only"),
+  );
+  const reactBtn = $("#sus-delete-reactions");
+  if (reactBtn) {
+    reactBtn.disabled = reactionCards.length === 0;
+    const reactLabel = reactBtn.querySelector("span:last-child");
+    if (reactLabel)
+      reactLabel.textContent =
+        reactionCards.length > 0
+          ? `刪純反應詞（${reactionCards.length}）`
+          : "刪純反應詞";
+  }
+
   // 全選按鈕：全勾就顯示「取消全選」反之顯示「全選紅卡」（用 icon 區分）
   const allChecked = susCards.length > 0 && checkedCount === susCards.length;
   const iconName = allChecked ? "check-square" : "square";
@@ -2281,6 +2297,24 @@ function setupSusToolbar() {
     pushUndo();
     for (const idx of state.susChecked) state.deletions.add(idx);
     state.susChecked.clear();
+    renderCards();
+    renderTopbar();
+    renderCaption();
+    renderTypo();
+  });
+
+  // 一鍵刪純反應詞：重算一次 reaction_only 紅卡（避免吃到過期快照），全刪
+  $("#sus-delete-reactions").addEventListener("click", () => {
+    const reactionCards = state.cards.filter(
+      (c) =>
+        c.suspicious_pause &&
+        !state.deletions.has(c.idx) &&
+        !state.cardSplits.has(c.idx) &&
+        (c.suspicious_reasons || []).includes("reaction_only"),
+    );
+    if (reactionCards.length === 0) return;
+    pushUndo();
+    for (const c of reactionCards) state.deletions.add(c.idx);
     renderCards();
     renderTopbar();
     renderCaption();
