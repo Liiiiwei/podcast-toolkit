@@ -313,6 +313,14 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     const r = activeCardAt($("#video").currentTime);
     if (r) auditionCard(r);
+  } else if (key === "j" || key === "J") {
+    // 跳下一張待複查卡（沒有待複查卡時自動 no-op）
+    e.preventDefault();
+    jumpToNextReview();
+  } else if (key === "k" || key === "K") {
+    // 跳上一張待複查卡
+    e.preventDefault();
+    jumpToPrevReview();
   } else if (key === "?") {
     e.preventDefault();
     showModal("shortcuts-modal");
@@ -2093,6 +2101,20 @@ function jumpToNextReview() {
   if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
+// 對稱 jumpToNextReview：往前找上一張待複查卡（到頭則繞回最後一張）
+function jumpToPrevReview() {
+  const v = $("#video");
+  const hits = expandedCards().filter((r) => cardNeedsReview(r.c));
+  if (!hits.length) return;
+  const t = v.currentTime;
+  const prev =
+    [...hits].reverse().find((r) => r.start < t - 0.05) ||
+    hits[hits.length - 1];
+  v.currentTime = prev.start;
+  const el = document.querySelector(`.card[data-idx="${String(prev.key)}"]`);
+  if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
 async function loadEpisodeState() {
   // 只重抓 episode + cards，重新轉字幕後會用到
   // cache:"no-store"：保險再加一層，避免瀏覽器吃舊 cache → 存檔後重載拿到存檔前資料
@@ -2351,6 +2373,7 @@ function setupSusToolbar() {
     state.reviewFilter = !state.reviewFilter;
     renderCards();
   });
+  $("#review-prev").addEventListener("click", jumpToPrevReview);
   $("#review-next").addEventListener("click", jumpToNextReview);
 }
 
