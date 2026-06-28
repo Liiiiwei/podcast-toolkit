@@ -42,6 +42,33 @@ AUDIO_MIME = {
 SKIP_DIRS = {".DS_Store", "__pycache__", ".git"}
 
 
+def probe_static_access() -> str | None:
+    """偵測 macOS TCC「能 stat、不能 open」：toolkit 裝在 ~/Desktop /Downloads
+    /Documents 等受保護資料夾時，server 收到 GET 會先用 os.stat 取大小送出
+    Content-Length（TCC 允許），再 open() 讀 body 卻被擋 → header 已送、body 永
+    不送 → 瀏覽器 ERR_CONTENT_LENGTH_MISMATCH、整頁空白卻無明顯錯誤。
+
+    這裡在 server 啟動時主動探一次 static/app.js：能 stat 但 open 噴
+    PermissionError 即判定被 TCC 擋，回傳被擋的目錄字串給 UI 報錯；可正常
+    讀取回 None。其他錯誤（檔案不存在等）不在本偵測範圍，一律回 None。
+    """
+    probe = STATIC_DIR / "app.js"
+    try:
+        st = probe.stat()
+    except OSError:
+        return None
+    if not st.st_size:
+        return None
+    try:
+        with open(probe, "rb") as fh:
+            fh.read(1)
+    except PermissionError:
+        return str(STATIC_DIR)
+    except OSError:
+        return None
+    return None
+
+
 @dataclass
 class RouteContext:
     """build_app 打包給各路由模組的共用依賴。

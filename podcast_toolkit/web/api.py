@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess  # noqa: F401  (測試 monkeypatch api_mod.subprocess.run)
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -52,6 +53,7 @@ from podcast_toolkit.web.shared import (  # noqa: F401  (向後相容 re-export)
     _normalize_glossary_entries,
     _save_common_glossary,
     _save_episode_glossary,
+    probe_static_access,
 )
 
 CONFIG_DIR = Path.home() / ".podcast-toolkit"
@@ -103,6 +105,23 @@ def _save_config(data: dict) -> None:
 def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     """建立 FastAPI app。shutdown 是儲存後/取消時呼叫的 callback。"""
     app = FastAPI(title="podcast-edit")
+
+    # macOS TCC 預檢：toolkit 裝在受保護資料夾時靜態檔 open 會被擋、整頁空白。
+    # 啟動時探一次，結果存進 app.state 給 "/" 路由改回明確錯誤頁（FileResponse
+    # 此時也讀不到 body，錯誤頁必須走 inline HTMLResponse，見 routes/episodes.py）。
+    tcc_blocked_dir = probe_static_access()
+    app.state.tcc_blocked_dir = tcc_blocked_dir
+    if tcc_blocked_dir:
+        print(
+            "[podcast-toolkit] 警告：macOS 權限（TCC）擋住讀取靜態檔："
+            f"{tcc_blocked_dir}\n"
+            "  → 編輯器會整頁空白。請把 toolkit 安裝目錄移出 ~/Desktop / "
+            "~/Downloads / ~/Documents（例如 ~/podcast-toolkit），\n"
+            "    或到「系統設定 › 隱私權與安全性 › 完全取用磁碟」把執行的 "
+            "Python／終端機加入後重啟。",
+            file=sys.stderr,
+            flush=True,
+        )
     ctx = RouteContext(
         # 用 dict 包住，讓 /api/episode/switch 能 hot-swap
         holder={"ep": ep},

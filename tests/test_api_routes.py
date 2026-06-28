@@ -26,6 +26,39 @@ def test_get_root_serves_index_html(client):
     assert "<html" in r.text.lower()
 
 
+def test_root_serves_inline_tcc_error_when_static_blocked(monkeypatch, tmp_episode_dir):
+    # 模擬 macOS TCC「能 stat、不能 open」：probe 回傳被擋目錄。
+    # "/" 必須改回 inline 503 錯誤頁（不能再 FileResponse 靜態檔，那也讀不到 → 空白）。
+    from podcast_toolkit.web import api as api_mod
+
+    blocked = "/Users/x/Desktop/podcast-toolkit/podcast_toolkit/web/static"
+    monkeypatch.setattr(api_mod, "probe_static_access", lambda: blocked)
+    ep = Episode(tmp_episode_dir)
+    app = build_app(ep, shutdown=lambda: None)
+    assert app.state.tcc_blocked_dir == blocked
+
+    r = TestClient(app, raise_server_exceptions=False).get("/")
+    assert r.status_code == 503
+    assert "無法載入編輯器" in r.text  # 明確錯誤標題
+    assert blocked in r.text  # 顯示被擋目錄
+    assert "/static/" not in r.text  # 不引用任何被擋的靜態資源
+    assert r.headers.get("cache-control") == "no-store"
+
+
+def test_root_normal_when_static_accessible(monkeypatch, tmp_episode_dir):
+    # probe 回 None（正常可讀）時，"/" 一切照舊、不出現錯誤頁。
+    from podcast_toolkit.web import api as api_mod
+
+    monkeypatch.setattr(api_mod, "probe_static_access", lambda: None)
+    ep = Episode(tmp_episode_dir)
+    app = build_app(ep, shutdown=lambda: None)
+    assert app.state.tcc_blocked_dir is None
+
+    r = TestClient(app).get("/")
+    assert r.status_code == 200
+    assert "無法載入編輯器" not in r.text
+
+
 def test_get_episode_returns_state(client):
     r = client.get("/api/episode")
     assert r.status_code == 200

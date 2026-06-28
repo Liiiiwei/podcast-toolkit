@@ -6,13 +6,74 @@ import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from podcast_toolkit import init as ep_init
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import dashboard as dashboard_mod
 from podcast_toolkit.web import episode_io
 from podcast_toolkit.web.shared import SKIP_DIRS, STATIC_DIR, RouteContext
+
+
+def _tcc_error_html(blocked_dir: str) -> str:
+    """macOS TCC 擋住靜態檔時回的明確錯誤頁。
+
+    必須完全 inline、不引用任何 /static 資源——因為那些檔正是被擋的對象，
+    用 FileResponse 或外連 css/js 一樣會空白。樣式內嵌、走 Studio Dark 色。
+    """
+    safe_dir = (
+        blocked_dir.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    return f"""<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>無法載入編輯器 — 權限問題</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{
+    margin: 0; min-height: 100vh; display: flex; align-items: center;
+    justify-content: center; background: #0e0e11; color: #ebebee;
+    font-family: "IBM Plex Sans", -apple-system, system-ui, sans-serif;
+    line-height: 1.6; padding: 24px;
+  }}
+  .card {{
+    max-width: 640px; background: #18181d; border: 1px solid #2a2a31;
+    border-left: 3px solid #ff6b6b; border-radius: 10px; padding: 28px 32px;
+  }}
+  h1 {{ font-size: 18px; margin: 0 0 4px; color: #ff6b6b; }}
+  .sub {{ font-size: 13px; color: #9a9aa3; margin: 0 0 20px; }}
+  p {{ font-size: 14px; margin: 12px 0; }}
+  ol {{ font-size: 14px; padding-left: 22px; margin: 12px 0; }}
+  li {{ margin: 8px 0; }}
+  code, .path {{
+    font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px;
+    background: #0e0e11; border: 1px solid #2a2a31; border-radius: 5px;
+    padding: 2px 6px; color: #f0b95a; word-break: break-all;
+  }}
+  .path {{ display: block; padding: 10px 12px; margin: 6px 0 0; }}
+  .hint {{ font-size: 12px; color: #9a9aa3; margin-top: 20px; }}
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>無法載入編輯器</h1>
+    <p class="sub">macOS 權限（TCC）擋住了 toolkit 讀取自己的程式檔</p>
+    <p>編輯器的靜態檔放在被系統保護的資料夾，server 能看到檔案卻無法開啟讀取，
+       因此頁面會整片空白。被擋的目錄：</p>
+    <span class="path">{safe_dir}</span>
+    <p>請擇一處理後重啟 server：</p>
+    <ol>
+      <li>把 toolkit 安裝目錄移出 <code>~/Desktop</code>、<code>~/Downloads</code>、
+          <code>~/Documents</code>（例如改放 <code>~/podcast-toolkit</code>）——最乾淨。</li>
+      <li>或到「系統設定 › 隱私權與安全性 › 完全取用磁碟」，把實際執行的
+          Python／終端機 App 加進去並開啟。</li>
+    </ol>
+    <p class="hint">處理完請重新啟動 podcast-toolkit server，本頁會自動恢復成正常編輯器。</p>
+  </div>
+</body>
+</html>"""
 
 
 def register(app: FastAPI, ctx: RouteContext) -> None:
@@ -24,6 +85,13 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         # 沒設 no-store 的話 Chromium 會用啟發式快取直接吃 cache 不打 server，
         # 導致 open 完 redirect 回 / 還是看到舊頁
         headers = {"Cache-Control": "no-store"}
+        # 靜態檔被 TCC 擋時，回 index.html/dashboard.html 一樣讀不到 body → 整頁空白。
+        # 改回明確 inline 錯誤頁（不碰任何 /static），告訴使用者真正原因與解法。
+        blocked = getattr(app.state, "tcc_blocked_dir", None)
+        if blocked:
+            return HTMLResponse(
+                _tcc_error_html(blocked), status_code=503, headers=headers
+            )
         if holder["ep"] is None:
             return FileResponse(STATIC_DIR / "dashboard.html", headers=headers)
         return FileResponse(STATIC_DIR / "index.html", headers=headers)
