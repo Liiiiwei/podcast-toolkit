@@ -1,0 +1,33 @@
+#:schema https://conductor.build/schemas/settings.repo.schema.json
+
+# podcast-toolkit 的 Conductor 共享設定（會進 git，團隊/多 workspace 共用）。
+# 本專案是純原始碼 Python 套件（靠 CWD 在 sys.path，無 build 步驟）+ 本機 FastAPI dashboard。
+
+[scripts]
+# setup：新 workspace 建立時跑。
+# 刻意「不」直接呼叫 ./install.sh —— 它會把全域 `podcast` symlink 重指到「最後建立的 workspace」
+# 並重建 /Applications/Podcast.app，對暫時性 worktree 不安全。這裡只補齊第三方 Python 依賴
+# （pip --user 全域、冪等；缺了才裝，已裝就秒過），原始碼本身隨 worktree 一起來、不需安裝。
+setup = "python3 -c 'import fastapi, uvicorn, multipart, yaml, opencc, numpy, requests' 2>/dev/null || pip3 install --user --break-system-packages pyyaml fastapi 'uvicorn[standard]' python-multipart pytest requests opencc-python-reimplemented numpy google-genai"
+
+# 單一全域 lockfile（~/.podcast-toolkit/.server.lock）= 全機一次只跑一個 dashboard instance，
+# 故設 nonconcurrent：在別的 workspace 按 Run 會先停掉前一個，避免「server 服務舊 worktree 的碼」。
+# 注意：此模式對「所有」run 生效——跑測試時又按開編輯器會先停掉測試（互斥）。
+run_mode = "nonconcurrent"
+
+# archive：封存 workspace 前清理。只移除「PID 已死」的殘留 lockfile（避免擋住下次啟動），
+# 絕不動還活著的 server —— 對其他 workspace 安全、非破壞性。
+archive = 'L="$HOME/.podcast-toolkit/.server.lock"; if [ -f "$L" ] && ! kill -0 "$(sed -n 1p "$L" 2>/dev/null)" 2>/dev/null; then rm -f "$L"; fi; true'
+
+# ── Run 按鈕（多顆）─────────────────────────────────────────────────────────
+# 開編輯器 dashboard：用專案既有 launcher（自動清死 lockfile、健康探測、找對的 python、開瀏覽器），
+# 從「這個 workspace 自己的目錄」啟動。dashboard port 由程式自動挑，故不套 CONDUCTOR_PORT。
+[scripts.run.dashboard]
+command = "bash scripts/podcast-ui.sh"
+icon = "play"
+default = true
+
+# 跑全套 pytest，確認這個 worktree 沒退步。
+[scripts.run.tests]
+command = "python3 -m pytest -q tests/"
+icon = "flask-conical"
