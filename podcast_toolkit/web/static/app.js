@@ -15,6 +15,7 @@ const state = {
   deletions: new Set(),
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
+  reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；session 內、不寫檔、不進 undo、換集即清
   cards: [],
   textOverrides: new Map(), // idx -> text
   // 在 UI 上按 Enter 切句：oldIdx -> [part0_text, part1_text, ...]；存檔時翻譯成
@@ -1578,7 +1579,11 @@ function renderCards() {
     if (state.deletions.has(key)) div.classList.add("deleted");
     if (c.suspicious_pause && !isSub) div.classList.add("suspicious");
     // 待複查卡標記（給「只看待複查」篩選 + 導覽用）；sub-card 也標，沿用原卡旗標
-    if (cardNeedsReview(c)) div.classList.add("review-hit");
+    // 待複查卡：標過「看過」的掛 review-seen（淡化、退出篩選/導覽），否則 review-hit
+    if (cardNeedsReview(c))
+      div.classList.add(
+        !isSub && state.reviewSeen.has(c.idx) ? "review-seen" : "review-hit",
+      );
     // 雙機集：標記實際生效鏡頭，CSS 用 .card.cam-b 染左邊框
     if (hasCamB) {
       const eff = camMap.get(key) ?? "a";
@@ -1705,6 +1710,26 @@ function renderCards() {
         (window.Icons ? window.Icons.get("alert-triangle", { size: 11 }) : "") +
         ` ${reasons.map(reviewReasonLabel).join("、")}`;
       time.appendChild(flag);
+    }
+    // 「看過」標記（session 內）：所有待複查卡（半句/幻覺 + 空拍）都可標，
+    // 標過就淡化、退出待辦計數與 J/K 導覽。不寫檔、不進 undo、換集即清。
+    if (cardNeedsReview(c) && !isSub) {
+      const seen = state.reviewSeen.has(c.idx);
+      const seenBtn = document.createElement("button");
+      seenBtn.type = "button";
+      seenBtn.className = "card-review-seen" + (seen ? " is-seen" : "");
+      seenBtn.title = seen ? "已看過（點擊取消標記）" : "標記為已看過";
+      seenBtn.innerHTML =
+        (window.Icons ? window.Icons.get("check", { size: 11 }) : "✓") +
+        (seen ? " 已看過" : " 看過");
+      seenBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (state.reviewSeen.has(c.idx)) state.reviewSeen.delete(c.idx);
+        else state.reviewSeen.add(c.idx);
+        renderReviewToolbar();
+        renderCards();
+      });
+      time.appendChild(seenBtn);
     }
 
     const text = document.createElement("div");
@@ -2069,13 +2094,16 @@ function renderSusToolbar() {
 function renderReviewToolbar() {
   const bar = $("#review-toolbar");
   if (!bar) return;
-  // 還沒刪除的原卡才算（切過的卡旗標屬原句，仍保留導覽價值）
-  const reviewCards = state.cards.filter(
-    (c) => cardNeedsReview(c) && !state.deletions.has(c.idx),
+  // 還沒刪除、也還沒標「看過」的原卡才算待辦（切過的卡旗標屬原句，仍保留導覽價值）
+  const unseen = state.cards.filter(
+    (c) =>
+      cardNeedsReview(c) &&
+      !state.deletions.has(c.idx) &&
+      !state.reviewSeen.has(c.idx),
   );
-  if (reviewCards.length === 0) {
+  if (unseen.length === 0) {
     bar.classList.add("hidden");
-    // 沒有待複查卡時自動關掉篩選，避免畫面整片空
+    // 沒有待辦待複查卡時自動關掉篩選，避免畫面整片空
     if (state.reviewFilter) {
       state.reviewFilter = false;
       $("#cards-list").classList.remove("filter-review");
@@ -2083,7 +2111,7 @@ function renderReviewToolbar() {
     return;
   }
   bar.classList.remove("hidden");
-  $("#review-count").textContent = reviewCards.length;
+  $("#review-count").textContent = unseen.length;
   const filterBtn = $("#review-filter");
   filterBtn.classList.toggle("active", state.reviewFilter);
   filterBtn.setAttribute("aria-pressed", state.reviewFilter ? "true" : "false");
@@ -2092,7 +2120,9 @@ function renderReviewToolbar() {
 // 從目前播放時間往後找下一張待複查卡，seek + scroll 過去（到尾端則繞回第一張）
 function jumpToNextReview() {
   const v = $("#video");
-  const hits = expandedCards().filter((r) => cardNeedsReview(r.c));
+  const hits = expandedCards().filter(
+    (r) => cardNeedsReview(r.c) && !state.reviewSeen.has(r.c.idx),
+  );
   if (!hits.length) return;
   const t = v.currentTime;
   const next = hits.find((r) => r.start > t + 0.05) || hits[0];
@@ -2104,7 +2134,9 @@ function jumpToNextReview() {
 // 對稱 jumpToNextReview：往前找上一張待複查卡（到頭則繞回最後一張）
 function jumpToPrevReview() {
   const v = $("#video");
-  const hits = expandedCards().filter((r) => cardNeedsReview(r.c));
+  const hits = expandedCards().filter(
+    (r) => cardNeedsReview(r.c) && !state.reviewSeen.has(r.c.idx),
+  );
   if (!hits.length) return;
   const t = v.currentTime;
   const prev =
@@ -2161,6 +2193,7 @@ async function loadEpisodeState() {
   state.cards = data.cards || [];
   state.textOverrides = new Map();
   state.susChecked = new Set();
+  state.reviewSeen = new Set(); // 換集即清「看過」標記（session 內、不跨集）
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
   state.timeOverrides = new Map();
