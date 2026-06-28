@@ -308,6 +308,11 @@ document.addEventListener("keydown", (e) => {
   } else if (key === "ArrowUp") {
     e.preventDefault();
     stepCard(-1);
+  } else if (key === "p" || key === "P") {
+    // 試聽當前播放位置所在的字幕卡（從卡頭播到卡尾自動停）
+    e.preventDefault();
+    const r = activeCardAt($("#video").currentTime);
+    if (r) auditionCard(r);
   } else if (key === "?") {
     e.preventDefault();
     showModal("shortcuts-modal");
@@ -2716,11 +2721,21 @@ function nextKeepTime(t) {
   return t;
 }
 
+// 試聽該卡：P 鍵從某張卡 start 播到 end 就自動停。_auditionEnd 非 null = 試聽中。
+let _auditionEnd = null;
+function auditionCard(r) {
+  const v = $("#video");
+  _auditionEnd = r.end;
+  v.currentTime = r.start;
+  v.play().catch(() => {});
+}
+
 // 播放中若 currentTime 進入刪除區間 → 直接跳到區間末端，跟最終輸出體感一致。
 // 暫停 / 拖 seek 時不踢，讓使用者還能進到刪除卡裡 inspect / 反悔復原。
 function autoSkipDeletedSegments() {
   const v = $("#video");
   if (v.paused) return;
+  if (_auditionEnd != null) return; // 試聽中不搶播放控制權
   const jumped = nextKeepTime(v.currentTime);
   if (jumped > v.currentTime + 0.01) v.currentTime = jumped;
 }
@@ -2730,6 +2745,11 @@ function autoSkipDeletedSegments() {
 let _lastActiveKey = null;
 $("#video").addEventListener("timeupdate", () => {
   autoPauseAtTailTrim();
+  // 試聽該卡：播到卡尾就停（在 autoSkip 之前判，避免被刪除區間跳走）
+  if (_auditionEnd != null && $("#video").currentTime >= _auditionEnd) {
+    $("#video").pause();
+    _auditionEnd = null;
+  }
   autoSkipDeletedSegments();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
@@ -2772,6 +2792,7 @@ const playBtn = $("#play-btn");
 // 播放/暫停切換：給 play 按鈕與 Space 快捷鍵共用
 function togglePlay() {
   const v = $("#video");
+  _auditionEnd = null; // 使用者自行播放/暫停 → 取消試聽守門
   if (v.paused) v.play();
   else v.pause();
 }
@@ -2783,6 +2804,7 @@ $("#cards-play-btn")?.addEventListener("click", togglePlay);
 // .playing 高亮 + scrollIntoView 由 #video 的 timeupdate（seek 也會 fire）統一處理。
 function stepCard(dir) {
   const v = $("#video");
+  _auditionEnd = null; // 切換卡片 → 取消試聽守門
   const rendered = expandedCards();
   if (!rendered.length) return;
   const t = v.currentTime;
@@ -2834,6 +2856,7 @@ $("#video").addEventListener("pause", () => {
 
 $("#seek").addEventListener("input", (e) => {
   const v = $("#video");
+  _auditionEnd = null; // 手動拖時間軸 → 取消試聽守門
   if (v.duration) v.currentTime = (e.target.value / 100) * v.duration;
   e.target.style.setProperty("--seek-pct", `${e.target.value}%`);
 });
