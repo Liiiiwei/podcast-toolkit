@@ -9,8 +9,17 @@ __pycache__/
 build/
 dist/
 *.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Session 截圖 / Playwright MCP / design review 工件 — 留本機就好
 *.png
+# 例外：品牌素材（封面/字卡）是專案資產，不可被上面的 *.png 默默忽略
+!assets/*.png
 .playwright-mcp/
 design-review/
+
+# 本機絕對路徑烤死的 IDE/啟動設定，per-machine 不進 git
+.claude/launch.json

@@ -8,7 +8,9 @@
 # 刻意「不」直接呼叫 ./install.sh —— 它會把全域 `podcast` symlink 重指到「最後建立的 workspace」
 # 並重建 /Applications/Podcast.app，對暫時性 worktree 不安全。這裡只補齊第三方 Python 依賴
 # （pip --user 全域、冪等；缺了才裝，已裝就秒過），原始碼本身隨 worktree 一起來、不需安裝。
-setup = "python3 -c 'import fastapi, uvicorn, multipart, yaml, opencc, numpy, requests' 2>/dev/null || pip3 install --user --break-system-packages pyyaml fastapi 'uvicorn[standard]' python-multipart pytest requests opencc-python-reimplemented numpy google-genai"
+# 探測 import 含 eval_type_backport：它是 3.9 跑 fastapi `X | Y` 型別標註的硬依賴，少了 dashboard 在路由註冊期就炸；
+# 故必須納入探測，否則缺它卻因其他套件齊全而跳過 pip。httpx 是 tests Run 鈕（TestClient）所需。
+setup = "python3 -c 'import fastapi, uvicorn, multipart, yaml, opencc, numpy, requests, eval_type_backport' 2>/dev/null || pip3 install --user --break-system-packages pyyaml fastapi 'uvicorn[standard]' python-multipart pytest requests opencc-python-reimplemented numpy google-genai eval-type-backport httpx"
 
 # 單一全域 lockfile（~/.podcast-toolkit/.server.lock）= 全機一次只跑一個 dashboard instance，
 # 故設 nonconcurrent：在別的 workspace 按 Run 會先停掉前一個，避免「server 服務舊 worktree 的碼」。

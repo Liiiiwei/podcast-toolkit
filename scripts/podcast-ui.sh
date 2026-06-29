@@ -63,7 +63,7 @@ find_python() {
   local py
   for py in /opt/homebrew/bin/python3 /usr/local/bin/python3 /usr/bin/python3 "$(command -v python3 2>/dev/null)"; do
     [ -n "$py" ] && [ -x "$py" ] || continue
-    if "$py" -c "import fastapi, uvicorn, podcast_toolkit" 2>/dev/null; then
+    if "$py" -c "import fastapi, uvicorn, podcast_toolkit, eval_type_backport" 2>/dev/null; then
       echo "$py"
       return 0
     fi

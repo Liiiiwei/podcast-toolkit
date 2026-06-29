@@ -28,6 +28,8 @@ dev = [
     # fastapi/starlette 的 TestClient 底層用 httpx；少了它 tests/test_api_*.py 會 collection error
     "httpx>=0.27",
 ]
+# STT 後端（選裝）：gemini 是預設 provider，但與 openai-whisper / mlx 一樣按需安裝，不綁進核心 runtime
+gemini = ["google-genai"]
 
 [project.scripts]
 podcast = "podcast_toolkit.cli:main"
