@@ -1,0 +1,33 @@
+#!/bin/bash
+# 提交前自動檢查：只在有改到對應檔案時才跑，沒改就秒過。
+# 想硬提交略過檢查：git commit --no-verify
+set -e
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+# 這次 commit 暫存了哪些檔
+STAGED="$(git diff --cached --name-only --diff-filter=ACM)"
+
+# ── 1. 前端語法檢查：只在動到 app.js 時 ──────────────────────────
+if echo "$STAGED" | grep -q 'podcast_toolkit/web/static/app.js'; then
+  JSC="/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
+  if [ -x "$JSC" ]; then
+    echo "→ 檢查 app.js 語法…"
+    if ! "$JSC" -e 'new Function(readFile("podcast_toolkit/web/static/app.js"))' >/dev/null 2>&1; then
+      echo "✗ app.js 語法錯誤，已擋下提交。修好再 commit（或 --no-verify 略過）。"
+      exit 1
+    fi
+  fi
+fi
+
+# ── 2. 快測：只在動到 .py 時，跑上次失敗優先、遇錯即停 ─────────────
+if echo "$STAGED" | grep -q '\.py$'; then
+  echo "→ 跑快測（pytest -x --ff）…"
+  if ! python3 -m pytest -q tests/ -x --ff >/dev/null 2>&1; then
+    echo "✗ 測試沒過，已擋下提交。跑 python3 -m pytest tests/ -x --ff 看細節（或 --no-verify 略過）。"
+    exit 1
+  fi
+fi
+
+echo "✓ 提交前檢查通過"
