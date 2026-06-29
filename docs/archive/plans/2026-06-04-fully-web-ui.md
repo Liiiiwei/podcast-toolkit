@@ -8,7 +8,7 @@
 
 **Tech Stack:** FastAPI、uvicorn、vanilla JS、py2app、pytest、macOS osascript。
 
-**Spec:** [docs/superpowers/specs/2026-06-04-fully-web-ui-design.md](../specs/2026-06-04-fully-web-ui-design.md)
+**Spec:** [docs/superpowers/specs/2026-06-04-fully-web-ui-design.md](../../superpowers/specs/2026-06-04-fully-web-ui-design.md)
 
 ---
 

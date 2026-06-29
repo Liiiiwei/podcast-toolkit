@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.9+、FastAPI、uvicorn、PyYAML（既有）、ffmpeg（既有）、pytest（**新增**）；vanilla HTML/JS/CSS（無 build step）。
 
-**Spec：** [`docs/superpowers/specs/2026-05-27-podcast-edit-ui-design.md`](../specs/2026-05-27-podcast-edit-ui-design.md)
+**Spec：** [`docs/superpowers/specs/2026-05-27-podcast-edit-ui-design.md`](../../superpowers/specs/2026-05-27-podcast-edit-ui-design.md)
 
 ---
 
