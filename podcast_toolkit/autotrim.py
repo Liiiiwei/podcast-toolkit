@@ -59,24 +59,3 @@ def run(ep: Episode, *, force: bool = False, progress=None) -> dict:
             encoding="utf-8",
         )
     return changes
-
-
-def run_cli(episode_dir, *, force: bool = False) -> int:
-    """CLI 薄包裝：印出結果。回 exit code。"""
-    ep = Episode(episode_dir)
-    kept = []
-    if not force:
-        if float(ep.cfg.get("head_trim_sec") or 0) > 0:
-            kept.append("head")
-        if float(ep.cfg.get("tail_trim_sec") or 0) > 0:
-            kept.append("tail")
-    changes = run(ep, force=force, progress=lambda m: print(f"  {m}"))
-    if changes:
-        for k, v in changes.items():
-            label = "開頭" if k.startswith("head") else "結尾"
-            print(f"去頭尾：{label} trim 設為 {v}s")
-    else:
-        print("去頭尾：頭尾都沒偵測到明顯靜音（或已手動設好），未改動。")
-    if kept:
-        print(f"  （保留手動設定的 {'/'.join(kept)} trim，未覆寫）")
-    return 0

@@ -95,32 +95,6 @@ def build_style_string(style: dict) -> str:
     return ",".join(parts)
 
 
-def build_deletion_intervals(v2_srt_path: Path, deletions: list[int]) -> list[tuple[float, float]]:
-    """讀 _v2.srt → 對應 deletion idx 的時間區間（秒）。"""
-    from podcast_toolkit import srt_io
-    if not deletions:
-        return []
-    cards = srt_io.parse(v2_srt_path.read_text(encoding="utf-8"))
-    by_idx = {c["idx"]: c for c in cards}
-    intervals = []
-    for idx in deletions:
-        c = by_idx.get(int(idx))
-        if c is None:
-            continue
-        intervals.append((c["start"], c["end"]))
-    intervals.sort()
-    return intervals
-
-
-def filter_deletion_srt(src: Path, dst: Path, deletions: list[int]) -> None:
-    """把要刪除的字幕段拿掉，寫到 dst（idx 仍維持原樣，ffmpeg 不在意）。"""
-    from podcast_toolkit import srt_io
-    cards = srt_io.parse(src.read_text(encoding="utf-8"))
-    deletion_set = {int(i) for i in deletions or []}
-    kept = [c for c in cards if c["idx"] not in deletion_set]
-    dst.write_text(srt_io.serialize(kept), encoding="utf-8")
-
-
 def _pad_and_merge_cuts(
     intervals: list[tuple[float, float]], v2_cards: list[dict], pad: float
 ) -> list[tuple[float, float]]:
@@ -654,11 +628,6 @@ def build_filter_complex_reels(
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
-
-
-# 保留舊名做相容呼叫（既有呼叫端預設走 YT 分支）
-def build_filter_complex(cfg, main_dur, srt_rel, deletion_intervals=None):
-    return build_filter_complex_yt(cfg, main_dur, srt_rel, deletion_intervals)
 
 
 def _chunked_select(intervals, *, audio):

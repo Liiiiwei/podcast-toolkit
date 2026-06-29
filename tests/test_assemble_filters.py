@@ -88,31 +88,6 @@ def test_filter_complex_yt_with_deletions_adds_select():
     assert "aselect=" in fc
 
 
-def test_build_deletion_intervals_returns_card_time_ranges(tmp_episode_dir):
-    from podcast_toolkit import assemble as asm
-    intervals = asm.build_deletion_intervals(
-        v2_srt_path=tmp_episode_dir / "03_成品" / "測試集_final_v2.srt",
-        deletions=[3],
-    )
-    assert intervals == [(12.0, 14.0)]
-
-
-def test_filter_deletion_srt_writes_clean_srt(tmp_path):
-    from podcast_toolkit import assemble as asm
-    src = tmp_path / "in.srt"
-    src.write_text(
-        "1\n00:00:00,000 --> 00:00:04,000\nA\n\n"
-        "2\n00:00:04,000 --> 00:00:08,000\nB\n\n"
-        "3\n00:00:08,000 --> 00:00:12,000\nC\n",
-        encoding="utf-8",
-    )
-    out = tmp_path / "out.srt"
-    asm.filter_deletion_srt(src, out, deletions=[2])
-    text = out.read_text(encoding="utf-8")
-    assert "B" not in text
-    assert "A" in text and "C" in text
-
-
 # --- prepare_assembly：YT / Reels 分支 ---
 
 def test_prepare_assembly_yt_uses_yt_output(tmp_episode_full):
