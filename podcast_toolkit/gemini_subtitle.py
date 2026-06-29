@@ -178,8 +178,8 @@ def post_clean_srt(
         text = text.strip()
         if not text:
             continue
-        start_ts = _seconds_to_srt_ts(c["start"])
-        end_ts = _seconds_to_srt_ts(c["end"])
+        start_ts = srt_io.seconds_to_srt_ts(c["start"])
+        end_ts = srt_io.seconds_to_srt_ts(c["end"])
         out_lines.append(f"{new_idx}\n{start_ts} --> {end_ts}\n{text}\n")
         new_idx += 1
 
@@ -189,18 +189,6 @@ def post_clean_srt(
             f"{audio_duration_sec:.1f}s × 1.05 邊界）"
         )
     return "\n".join(out_lines)
-
-
-def _seconds_to_srt_ts(t: float) -> str:
-    """秒 → SRT timestamp（hh:mm:ss,SSS）。"""
-    h = int(t // 3600)
-    m = int((t % 3600) // 60)
-    s = int(t % 60)
-    ms = int(round((t - int(t)) * 1000))
-    if ms == 1000:
-        s += 1
-        ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def transcribe(audio_path: Path, prompt: str, model: str) -> str:

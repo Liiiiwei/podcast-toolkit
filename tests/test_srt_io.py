@@ -183,5 +183,5 @@ def test_time_override_partial_on_split_keeps_char_alloc():
     assert "00:00:04,200 --> 00:00:06,000" in text
     # part 1 沒被覆寫 → 仍是 allocate_split_times 算出的值（不等於手動段）
     alloc = srt_io.allocate_split_times(4.2, 12.0, ["前半段", "後半段"])
-    p1_start = srt_io._s2ts(alloc[1][0])
+    p1_start = srt_io.seconds_to_srt_ts(alloc[1][0])
     assert p1_start in text

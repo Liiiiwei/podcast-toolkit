@@ -65,7 +65,8 @@ def _ts2s(ts: str) -> float:
     raise ValueError(f"無法解析 srt 時間碼：{ts!r}")
 
 
-def _s2ts(t: float) -> str:
+def seconds_to_srt_ts(t: float) -> str:
+    """秒 → SRT timestamp（hh:mm:ss,SSS）。全套件共用的 cue 時間序列化。"""
     h = int(t // 3600)
     m = int((t % 3600) // 60)
     s = int(t % 60)
@@ -189,12 +190,12 @@ def serialize_with_map(
             times = allocate_split_times(c["start"], c["end"], parts)
             for i, (part, (p_start, p_end)) in enumerate(zip(parts, times)):
                 st, en = time_overrides.get((oid, i), (p_start, p_end))
-                out.append(f"{new_idx}\n{_s2ts(st)} --> {_s2ts(en)}\n{part}\n")
+                out.append(f"{new_idx}\n{seconds_to_srt_ts(st)} --> {seconds_to_srt_ts(en)}\n{part}\n")
                 idx_map.append((oid, i))
                 new_idx += 1
         else:
             st, en = time_overrides.get((oid, 0), (c["start"], c["end"]))
-            out.append(f"{new_idx}\n{_s2ts(st)} --> {_s2ts(en)}\n{base_text}\n")
+            out.append(f"{new_idx}\n{seconds_to_srt_ts(st)} --> {seconds_to_srt_ts(en)}\n{base_text}\n")
             idx_map.append((oid, 0))
             new_idx += 1
     return "\n".join(out), idx_map

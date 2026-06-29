@@ -5,6 +5,7 @@
 import re
 import sys
 from pathlib import Path
+from podcast_toolkit import srt_io
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
 from podcast_toolkit.whisper_guard.vocab import filter_filler_words
@@ -18,17 +19,6 @@ def ts2s(ts: str) -> float:
     h, m, rest = ts.split(":")
     s, ms = rest.split(",")
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
-
-
-def s2ts(t: float) -> str:
-    h = int(t // 3600)
-    m = int((t % 3600) // 60)
-    s = int(t % 60)
-    ms = int(round((t - int(t)) * 1000))
-    if ms == 1000:
-        s += 1
-        ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def run(episode_dir: Path, force: bool = False) -> int:
@@ -148,7 +138,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
     # 寫 SRT
     with out.open("w", encoding="utf-8") as f:
         for n, (st, en, txt, _, _) in enumerate(cards, 1):
-            f.write(f"{n}\n{s2ts(st)} --> {s2ts(en)}\n{txt}\n\n")
+            f.write(f"{n}\n{srt_io.seconds_to_srt_ts(st)} --> {srt_io.seconds_to_srt_ts(en)}\n{txt}\n\n")
 
     # 寫複查清單
     risky = []
@@ -168,7 +158,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
                 flag += "  ⚠疑似重複幻覺"
                 if n not in risky:
                     risky.append(n)
-            f.write(f"[{n:>3}] {s2ts(st)[:-4]}-{s2ts(en)[:-4]} segs{fi}-{li} ({len(txt):>2}) {txt}{flag}\n")
+            f.write(f"[{n:>3}] {srt_io.seconds_to_srt_ts(st)[:-4]}-{srt_io.seconds_to_srt_ts(en)[:-4]} segs{fi}-{li} ({len(txt):>2}) {txt}{flag}\n")
 
     dist = {}
     for c in cards:

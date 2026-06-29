@@ -55,23 +55,11 @@ def merge_per_mic_srts(per_mic_srts: dict) -> tuple[str, dict]:
     out_lines: list[str] = []
     speakers: dict = {}
     for new_idx, (_, speaker, card) in enumerate(all_cues, start=1):
-        start_ts = _seconds_to_timestamp(card["start"])
-        end_ts = _seconds_to_timestamp(card["end"])
+        start_ts = srt_io.seconds_to_srt_ts(card["start"])
+        end_ts = srt_io.seconds_to_srt_ts(card["end"])
         out_lines.append(f"{new_idx}\n{start_ts} --> {end_ts}\n{card['text']}\n")
         speakers[new_idx] = speaker
     return "\n".join(out_lines), speakers
-
-
-def _seconds_to_timestamp(t: float) -> str:
-    """秒 → SRT timestamp（hh:mm:ss,SSS）；保持與 srt_io._s2ts 一致行為。"""
-    h = int(t // 3600)
-    m = int((t % 3600) // 60)
-    s = int(t % 60)
-    ms = int(round((t - int(t)) * 1000))
-    if ms == 1000:
-        s += 1
-        ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 def run(ep: Episode, force: bool = False) -> int:
