@@ -7,9 +7,9 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.web import video
 from podcast_toolkit.web.shared import (
-    AUDIO_EXTS,
     AUDIO_MIME,
     PREVIEWABLE_EXTS,
     TRANSCRIBABLE_EXTS,

@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Optional
 import yaml
 
-# web UI 寫的集詞庫 sidecar（與 web/shared.py 的常數同名；此處 inline 以免 config→web 循環依賴）
-EPISODE_GLOSSARY_FILENAME = ".glossary.json"
+from podcast_toolkit.constants import EPISODE_GLOSSARY_FILENAME
 
 
 def toolkit_root() -> Path:

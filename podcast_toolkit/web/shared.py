@@ -14,11 +14,11 @@ from typing import Callable
 from fastapi import HTTPException
 
 from podcast_toolkit import config as pt_config
+from podcast_toolkit.constants import EPISODE_GLOSSARY_FILENAME
 from podcast_toolkit.episode import Episode
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COMMON_GLOSSARY_PATH = Path.home() / ".podcast-toolkit" / "common-glossary.json"
-EPISODE_GLOSSARY_FILENAME = ".glossary.json"
 
 # 可轉字幕的副檔名（含音訊與含音訊軌的影片）
 TRANSCRIBABLE_EXTS = {
@@ -27,8 +27,7 @@ TRANSCRIBABLE_EXTS = {
 }
 # 可在瀏覽器直接預覽的影片副檔名
 PREVIEWABLE_EXTS = {".mp4", ".mov", ".webm", ".m4v"}
-# 可在瀏覽器直接預覽的音檔副檔名 + MIME 對照
-AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
+# 可在瀏覽器直接預覽的音檔 MIME 對照（副檔名集合見 constants.AUDIO_EXTS）
 AUDIO_MIME = {
     ".wav": "audio/wav",
     ".mp3": "audio/mpeg",

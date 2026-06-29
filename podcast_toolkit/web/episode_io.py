@@ -5,6 +5,7 @@ from typing import Any
 import yaml
 
 from podcast_toolkit import cameras_io, srt_io
+from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.resegment import _HALF_SENTENCE_TAIL
 from podcast_toolkit.whisper_guard import GuardConfig, WhisperGuard
@@ -101,10 +102,6 @@ def _list_cam_b_candidates(ep: Episode) -> list[str]:
     return out
 
 
-# 外接音檔常見副檔名（小寫比對，相機/錄音機常出大寫）
-_AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
-
-
 def _list_audio_candidates(ep: Episode) -> list[str]:
     """找外接音檔候選；掃集根目錄 + 01_母帶/ + 02_素材/，回相對路徑。
 
@@ -116,7 +113,7 @@ def _list_audio_candidates(ep: Episode) -> list[str]:
     for entry in sorted(ep.dir.iterdir()):
         if not entry.is_file():
             continue
-        if entry.suffix.lower() not in _AUDIO_EXTS:
+        if entry.suffix.lower() not in AUDIO_EXTS:
             continue
         out.append(entry.name)
     # 慣例子資料夾
@@ -127,7 +124,7 @@ def _list_audio_candidates(ep: Episode) -> list[str]:
         for entry in sorted(d.iterdir()):
             if not entry.is_file():
                 continue
-            if entry.suffix.lower() not in _AUDIO_EXTS:
+            if entry.suffix.lower() not in AUDIO_EXTS:
                 continue
             out.append(str(entry.relative_to(ep.dir)))
     return out
