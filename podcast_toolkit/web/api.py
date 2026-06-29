@@ -36,23 +36,9 @@ from podcast_toolkit.web.routes import (
 from podcast_toolkit.web.routes import (
     transcribe as transcribe_routes,
 )
-from podcast_toolkit.web.shared import (  # noqa: F401  (向後相容 re-export)
-    AUDIO_EXTS,
-    AUDIO_MIME,
-    COMMON_GLOSSARY_PATH,
-    EPISODE_GLOSSARY_FILENAME,
-    PREVIEWABLE_EXTS,
-    SKIP_DIRS,
+from podcast_toolkit.web.shared import (
     STATIC_DIR,
-    TRANSCRIBABLE_EXTS,
     RouteContext,
-    _check_assets_status,
-    _list_episode_files,
-    _load_common_glossary,
-    _load_episode_glossary,
-    _normalize_glossary_entries,
-    _save_common_glossary,
-    _save_episode_glossary,
     probe_static_access,
 )
 

@@ -247,7 +247,7 @@ def test_assemble_endpoint_with_yt_reels(client, monkeypatch):
 
 def test_list_episode_files_classifies_by_kind(tmp_episode_full):
     """_list_episode_files 對每個檔案標 kind + 字幕角色。"""
-    from podcast_toolkit.web.api import _list_episode_files
+    from podcast_toolkit.web.shared import _list_episode_files
 
     # 補出測試需要的檔案（fixture 沒有的）
     NAME = "測試集"
