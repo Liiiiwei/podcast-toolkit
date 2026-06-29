@@ -19,7 +19,11 @@ suspicious_pause:
   short_long_min_dur_sec: 2.0  # 但持續 > N 秒 → 短句拖很久
   big_gap_min_sec: 1.5         # 距離前一張卡 > N 秒 → 前面有大靜默
 
-common_fixes: []
+# 跨集確定性 1:1 盲替換（resegment 時 s.replace 套用）。只放「不看語境也不會誤傷」的。
+# 用字偏好（蠻→滿）、代名詞（他→牠/她）、數字國字化（4→四）刻意「不」放這裡——
+# 那些要看語境，盲替換會誤傷（野蠻→野滿、2024→二〇二四），改由 proofread 處理。
+common_fixes:
+  - ["賬", "帳"]   # 異體字殘留；OpenCC s2twp 不會處理，三集都出現
 
 # 分軌轉錄設定（per-mic transcribe 用）
 # 每路 mic 先過 VAD 閘掉串音（RMS < threshold 視為靜音餵給 Gemini），
@@ -182,7 +186,9 @@ proofread:
   # auto = 本地 Claude Code 優先,其次 Gemini key,都沒有就跳過(非 CC 使用者零影響)
   # 也可硬指定:claude_code | gemini | off
   provider: "auto"
-  chunk_size: 150        # 每次餵幾張卡給模型
+  chunk_size: 60         # 每次餵幾張卡給模型。150 實測會逾時：過嗨乳牛集 8 塊有 3 塊
+                         # claude -p 跑不完→靜默丟掉 37% 的卡。降到 60 後 0 逾時，
+                         # 自動補上的 CER 差距從 15%（半殘）翻倍到 30%（完整）。
   max_workers: 4         # 並行幾塊(每塊在等模型回應,並行壓掉牆鐘時間;遇 rate limit 可調小)
   timeout_sec: 600       # 每塊逾時:大塊在並行負載下可能較慢,給寬一點(claude -p 本地呼叫)
   model: null            # null = 用 provider 預設(CC 預設模型);bulk 校對建議用 sonnet 更快
