@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from podcast_toolkit.web import silencedetect
+from podcast_toolkit import silencedetect
 
 
 # ─── 解析 ffmpeg stderr ─────────────────────────────────────────────

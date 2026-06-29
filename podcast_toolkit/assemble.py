@@ -1658,7 +1658,7 @@ def _silence_cuts_from_cfg(ep) -> list[tuple[float, float]]:
     out: list[tuple[float, float]] = []
     _st = cfg.get("silence_trim") or {}
     if _st.get("enabled"):
-        from podcast_toolkit.web.silencedetect import detect_silence_intervals
+        from podcast_toolkit.silencedetect import detect_silence_intervals
         _min_sil = float(_st.get("min_silence") or 0.8)
         _pad = float(_st["pad"]) if _st.get("pad") is not None else 0.15
         _noise = float(_st.get("noise_db") or -30.0)

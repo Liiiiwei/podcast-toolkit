@@ -7,9 +7,8 @@ from __future__ import annotations
 
 import yaml
 
-from podcast_toolkit import autotrim
+from podcast_toolkit import autotrim, silencedetect
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.web import silencedetect
 
 
 def test_parse_duration():

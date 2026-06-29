@@ -543,7 +543,7 @@ def test_post_upload_rejects_empty_filename(client):
 
 def test_post_detect_silence_returns_head_seconds(client, monkeypatch):
     """/api/detect-silence 呼叫 silencedetect.detect_head_silence 並回傳秒數。"""
-    from podcast_toolkit.web import silencedetect as _sd
+    from podcast_toolkit import silencedetect as _sd
 
     called = {}
 

@@ -6,9 +6,9 @@ import threading
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 
-from podcast_toolkit import audio_align
+from podcast_toolkit import audio_align, silencedetect
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.web import episode_io, silencedetect
+from podcast_toolkit.web import episode_io
 from podcast_toolkit.web.shared import RouteContext, validate_episode_path
 
 

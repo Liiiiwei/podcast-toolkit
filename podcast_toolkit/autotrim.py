@@ -14,7 +14,7 @@ from __future__ import annotations
 import yaml
 
 from podcast_toolkit.episode import Episode
-from podcast_toolkit.web.silencedetect import detect_head_silence, detect_tail_silence
+from podcast_toolkit.silencedetect import detect_head_silence, detect_tail_silence
 
 # 靜音短於此值（秒）不值得標 trim（避免把零點幾秒的氣口當成要砍的頭尾）
 _MIN_TRIM_SEC = 1.0
