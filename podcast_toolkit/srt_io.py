@@ -11,6 +11,9 @@ _UNIT_MULT = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
 # 中文 podcast 對話約 3-5 字/秒；用 0.3s/字當「合理語速」上界。
 # 切卡時若原卡 dur 比 sum(chars)*RATE 還大（trailing silence），
 # sub-cards 從 t0 緊湊排，尾段不指派字幕；避免 sub-card 1 被推進靜音裡。
+# ⚠ 前端 web/static/app.js 的 SPLIT_SEC_PER_CHAR 必須同值——兩邊各算一次
+# sub-card 時間（app.js expandedCards / 這裡 allocate_split_times），改一邊
+# 沒同步另一邊，存檔前後 UI 會跳動。test_srt_io 有防漂移測試會比對兩邊。
 SPLIT_SEC_PER_CHAR = 0.3
 
 

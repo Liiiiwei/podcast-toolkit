@@ -185,3 +185,27 @@ def test_time_override_partial_on_split_keeps_char_alloc():
     alloc = srt_io.allocate_split_times(4.2, 12.0, ["前半段", "後半段"])
     p1_start = srt_io.seconds_to_srt_ts(alloc[1][0])
     assert p1_start in text
+
+
+def test_split_sec_per_char_matches_frontend_constant():
+    """防漂移：app.js 的 SPLIT_SEC_PER_CHAR 必須跟後端 srt_io 同值。
+
+    切卡 sub-card 時間在前端（app.js expandedCards）與後端
+    （srt_io.allocate_split_times）各算一次，共用 0.3s/字 這個常數；任一邊改了
+    沒同步另一邊，存檔前後 UI 會跳動。這裡直接讀 app.js 比對，改任一邊忘了改
+    另一邊就會紅。
+    """
+    import re
+    from pathlib import Path
+
+    app_js = (
+        Path(__file__).resolve().parent.parent
+        / "podcast_toolkit" / "web" / "static" / "app.js"
+    )
+    src = app_js.read_text(encoding="utf-8")
+    m = re.search(r"const SPLIT_SEC_PER_CHAR\s*=\s*([0-9.]+)\s*;", src)
+    assert m, "app.js 找不到 const SPLIT_SEC_PER_CHAR 宣告（檔案結構變了？）"
+    assert float(m.group(1)) == srt_io.SPLIT_SEC_PER_CHAR, (
+        f"前端 app.js SPLIT_SEC_PER_CHAR={m.group(1)} 與後端 "
+        f"srt_io.SPLIT_SEC_PER_CHAR={srt_io.SPLIT_SEC_PER_CHAR} 不一致；兩邊要同步改。"
+    )
