@@ -2188,8 +2188,9 @@ async function loadEpisodeState() {
       }))
       .filter((c) => c.end > 0);
   }
-  // 字幕偏移工具列：有字幕才顯示；input 顯示目前已存的絕對偏移值（可改、設 0 = 清除）
-  $("#srt-shift-row").hidden = state.cards.length === 0;
+  // 字幕偏移：有字幕才顯示「偏移」入口（控制項收進 popover）；input 顯示目前已存的絕對偏移值
+  const srtShiftToggle = $("#srt-shift-toggle");
+  if (srtShiftToggle) srtShiftToggle.hidden = state.cards.length === 0;
   const srtShiftInput = $("#srt-shift-input");
   if (srtShiftInput && document.activeElement !== srtShiftInput) {
     srtShiftInput.value = state.subtitleOffsetSec
@@ -3668,6 +3669,8 @@ $("#save-btn").addEventListener("click", async () => {
     // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
     const ytBtn = $("#assemble-yt-btn");
     const reelsBtn = $("#assemble-reels-btn");
+    // 合成鈕已收進「輸出」下拉，存檔後自動展開讓引導用的 pulse 看得到
+    $("#output-menu-btn")?._popover?.open();
     ytBtn.classList.add("pulse");
     reelsBtn.classList.add("pulse");
     ytBtn.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -5317,6 +5320,7 @@ function setupAssembleButtons() {
 
   // 「下一步」：點合成 → 先開「合成設定」視窗（設倍速等輸出選項）→ 按「開始合成」才真的跑
   const launch = (targets, title, { previewSec = null } = {}) => {
+    $("#output-menu-btn")?._popover?.close(); // 合成設定視窗要蓋過下拉，先收掉
     _pendingAssemble = { targets, title, previewSec };
     syncOutputControls(); // 把目前 state.speed 反映到設定視窗的控制項
     showModal("assemble-setup-modal");
@@ -7008,6 +7012,37 @@ function setupOutputControls() {
   syncOutputControls();
 }
 
+// 通用下拉浮層：點觸發鈕開合，點外面或按 Esc 關閉。close/open 掛在 btn._popover 供他處呼叫。
+function setupPopover(btnId, menuId) {
+  const btn = $("#" + btnId);
+  const menu = $("#" + menuId);
+  if (!btn || !menu) return null;
+  const close = () => {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    btn.classList.remove("popover-open");
+  };
+  const open = () => {
+    menu.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    btn.classList.add("popover-open");
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (menu.hidden) open();
+    else close();
+  });
+  // 選單內部互動（改下拉、打字、按合成）不該關閉浮層
+  menu.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close();
+  });
+  btn._popover = { open, close };
+  return btn._popover;
+}
+
 setupVersionTabs();
 setupCaptionSize();
 $("#transcribe-breeze-btn")?.addEventListener("click", startBreezeTranscribe);
@@ -7016,6 +7051,8 @@ setupAssembleButtons();
 setupOutputControls();
 setupSusToolbar();
 setupSrtShift();
+setupPopover("output-menu-btn", "output-menu");
+setupPopover("srt-shift-toggle", "srt-shift-menu");
 
 // 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
 if (window.Icons) window.Icons.inject();
