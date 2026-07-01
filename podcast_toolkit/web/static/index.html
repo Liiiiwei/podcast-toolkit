@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260623d" />
+    <link rel="stylesheet" href="/static/app.css?v=20260629c" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -77,100 +77,108 @@
             <span data-icon="video"></span>
             <span>鏡頭</span>
           </button>
-          <label
-            class="subtitle-mode"
-            title="燒進畫面：字幕燒在影片上（現行）。另存字幕檔：YT 影片不燒、另出一份對齊最終影片的 .srt（跳過燒字幕→輸出較快，觀眾可開 CC）。注意：Reels/IG/TikTok 不吃外掛字幕，一律硬燒、不受此選項影響。"
-          >
-            <span class="subtitle-mode-label">字幕</span>
-            <select id="subtitle-mode-select">
-              <option value="burn">燒進畫面</option>
-              <option value="sidecar">另存字幕檔（僅 YT，較快）</option>
-              <option value="overlay">抽換字幕（燒指定字幕檔）</option>
-            </select>
-          </label>
-          <span
-            id="overlay-controls"
-            class="overlay-controls"
-            hidden
-            title="抽換字幕：選一份已對齊成品時間軸的字幕檔（例如從 YT 下載修正後的 .srt），在合成最後一段直接燒上。鏡頭/刪段/倍速照舊，另存成新檔不蓋原成品。提前(ms) 可整份微調字幕快慢。"
-          >
-            <select
-              id="overlay-srt-select"
-              title="要燒的字幕檔（集資料夾內）"
-            ></select>
-            <label class="overlay-shift-label"
-              >提前<input
-                id="overlay-shift-ms"
-                type="number"
-                value="0"
-                step="50"
-                min="-2000"
-                max="2000"
-              />ms</label
+          <div class="output-menu-wrap">
+            <button
+              id="output-menu-btn"
+              type="button"
+              class="btn btn-ghost"
+              aria-haspopup="true"
+              aria-expanded="false"
+              title="字幕模式與合成輸出"
             >
-            <label
-              class="overlay-keep-label"
-              title="勾選＝合成時不套用 yaml 的刪段，保留全部內容，對齊外部字幕的完整時間軸（外部字幕通常來自未刪減的完整版）。若取消，會套用你目前的刪段，外部字幕在刪點之後可能會慢出現。"
-              ><input
-                id="overlay-keep-all"
-                type="checkbox"
-                checked
-              />保留全部內容</label
-            >
-          </span>
-          <details class="export-menu" id="export-menu">
-            <summary
-              id="export-menu-btn"
-              class="btn btn-ghost export-summary"
-              title="匯出成品（合成 YT / Reels / 原速 MP3 / 5 分鐘預覽）"
-            >
-              <span data-icon="upload"></span>
-              <span>匯出</span>
-              <span data-icon="chevron-down" class="export-caret"></span>
-            </summary>
-            <div class="export-panel" role="menu">
-              <button
-                id="assemble-yt-btn"
-                type="button"
-                class="export-item"
-                role="menuitem"
-                title="合成 YT 16:9 完整版（含片頭片尾）"
+              <span data-icon="package"></span>
+              <span>輸出</span>
+              <span
+                data-icon="chevron-down"
+                data-icon-size="14"
+                class="popover-caret"
+              ></span>
+            </button>
+            <div id="output-menu" class="output-menu" role="menu" hidden>
+              <div class="output-menu-label">字幕模式</div>
+              <label
+                class="subtitle-mode"
+                title="燒進畫面：字幕燒在影片上（現行）。另存字幕檔：YT 影片不燒、另出一份對齊最終影片的 .srt（跳過燒字幕→輸出較快，觀眾可開 CC）。注意：Reels/IG/TikTok 不吃外掛字幕，一律硬燒、不受此選項影響。"
               >
-                <span data-icon="film"></span>
-                <span>合成 YT（16:9 完整版）</span>
-              </button>
-              <button
-                id="assemble-reels-btn"
-                type="button"
-                class="export-item"
-                role="menuitem"
-                title="合成 Reels 9:16 短版（無片頭片尾）"
+                <span class="subtitle-mode-label">字幕</span>
+                <select id="subtitle-mode-select">
+                  <option value="burn">燒進畫面</option>
+                  <option value="sidecar">另存字幕檔（僅 YT，較快）</option>
+                  <option value="overlay">抽換字幕（燒指定字幕檔）</option>
+                </select>
+              </label>
+              <span
+                id="overlay-controls"
+                class="overlay-controls"
+                hidden
+                title="抽換字幕：選一份已對齊成品時間軸的字幕檔（例如從 YT 下載修正後的 .srt），在合成最後一段直接燒上。鏡頭/刪段/倍速照舊，另存成新檔不蓋原成品。提前(ms) 可整份微調字幕快慢。"
               >
-                <span data-icon="smartphone"></span>
-                <span>合成 Reels（9:16 短版）</span>
-              </button>
-              <button
-                id="assemble-mp3-btn"
-                type="button"
-                class="export-item"
-                role="menuitem"
-                title="輸出原速度 MP3：成品音訊（套用刪段／頭尾 trim／去空拍）+ 含片頭片尾，但不加速、純音訊。給 podcast 音訊版用。"
-              >
-                <span data-icon="mic"></span>
-                <span>原速 MP3（純音訊）</span>
-              </button>
-              <button
-                id="assemble-preview-btn"
-                type="button"
-                class="export-item"
-                role="menuitem"
-                title="合成 YT 前 5 分鐘給人對比 bitrate / 畫質用；輸出檔名加 .preview，不會覆蓋正式成品"
-              >
-                <span data-icon="gauge"></span>
-                <span>5 分鐘預覽</span>
-              </button>
+                <select
+                  id="overlay-srt-select"
+                  title="要燒的字幕檔（集資料夾內）"
+                ></select>
+                <label class="overlay-shift-label"
+                  >提前<input
+                    id="overlay-shift-ms"
+                    type="number"
+                    value="0"
+                    step="50"
+                    min="-2000"
+                    max="2000"
+                  />ms</label
+                >
+                <label
+                  class="overlay-keep-label"
+                  title="勾選＝合成時不套用 yaml 的刪段，保留全部內容，對齊外部字幕的完整時間軸（外部字幕通常來自未刪減的完整版）。若取消，會套用你目前的刪段，外部字幕在刪點之後可能會慢出現。"
+                  ><input
+                    id="overlay-keep-all"
+                    type="checkbox"
+                    checked
+                  />保留全部內容</label
+                >
+              </span>
+              <div class="output-menu-divider"></div>
+              <div class="output-menu-label">合成輸出</div>
+              <div class="output-menu-actions">
+                <button
+                  id="assemble-yt-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="合成 YT 16:9 完整版（含片頭片尾）"
+                >
+                  <span data-icon="film"></span>
+                  <span>合成 YT</span>
+                </button>
+                <button
+                  id="assemble-reels-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="合成 Reels 9:16 短版（無片頭片尾）"
+                >
+                  <span data-icon="smartphone"></span>
+                  <span>合成 Reels</span>
+                </button>
+                <button
+                  id="assemble-mp3-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="輸出原速度 MP3：成品音訊（套用刪段／頭尾 trim／去空拍）+ 含片頭片尾，但不加速、純音訊。給 podcast 音訊版用。"
+                >
+                  <span data-icon="mic"></span>
+                  <span>原速 MP3</span>
+                </button>
+                <button
+                  id="assemble-preview-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="合成 YT 前 5 分鐘給人對比 bitrate / 畫質用；輸出檔名加 .preview，不會覆蓋正式成品"
+                >
+                  <span data-icon="gauge"></span>
+                  <span>5 分鐘預覽</span>
+                </button>
+              </div>
             </div>
-          </details>
+          </div>
         </div>
         <div class="topbar-group">
           <button id="cancel-btn" type="button" class="btn btn-ghost">
@@ -301,158 +309,174 @@
               ></div>
             </div>
           </div>
-          <div class="trim-controls">
-            <button
-              id="trim-head-btn"
-              type="button"
-              class="btn btn-ghost"
-              title="把目前播放位置設成新片頭"
-            >
-              <span data-icon="scissors"></span>
-              <span>設頭</span>
-              <span id="trim-head-val" class="kbd-val">0.0s</span>
-            </button>
-            <button
-              id="trim-tail-btn"
-              type="button"
-              class="btn btn-ghost"
-              title="把目前播放位置設成新片尾"
-            >
-              <span data-icon="scissors"></span>
-              <span>設尾</span>
-              <span id="trim-tail-val" class="kbd-val">0.0s</span>
-            </button>
-            <button
-              id="trim-reset"
-              type="button"
-              class="btn btn-ghost"
-              title="清除頭尾裁切"
-            >
-              <span data-icon="rotate-ccw"></span>
-              <span>重設</span>
-            </button>
-            <button
-              id="trim-play-head"
-              type="button"
-              class="btn btn-ghost"
-              title="從片頭起點開始播放（不是當下位置）"
-            >
-              <span data-icon="play"></span>
-              <span>從頭播</span>
-            </button>
-            <button
-              id="trim-suggest-btn"
-              type="button"
-              class="btn btn-ghost"
-              title="用 ffmpeg silencedetect 估開頭靜音"
-            >
-              <span data-icon="sparkles"></span>
-              <span>智慧建議</span>
-            </button>
-            <span id="trim-suggest-hint" class="trim-hint"></span>
-            <span id="trim-hint" class="trim-hint"></span>
-          </div>
-          <div class="crop-info">
-            <span id="crop-text">裁切框：未設定</span>
-            <div class="crop-ratios">
-              <button
-                class="btn btn-ghost ratio-btn"
-                data-ratio="4:5"
-                type="button"
+          <details class="framing-panel">
+            <summary class="framing-summary">
+              <span data-icon="settings" data-icon-size="14"></span>
+              <span>出片設定</span>
+              <span class="framing-summary-hint"
+                >裁切比例 · 頭尾 · 旋轉 · 字級 · 封面</span
               >
-                4:5
-              </button>
-              <button
-                class="btn btn-ghost ratio-btn"
-                data-ratio="9:16"
-                type="button"
-              >
-                9:16
-              </button>
-              <button
-                class="btn btn-ghost ratio-btn"
-                data-ratio="16:9"
-                type="button"
-              >
-                16:9
-              </button>
-              <button id="crop-reset" type="button" class="btn btn-ghost">
-                <span data-icon="rotate-ccw"></span>
-                <span>重設</span>
-              </button>
-              <div
-                class="caption-size"
-                id="caption-size"
-                title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
-              >
-                <span
-                  class="caption-size-label"
-                  data-icon="type"
-                  data-icon-size="13"
-                ></span>
+              <span
+                class="framing-summary-caret"
+                data-icon="chevron-down"
+                data-icon-size="14"
+              ></span>
+            </summary>
+            <div class="framing-body">
+              <div class="trim-controls">
                 <button
+                  id="trim-head-btn"
                   type="button"
-                  id="cap-size-dec"
-                  class="cap-size-btn"
-                  aria-label="字幕縮小"
+                  class="btn btn-ghost"
+                  title="把目前播放位置設成新片頭"
                 >
-                  −
+                  <span data-icon="scissors"></span>
+                  <span>設頭</span>
+                  <span id="trim-head-val" class="kbd-val">0.0s</span>
                 </button>
-                <span class="cap-size-val" id="cap-size-val">—</span>
                 <button
+                  id="trim-tail-btn"
                   type="button"
-                  id="cap-size-inc"
-                  class="cap-size-btn"
-                  aria-label="字幕放大"
+                  class="btn btn-ghost"
+                  title="把目前播放位置設成新片尾"
                 >
-                  ＋
+                  <span data-icon="scissors"></span>
+                  <span>設尾</span>
+                  <span id="trim-tail-val" class="kbd-val">0.0s</span>
                 </button>
+                <button
+                  id="trim-reset"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="清除頭尾裁切"
+                >
+                  <span data-icon="rotate-ccw"></span>
+                  <span>重設</span>
+                </button>
+                <button
+                  id="trim-play-head"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="從片頭起點開始播放（不是當下位置）"
+                >
+                  <span data-icon="play"></span>
+                  <span>從頭播</span>
+                </button>
+                <button
+                  id="trim-suggest-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="用 ffmpeg silencedetect 估開頭靜音"
+                >
+                  <span data-icon="sparkles"></span>
+                  <span>智慧建議</span>
+                </button>
+                <span id="trim-suggest-hint" class="trim-hint"></span>
+                <span id="trim-hint" class="trim-hint"></span>
+              </div>
+              <div class="crop-info">
+                <span id="crop-text">裁切框：未設定</span>
+                <div class="crop-ratios">
+                  <button
+                    class="btn btn-ghost ratio-btn"
+                    data-ratio="4:5"
+                    type="button"
+                  >
+                    4:5
+                  </button>
+                  <button
+                    class="btn btn-ghost ratio-btn"
+                    data-ratio="9:16"
+                    type="button"
+                  >
+                    9:16
+                  </button>
+                  <button
+                    class="btn btn-ghost ratio-btn"
+                    data-ratio="16:9"
+                    type="button"
+                  >
+                    16:9
+                  </button>
+                  <button id="crop-reset" type="button" class="btn btn-ghost">
+                    <span data-icon="rotate-ccw"></span>
+                    <span>重設</span>
+                  </button>
+                  <div
+                    class="caption-size"
+                    id="caption-size"
+                    title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
+                  >
+                    <span
+                      class="caption-size-label"
+                      data-icon="type"
+                      data-icon-size="13"
+                    ></span>
+                    <button
+                      type="button"
+                      id="cap-size-dec"
+                      class="cap-size-btn"
+                      aria-label="字幕縮小"
+                    >
+                      −
+                    </button>
+                    <span class="cap-size-val" id="cap-size-val">—</span>
+                    <button
+                      type="button"
+                      id="cap-size-inc"
+                      class="cap-size-btn"
+                      aria-label="字幕放大"
+                    >
+                      ＋
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="framing-row">
+                <div
+                  class="rotate-control"
+                  title="把傾斜的畫面轉正（旋轉露出的黑角靠裁切內縮裁掉）"
+                >
+                  <span data-icon="rotate-cw" data-icon-size="14"></span>
+                  <span class="framing-label">旋轉</span>
+                  <span id="rotate-cam-badge" class="rotate-cam-badge"></span>
+                  <input
+                    type="range"
+                    id="rotate-slider"
+                    class="rotate-slider"
+                    min="-10"
+                    max="10"
+                    step="0.1"
+                    value="0"
+                  />
+                  <input
+                    type="number"
+                    id="rotate-input"
+                    class="rotate-input"
+                    min="-15"
+                    max="15"
+                    step="0.1"
+                    value="0"
+                  />
+                  <span class="rotate-unit">°</span>
+                  <button
+                    id="rotate-reset"
+                    type="button"
+                    class="btn btn-ghost btn-sm"
+                  >
+                    歸零
+                  </button>
+                </div>
+                <label
+                  class="toggle-chip"
+                  title="正片右上角放節目封面（片頭片尾不放）"
+                >
+                  <input type="checkbox" id="cover-toggle" />
+                  <span>節目封面</span>
+                </label>
               </div>
             </div>
-          </div>
-          <div class="framing-row">
-            <div
-              class="rotate-control"
-              title="把傾斜的畫面轉正（旋轉露出的黑角靠裁切內縮裁掉）"
-            >
-              <span data-icon="rotate-cw" data-icon-size="14"></span>
-              <span class="framing-label">旋轉</span>
-              <span id="rotate-cam-badge" class="rotate-cam-badge"></span>
-              <input
-                type="range"
-                id="rotate-slider"
-                class="rotate-slider"
-                min="-10"
-                max="10"
-                step="0.1"
-                value="0"
-              />
-              <input
-                type="number"
-                id="rotate-input"
-                class="rotate-input"
-                min="-15"
-                max="15"
-                step="0.1"
-                value="0"
-              />
-              <span class="rotate-unit">°</span>
-              <button
-                id="rotate-reset"
-                type="button"
-                class="btn btn-ghost btn-sm"
-              >
-                歸零
-              </button>
-            </div>
-            <label
-              class="toggle-chip"
-              title="正片右上角放節目封面（片頭片尾不放）"
-            >
-              <input type="checkbox" id="cover-toggle" />
-              <span>節目封面</span>
-            </label>
-          </div>
+          </details>
           <div class="reels-clips-panel hidden" id="reels-clips-panel">
             <div class="reels-clips-head">
               <span data-icon="scissors" data-icon-size="14"></span>
@@ -509,75 +533,57 @@
         </section>
 
         <section class="cards-pane">
-          <div class="sus-toolbar hidden" id="sus-toolbar">
-            <span class="sus-count" id="sus-count">0</span>
-            <span class="sus-label">張可疑空拍卡</span>
-            <button id="sus-select-all" type="button" class="btn btn-ghost">
-              <span data-icon="square"></span>
-              <span>全選紅卡</span>
-            </button>
-            <button
-              id="sus-delete-checked"
-              type="button"
-              class="btn btn-ghost"
-              disabled
-            >
-              <span data-icon="trash-2"></span>
-              <span>刪除已勾</span>
-            </button>
-            <button
-              id="sus-delete-reactions"
-              type="button"
-              class="btn btn-ghost"
-              title="一鍵刪掉所有「只有反應詞（嗯／對／哈）」的紅卡"
-              disabled
-            >
-              <span data-icon="trash-2"></span>
-              <span>刪純反應詞</span>
-            </button>
-            <span class="spacer"></span>
-            <span id="sus-checked-count" class="sus-label">已勾 0</span>
-          </div>
-          <div class="srt-shift-row" id="srt-shift-row" hidden>
-            <label
-              class="srt-shift-label"
-              title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。"
-            >
-              <span data-icon="clock"></span>
-              <span>字幕偏移（秒，不改原檔）</span>
-            </label>
-            <input
-              type="number"
-              id="srt-shift-input"
-              class="srt-shift-input"
-              step="0.1"
-              placeholder="0.0"
-            />
-            <button type="button" id="srt-shift-btn" class="btn btn-ghost">
-              <span data-icon="move"></span>
-              <span>套用偏移</span>
-            </button>
-          </div>
-          <div class="review-toolbar hidden" id="review-toolbar">
-            <span class="review-flag-icon" data-icon="alert-triangle"></span>
-            <span class="review-count" id="review-count">0</span>
-            <span class="review-label">張待複查卡（半句 / 幻覺 / 空拍）</span>
-            <button
-              id="review-filter"
-              type="button"
-              class="btn btn-ghost"
-              aria-pressed="false"
-            >
-              <span>只看待複查</span>
-            </button>
-            <button id="review-prev" type="button" class="btn btn-ghost">
-              <span data-icon="chevron-up"></span>
-              <span>跳上一張</span>
-            </button>
-            <button id="review-next" type="button" class="btn btn-ghost">
-              <span data-icon="chevron-down"></span>
-              <span>跳下一張</span>
-            </button>
+          <div class="cards-flagbar" id="cards-flagbar">
+            <div class="sus-toolbar hidden" id="sus-toolbar">
+              <span class="sus-count" id="sus-count">0</span>
+              <span class="sus-label">張可疑空拍卡</span>
+              <button id="sus-select-all" type="button" class="btn btn-ghost">
+                <span data-icon="square"></span>
+                <span>全選紅卡</span>
+              </button>
+              <button
+                id="sus-delete-checked"
+                type="button"
+                class="btn btn-ghost"
+                disabled
+              >
+                <span data-icon="trash-2"></span>
+                <span>刪除已勾</span>
+              </button>
+              <button
+                id="sus-delete-reactions"
+                type="button"
+                class="btn btn-ghost"
+                title="一鍵刪掉所有「只有反應詞（嗯／對／哈）」的紅卡"
+                disabled
+              >
+                <span data-icon="trash-2"></span>
+                <span>刪純反應詞</span>
+              </button>
+              <span class="spacer"></span>
+              <span id="sus-checked-count" class="sus-label">已勾 0</span>
+            </div>
+            <div class="review-toolbar hidden" id="review-toolbar">
+              <span class="review-flag-icon" data-icon="alert-triangle"></span>
+              <span class="review-count" id="review-count">0</span>
+              <span class="review-label">張待複查卡（半句 / 幻覺 / 空拍）</span>
+              <button
+                id="review-filter"
+                type="button"
+                class="btn btn-ghost"
+                aria-pressed="false"
+              >
+                <span>只看待複查</span>
+              </button>
+              <button id="review-prev" type="button" class="btn btn-ghost">
+                <span data-icon="chevron-up"></span>
+                <span>跳上一張</span>
+              </button>
+              <button id="review-next" type="button" class="btn btn-ghost">
+                <span data-icon="chevron-down"></span>
+                <span>跳下一張</span>
+              </button>
+            </div>
           </div>
           <div class="cards-toolbar" id="cards-toolbar">
             <button
@@ -591,6 +597,46 @@
             </button>
             <span class="cards-time" id="cards-time">0:00 / 0:00</span>
             <span class="spacer"></span>
+            <div class="srt-shift-wrap">
+              <button
+                id="srt-shift-toggle"
+                type="button"
+                class="btn btn-ghost"
+                aria-haspopup="true"
+                aria-expanded="false"
+                hidden
+                title="字幕偏移（秒，不改原檔）"
+              >
+                <span data-icon="clock"></span>
+                <span>偏移</span>
+              </button>
+              <div class="srt-shift-menu" id="srt-shift-menu" hidden>
+                <div class="srt-shift-row" id="srt-shift-row">
+                  <label
+                    class="srt-shift-label"
+                    title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。"
+                  >
+                    <span data-icon="clock"></span>
+                    <span>字幕偏移（秒，不改原檔）</span>
+                  </label>
+                  <input
+                    type="number"
+                    id="srt-shift-input"
+                    class="srt-shift-input"
+                    step="0.1"
+                    placeholder="0.0"
+                  />
+                  <button
+                    type="button"
+                    id="srt-shift-btn"
+                    class="btn btn-ghost"
+                  >
+                    <span data-icon="move"></span>
+                    <span>套用偏移</span>
+                  </button>
+                </div>
+              </div>
+            </div>
             <button
               type="button"
               id="card-insert-btn"
@@ -1477,7 +1523,7 @@
       </div>
     </dialog>
 
-    <script src="/static/icons.js?v=20260623d"></script>
-    <script src="/static/app.js?v=20260627a" type="module"></script>
+    <script src="/static/icons.js?v=20260701a"></script>
+    <script src="/static/app.js?v=20260701a" type="module"></script>
   </body>
 </html>
