@@ -1027,7 +1027,7 @@
              checkbox 與倍率輸入框。純 div 讓 inline-flex 的 .toggle-chip 維持緊湊靠左。 -->
         <div>
           <label class="toggle-chip" title="只加速正片，字幕自動同步">
-            <input type="checkbox" id="speed-toggle" />
+            <input type="checkbox" id="speed-toggle" checked />
             <span>倍速</span>
             <input
               type="number"
@@ -1036,8 +1036,7 @@
               min="1"
               max="2"
               step="0.05"
-              value="1.25"
-              disabled
+              value="1.15"
             />
             <span class="rotate-unit">×</span>
           </label>
@@ -1047,7 +1046,7 @@
             class="toggle-chip"
             title="偵測整集中段的停頓/空檔，輸出時自動跳剪掉（字幕/鏡頭自動跟著對齊）。能量門檻式偵測，可能誤剪刻意停頓/笑場——門檻越大剪越保守。"
           >
-            <input type="checkbox" id="silence-toggle" />
+            <input type="checkbox" id="silence-toggle" checked />
             <span>去空拍</span>
             <span class="rotate-unit">停頓≥</span>
             <input
@@ -1058,7 +1057,6 @@
               max="5"
               step="0.1"
               value="0.8"
-              disabled
             />
             <span class="rotate-unit">秒才剪</span>
           </label>
@@ -1524,6 +1522,6 @@
     </dialog>
 
     <script src="/static/icons.js?v=20260701a"></script>
-    <script src="/static/app.js?v=20260701a" type="module"></script>
+    <script src="/static/app.js?v=20260701b" type="module"></script>
   </body>
 </html>

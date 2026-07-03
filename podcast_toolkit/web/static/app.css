@@ -534,14 +534,13 @@ h2 {
   display: block;
   margin: 2px 0;
 }
-#caption-overlay .caption-line.speaker-a {
-  color: var(--speaker-a-color, #fbbf24);
-}
-#caption-overlay .caption-line.speaker-b {
-  color: var(--speaker-b-color, #38bdf8);
-}
+/* 字幕文字一律白色（與燒進成品的 ASS Default 白色一致）。
+   speaker class 仍保留供版面/排序用，只是不再依講者染色；
+   講者區分改看 speaker-ruler 與 card 左邊框，不佔用字幕本身。 */
+#caption-overlay .caption-line.speaker-a,
+#caption-overlay .caption-line.speaker-b,
 #caption-overlay .caption-line.speaker-c {
-  color: var(--speaker-c-color, #34d399);
+  color: #fff;
 }
 #caption-overlay.multi-speaker {
   /* 兩行重疊時稍微縮小避免擠破 video frame */

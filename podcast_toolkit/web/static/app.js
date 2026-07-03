@@ -68,9 +68,9 @@ const state = {
   outputResReels: { w: 1080, h: 1920 },
   // 節目封面（右上角小徽章）開關 / 正片倍速 {enabled,factor} / 合成字幕模式
   coverEnabled: false,
-  speed: { enabled: false, factor: 1.25 },
+  speed: { enabled: true, factor: 1.15 },
   // 全片去空拍（偵測中段靜音→跳剪）：{enabled, minSilence 秒}。在合成設定視窗設、存進 episode.yaml
-  silenceTrim: { enabled: false, minSilence: 0.8 },
+  silenceTrim: { enabled: true, minSilence: 0.8 },
   subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
   // 非破壞性字幕偏移（秒）：存 episode.yaml，預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
   subtitleOffsetSec: 0,
@@ -2180,11 +2180,16 @@ async function loadEpisodeState() {
   const rot = data.rotate || {};
   state.rotate = { a: Number(rot.a) || 0, b: Number(rot.b) || 0 };
   state.coverEnabled = !!data.cover_enabled;
+  // 預設 ON：episode.yaml 沒有 speed/silence_trim 欄位時，合成 YT 預設 1.15x 倍速 + 去空拍。
+  // 只有明確寫 enabled:false 才關（respect explicit false）；避免舊集重新輸出時被迫加速。
   const sp = data.speed || {};
-  state.speed = { enabled: !!sp.enabled, factor: Number(sp.factor) || 1.25 };
+  state.speed = {
+    enabled: sp.enabled !== undefined ? !!sp.enabled : true,
+    factor: Number(sp.factor) || 1.15,
+  };
   const stm = data.silence_trim || {};
   state.silenceTrim = {
-    enabled: !!stm.enabled,
+    enabled: stm.enabled !== undefined ? !!stm.enabled : true,
     minSilence: Number(stm.min_silence) || 0.8,
   };
   state.outputDirty = false;
@@ -4553,6 +4558,29 @@ function computeOverallPercent(phase, percent) {
   return idx * (100 / 3) + Math.max(0, Math.min(100, percent)) / 3;
 }
 
+// 一鍵 Breeze 的進度配重：ASR（breeze-asr）吃掉真實時間的絕大多數，讓它佔進度條主體，
+// 尾段兩個快 phase（匯入／校對）只補尾巴 → 條的移動貼近實際等待，不會「爬到 33% 再瞬跳」。
+const BREEZE_PHASE_SPAN = {
+  "breeze-asr": [0, 92],
+  ingest: [92, 96],
+  proofread: [96, 99],
+};
+function computeBreezeOverallPercent(phase, percent) {
+  const span = BREEZE_PHASE_SPAN[phase];
+  if (!span) return 0;
+  const [lo, hi] = span;
+  const p = Math.max(0, Math.min(100, percent)) / 100;
+  return lo + (hi - lo) * p;
+}
+
+// 秒數 →「M:SS」，給經過時間計時器用（模型載入期還沒 tqdm 時也讓使用者看到有在動）。
+function fmtElapsed(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, "0")}`;
+}
+let _breezeStartMs = 0;
+
 // 一鍵 Breeze 轉字幕：Breeze ASR → 匯入講者 → 校對，整條龍背景跑，共用 transcribe 進度 UI。
 async function startBreezeTranscribe() {
   $("#transcribe-title").textContent = "Breeze 轉字幕中…";
@@ -4568,6 +4596,7 @@ async function startBreezeTranscribe() {
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動 Breeze…";
+  _breezeStartMs = Date.now(); // 經過時間計時器起點
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   if (go) go.disabled = true;
@@ -4717,12 +4746,19 @@ async function _pollTranscribeOnce() {
   if (s.state === "running") {
     const phase = s.phase || "compress";
     const pct = Math.max(0, Math.min(100, s.percent || 0));
-    const overall = computeOverallPercent(phase, pct);
+    const isBreeze = s.mode === "breeze";
+    const overall = isBreeze
+      ? computeBreezeOverallPercent(phase, pct)
+      : computeOverallPercent(phase, pct);
     $("#transcribe-fill").style.width = `${overall.toFixed(1)}%`;
     $("#transcribe-percent").textContent = `${overall.toFixed(0)}%`;
-    $("#transcribe-phase-label").textContent =
-      TRANSCRIBE_PHASE_LABELS[phase] || phase;
-    renderTranscribePhasePills(phase, "running");
+    let label = TRANSCRIBE_PHASE_LABELS[phase] || phase;
+    if (isBreeze && _breezeStartMs) {
+      // 經過時間計時器：即使模型載入期 percent 還是 0，也讓使用者看到有在動。
+      label += `　已 ${fmtElapsed((Date.now() - _breezeStartMs) / 1000)}`;
+    }
+    $("#transcribe-phase-label").textContent = label;
+    if (!isBreeze) renderTranscribePhasePills(phase, "running");
     return;
   }
 
@@ -7055,7 +7091,7 @@ function syncOutputControls() {
   const spf = document.querySelector("#speed-factor");
   if (spd) spd.checked = !!(state.speed && state.speed.enabled);
   if (spf) {
-    spf.value = String((state.speed && state.speed.factor) || 1.25);
+    spf.value = String((state.speed && state.speed.factor) || 1.15);
     spf.disabled = !(state.speed && state.speed.enabled);
   }
   const sil = document.querySelector("#silence-toggle");
@@ -7165,7 +7201,7 @@ function setupOutputControls() {
   if (spf)
     spf.addEventListener("change", () => {
       let v = Number(spf.value);
-      if (!isFinite(v)) v = 1.25;
+      if (!isFinite(v)) v = 1.15;
       v = Math.round(Math.max(0.5, Math.min(2, v)) * 100) / 100;
       state.speed.factor = v;
       spf.value = String(v);
