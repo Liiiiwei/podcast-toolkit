@@ -386,3 +386,60 @@ def test_stale_worker_write_is_ignored_after_timeout(monkeypatch, tmp_episode_di
     release.set()
     time.sleep(0.3)
     assert transcribe_job.get_status()["state"] == "error"
+
+
+# --- Breeze ASR 進度：解析 whisper/tqdm 寫到 stderr 的 % ---
+
+def test_parse_tqdm_percent_reads_leading_percentage():
+    """tqdm 預設格式開頭是「{percentage}%|」→ 抽出該百分數。"""
+    line = "  3%|██▌       | 12000/360000 [00:05<02:30, 2300.00frames/s]"
+    assert transcribe_job._parse_tqdm_percent(line) == 3.0
+
+
+def test_parse_tqdm_percent_takes_latest_of_multiple_refreshes():
+    """tqdm 用 \\r 刷新，一個 buffer 內可能有多筆 → 取最後（最新）那筆。"""
+    buf = (
+        "  3%|█         | 12000/360000 [00:05<02:30, 2300.00frames/s]\r"
+        " 47%|████▋     | 169200/360000 [01:20<01:30, 2100.00frames/s]"
+    )
+    assert transcribe_job._parse_tqdm_percent(buf) == 47.0
+
+
+def test_parse_tqdm_percent_handles_complete_bar():
+    line = "100%|██████████| 360000/360000 [03:10<00:00, 1890.00frames/s]"
+    assert transcribe_job._parse_tqdm_percent(line) == 100.0
+
+
+def test_parse_tqdm_percent_returns_none_for_non_progress_text():
+    """非進度行（含句子裡沒接 '|' 的 '%'）不該被誤判。"""
+    assert transcribe_job._parse_tqdm_percent("載入模型(CPU)…") is None
+    assert transcribe_job._parse_tqdm_percent("") is None
+    assert transcribe_job._parse_tqdm_percent("CPU 使用率 55% 偏高") is None
+
+
+def test_pump_progress_reports_each_refresh_from_stream():
+    """讀 tqdm 用 \\r 前綴刷新的 stderr（bytes 串流），逐筆回報 %，最後是 100。"""
+    import io
+
+    data = (
+        "\r  0%|  | 0/100 [00:00<?, ?frames/s]"
+        "\r 50%|## | 50/100 [00:01<00:01, 50frames/s]"
+        "\r100%|###| 100/100 [00:02<00:00, 50frames/s]\n"
+    ).encode()
+    seen: list[float] = []
+    transcribe_job._pump_progress(io.BytesIO(data), seen.append)
+    assert seen, "應該至少回報一次"
+    assert 50.0 in seen
+    assert seen[-1] == 100.0
+
+
+def test_pump_progress_tees_raw_output_for_error_log():
+    """tee 有給時，原始 stderr 文字要照抄進去（保留錯誤診斷日誌）。"""
+    import io
+
+    data = b"\r 10%|# | 10/100 [00:00<00:00, 10frames/s]\nTraceback boom\n"
+    tee = io.StringIO()
+    transcribe_job._pump_progress(io.BytesIO(data), lambda _p: None, tee=tee)
+    text = tee.getvalue()
+    assert "10%" in text
+    assert "Traceback boom" in text

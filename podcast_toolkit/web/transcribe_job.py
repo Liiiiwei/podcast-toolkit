@@ -7,6 +7,7 @@ Phase 順序：compress → upload → resegment → done
 """
 from __future__ import annotations
 
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -331,6 +332,54 @@ def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> Non
 
 # ── 一鍵 Breeze 轉字幕：Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對 ──
 
+_TQDM_PCT_RE = re.compile(r"(\d{1,3})%\|")
+
+
+def _parse_tqdm_percent(text: str) -> float | None:
+    """從 whisper/tqdm 寫到 stderr 的進度行抽出百分比（0-100）。
+
+    tqdm 預設格式的 l_bar 是「{percentage:3.0f}%|」，故只認「數字後緊接 |」的
+    百分數，避免把句子裡的 '%'（如「使用率 55%」）誤判成進度。一段 buffer 內
+    可能有多筆（\\r 刷新），取最後一筆＝最新進度。找不到回 None。
+    """
+    matches = _TQDM_PCT_RE.findall(text)
+    if not matches:
+        return None
+    return max(0.0, min(100.0, float(matches[-1])))
+
+
+def _pump_progress(stream, on_pct, tee=None) -> None:
+    """即時讀子行程 stderr（bytes 串流），切出 tqdm 進度行並回報 %。
+
+    tqdm 用 \\r（非 \\n）刷新，故不能 readline（會卡到最後才吐一坨）：讀 chunk 後
+    切 [\\r\\n]，完整片段立刻解析，殘段（最新一次刷新，尚未被下個 \\r 收尾）也即時
+    回報好讓 UI 追到最新。tee 若給則把原始文字附寫進去（保留錯誤診斷日誌）。
+    此函式同時負責「排空」stderr，避免 pipe 塞滿讓 Breeze 卡死。
+    """
+    buf = ""
+    while True:
+        chunk = stream.read(256)
+        if not chunk:
+            break
+        s = chunk.decode("utf-8", "replace") if isinstance(chunk, bytes) else chunk
+        if tee is not None:
+            tee.write(s)
+            tee.flush()
+        buf += s
+        parts = re.split(r"[\r\n]", buf)
+        buf = parts[-1]
+        for seg in parts[:-1]:
+            pct = _parse_tqdm_percent(seg)
+            if pct is not None:
+                on_pct(pct)
+        live = _parse_tqdm_percent(buf)
+        if live is not None:
+            on_pct(live)
+    tail = _parse_tqdm_percent(buf)
+    if tail is not None:
+        on_pct(tail)
+
+
 def _breeze_dir() -> Path | None:
     """Breeze-ASR-25 專案路徑：config.json 的 breeze_dir 優先，否則試常見位置。
     認得的條件 = 該資料夾下有 make_subtitle.py。找不到回 None。"""
@@ -390,22 +439,34 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
     def setj(**kwargs) -> None:
         _set_job(job, **kwargs)
 
-    # 1) Breeze ASR：make_subtitle.py（--quiet 給 UI；自己找 Track*-Mic*.wav）
+    # 1) Breeze ASR：make_subtitle.py（不帶 --quiet → whisper 把 tqdm 進度吐到
+    #    stderr，pump 執行緒即時解析成 breeze-asr 這一 phase 的真實 %；自己找 Track*-Mic*.wav）
     py = bdir / ".venv" / "bin" / "python"
     py_str = str(py) if py.exists() else "python3"
     cmd = [
         py_str, str(bdir / "make_subtitle.py"),
         "--dir", str(ep.dir),
-        "--guest", guest, "--terms", terms, "--quiet",
+        "--guest", guest, "--terms", terms,
     ]
     errf = ep.subdir("work") / "_breeze_stderr.log"
     try:
         setj(phase="breeze-asr", percent=0.0)
         with open(errf, "w", encoding="utf-8") as ef:
-            proc = subprocess.Popen(cmd, cwd=str(bdir), stdout=subprocess.DEVNULL, stderr=ef)
+            proc = subprocess.Popen(
+                cmd, cwd=str(bdir),
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, bufsize=0,
+            )
+            # pump：排空 stderr（避免 pipe 塞滿卡死）＋把 tqdm % 即時餵進狀態、tee 進日誌
+            pump = threading.Thread(
+                target=_pump_progress,
+                args=(proc.stderr, lambda p: setj(phase="breeze-asr", percent=p), ef),
+                daemon=True,
+            )
+            pump.start()
             while proc.poll() is None:
-                setj(phase="breeze-asr")  # 心跳，避免 30 分鐘 watchdog 誤殺
+                setj(phase="breeze-asr")  # 心跳；模型載入期（還沒 tqdm）也不被 watchdog 誤殺
                 sleep(10)
+            pump.join(timeout=10)  # 收尾：讓最後一筆 % + 錯誤日誌寫完
         if proc.returncode != 0:
             tail = ""
             try:
