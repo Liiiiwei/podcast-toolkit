@@ -158,3 +158,44 @@ def test_reflow_subsplit_keeps_cjk_ascii_terms_intact():
     # idea 整段保留、且左右空格沒被當邊界拆掉（永遠是「 idea 」貼在某張卡裡）
     assert any(" idea " in t for t in texts2), texts2
     assert not any(t in ("idea", "很多", "出現") for t in texts2), texts2
+
+
+def test_reflow_subsplit_no_word_straddle():
+    """硬切改走 word_break 評分：不再把「然後」「耳機」切成 然|後、耳|機。"""
+    for src, word in [
+        ("他們家的隔音跟通風設備真的做得很不錯然後我們就決定租下來了", "然後"),
+        ("因為現場真的太吵的時候你根本聽不見耳機裡的聲音", "耳機"),
+    ]:
+        new, _ = reflow_by_phrases(_cards((0.0, 8.0, src)), {1: "c"}, max_w=16)
+        texts = [c["text"] for c in new]
+        assert len(texts) >= 2, texts                       # 有真的切
+        assert "".join(texts) == src                        # 內容不丟
+        assert any(word in t for t in texts), texts         # 詞完整留在某卡
+        for a, b in zip(texts, texts[1:]):
+            assert a[-1] + b[0] != word, texts              # 不切在詞中間
+
+
+def test_reflow_conservative_run_kept_verbatim():
+    """保守化：run 無 proofread 空格邊界、也無過長卡 → 原卡原時間直接保留。"""
+    cards = _cards((0.0, 1.0, "我們今天請到"), (1.1, 2.0, "一位很棒的來賓"))
+    new, ns = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["我們今天請到", "一位很棒的來賓"]
+    # 時間逐卡不變（不重併重切 → 保住 Breeze 逐字時間精度）
+    assert [(c["start"], c["end"]) for c in new] == [(0.0, 1.0), (1.1, 2.0)]
+    assert ns == {1: "c", 2: "c"}
+
+
+def test_reflow_conservative_not_applied_when_space_boundary_exists():
+    """run 內只要有可用空格邊界（兩側皆 CJK）→ 仍照舊重切。"""
+    cards = _cards((0.0, 1.5, "我們今天請到 一位"), (1.6, 2.4, "很棒的來賓"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["我們今天請到", "一位很棒的來賓"]
+
+
+def test_reflow_conservative_not_applied_when_card_too_long():
+    """run 內有卡超過 max_w → 仍要切（≤max_w、內容不丟）。"""
+    src = "一二三四五六七八九十甲乙丙丁戊己庚辛"
+    new, _ = reflow_by_phrases(_cards((0.0, 4.0, src)), {1: "c"}, max_w=16)
+    assert len(new) >= 2
+    assert all(len(c["text"]) <= 16 for c in new)
+    assert "".join(c["text"] for c in new) == src
