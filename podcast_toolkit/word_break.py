@@ -122,16 +122,19 @@ def text_width(s: str) -> float:
     return sum(char_width(c) for c in s)
 
 
-def balanced_split(chars: list, max_w: float = 16.0, min_w: float = 5.0) -> list[tuple[int, int]]:
+def balanced_split(chars: list, max_w: float = 16.0, min_w: float = 5.0,
+                   width=char_width) -> list[tuple[int, int]]:
     """chars: [(ch, start, end), ...]。回傳片段 [(a, b), ...]（半開區間 index）。
 
     先算要切幾段與理想長度（平衡），再於「上限內」挑最接近理想又邊界好的切點。
+    width：字元寬度函式；上游預設 char_width（ascii 0.5/空白 0），
+    toolkit 的 _subsplit 傳「每字元算 1」對齊既有 max_w 原始字數尺。
     """
     n = len(chars)
     text = [c[0] for c in chars]
     cum = [0.0] * (n + 1)
     for i, c in enumerate(text):
-        cum[i + 1] = cum[i] + char_width(c)
+        cum[i + 1] = cum[i] + width(c)
     total = cum[n]
     if total <= max_w or n <= 1:
         return [(0, n)]
