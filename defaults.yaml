@@ -9,6 +9,8 @@ resegment:
                    "哈哈哈", "哈哈", "哇", "喔", "哦", "蛤", "對啦",
                    "好", "是吧", "是喔"]
   use_filler_filter: false
+  straddle_gap: 0.35    # check-seg ④ 跨卡切詞：相鄰卡間隔 ≤ N 秒才檢（更大＝真氣口，不算）
+  jieba_dict: null      # jieba 詞典路徑；null＝自動偵測（Breeze dict.txt.big 存在就用，否則內建）
   whisper_guard:
     char_loop_min_repeats: 4
 

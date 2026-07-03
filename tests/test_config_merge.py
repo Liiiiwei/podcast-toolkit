@@ -268,3 +268,19 @@ def test_merge_has_speaker_tags_present_is_preserved():
     """yaml 設 has_speaker_tags:true → 寫得進讀得回（修白名單後）。"""
     cfg = config.merge(DEFAULTS, {"name": "t", "has_speaker_tags": True})
     assert cfg["has_speaker_tags"] is True
+
+
+def test_merge_resegment_straddle_keys_readback():
+    """resegment 走整段 dict merge：straddle_gap / jieba_dict 從 defaults 透出、
+    episode.yaml 覆寫讀得回（新 key 免動頂層白名單）。"""
+    defaults = {**DEFAULTS,
+                "resegment": {"min_chars": 8, "straddle_gap": 0.35, "jieba_dict": None}}
+    cfg = config.merge(defaults, {"name": "t"})
+    assert cfg["resegment"]["straddle_gap"] == 0.35
+    assert cfg["resegment"]["jieba_dict"] is None
+    cfg2 = config.merge(defaults, {"name": "t",
+                                   "resegment": {"straddle_gap": 0.5,
+                                                 "jieba_dict": "/tmp/dict.txt"}})
+    assert cfg2["resegment"]["straddle_gap"] == 0.5
+    assert cfg2["resegment"]["jieba_dict"] == "/tmp/dict.txt"
+    assert cfg2["resegment"]["min_chars"] == 8  # 其餘欄位仍走 defaults
