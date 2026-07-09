@@ -147,12 +147,33 @@ def _has_cjk_space(text: str) -> bool:
     return False
 
 
+def _merge_runts(group: list[dict], max_w: int, reaction) -> list[dict]:
+    """語句 group 內把單字碎卡（Breeze 逐字殘留）併進鄰卡，補足 reflow「只切不併」的缺口。
+
+    只在「有一側是單字(≤1 字)且非反應詞」且併後 ≤max_w 時併，保第一卡 start、末卡 end。
+    只在同一語句 group 內作用（呼叫端已用 proofread 空格／真停頓切好 group）→
+    不跨語句邊界、不跨停頓亂併。反應詞單字卡（對／嗯…）獨立成卡不動。"""
+    def runt(t: str) -> bool:
+        return len(t) <= 1 and t not in reaction
+
+    out: list[dict] = []
+    for c in group:
+        if (out and (runt(c["text"]) or runt(out[-1]["text"]))
+                and len(out[-1]["text"]) + len(c["text"]) <= max_w):
+            out[-1] = {"start": out[-1]["start"], "end": c["end"],
+                       "text": out[-1]["text"] + c["text"]}
+        else:
+            out.append(dict(c))
+    return out
+
+
 def reflow_by_phrases(
     cards: list[dict],
     speakers: dict[int, str],
     *,
     gap: float = 0.3,
     max_w: int = 16,
+    reaction=frozenset(),
 ) -> tuple[list[dict], dict[int, str]]:
     """對「連續(間隔<gap)、同講者」的卡，用 proofread 空格當語句邊界重切。
 
@@ -160,7 +181,9 @@ def reflow_by_phrases(
     自動當詞內、不拆。單一語句>max_w 才再交 word_break 評分切。時間在原卡內線性插值。
     保守化：run 內「無可用空格邊界、且無任何卡超過 max_w」→ 原卡原時間直接保留
     （只重編 idx），不重併重切，保住 Breeze 逐字時間精度。
-    回傳 (新 cards[idx 從 1 重編], 新 speakers)；停頓分開的卡（真邊界）不會被併。
+    切好每個語句 group 後，再跑 _merge_runts 把單字碎卡（避／開各自成卡）併回鄰卡，
+    reaction 傳入的反應詞單字卡不併。回傳 (新 cards[idx 從 1 重編], 新 speakers)；
+    停頓分開的卡（真邊界）不會被併。
     """
     ordered = sorted(cards, key=lambda c: float(c["start"]))
     runs: list[list[dict]] = []
@@ -178,50 +201,55 @@ def reflow_by_phrases(
     for run in runs:
         sp = speakers.get(int(run[0]["idx"]))
         texts = [(c["text"] or "").replace("\n", " ") for c in run]
+        # 每個語句邊界（proofread 空格）切一個 group；merge 只在 group 內作用，不跨界
+        groups: list[list[dict]] = []
         # 保守化：沒有可用的 proofread 空格邊界、也沒有任何卡超過 max_w
-        # → 這個 run 不重併重切，原卡原時間保留（只重編 idx / speakers 對齊）
+        # → 整個 run 是一個 group，原卡原時間保留（不重併重切），只在 group 內併單字碎卡
         if (not any(_has_cjk_space(t) for t in texts)
                 and not any(len(t) > max_w for t in texts)):   # 尺同 _subsplit：每字元算 1
+            g: list[dict] = []
             for c, t in zip(run, texts):
                 t = re.sub(r"\s+", " ", t).strip()
                 if not t:
                     continue
-                nid += 1
-                new_cards.append({"idx": nid, "start": float(c["start"]),
-                                  "end": float(c["end"]), "text": t})
-                if sp:
-                    new_spk[nid] = sp
-            continue
-        chars: list[tuple] = []
-        for c in run:
-            t = (c["text"] or "").replace("\n", " ")
-            if not t:
-                continue
-            d = (float(c["end"]) - float(c["start"])) / len(t)
-            for k, ch in enumerate(t):
-                chars.append((ch, float(c["start"]) + d * k, float(c["start"]) + d * (k + 1)))
-        # 用「兩側皆中文字」的空格切語句；其餘空格（英/數旁）留在語句內
-        phrases: list[list] = []
-        cur: list = []
-        for k, (ch, s, e) in enumerate(chars):
-            if ch == " ":
-                prev_ch = chars[k - 1][0] if k > 0 else ""
-                next_ch = chars[k + 1][0] if k + 1 < len(chars) else ""
-                if cur and _is_cjk(prev_ch) and _is_cjk(next_ch):
-                    phrases.append(cur)
-                    cur = []
+                g.append({"start": float(c["start"]), "end": float(c["end"]), "text": t})
+            groups.append(g)
+        else:
+            chars: list[tuple] = []
+            for c in run:
+                t = (c["text"] or "").replace("\n", " ")
+                if not t:
                     continue
-            cur.append((ch, s, e))
-        if cur:
-            phrases.append(cur)
-        for ph in phrases:
-            for a, b in _subsplit(ph, max_w):
-                txt = re.sub(r"\s+", " ", "".join(x[0] for x in ph[a:b])).strip()
-                if not txt:
-                    continue
+                d = (float(c["end"]) - float(c["start"])) / len(t)
+                for k, ch in enumerate(t):
+                    chars.append((ch, float(c["start"]) + d * k, float(c["start"]) + d * (k + 1)))
+            # 用「兩側皆中文字」的空格切語句；其餘空格（英/數旁）留在語句內
+            phrases: list[list] = []
+            cur: list = []
+            for k, (ch, s, e) in enumerate(chars):
+                if ch == " ":
+                    prev_ch = chars[k - 1][0] if k > 0 else ""
+                    next_ch = chars[k + 1][0] if k + 1 < len(chars) else ""
+                    if cur and _is_cjk(prev_ch) and _is_cjk(next_ch):
+                        phrases.append(cur)
+                        cur = []
+                        continue
+                cur.append((ch, s, e))
+            if cur:
+                phrases.append(cur)
+            for ph in phrases:
+                g = []
+                for a, b in _subsplit(ph, max_w):
+                    txt = re.sub(r"\s+", " ", "".join(x[0] for x in ph[a:b])).strip()
+                    if not txt:
+                        continue
+                    g.append({"start": ph[a][1], "end": ph[b - 1][2], "text": txt})
+                groups.append(g)
+        for g in groups:
+            for rc in _merge_runts(g, max_w, reaction):
                 nid += 1
-                new_cards.append({"idx": nid, "start": ph[a][1],
-                                  "end": ph[b - 1][2], "text": txt})
+                new_cards.append({"idx": nid, "start": rc["start"],
+                                  "end": rc["end"], "text": rc["text"]})
                 if sp:
                     new_spk[nid] = sp
     return new_cards, new_spk
@@ -245,7 +273,9 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
         return 0
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     speakers = cameras_io.load(spk_path)
-    new_cards, new_spk = reflow_by_phrases(cards, speakers, gap=gap)
+    # 反應詞（對／嗯…）單字卡不被 _merge_runts 併回鄰卡
+    reaction = frozenset((ep.cfg.get("resegment") or {}).get("reaction_words", []))
+    new_cards, new_spk = reflow_by_phrases(cards, speakers, gap=gap, reaction=reaction)
     if not new_cards:
         return 0
     shutil.copy(v2, v2.with_name(f"{v2.stem}.pre-reflow.bak{v2.suffix}"))

@@ -199,3 +199,44 @@ def test_reflow_conservative_not_applied_when_card_too_long():
     assert len(new) >= 2
     assert all(len(c["text"]) <= 16 for c in new)
     assert "".join(c["text"] for c in new) == src
+
+
+# ---- 單字碎卡合併（Breeze 逐字卡殘留）----
+
+def test_reflow_merges_single_char_runts():
+    """保守化 run 內的單字碎卡（避 / 開）→ 併成完整詞「避開」，時間跨接。"""
+    cards = _cards((0.0, 0.4, "避"), (0.4, 0.8, "開"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["避開"]
+    assert (new[0]["start"], new[0]["end"]) == (0.0, 0.8)
+
+
+def test_reflow_merges_chain_of_single_chars():
+    """連續單字碎卡（只/要/一次）→ 併掉單字卡，內容不丟。"""
+    cards = _cards((0.0, 0.3, "只"), (0.3, 0.6, "要"), (0.6, 1.2, "一次"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c", 3: "c"}, gap=0.3, max_w=16)
+    assert "".join(c["text"] for c in new) == "只要一次"
+    assert all(len(c["text"]) >= 2 for c in new)   # 不再有單字卡
+
+
+def test_reflow_single_char_reaction_not_merged():
+    """反應詞單字卡（對）保留、不併進鄰卡。"""
+    cards = _cards((0.0, 0.5, "對"), (0.5, 1.5, "我也這樣覺得"))
+    new, _ = reflow_by_phrases(
+        cards, {1: "c", 2: "c"}, gap=0.3, max_w=16, reaction=frozenset({"對"}))
+    assert [c["text"] for c in new] == ["對", "我也這樣覺得"]
+
+
+def test_reflow_runt_not_merged_across_pause():
+    """真停頓分開的單字卡（避 … 開 gap>0.3）→ 各自成卡，不跨停頓併。"""
+    cards = _cards((0.0, 0.4, "避"), (2.0, 2.4, "開"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["避", "開"]
+
+
+def test_reflow_runt_not_merged_across_clause_space():
+    """單字碎卡不可跨 proofread 空格（真語句邊界）併到別的語句去。"""
+    # 「好」在空格後自成語句；不可被前併成「請說好」
+    cards = _cards((0.0, 2.0, "那你先請說 好"), (2.0, 4.0, "我們開始"))
+    new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["那你先請說", "好我們開始"]
