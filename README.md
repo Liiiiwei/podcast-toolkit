@@ -73,6 +73,18 @@
 
 ## 安裝（第一次拿到電腦才要做，只做一次）
 
+**限 macOS（Apple Silicon）。** 先做三個一次性前置，再跑一支腳本，全部裝好（含 Breeze 轉字幕）。
+
+**前置（一次性）：**
+```bash
+# 1. Homebrew（已裝跳過）
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+# 2. GitHub CLI，並登入（Breeze 是私有 repo，靠它下載）
+brew install gh
+gh auth login          # 選 GitHub.com → HTTPS → 用瀏覽器登入
+```
+
+**一鍵安裝：**
 ```bash
 cd ~/Projects
 git clone https://github.com/Liiiiwei/podcast-toolkit.git
@@ -80,12 +92,15 @@ cd podcast-toolkit
 ./install.sh
 ```
 
-`install.sh` 會自動：檢查 Python 3.9+、裝 ffmpeg、裝必要套件、建立 `podcast` 指令，並在 `/Applications/` 生成一個**可以雙擊打開的 `Podcast.app`**（本機生成，不會被 macOS 攔）。
+`install.sh` 一支跑完會自動：檢查 Python 3.9+、裝 ffmpeg、裝 toolkit 套件、建立 `podcast` 指令、在 `/Applications/` 生成可雙擊的 `Podcast.app`（本機生成、不被 Gatekeeper 攔），**並且把 Breeze 轉字幕後端也一起裝好**（下載私有 repo → 建專用 venv → 裝打過補丁的 whisper + jieba 詞典）。
 
-**轉字幕引擎（二選一，本地、免金鑰）：**
+> Breeze 首次「一鍵轉字幕」時才會自動下載 2.9G 模型到 `~/.cache/whisper`（之後不再下載）。
+> 若跳過 gh 登入，install 不會中斷，只是 Breeze 那段跳過；補登入後重跑 `./install.sh` 即可補上。
 
-- **Breeze（推薦）**：台灣腔最準、會標講者。需要另一個本地專案 [Breeze-ASR-25](https://github.com/mtkresearch/Breeze-ASR-25)，預設放在 `~/Developer/breeze subtitle/Breeze-ASR-25`（也可在設定指定路徑）。
-- **本機 Whisper（mlx）**：Apple Silicon 跑，免金鑰。`pip3 install --user mlx-whisper`。
+**轉字幕引擎（本地、免金鑰）：**
+
+- **Breeze（預設，install.sh 已幫你裝）**：台灣腔最準、會標講者。裝在 `~/Developer/breeze subtitle/Breeze-ASR-25`。
+- **本機 Whisper（mlx，備援）**：Breeze 沒裝成時的退路，Apple Silicon 跑、免金鑰、但不標講者。`pip3 install --user mlx-whisper`。
 
 > 這個工具**零雲端金鑰**：不需要 OpenAI / Gemini 等 API key，聲音不會上傳到雲端。
 
