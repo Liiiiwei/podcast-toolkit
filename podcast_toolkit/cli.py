@@ -114,6 +114,11 @@ def cmd_clip(args):
     return assemble.run_clips(Path(args.path), clip_names=names, force=args.force)
 
 
+def cmd_publish_doc(args):
+    from podcast_toolkit import publish_doc
+    return publish_doc.run(Path(args.path), model=args.model, ep_number=args.ep)
+
+
 def cmd_edit(args):
     from podcast_toolkit import edit
     return edit.run(Path(args.path))
@@ -244,6 +249,18 @@ def build_parser():
     pc.add_argument("--name", dest="names", action="append", help="只跑指定 clip name（可多次）；省略 = 跑全部")
     pc.add_argument("--force", action="store_true", help="覆寫已存在的片段")
     pc.set_defaults(func=cmd_clip)
+
+    ppd = sub.add_parser(
+        "publish-doc",
+        help="產 YouTube 上架文案（標題／說明欄／章節／重點／社群短文；章節對齊成品時間軸，本地 Claude Code）",
+    )
+    ppd.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    ppd.add_argument("--ep", default=None, help="EP 編號（填入標題的 EP__ 佔位）")
+    ppd.add_argument(
+        "--model", default=None,
+        help="覆寫產文案模型（claude --model，如 sonnet / opus）；預設用 Claude Code 預設模型",
+    )
+    ppd.set_defaults(func=cmd_publish_doc)
 
     pe = sub.add_parser("edit", help="在瀏覽器編輯：裁切 / 刪段 / 改字")
     pe.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
