@@ -5607,7 +5607,18 @@ function setupAssembleButtons() {
     startAssemble(targets, { previewSec, force: previewSec ? true : false });
   });
 
-  $("#assemble-cancel").addEventListener("click", () => {
+  $("#assemble-cancel").addEventListener("click", async () => {
+    const btn = $("#assemble-cancel");
+    // 「取消」＝ job 還在跑 → 先通知後端砍掉 ffmpeg，否則後端 state 卡在 running，
+    // 下次合成會被「已有合成正在進行中」擋下。「關閉」＝已結束 → 純關閉。
+    if (btn.textContent.trim() === "取消") {
+      btn.disabled = true;
+      try {
+        await fetch("/api/assemble/cancel", { method: "POST" });
+      } catch (e) {
+        /* 取消請求失敗不擋關閉；狀態列會反映後端實際狀態 */
+      }
+    }
     stopAssemblePoll();
     hideModal("assemble-modal");
   });

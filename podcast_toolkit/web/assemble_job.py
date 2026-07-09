@@ -38,7 +38,11 @@ _STATE: dict[str, Any] = {
     "output_files": [],        # 已完成的輸出路徑 list
     "error": None,
     "started_at": None,
+    "cancelled": False,        # 使用者按取消 → 砍 ffmpeg 並收回 idle
 }
+
+# 目前在跑的 ffmpeg process，取消時用來 kill。只在 _LOCK 內讀寫。
+_ACTIVE_PROC: Popen | None = None
 
 
 def get_status() -> dict[str, Any]:
@@ -61,6 +65,7 @@ def _reset(**kwargs) -> None:
             "output_files": [],
             "error": None,
             "started_at": None,
+            "cancelled": False,
         })
         _STATE.update(kwargs)
 
@@ -68,6 +73,25 @@ def _reset(**kwargs) -> None:
 def _set(**kwargs) -> None:
     with _LOCK:
         _STATE.update(kwargs)
+
+
+def cancel_job() -> bool:
+    """使用者取消：標記 cancelled 並砍掉在跑的 ffmpeg。
+
+    回傳是否真的有 job 被取消（idle 時回 False）。被 kill 的 ffmpeg 會走
+    _pump_progress 的取消分支（清 tmp、不設 error），coordinator 再把 state 收回 idle。
+    """
+    with _LOCK:
+        if _STATE["state"] != "running":
+            return False
+        _STATE["cancelled"] = True
+        proc = _ACTIVE_PROC
+    if proc is not None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return True
 
 
 def start_job(
@@ -163,9 +187,17 @@ def start_job(
     }
 
 
+def _cancelled() -> bool:
+    with _LOCK:
+        return bool(_STATE["cancelled"])
+
+
 def _run_queue(plans: list[dict]) -> None:
-    """coordinator：依序跑 plans，任一失敗就停止後續。"""
+    """coordinator：依序跑 plans，任一失敗就停止後續；使用者取消則收回 idle。"""
     for i, plan in enumerate(plans):
+        if _cancelled():
+            _reset()
+            return
         _set(
             current=plan["output_kind"],
             index=i,
@@ -179,6 +211,8 @@ def _run_queue(plans: list[dict]) -> None:
             if _leveled_proxy_valid(pb["proxy"], pb["meta"], pb["src"], pb["angle"]):
                 continue
             if not _run_prebake(pb):
+                if _cancelled():
+                    _reset()  # 預烤中被取消 → 收回 idle，非錯誤
                 return
             # 預烤完回到該 target 的進度起點
             _set(current=plan["output_kind"], percent=0.0, eta_s=None)
@@ -187,6 +221,10 @@ def _run_queue(plans: list[dict]) -> None:
                      text=True, bufsize=1)
         _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
 
+        # 使用者取消（ffmpeg 已被 kill）：清乾淨收回 idle，不當成錯誤。
+        if _cancelled():
+            _reset()
+            return
         # _pump_progress 失敗會 set state=error；成功只更新 percent，
         # 最終 done 由這裡統一設——否則多 target 間隙會被前端 poll 到假的 done。
         with _LOCK:
@@ -218,7 +256,7 @@ def _run_prebake(pb: dict) -> bool:
     proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True, bufsize=1)
     _pump_progress(proc, pb["total_dur"], proxy, tmp)
     with _LOCK:
-        if _STATE["state"] == "error":
+        if _STATE["state"] == "error" or _STATE["cancelled"]:
             return False
     write_leveled_meta(Path(pb["meta"]), Path(pb["src"]), pb["angle"])
     return True
@@ -231,6 +269,10 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
     watchdog：-progress 太久沒輸出（pipe 卡住/ffmpeg 死鎖）就 kill 掉，
     讓 stdout 收到 EOF、走正常的失敗路徑，前端才不會永遠 poll 到 running。
     """
+    global _ACTIVE_PROC
+    with _LOCK:
+        _ACTIVE_PROC = proc  # 註冊給 cancel_job kill
+
     started = monotonic()
     last_out_time_us = 0
     heartbeat = [monotonic()]
@@ -295,6 +337,18 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
 
     returncode = proc.wait()
     stderr_thread.join(timeout=2.0)
+    with _LOCK:
+        _ACTIVE_PROC = None
+        cancelled = bool(_STATE["cancelled"])
+    # 使用者取消：ffmpeg 被 kill → returncode 非 0，但這不是錯誤。清 tmp、保留舊 out、
+    # 不設 state（由 coordinator 收回 idle），否則會被前端 poll 到假的「合成失敗」。
+    if cancelled:
+        try:
+            if tmp_out.exists():
+                tmp_out.unlink()
+        except OSError:
+            pass
+        return
     stderr_tail = "".join(stderr_lines)
     if returncode == 0 and tmp_out.exists():
         # 成功才覆寫舊輸出；最終 state=done 由 _run_queue 統一設

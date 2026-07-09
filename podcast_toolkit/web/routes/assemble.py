@@ -79,6 +79,13 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     def get_assemble_status():
         return JSONResponse(assemble_job.get_status())
 
+    @app.post("/api/assemble/cancel")
+    def post_assemble_cancel():
+        """使用者取消：砍掉在跑的 ffmpeg 並把 job 收回 idle。
+        cancelled=False 代表當下沒有 job 在跑（idle）。"""
+        cancelled = assemble_job.cancel_job()
+        return JSONResponse({"ok": True, "cancelled": cancelled})
+
     @app.post("/api/clip")
     def post_clip(payload: dict):
         """同步切 Reels 片段（-c copy 很快，沒必要 background job）。
