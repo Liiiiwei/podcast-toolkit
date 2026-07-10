@@ -167,6 +167,26 @@ def _merge_runts(group: list[dict], max_w: int, reaction) -> list[dict]:
     return out
 
 
+def _merge_short(group: list[dict], target: int, reaction) -> list[dict]:
+    """_merge_runts 的加強版：不限於單字碎卡，把連續短卡貪婪併到 ≤target。
+
+    針對「無 proofread 空格、又無大停頓」的過碎卡（Breeze 逐字殘留，人手最常併回的類型：
+    『還好／一點』『我們／尤其』…）。上限用 target（人手實測中位數 ≈9 字）而非 max_w，
+    避免併過頭跨子句。反應詞（對／嗯…）維持獨立成卡不併；併時保第一卡 start、末卡 end。
+    只在呼叫端已切好的 group 內作用（group 已由 proofread 空格／真停頓切開）→
+    不跨語句、不跨停頓亂併。"""
+    out: list[dict] = []
+    for c in group:
+        t = c["text"]
+        if (out and t not in reaction and out[-1]["text"] not in reaction
+                and len(out[-1]["text"]) + len(t) <= target):
+            out[-1] = {"start": out[-1]["start"], "end": c["end"],
+                       "text": out[-1]["text"] + t}
+        else:
+            out.append(dict(c))
+    return out
+
+
 def reflow_by_phrases(
     cards: list[dict],
     speakers: dict[int, str],
@@ -174,6 +194,8 @@ def reflow_by_phrases(
     gap: float = 0.3,
     max_w: int = 16,
     reaction=frozenset(),
+    merge_short: bool = False,
+    merge_target: int = 9,
 ) -> tuple[list[dict], dict[int, str]]:
     """對「連續(間隔<gap)、同講者」的卡，用 proofread 空格當語句邊界重切。
 
@@ -246,7 +268,9 @@ def reflow_by_phrases(
                     g.append({"start": ph[a][1], "end": ph[b - 1][2], "text": txt})
                 groups.append(g)
         for g in groups:
-            for rc in _merge_runts(g, max_w, reaction):
+            merged = (_merge_short(g, merge_target, reaction) if merge_short
+                      else _merge_runts(g, max_w, reaction))
+            for rc in merged:
                 nid += 1
                 new_cards.append({"idx": nid, "start": rc["start"],
                                   "end": rc["end"], "text": rc["text"]})
@@ -273,9 +297,18 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
         return 0
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     speakers = cameras_io.load(spk_path)
-    # 反應詞（對／嗯…）單字卡不被 _merge_runts 併回鄰卡
+    # 反應詞（對／嗯…）單字卡不被併回鄰卡
     reaction = frozenset((ep.cfg.get("resegment") or {}).get("reaction_words", []))
-    new_cards, new_spk = reflow_by_phrases(cards, speakers, gap=gap, reaction=reaction)
+    # reflow 設定段可 per-episode 覆寫；缺段時全用預設 → 既有各集行為位元組不變
+    rf = ep.cfg.get("reflow") or {}
+    new_cards, new_spk = reflow_by_phrases(
+        cards, speakers,
+        gap=rf.get("gap", gap),
+        max_w=rf.get("max_w", 16),
+        reaction=reaction,
+        merge_short=rf.get("merge_short", False),
+        merge_target=rf.get("merge_target", 9),
+    )
     if not new_cards:
         return 0
     shutil.copy(v2, v2.with_name(f"{v2.stem}.pre-reflow.bak{v2.suffix}"))
