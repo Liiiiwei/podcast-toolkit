@@ -150,6 +150,7 @@ def serialize(
     overrides: dict[int, str] | None = None,
     splits: dict[int, list[str]] | None = None,
     time_overrides: dict[tuple[int, int], tuple[float, float]] | None = None,
+    merges: set[int] | None = None,
 ) -> str:
     """把 cards 寫回 srt 字串。
 
@@ -157,9 +158,11 @@ def serialize(
     splits[idx]：把該卡切成 N 段文字，時間依文字長度比例分配；
                  切完所有 idx 一律重編序號。
     time_overrides[(idx, part)]：手動覆寫該卡 / 該段的 (start, end) 秒（最後一道覆寫）。
+    merges：一組要「併進上一張卡」的 idx（見 serialize_with_map）。
     """
     text, _ = serialize_with_map(
-        cards, overrides=overrides, splits=splits, time_overrides=time_overrides
+        cards, overrides=overrides, splits=splits,
+        time_overrides=time_overrides, merges=merges,
     )
     return text
 
@@ -169,6 +172,7 @@ def serialize_with_map(
     overrides: dict[int, str] | None = None,
     splits: dict[int, list[str]] | None = None,
     time_overrides: dict[tuple[int, int], tuple[float, float]] | None = None,
+    merges: set[int] | None = None,
 ) -> tuple[str, list[tuple[int, int]]]:
     """同 serialize，但額外回傳 idx_map：
     new_idx (1-based) → (original_idx, part_idx)
@@ -178,27 +182,41 @@ def serialize_with_map(
     time_overrides[(oid, part)]：手動拖拉改的時間，疊在最外層覆寫衍生值——
     未切卡覆寫 SRT 原始時間；切句卡覆寫 allocate_split_times 算出的該段時間
     （沒被覆寫的段仍走字數分配）。idx_map 不受影響（時間覆寫不改編號）。
+
+    merges：被併卡的 idx 集合。被併卡不單獨輸出，只把它的結束時間接到「上一張已輸出的卡」
+    （合併時間 = 上一張.start → 被併卡.end）。合併後的文字由 caller 透過 overrides 落在
+    上一張卡上（避免和後續編輯重複串接），所以這裡只動時間、掉卡、不碰文字。第一張卡沒有
+    上一張可併 → 忽略。合併優先於切句（兩者互斥）；被併卡因不輸出，也不會進 idx_map，
+    其 deletions/鏡頭/講者標記自然折進上一張（沿用上一張的鏡頭，正是合併該有的行為）。
     """
     overrides = overrides or {}
     splits = splits or {}
     time_overrides = time_overrides or {}
-    out: list[str] = []
+    merges = merges or set()
+    # 先組結構化的輸出卡，合併要能回頭改「上一張」的結束時間，最後才 format
+    emitted: list[dict] = []
     idx_map: list[tuple[int, int]] = []
-    new_idx = 1
     for c in cards:
         oid = c["idx"]
         base_text = overrides.get(oid, c["text"])
+        if oid in merges and emitted:
+            # 併進上一張已輸出卡：只延伸結束時間到本卡結束（文字由 override 落在前卡）
+            _, en = time_overrides.get((oid, 0), (c["start"], c["end"]))
+            emitted[-1]["en"] = en
+            continue
         parts = splits.get(oid)
         if parts and len(parts) > 1:
             times = allocate_split_times(c["start"], c["end"], parts)
             for i, (part, (p_start, p_end)) in enumerate(zip(parts, times)):
                 st, en = time_overrides.get((oid, i), (p_start, p_end))
-                out.append(f"{new_idx}\n{seconds_to_srt_ts(st)} --> {seconds_to_srt_ts(en)}\n{part}\n")
+                emitted.append({"st": st, "en": en, "text": part})
                 idx_map.append((oid, i))
-                new_idx += 1
         else:
             st, en = time_overrides.get((oid, 0), (c["start"], c["end"]))
-            out.append(f"{new_idx}\n{seconds_to_srt_ts(st)} --> {seconds_to_srt_ts(en)}\n{base_text}\n")
+            emitted.append({"st": st, "en": en, "text": base_text})
             idx_map.append((oid, 0))
-            new_idx += 1
+    out = [
+        f"{new_idx}\n{seconds_to_srt_ts(em['st'])} --> {seconds_to_srt_ts(em['en'])}\n{em['text']}\n"
+        for new_idx, em in enumerate(emitted, start=1)
+    ]
     return "\n".join(out), idx_map

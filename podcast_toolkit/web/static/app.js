@@ -23,6 +23,10 @@ const state = {
   // 切過的卡 textOverrides 會被清掉（parts 內容才是真相）。
   // sub-card 上按 Enter 可連鎖切：把該 part 拆兩半、後面 composite key 全部 +1。
   cardSplits: new Map(),
+  // 在字卡最前面按 Backspace 跨卡合併：被併掉的整卡 idx 集合。被併卡不單獨顯示 /
+  // 不寫進 SRT，只把結束時間接到上一張整卡；合併後文字落在上一張的 textOverrides。
+  // 只支援「整卡併整卡」（切過的卡在卡內已有 sub-card 合併，不走這條）。
+  cardMerges: new Set(),
   // 單卡時間微調：idx -> {start, end}（覆寫該卡時間）；只用於未切的整卡
   timeOverrides: new Map(),
   timeEditKey: null, // 目前展開時間微調工具列的卡 domKey（字串；null = 沒開）
@@ -152,6 +156,7 @@ function snapshotEditState() {
     tailTrimSec: state.tailTrimSec,
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
+    cardMerges: new Set(state.cardMerges),
     timeOverrides: new Map(
       [...state.timeOverrides].map(([k, v]) => [k, { ...v }]),
     ),
@@ -178,6 +183,7 @@ function applyEditSnapshot(snap) {
   state.cardSplits = new Map(
     [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
   );
+  state.cardMerges = new Set(snap.cardMerges || []);
   state.timeOverrides = new Map(
     [...(snap.timeOverrides || [])].map(([k, v]) => [k, { ...v }]),
   );
@@ -362,6 +368,7 @@ function unsavedCount() {
     state.deletions.size +
     state.textOverrides.size +
     state.cardSplits.size +
+    state.cardMerges.size +
     state.timeOverrides.size +
     state.newCards.length +
     state.cardTimings.size +
@@ -384,10 +391,12 @@ function renderTopbar() {
   const deleted = state.deletions.size;
   const dirty = state.textOverrides.size;
   const split = state.cardSplits.size;
+  const merged = state.cardMerges.size;
   const head = state.headTrimSec || 0;
   const tail = state.tailTrimSec || 0;
   let line = `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
   if (split > 0) line += ` · 已切 ${split}`;
+  if (merged > 0) line += ` · 已併 ${merged}`;
   if (head > 0 || tail > 0) {
     line += ` · 頭 ${head.toFixed(1)}s / 尾 ${tail.toFixed(1)}s`;
   }
@@ -714,7 +723,16 @@ function getCursorOffset(el) {
 const SPLIT_SEC_PER_CHAR = 0.3;
 function expandedCards() {
   const out = [];
+  let lastWhole = null; // 最後輸出的整卡；被 Backspace 併掉的卡把結束時間接到它
   for (const c of state.cards) {
+    // 跨卡合併掉的整卡：不輸出，只把結束時間延伸到本卡結束（時間 = 上一張.start → 本卡.end）
+    if (state.cardMerges.has(c.idx)) {
+      if (lastWhole) {
+        const mov = state.timeOverrides.get(c.idx);
+        lastWhole.end = mov ? mov.end : c.end;
+      }
+      continue;
+    }
     // 時間微調 override：未切卡直接套；切過的卡用 override 當 t0/t1 重算 sub-card
     const ov = state.timeOverrides.get(c.idx);
     const cStart = ov ? ov.start : c.start;
@@ -744,6 +762,7 @@ function expandedCards() {
           end: ov ? ov.end : end,
         });
       }
+      lastWhole = null; // 切過的卡不當合併目標（後端無法把合併文字掛到切卡上）
     } else {
       const ov = state.cardTimings.get(c.idx);
       out.push({
@@ -754,6 +773,7 @@ function expandedCards() {
         start: ov ? ov.start : cStart,
         end: ov ? ov.end : cEnd,
       });
+      lastWhole = out[out.length - 1];
     }
   }
   // 新增的字卡：併進清單、依 start 排序（讓它出現在正確時間位置、預覽也吃得到）
@@ -1550,7 +1570,10 @@ function renderCards() {
   // 效能：整列卡先進 DocumentFragment，最後一次性掛上 #cards-list，
   // 避免逐卡 appendChild 觸發 live-tree 重排
   const frag = document.createDocumentFragment();
+  let prevRenderedRow = null; // 上一張 rendered row，給 Backspace 跨卡合併找合併目標
   for (const r of rendered) {
+    const prevRow = prevRenderedRow; // per-iteration 快照，keydown 閉包用
+    prevRenderedRow = r;
     if (r.newCard) {
       renderNewCardRow(r, frag);
       continue;
@@ -1855,6 +1878,47 @@ function renderCards() {
         });
         return;
       }
+      // Backspace at offset 0 on 整卡 → 併進「上一張整卡」（時間 = 上一張.start → 本卡.end）
+      // 只支援整卡併整卡：本卡與上一張都必須未切（切過的卡文字在 cardSplits，後端合併掛不上去）。
+      // 修飾鍵 / IME 組字中不攔，維持 cmd+Backspace 刪整行等原生行為。
+      if (
+        e.key === "Backspace" &&
+        !e.shiftKey &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.isComposing &&
+        !isSub &&
+        prevRow &&
+        !prevRow.newCard &&
+        prevRow.partIdx == null &&
+        prevRow.c &&
+        getCursorOffset(text) === 0
+      ) {
+        e.preventDefault();
+        const prev = prevRow.c;
+        mutateEditStateAtomic(() => {
+          const prevText = state.textOverrides.get(prev.idx) ?? prev.text;
+          const curText = state.textOverrides.get(c.idx) ?? c.text;
+          const mergedText = prevText + curText;
+          // 合併後文字落在上一張整卡；等於原文就移除 override 保持乾淨
+          if (mergedText && mergedText !== prev.text) {
+            state.textOverrides.set(prev.idx, mergedText);
+          } else {
+            state.textOverrides.delete(prev.idx);
+          }
+          // 本卡併掉：進 merges、清掉自身所有 override（後端也會 fold，但前端要立即乾淨）
+          state.cardMerges.add(c.idx);
+          state.textOverrides.delete(c.idx);
+          state.deletions.delete(c.idx);
+          state.camerasMapping.delete(c.idx);
+          state.speakersMapping.delete(c.idx);
+          state.timeOverrides.delete(c.idx);
+          clearCardTimings(c.idx);
+          focusCardAt(prev.idx, prevText.length); // 游標停在兩卡接縫
+        });
+        return;
+      }
       if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
       e.preventDefault();
       const cursorPos = getCursorOffset(text);
@@ -1976,6 +2040,9 @@ function renderCards() {
         pushUndo();
         state.camerasMapping.set(key, "a");
         renderCards();
+        // 把播放頭移到這張卡起點，預覽才會切到剛標的鏡頭
+        //（refreshCamBOverlay 依 activeCardAt(currentTime) 判斷，不移就還停在別張卡）
+        $("#video").currentTime = r.start;
         // 暫停時 timeupdate 不會 fire，手動 refresh 一次 overlay 才會收掉
         refreshCamBOverlay();
       });
@@ -1993,6 +2060,9 @@ function renderCards() {
         pushUndo();
         state.camerasMapping.set(key, "b");
         renderCards();
+        // 把播放頭移到這張卡起點，預覽才會切到剛標的 B 鏡頭
+        //（refreshCamBOverlay 依 activeCardAt(currentTime) 判斷，不移就還停在別張卡）
+        $("#video").currentTime = r.start;
         // 暫停時也要立刻把 cam B overlay 疊上來
         refreshCamBOverlay();
       });
@@ -2038,7 +2108,8 @@ function renderSusToolbar() {
     (c) =>
       c.suspicious_pause &&
       !state.deletions.has(c.idx) &&
-      !state.cardSplits.has(c.idx),
+      !state.cardSplits.has(c.idx) &&
+      !state.cardMerges.has(c.idx),
   );
   if (susCards.length === 0) {
     bar.classList.add("hidden");
@@ -2099,7 +2170,8 @@ function renderReviewToolbar() {
     (c) =>
       cardNeedsReview(c) &&
       !state.deletions.has(c.idx) &&
-      !state.reviewSeen.has(c.idx),
+      !state.reviewSeen.has(c.idx) &&
+      !state.cardMerges.has(c.idx),
   );
   if (unseen.length === 0) {
     bar.classList.add("hidden");
@@ -2201,6 +2273,7 @@ async function loadEpisodeState() {
   state.reviewSeen = new Set(); // 換集即清「看過」標記（session 內、不跨集）
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
+  state.cardMerges = new Set();
   state.timeOverrides = new Map();
   state.timeEditKey = null;
   state.newCards = [];
@@ -2353,7 +2426,8 @@ function setupSusToolbar() {
       (c) =>
         c.suspicious_pause &&
         !state.deletions.has(c.idx) &&
-        !state.cardSplits.has(c.idx),
+        !state.cardSplits.has(c.idx) &&
+        !state.cardMerges.has(c.idx),
     );
     const allChecked =
       susCards.length > 0 && state.susChecked.size === susCards.length;
@@ -2396,6 +2470,7 @@ function setupSusToolbar() {
         c.suspicious_pause &&
         !state.deletions.has(c.idx) &&
         !state.cardSplits.has(c.idx) &&
+        !state.cardMerges.has(c.idx) &&
         (c.suspicious_reasons || []).includes("reaction_only"),
     );
     if (reactionCards.length === 0) return;
@@ -2527,6 +2602,7 @@ function findHits(wrong) {
   const hits = [];
   if (!wrong) return hits;
   for (const c of state.cards) {
+    if (state.cardMerges.has(c.idx)) continue; // 併掉的卡不算命中（已折進上一張）
     const text = currentCardText(c);
     if (!text) continue;
     let count = 0;
@@ -3773,6 +3849,9 @@ function buildSavePayload({ withSpeed = false } = {}) {
     speakers_mapping: Object.fromEntries(state.speakersMapping),
     // 切卡：{ "<old_idx>": ["前段", "後段", ...] }；後端按文字長度比例分配時間 + 重編號
     splits: Object.fromEntries(state.cardSplits),
+    // 跨卡合併：[old_idx, ...]；後端把這些卡從 SRT 拿掉、結束時間接到上一張整卡。
+    // 合併後文字由上面的 cards（textOverrides）落在上一張卡，避免重複串接。
+    merges: [...state.cardMerges],
     // 單卡時間微調：{ "<idx>": {start, end} }；後端 serialize 前覆寫該卡 start/end
     // ── 時間軸還原 ──
     // 載入時（loadEpisodeState）字卡被整批 -audioSyncOffset 移到 cam A 軸（讓播放預覽的字幕
@@ -5289,6 +5368,33 @@ function stopAssemblePoll() {
   }
 }
 
+// 進度 pill 是否代表「有 job 在跑」（啟動中 / 合成中）。用來取代脆弱的按鈕文字比對，
+// 判斷取消鈕當下該打 /cancel（取消）還是純關閉。
+function isAssembleActive() {
+  const pill = $("#assemble-pill");
+  const st = pill && pill.getAttribute("data-state");
+  return st === "starting" || st === "running";
+}
+
+// 輪詢 assemble status 直到離開 running/preparing（或 timeout）。回傳最終 state。
+// 後端 cancel 已同步等到 idle 才回；這是防後端 timeout 沒收乾淨的保險。
+async function pollUntilAssembleIdle(timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "idle";
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch("/api/assemble/status");
+      const s = await r.json();
+      last = s.state;
+      if (s.state !== "running" && s.state !== "preparing") return s.state;
+    } catch (e) {
+      /* 暫時失敗，續試 */
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  return last;
+}
+
 // 切換狀態 pill：starting / running / done / error
 function setAssemblePill(stateName, label) {
   const pill = $("#assemble-pill");
@@ -5433,6 +5539,11 @@ async function startAssemble(
       }
       throw new Error(msg);
     }
+    // prepare 期間被取消（後端在 ffmpeg 起來前收到 cancel）：不開 poll，取消流程會關 modal。
+    const data = await r.json().catch(() => ({}));
+    if (data.cancelled) {
+      return;
+    }
   } catch (e) {
     setModalStatusTitle("assemble-title", "circle-alert", "無法啟動", "danger");
     setAssemblePill("error", "失敗");
@@ -5471,6 +5582,13 @@ async function _pollAssembleOnce() {
 
   if (s.state === "idle") {
     // 還沒開始或已重置，避免覆蓋 done 後的畫面
+    return;
+  }
+
+  if (s.state === "preparing") {
+    // 佔位過渡態：素材檢查中（ffprobe/建 srt），ffmpeg 還沒起來
+    setAssemblePill("starting", "準備中");
+    $("#assemble-current-label").textContent = "準備素材中…";
     return;
   }
 
@@ -5609,15 +5727,31 @@ function setupAssembleButtons() {
 
   $("#assemble-cancel").addEventListener("click", async () => {
     const btn = $("#assemble-cancel");
-    // 「取消」＝ job 還在跑 → 先通知後端砍掉 ffmpeg，否則後端 state 卡在 running，
-    // 下次合成會被「已有合成正在進行中」擋下。「關閉」＝已結束 → 純關閉。
-    if (btn.textContent.trim() === "取消") {
-      btn.disabled = true;
-      try {
-        await fetch("/api/assemble/cancel", { method: "POST" });
-      } catch (e) {
-        /* 取消請求失敗不擋關閉；狀態列會反映後端實際狀態 */
-      }
+    // 已結束（done/error）→ 純關閉，不打 cancel。
+    if (!isAssembleActive()) {
+      stopAssemblePoll();
+      hideModal("assemble-modal");
+      return;
+    }
+    // job 還在跑：通知後端砍 ffmpeg，並等後端確認收回 idle 才關 modal。
+    // 期間 modal 維持開啟＋按鈕 disable，擋掉「取消後空窗重按合成」撞 409。
+    btn.disabled = true;
+    btn.textContent = "取消中…";
+    stopAssemblePoll(); // 停進度 poll，避免和取消狀態打架
+    setAssemblePill("starting", "取消中…");
+    $("#assemble-current-label").textContent = "取消中…";
+    let finalState = "idle";
+    try {
+      const r = await fetch("/api/assemble/cancel", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      finalState = d.state || "idle";
+    } catch (e) {
+      /* 取消請求失敗：改用輪詢確認後端狀態 */
+      finalState = "running";
+    }
+    // 後端沒在回應內收乾淨（極少見，例如 join timeout）→ 再輪詢一小段
+    if (finalState === "running" || finalState === "preparing") {
+      finalState = await pollUntilAssembleIdle();
     }
     stopAssemblePoll();
     hideModal("assemble-modal");
@@ -6114,19 +6248,20 @@ function openCamModal() {
     }
   }
 
-  // 依講者推 A/B：分軌集（有 mics）才顯示；要有 speakers 才能按
+  // 依講者推 A/B：雙機集（有 cam B）就顯示，跟 A/B 膠囊同一條件，讓入口好找。
+  // 要有逐卡講者（speakers.json）才能按——分軌轉錄或 Breeze 轉錄都會產生，不限有 mics。
   const suggestRow = $("#cam-suggest-row");
   if (suggestRow) {
-    const hasMics = state.mics && Object.keys(state.mics).length > 0;
+    const hasCamB = !!(state.cameras && state.cameras.b);
     const hasSpeakers = state.speakersMapping && state.speakersMapping.size > 0;
-    suggestRow.hidden = !hasMics;
+    suggestRow.hidden = !hasCamB;
     const sgBtn = $("#cam-suggest-btn");
     const sgHint = $("#cam-suggest-hint");
     if (sgBtn) sgBtn.disabled = !hasSpeakers;
     if (sgHint)
       sgHint.textContent = hasSpeakers
         ? "會覆蓋現有 A/B 切換（先自動備份）"
-        : "需先用「分軌轉錄」產生講者，才能推鏡頭";
+        : "需先產生逐卡講者（分軌轉錄或 Breeze 轉錄）才能推鏡頭";
   }
 
   showModal("cam-modal");

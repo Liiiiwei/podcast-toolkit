@@ -293,6 +293,50 @@ def test_save_state_skips_invalid_new_cards(tmp_episode_dir):
     assert all("壞卡" not in c["text"] for c in cards)
 
 
+def test_save_state_merges_card_into_previous(tmp_episode_dir):
+    """merges：卡 3 併進卡 2 → 卡 2 結束時間接到卡 3 結束、卡 3 消失、重編號連續。
+    合併後文字由前端經 cards override 落在卡 2。"""
+    from podcast_toolkit import srt_io
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "cards": [{"idx": 2, "text": "今天要聊的是過嗨乳牛這個議題呃那個"}],
+            "merges": [3],
+        },
+    )
+    v2 = (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").read_text(encoding="utf-8")
+    cards = srt_io.parse(v2)
+    assert len(cards) == 3  # 原 4 張 → 併掉 1 張
+    assert [c["idx"] for c in cards] == [1, 2, 3]  # 重編號連續
+    # 卡 2 吃下卡 3 的文字與結束時間（4.2 → 14.0）
+    c2 = cards[1]
+    assert c2["text"] == "今天要聊的是過嗨乳牛這個議題呃那個"
+    assert c2["start"] == pytest.approx(4.2)
+    assert c2["end"] == pytest.approx(14.0)
+    # 「呃那個」不再單獨成卡
+    assert all(c["text"] == "呃那個" for c in cards) is False
+    assert cards[2]["text"] == "我們從牠的飼料配方開始講起"
+
+
+def test_save_state_merged_card_deletion_folds_away(tmp_episode_dir):
+    """被併卡的 deletions 標記要折掉：卡 3 併進卡 2 後，對卡 3 的刪除標記解不到新 idx → 丟棄，
+    不會誤刪合併後的卡 2。"""
+    import yaml
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(
+        ep,
+        payload={
+            "cards": [{"idx": 2, "text": "今天要聊的是過嗨乳牛這個議題呃那個"}],
+            "merges": [3],
+            "deletions": [3],  # 對被併卡的刪除標記
+        },
+    )
+    data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    # 卡 3 已併掉、不在 idx_lookup → deletions 翻不到 → key 不存在
+    assert "deletions" not in data or data.get("deletions") == []
+
+
 def test_save_state_overwrites_v2_srt_with_card_text_overrides(tmp_episode_dir):
     ep = Episode(tmp_episode_dir)
     episode_io.save_state(

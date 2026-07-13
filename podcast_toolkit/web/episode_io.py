@@ -562,6 +562,15 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
+    # merges：要併進上一張卡的 old idx 清單（前端 Backspace 跨卡合併）。被併卡不單獨輸出，
+    # 只把結束時間接到上一張；合併後文字由 overrides 落在上一張卡（見 srt_io.serialize_with_map）。
+    merges: set[int] = set()
+    for k in payload.get("merges") or []:
+        try:
+            merges.add(int(k))
+        except (TypeError, ValueError):
+            continue
+
     # 單卡時間微調：兩個來源都收進 composite-key（idx, part）dict：
     #  (a) time_overrides payload（int idx，舊版拖拉）— 非法值靜默跳過
     #  (b) card_timings payload（composite "5" / "5:1"）— 後端權威驗證，非法 raise（轉 400）
@@ -631,12 +640,13 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         # SRT、重載後整份錯位（症狀：「時間整個跑掉」）。輸入已排序時重排為 no-op，安全。
         cards.sort(key=lambda c: float(c["start"]))
         new_text, idx_map = srt_io.serialize_with_map(
-            cards, overrides=overrides, splits=splits, time_overrides=time_overrides
+            cards, overrides=overrides, splits=splits,
+            time_overrides=time_overrides, merges=merges,
         )
         v2.write_text(new_text, encoding="utf-8")
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
-    elif overrides or splits or time_overrides or new_cards:
+    elif overrides or splits or time_overrides or new_cards or merges:
         raise FileNotFoundError(
             f"找不到 {v2.name}，無法套用字幕文字／時間修改；請先跑 podcast subtitle 產生字幕"
         )

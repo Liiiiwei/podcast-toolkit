@@ -24,10 +24,14 @@ from podcast_toolkit.episode import Episode
 # ffmpeg -progress 正常每秒都有輸出；超過這個秒數沒動靜視為卡死，強制終止
 FFMPEG_STALL_TIMEOUT_S = 120
 
+# 取消時等 coordinator 收尾（kill ffmpeg → proc.wait + stderr join ≤2s）的上限。
+# 讓 cancel_job 回來時保證 state 已離開 running，前端一 await 完就能安全重跑。
+CANCEL_JOIN_TIMEOUT_S = 8.0
+
 # 模組級 state，build_app 每次都拿同一個 dict
 _LOCK = threading.Lock()
 _STATE: dict[str, Any] = {
-    "state": "idle",           # idle | running | done | error
+    "state": "idle",           # idle | preparing | running | done | error
     "queue": [],               # 例如 ["yt", "reels"]
     "current": None,           # 目前在跑的 target
     "index": 0,                # 第幾個（0-based）
@@ -43,6 +47,9 @@ _STATE: dict[str, Any] = {
 
 # 目前在跑的 ffmpeg process，取消時用來 kill。只在 _LOCK 內讀寫。
 _ACTIVE_PROC: Popen | None = None
+
+# 目前 job 的 coordinator thread；取消時 join 它等收尾。只在 _LOCK 內讀寫。
+_COORDINATOR: threading.Thread | None = None
 
 
 def get_status() -> dict[str, Any]:
@@ -76,21 +83,39 @@ def _set(**kwargs) -> None:
 
 
 def cancel_job() -> bool:
-    """使用者取消：標記 cancelled 並砍掉在跑的 ffmpeg。
+    """使用者取消：標記 cancelled、砍掉在跑的 ffmpeg，並同步等到 state 收回 idle 才回傳。
 
-    回傳是否真的有 job 被取消（idle 時回 False）。被 kill 的 ffmpeg 會走
-    _pump_progress 的取消分支（清 tmp、不設 error），coordinator 再把 state 收回 idle。
+    回傳是否真的有 job 被取消（idle / done / error 時回 False）。
+    受理範圍含 preparing（按開始→ffmpeg 起來前的空窗），避免取消被吞掉、合成照跑。
+
+    同步等待的理由：取消是背景 coordinator 收尾，若立即回傳，get_status 會有一段仍是
+    running/preparing 的空窗；前端在空窗內重按合成就撞「已有合成正在進行中」(409)。
+    這裡 join coordinator（被 kill 的 ffmpeg 走 _pump_progress 取消分支 → coordinator _reset）
+    後才回傳，呼叫端一 await 完 state 必定已離開 running。
     """
     with _LOCK:
-        if _STATE["state"] != "running":
+        if _STATE["state"] not in ("running", "preparing"):
             return False
         _STATE["cancelled"] = True
         proc = _ACTIVE_PROC
+        coordinator = _COORDINATOR
     if proc is not None:
         try:
             proc.kill()
         except OSError:
             pass
+    # coordinator 存在（已進 running）→ join 等它 _reset 收回 idle。
+    # 還在 preparing（coordinator 尚未建立）→ start_job 會在 prepare 後看到 cancelled 而中止，
+    # 這裡輪詢等它把 state 收回 idle，讓回傳即代表「可安全重跑」。
+    if coordinator is not None:
+        coordinator.join(timeout=CANCEL_JOIN_TIMEOUT_S)
+    else:
+        deadline = monotonic() + CANCEL_JOIN_TIMEOUT_S
+        while monotonic() < deadline:
+            with _LOCK:
+                if _STATE["state"] not in ("running", "preparing"):
+                    break
+            threading.Event().wait(0.02)
     return True
 
 
@@ -109,17 +134,89 @@ def start_job(
     overlay：把 overlay_srt（已對齊成品時間軸的字幕）整份提前 overlay_shift_ms 毫秒後，
     在合成最後一段直接燒上；鏡頭/刪段/倍速照舊，另存成新檔不蓋原成品。
     sidecar / overlay 只對 yt 生效；reels 一律硬燒（見下方 per-target 政策）。"""
+    global _COORDINATOR
     if not targets:
         raise ValueError("targets 不能為空")
     for t in targets:
         if t not in ("yt", "reels", "mp3"):
             raise ValueError(f"未知 target={t}")
 
+    # 立刻佔位成 preparing：prepare_assembly 可能數秒（ffprobe/建 srt），這段期間也算「有 job」，
+    # 讓 cancel_job 認得（否則取消被吞、合成照跑），重按合成也會被守衛擋下。
     with _LOCK:
-        if _STATE["state"] == "running":
+        if _STATE["state"] in ("running", "preparing"):
             raise RuntimeError("已有合成正在進行中")
+        _STATE.update({
+            "state": "preparing",
+            "queue": list(targets),
+            "current": None,
+            "index": 0,
+            "total": len(targets),
+            "percent": 0.0,
+            "eta_s": None,
+            "out_path": None,
+            "output_files": [],
+            "error": None,
+            "started_at": monotonic(),
+            "cancelled": False,
+        })
 
-    # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）
+    # 預先檢查所有 target：任一失敗就整批拒絕（不要跑一半才報錯）。
+    # 失敗要先把 state 收回 idle 再往外拋，否則 preparing 卡住擋掉之後所有合成。
+    try:
+        plans = _build_plans(
+            ep, targets, force=force, preview_sec=preview_sec,
+            subtitle_mode=subtitle_mode, overlay_srt=overlay_srt,
+            overlay_shift_ms=overlay_shift_ms, keep_all_content=keep_all_content,
+        )
+    except Exception:
+        _reset()
+        raise
+
+    # prepare 完成後原子轉成 running；若期間被取消則中止、不啟 coordinator（取消不被吞）。
+    # state=running 與 _COORDINATOR 在同一把鎖內一起設定，避免 cancel_job 讀到 running
+    # 卻拿到還沒更新的舊 coordinator（會跳去輪詢分支而非 join）。
+    coordinator = threading.Thread(
+        target=_run_queue,
+        args=(plans,),
+        daemon=True,
+    )
+    with _LOCK:
+        aborted = bool(_STATE["cancelled"])
+        if not aborted:
+            _COORDINATOR = coordinator
+            _STATE.update({
+                "state": "running",
+                "current": targets[0],
+                "index": 0,
+                "percent": 0.0,
+                "eta_s": None,
+                "out_path": str(plans[0]["out"]),
+                "output_files": [],
+            })
+    if aborted:
+        _reset()
+        return {"targets": [], "out_paths": [], "cancelled": True}
+
+    coordinator.start()
+
+    return {
+        "targets": list(targets),
+        "out_paths": [str(p["out"]) for p in plans],
+    }
+
+
+def _build_plans(
+    ep: Episode,
+    targets: list[str],
+    force: bool = False,
+    preview_sec: int | None = None,
+    subtitle_mode: str = "burn",
+    overlay_srt: Path | None = None,
+    overlay_shift_ms: int = 0,
+    keep_all_content: bool = False,
+) -> list[dict]:
+    """為每個 target 跑 prepare_assembly，任一失敗直接往外拋（整批拒絕）。"""
     plans = []
     for t in targets:
         # 原速 MP3：純音訊 + 含片頭尾 + 套編輯但不加速；走 yt 管線的 audio_only 分支。
@@ -161,30 +258,7 @@ def start_job(
             deletions_override=del_override,
         ))
 
-    _reset(
-        state="running",
-        queue=list(targets),
-        current=targets[0],
-        index=0,
-        total=len(targets),
-        percent=0.0,
-        eta_s=None,
-        out_path=str(plans[0]["out"]),
-        output_files=[],
-        started_at=monotonic(),
-    )
-
-    coordinator = threading.Thread(
-        target=_run_queue,
-        args=(plans,),
-        daemon=True,
-    )
-    coordinator.start()
-
-    return {
-        "targets": list(targets),
-        "out_paths": [str(p["out"]) for p in plans],
-    }
+    return plans
 
 
 def _cancelled() -> bool:

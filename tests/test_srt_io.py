@@ -187,6 +187,81 @@ def test_time_override_partial_on_split_keeps_char_alloc():
     assert p1_start in text
 
 
+# --- 功能2B：merges（把字卡併進上一張，時間 = 上一張.start → 被併卡.end）---
+
+
+def test_merge_extends_previous_end_and_drops_card():
+    """併卡 2 進卡 1：只剩 2 張卡；卡 1 結束時間延到卡 2 的結束，卡 2 不單獨輸出。
+    合併後文字由 caller 用 override 落在卡 1（這裡驗證時間 + 掉卡）。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "你好"},
+        {"idx": 2, "start": 2.0, "end": 4.0, "text": "世界"},
+        {"idx": 3, "start": 4.0, "end": 6.0, "text": "再見"},
+    ]
+    text, idx_map = srt_io.serialize_with_map(
+        cards, overrides={1: "你好世界"}, merges={2}
+    )
+    # 只剩卡 1、卡 3 兩張輸出（卡 2 被併掉）
+    assert idx_map == [(1, 0), (3, 0)]
+    assert text.count("-->") == 2
+    # 卡 1：合併文字 + 時間延到 4.0
+    assert "你好世界" in text
+    assert "00:00:00,000 --> 00:00:04,000" in text
+
+
+def test_merge_first_card_has_no_previous_ignored():
+    """第一張卡沒有上一張可併 → 忽略 merge，照常輸出。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "你好"},
+        {"idx": 2, "start": 2.0, "end": 4.0, "text": "世界"},
+    ]
+    text, idx_map = srt_io.serialize_with_map(cards, merges={1})
+    assert idx_map == [(1, 0), (2, 0)]
+    assert text.count("-->") == 2
+
+
+def test_merge_extends_to_merged_card_time_override_end():
+    """被併卡若有 time_override，延伸的結束時間用 override 的 end。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "A"},
+        {"idx": 2, "start": 2.0, "end": 4.0, "text": "B"},
+    ]
+    text, _ = srt_io.serialize_with_map(
+        cards, merges={2}, time_overrides={(2, 0): (2.0, 5.5)}
+    )
+    assert "00:00:00,000 --> 00:00:05,500" in text
+    assert text.count("-->") == 1
+
+
+def test_merge_folds_into_previous_split_last_part():
+    """上一張是切句卡 → 併進它的最後一段（延伸最後一段的結束時間）。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 4.0, "text": "前後"},
+        {"idx": 2, "start": 4.0, "end": 6.0, "text": "尾"},
+    ]
+    text, idx_map = srt_io.serialize_with_map(
+        cards, splits={1: ["前", "後"]}, merges={2}
+    )
+    # 切句 2 段 + 併掉卡 2 → 仍 2 張，最後一張是 (1,1)
+    assert idx_map == [(1, 0), (1, 1)]
+    assert text.count("-->") == 2
+    # (1,1) 的結束延到卡 2 的結束 6.0
+    assert "00:00:06,000" in text
+
+
+def test_merge_multiple_chain_into_first():
+    """卡 2、3 同時併進卡 1 → 只剩 1 張，時間 0→6。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "一"},
+        {"idx": 2, "start": 2.0, "end": 4.0, "text": "二"},
+        {"idx": 3, "start": 4.0, "end": 6.0, "text": "三"},
+    ]
+    text, idx_map = srt_io.serialize_with_map(cards, merges={2, 3})
+    assert idx_map == [(1, 0)]
+    assert text.count("-->") == 1
+    assert "00:00:00,000 --> 00:00:06,000" in text
+
+
 def test_split_sec_per_char_matches_frontend_constant():
     """防漂移：app.js 的 SPLIT_SEC_PER_CHAR 必須跟後端 srt_io 同值。
 
