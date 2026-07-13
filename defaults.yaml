@@ -19,8 +19,8 @@ resegment:
 reflow:
   gap: 0.3            # 同講者、間隔 < 此值 → 同一 run 一起重切（放大＝更少被換氣打斷）
   max_w: 16          # 單一語句 > 此值才交 word_break 評分切
-  merge_short: false # true＝保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target
-                     #（治 Breeze 逐字殘留：『還好／一點』併成『還好一點』）。預設 false＝只併單字碎卡
+  merge_short: true  # 全域啟用：保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target
+                     #（治 Breeze 逐字殘留：『還好／一點』併成『還好一點』）。false＝只併單字碎卡
   merge_target: 9    # merge_short 的併接上限字數（人手實測中位數 ≈9，避免併過頭跨子句）
 
 # 編輯介面標紅「可疑空拍卡」的門檻。三條 OR，命中任一條就標紅。
