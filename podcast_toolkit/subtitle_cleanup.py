@@ -147,6 +147,29 @@ def _has_cjk_space(text: str) -> bool:
     return False
 
 
+# 跨講者硬斷歸同 run 用：相鄰卡間隔 ≤ 此秒數才視為 Breeze「詞中間 0 秒硬斷」（遠低於一個氣口）
+_MERGE_GAP = 0.12
+# 判詞界取前卡尾/後卡頭各 N 字接起來跑 jieba（對齊 seg_check._STRADDLE_WIN）
+_MERGE_WIN = 6
+
+
+def _boundary_midword(prev_text: str, cur_text: str) -> bool:
+    """兩段文字相接時，卡界是否落在 jieba 詞中間（有詞跨界）。
+
+    兩端須皆中文字；取前段尾 _MERGE_WIN 字＋後段頭 _MERGE_WIN 字接起來跑 jieba，
+    卡界位置若不在詞界上＝有詞被切開。無 jieba（word_break_ok 回 None）→ 回 False
+    （等同關閉此判斷）。給 reflow_by_phrases 分 run 判「跨講者硬斷點」用。
+    """
+    from podcast_toolkit import word_break
+    p = re.sub(r"\s+", " ", (prev_text or "").replace("\n", " ")).strip()
+    c = re.sub(r"\s+", " ", (cur_text or "").replace("\n", " ")).strip()
+    if not p or not c or not (_is_cjk(p[-1]) and _is_cjk(c[0])):
+        return False
+    tail, head = p[-_MERGE_WIN:], c[:_MERGE_WIN]
+    pts = word_break.word_break_ok(tail + head)
+    return pts is not None and len(tail) not in pts
+
+
 def _merge_runts(group: list[dict], max_w: int, reaction) -> list[dict]:
     """語句 group 內把單字碎卡（Breeze 逐字殘留）併進鄰卡，補足 reflow「只切不併」的缺口。
 
@@ -211,11 +234,20 @@ def reflow_by_phrases(
     runs: list[list[dict]] = []
     for c in ordered:
         sp = speakers.get(int(c["idx"]))
-        if (runs and speakers.get(int(runs[-1][-1]["idx"])) == sp
-                and float(c["start"]) - float(runs[-1][-1]["end"]) < gap):
-            runs[-1].append(c)
-        else:
-            runs.append([c])
+        if runs:
+            prev = runs[-1][-1]
+            dt = float(c["start"]) - float(prev["end"])
+            same_sp = speakers.get(int(prev["idx"])) == sp
+            # 同講者且未跨氣口 → 同 run（原行為）；
+            # 講者不同但近乎 0 秒相接、且卡界落在詞中間 → 也歸同 run：這是 Breeze 在
+            # 詞中間硬斷處把尾字誤標成另一講者（國貿/主播型），0 秒＋詞內延續＝同一句話。
+            # 歸同 run 後，run 內既有的 merge_short／_merge_runts 會把兩半併回整詞、講者統一。
+            if dt < gap and (same_sp or
+                             (dt <= _MERGE_GAP
+                              and _boundary_midword(prev["text"], c["text"]))):
+                runs[-1].append(c)
+                continue
+        runs.append([c])
 
     new_cards: list[dict] = []
     new_spk: dict[int, str] = {}

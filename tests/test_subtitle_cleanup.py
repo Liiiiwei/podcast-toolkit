@@ -240,3 +240,43 @@ def test_reflow_runt_not_merged_across_clause_space():
     cards = _cards((0.0, 2.0, "那你先請說 好"), (2.0, 4.0, "我們開始"))
     new, _ = reflow_by_phrases(cards, {1: "c", 2: "c"}, gap=0.3, max_w=16)
     assert [c["text"] for c in new] == ["那你先請說", "好我們開始"]
+
+
+# ---- 跨講者詞中間硬斷歸位（Breeze 0 秒斷詞＋誤標尾字）----
+# 情境：Breeze rhythm_segment 在詞中間硬斷（間隔 0 秒），並把尾字誤標成另一講者。
+# 兩半落入不同 run，run 內既有的合併永遠碰不到 → 詞被永久切在兩張卡。
+# 修法：講者不同但近乎 0 秒相接、且卡界落在詞中間 → 歸同 run，再讓 run 內合併把它併回。
+
+def test_reflow_joins_zero_gap_midword_across_speaker_single_char():
+    """單字尾被誤標成別的講者（彼｜此，0 秒）→ 併回「彼此」、講者統一；merge_short 關也成立。"""
+    cards = _cards((0.0, 0.4, "彼"), (0.4, 0.9, "此"))
+    new, ns = reflow_by_phrases(cards, {1: "a", 2: "c"}, gap=0.3, max_w=16)
+    assert [c["text"] for c in new] == ["彼此"]
+    assert ns == {1: "a"}
+
+
+def test_reflow_joins_zero_gap_midword_across_speaker_multichar():
+    """多字碎卡跨講者硬斷（然後國｜貿啊，0 秒）→ 生產預設 merge_short 併回整句。"""
+    cards = _cards((0.0, 0.6, "然後國"), (0.6, 1.1, "貿啊"))
+    new, ns = reflow_by_phrases(
+        cards, {1: "a", 2: "c"}, gap=0.3, max_w=16, merge_short=True)
+    assert [c["text"] for c in new] == ["然後國貿啊"]
+    assert ns == {1: "a"}
+
+
+def test_reflow_midword_across_speaker_kept_when_real_pause():
+    """跨講者詞中間但有真停頓（gap 0.4 > 0 秒判準）→ 不歸同 run、維持切開、講者不動。"""
+    cards = _cards((0.0, 0.6, "然後國"), (1.0, 1.5, "貿啊"))
+    new, ns = reflow_by_phrases(
+        cards, {1: "a", 2: "c"}, gap=0.3, max_w=16, merge_short=True)
+    assert [c["text"] for c in new] == ["然後國", "貿啊"]
+    assert ns == {1: "a", 2: "c"}
+
+
+def test_reflow_gapless_across_speaker_not_joined_when_clean_boundary():
+    """跨講者 0 秒但卡界是乾淨詞界（你好｜謝謝，正常無縫換手）→ 不誤黏、講者保留。"""
+    cards = _cards((0.0, 0.6, "你好"), (0.6, 1.1, "謝謝"))
+    new, ns = reflow_by_phrases(
+        cards, {1: "a", 2: "c"}, gap=0.3, max_w=16, merge_short=True)
+    assert [c["text"] for c in new] == ["你好", "謝謝"]
+    assert ns == {1: "a", 2: "c"}
