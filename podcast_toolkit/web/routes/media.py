@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from podcast_toolkit import waveform
 from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.web import video
 from podcast_toolkit.web.episode_io import _list_episode_files
@@ -65,6 +66,31 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail="不支援預覽的音檔副檔名")
         mime = AUDIO_MIME.get(ext, "audio/mpeg")
         return video.range_response(target, request.headers.get("range"), media_type=mime)
+
+    @app.get("/api/waveform")
+    def get_waveform(path: str | None = None):
+        """字幕卡時間軸波形：回 peaks（振幅輪廓）＋ 靜音區間 ＋ 時長。
+
+        path 空 → 用主音訊（單軌集母帶，與字幕同一時間軸）；否則沿用集內路徑驗證。
+        重活（解碼／算峰值／偵測靜音）在後端算一次並落 04_工作檔/ 快取，前端只收
+        壓縮後的小陣列畫一次；換檔（簽章變）自動重算。
+        """
+        ep = ctx.require_ep()
+        if path:
+            target = validate_episode_path(ep, path)
+            if not target.is_file():
+                raise HTTPException(status_code=404, detail=f"找不到檔案：{path}")
+        else:
+            try:
+                target = ep.main_audio()
+            except FileNotFoundError:
+                raise HTTPException(status_code=404, detail="這集還沒有音訊")
+        cache = ep.subdir("work") / f"{ep.name}_waveform_{target.stem}.json"
+        try:
+            data = waveform.build_waveform(target, cache)
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(data)
 
     @app.post("/api/upload")
     async def post_upload(file: UploadFile = File(...)):

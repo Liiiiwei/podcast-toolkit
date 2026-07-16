@@ -38,6 +38,7 @@ const state = {
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
   tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
+  waveform: null, // 時間軸波形資料 {peaks, silences, duration,...}；後端 /api/waveform 算好，背景載入
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
@@ -1225,6 +1226,12 @@ function renderCardTimeline() {
     block.append(hL, hR);
     tl.appendChild(block);
   }
+  // 波形層：後端 /api/waveform 算好的振幅輪廓，半透明蓋在字幕塊上。跟播放頭一樣每次
+  // render 重建（tl.innerHTML 清空會清掉它），資料就緒後才畫出內容。
+  const wfc = document.createElement("canvas");
+  wfc.className = "tl-waveform";
+  wfc.id = "tl-waveform";
+  tl.appendChild(wfc);
   // 播放頭：跟著影片時間移動的豎線（updateTimelinePlayhead 每次 timeupdate 定位）
   const ph = document.createElement("div");
   ph.className = "tl-playhead";
@@ -1232,6 +1239,15 @@ function renderCardTimeline() {
   tl.appendChild(ph);
   _applyTlZoomWidth();
   updateTimelinePlayhead($("#video").currentTime);
+  drawTlWaveform(); // 若波形已載入就即刻畫；否則下面背景載入回來會再畫
+  // 背景載波形（首次要 ffmpeg 解碼，可能 20~40s）：不 await、不擋首屏。只抓一次——
+  // flag 擋住每次 render 重抓；換集會整頁重載、state 重置。轉錄前（沒卡）不抓。
+  if (!state.waveform && !state._wfFetching && !state.needsTranscribe) {
+    state._wfFetching = true;
+    loadWaveform().finally(() => {
+      state._wfFetching = false;
+    });
+  }
 }
 
 // 三邊同步：影片時間 → 時間軸播放頭位置 + 高亮當前 block（縮放時自動捲到可見）
@@ -1259,6 +1275,95 @@ function updateTimelinePlayhead(t) {
     const blk = tl.querySelector(`.tl-block[data-key="${_lastActiveKey}"]`);
     if (blk) blk.classList.add("playing");
   }
+}
+
+// === 時間軸波形（Option B：後端 /api/waveform 一次算好 peaks + 靜音，前端只畫不算）===
+// 硬條件：不影響檔案解析（後端只讀來源、落 04_工作檔/ 快取）、前端不卡（只在「載入完成／
+// 縮放／視窗 resize」重畫，播放時完全不重畫——播放頭是獨立 DOM 用 CSS 移動）。
+const TL_WAVE_MAX_PX = 16384; // canvas 背板單邊上限（WebKit 安全值）；超過改 CSS 拉伸，高倍率略糊但不空白
+
+async function loadWaveform() {
+  // 背景抓：首次要解碼可能久，失敗就當沒有，時間軸照常運作。抓回來才畫一次。
+  try {
+    const r = await fetch("/api/waveform", { cache: "no-store" });
+    if (!r.ok) {
+      state.waveform = null;
+      return;
+    }
+    const data = await r.json();
+    if (!data || !Array.isArray(data.peaks) || !data.peaks.length) {
+      state.waveform = null;
+      return;
+    }
+    state.waveform = data;
+    drawTlWaveform();
+  } catch (_) {
+    state.waveform = null;
+  }
+}
+
+function drawTlWaveform() {
+  const tl = $("#card-timeline");
+  const canvas = $("#tl-waveform");
+  const wf = state.waveform;
+  if (!tl || !canvas || !wf || !wf.peaks || !wf.peaks.length) return;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  const t0 = parseFloat(tl.dataset.t0 || "0");
+  const total = parseFloat(tl.dataset.total || "1");
+  const cssW = tl.clientWidth;
+  const cssH = tl.clientHeight;
+  if (!(total > 0) || cssW < 2 || cssH < 2) return;
+  // 背板尺寸吃 devicePixelRatio 求銳利，但封頂避免高倍率下超出 canvas 限制而整片空白
+  const dpr = window.devicePixelRatio || 1;
+  const backW = Math.min(Math.max(1, Math.round(cssW * dpr)), TL_WAVE_MAX_PX);
+  const backH = Math.max(1, Math.round(cssH * dpr));
+  if (canvas.width !== backW) canvas.width = backW;
+  if (canvas.height !== backH) canvas.height = backH;
+  ctx.clearRect(0, 0, backW, backH);
+
+  const peaks = wf.peaks;
+  const nP = peaks.length;
+  const peakMax = wf.peak_max || 100;
+  const secPerBucket = (wf.bucket_ms || 20) / 1000;
+  // 每個背板欄位的高度：涵蓋多個 bucket → 取 max（縮小時）；不足一 bucket → 取最近（放大時，免斷點）
+  const colV = new Float32Array(backW);
+  for (let x = 0; x < backW; x++) {
+    let k0 = Math.floor((t0 + (x / backW) * total) / secPerBucket);
+    let k1 = Math.floor((t0 + ((x + 1) / backW) * total) / secPerBucket);
+    let v = 0;
+    if (k1 <= k0) {
+      const k = k0 < 0 ? 0 : k0 >= nP ? nP - 1 : k0;
+      v = peaks[k] || 0;
+    } else {
+      if (k0 < 0) k0 = 0;
+      if (k1 > nP) k1 = nP;
+      for (let k = k0; k < k1; k++) if (peaks[k] > v) v = peaks[k];
+    }
+    colV[x] = v;
+  }
+
+  // 中線鏡像的填色波形；半透明讓底下的字幕塊/高亮仍可讀
+  const mid = backH / 2;
+  const amp = backH * 0.46;
+  ctx.beginPath();
+  for (let x = 0; x < backW; x++) {
+    const y = mid - (colV[x] / peakMax) * amp;
+    if (x === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  for (let x = backW - 1; x >= 0; x--) {
+    ctx.lineTo(x, mid + (colV[x] / peakMax) * amp);
+  }
+  ctx.closePath();
+  const accent =
+    getComputedStyle(document.documentElement)
+      .getPropertyValue("--accent")
+      .trim() || "#4a9eff";
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.4;
+  ctx.fill();
+  ctx.globalAlpha = 1;
 }
 
 // === 時間軸縮放（zoom + 橫向捲動）===
@@ -1304,6 +1409,7 @@ function setTlZoom(z, { anchorClientX = null } = {}) {
     const newW = tl.offsetWidth || scroll.clientWidth * z;
     scroll.scrollLeft = frac * newW - anchorOffset;
   }
+  drawTlWaveform(); // 寬度變了 → 波形背板重算重畫（只在縮放時，一次）
   try {
     localStorage.setItem("edit.tlZoom", String(z));
   } catch (_) {}
@@ -1329,6 +1435,15 @@ function startTimelineDrag(e, r, edge) {
   try {
     handle.setPointerCapture(e.pointerId);
   } catch (_) {}
+  // 拖曳精確時間讀值：接到 body（fixed 定位，不受時間軸 overflow:hidden 裁切）
+  let readout = document.getElementById("tl-drag-readout");
+  if (!readout) {
+    readout = document.createElement("div");
+    readout.id = "tl-drag-readout";
+    readout.className = "tl-drag-readout";
+    document.body.appendChild(readout);
+  }
+  _tlDrag.readout = readout;
   handle.addEventListener("pointermove", onTimelineDragMove);
   handle.addEventListener("pointerup", endTimelineDrag);
   handle.addEventListener("pointercancel", endTimelineDrag);
@@ -1344,6 +1459,30 @@ function onTimelineDragMove(e) {
   const prev = rendered[i - 1];
   const next = rendered[i + 1];
   let t = t0 + ((e.clientX - rect.left) / rect.width) * total;
+  // 加分項：拖曳吸附靜音邊界（後端偵測的 silences）。按住 Alt 暫時關閉吸附。
+  // 吸附半徑用像素換算（約 8px），縮放時手感一致；縮到很小則幾乎不吸附（本來也難精準對位）。
+  let snapped = false;
+  const sil = state.waveform && state.waveform.silences;
+  if (!e.altKey && sil && sil.length) {
+    const snapSec = Math.min(0.3, (8 / rect.width) * total);
+    let bestD = snapSec;
+    let best = null;
+    for (const iv of sil) {
+      // 拖 start 優先吸「靜音結束＝說話起點」；拖 end 優先吸「說話止＝靜音起點」
+      const cands = edge === "start" ? [iv[1], iv[0]] : [iv[0], iv[1]];
+      for (const b of cands) {
+        const d = Math.abs(b - t);
+        if (d < bestD) {
+          bestD = d;
+          best = b;
+        }
+      }
+    }
+    if (best != null) {
+      t = best;
+      snapped = true;
+    }
+  }
   let syncKey = null;
   let syncStart = 0;
   let syncEnd = 0;
@@ -1383,6 +1522,13 @@ function onTimelineDragMove(e) {
       el.classList.add("edited");
     }
   }
+  // 拖曳讀值：跟游標顯示這一刻的精確時間（0.1s），吸附靜音時標注——直接回應「難判斷開始/結束點」
+  if (_tlDrag.readout) {
+    _tlDrag.readout.textContent = fmtTimeD(t) + (snapped ? "  ·吸附" : "");
+    _tlDrag.readout.classList.toggle("snapped", snapped);
+    _tlDrag.readout.style.left = `${e.clientX}px`;
+    _tlDrag.readout.style.top = `${e.clientY}px`;
+  }
 }
 
 function endTimelineDrag(e) {
@@ -1394,6 +1540,7 @@ function endTimelineDrag(e) {
   handle.removeEventListener("pointermove", onTimelineDragMove);
   handle.removeEventListener("pointerup", endTimelineDrag);
   handle.removeEventListener("pointercancel", endTimelineDrag);
+  if (_tlDrag.readout) _tlDrag.readout.remove();
   _tlDrag = null;
   // 全量同步：卡片時間欄 / ruler / caption / 未儲存徽章 / timeline 重建
   rerenderEditState();
@@ -3092,6 +3239,16 @@ $("#card-timeline-scroll")?.addEventListener(
   { passive: false },
 );
 
+// 視窗縮放 → 時間軸寬度改變 → 波形背板需重算重畫（rAF 節流，連續 resize 只畫最後一次）
+let _wfResizeRaf = null;
+window.addEventListener("resize", () => {
+  if (_wfResizeRaf != null) return;
+  _wfResizeRaf = requestAnimationFrame(() => {
+    _wfResizeRaf = null;
+    drawTlWaveform();
+  });
+});
+
 // 頭尾 trim 按鈕：用目前播放位置設值，再次按同位置 → 視為清除
 $("#trim-head-btn").addEventListener("click", () => {
   const v = $("#video");
@@ -3945,17 +4102,14 @@ $("#save-btn").addEventListener("click", async () => {
     // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
     await loadEpisodeState();
     renderCards();
-    // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
+    // 引導使用者按合成（高亮輸出鈕）
     const ytBtn = $("#assemble-yt-btn");
-    const reelsBtn = $("#assemble-reels-btn");
     // 合成鈕已收進「輸出」下拉，存檔後自動展開讓引導用的 pulse 看得到
     $("#output-menu-btn")?._popover?.open();
     ytBtn?.classList.add("pulse");
-    reelsBtn?.classList.add("pulse");
     ytBtn?.scrollIntoView({ block: "nearest", inline: "nearest" });
     setTimeout(() => {
       ytBtn?.classList.remove("pulse");
-      reelsBtn?.classList.remove("pulse");
     }, 6000);
     setTimeout(() => {
       setSaveBtnLabel("check", "完成並儲存");
@@ -5677,9 +5831,6 @@ function setupAssembleButtons() {
 
   $("#assemble-yt-btn").addEventListener("click", () => {
     launch(["yt"], "合成 YT 16:9 完整版");
-  });
-  $("#assemble-reels-btn").addEventListener("click", () => {
-    launch(["reels"], "合成 Reels 9:16 短版");
   });
   $("#assemble-mp3-btn")?.addEventListener("click", () => {
     launch(["mp3"], "輸出原速 MP3（純音訊）");
