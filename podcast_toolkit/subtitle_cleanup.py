@@ -311,6 +311,31 @@ def reflow_by_phrases(
     return new_cards, new_spk
 
 
+def clamp_overlaps(
+    cards: list[dict],
+    speakers: dict[int, str] | None = None,
+    *,
+    eps: float = 0.001,
+) -> list[dict]:
+    """把相鄰卡的時間重疊夾掉：前卡 end 若越過後卡 start，夾回後卡 start。
+
+    依 start 排序後掃相鄰對。speakers 空／None（單軌）→ 所有相鄰重疊都夾；有 speakers
+    （分軌）→ 只夾「同一講者」的重疊——不同（或未知）講者的時間重疊是分軌雙人同時說話
+    的既定設計（見 srt_merge），原樣保留。只在真的重疊（前卡 end > 後卡 start + eps）
+    且夾完前卡仍 start < end 時才動手；後卡被前卡完全包住之類夾不動的，跳過交給
+    seg_check ⑤ 標出。回傳新 list（每張卡淺複製、依 start 排序），不改輸入。
+    """
+    speakers = speakers or {}
+    ordered = sorted((dict(c) for c in cards), key=lambda c: float(c["start"]))
+    for prev, cur in zip(ordered, ordered[1:]):
+        if speakers and speakers.get(int(prev["idx"])) != speakers.get(int(cur["idx"])):
+            continue                                  # 不同/未知講者 → 分軌同時說話，保留
+        cs = float(cur["start"])
+        if float(prev["end"]) > cs + eps and float(prev["start"]) < cs:
+            prev["end"] = cs
+    return ordered
+
+
 def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
     """讀 _final_v2.srt + speakers.json → 依語句重切 → 寫回（先備份 .pre-reflow.bak）。
 
@@ -343,6 +368,8 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
     )
     if not new_cards:
         return 0
+    # 夾掉相鄰同講者卡的時間重疊（單軌無 speakers → 全夾）：避免 UI 兩短句疊字
+    new_cards = clamp_overlaps(new_cards, new_spk)
     shutil.copy(v2, v2.with_name(f"{v2.stem}.pre-reflow.bak{v2.suffix}"))
     if spk_path.exists():
         shutil.copy(spk_path, spk_path.with_name(spk_path.name + ".pre-reflow.bak"))

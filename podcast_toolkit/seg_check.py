@@ -1,11 +1,13 @@
 """podcast check-seg：斷句體檢（純讀取，不改字幕）。
 
-對一集的 _final_v2.srt 掃四類「斷句異味卡」，輸出卡號清單讓人到編輯器跳對：
+對一集的 _final_v2.srt 掃五類「斷句異味卡」，輸出卡號清單讓人到編輯器跳對：
   ① 過長        顯示字數 > resegment.hardlen（resegment 硬切上限，照定義不該超）
   ② 掛尾連接詞   卡尾停在 dangle_endings（然後/所以/因為…），讀起來像沒講完
   ③ 過短非反應詞 顯示字數 < SHORT_CHARS 且不在 reaction_words（多為自然停頓，可忽略大半）
   ④ 跨卡切詞     相鄰兩卡間隔 ≤ straddle_gap、且 jieba 詞（≥2 字）跨越卡界
                 （然/後、耳/機…）；jieba 未安裝時此味跳過並註明
+  ⑤ 時間重疊     相鄰卡時間相疊（前卡未結束、後卡已開始）→ UI 疊字/兩短句重疊；
+                有 speakers（分軌）時只記同講者重疊，跨講者同時說話是設計不算
 
 門檻全讀 cfg["resegment"]，字數用 sentence_resegment._is_punct 算（與斷句引擎同一把尺）。
 """
@@ -25,6 +27,8 @@ SHORT_CHARS = 3
 STRADDLE_GAP = 0.35
 # ④ 取前卡尾/後卡頭各 N 字接起來跑 jieba（詞界判斷不需要整卡）
 _STRADDLE_WIN = 6
+# ⑤ 時間重疊：相鄰卡 前卡 end > 後卡 start + 此秒數 才判為重疊（濾浮點雜訊）
+_OVERLAP_EPS = 0.001
 # 行首 [Mic1] / [郝慧川] 之類講者標籤（對齊 ingest_breeze._LABEL_RE）
 _LABEL_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*")
 
@@ -105,10 +109,31 @@ def _scan_straddle(cards: list, gap_thr: float) -> list | None:
     return out
 
 
-def scan(cards: list, rcfg: dict) -> dict:
-    """回傳四類異味卡。純函式，方便測試。
+def _scan_overlap(cards: list, speakers: dict | None = None) -> list:
+    """⑤ 時間重疊：回傳 [(前卡idx, 後卡idx, 重疊秒數), ...]。
 
-    cards 每項 (idx, text) 或 (idx, text, start, end)；④ 只在帶時間時檢。
+    只檢帶時間（4 欄）的相鄰對，依 start 排序；前卡 end > 後卡 start + _OVERLAP_EPS
+    即重疊。speakers 提供時只記「同一講者」的重疊——不同（或未知）講者的時間重疊是分軌
+    雙人同時說話的既定設計（見 srt_merge），不算異味；speakers 空／None（單軌）→ 全記。
+    """
+    timed = [c for c in cards if len(c) >= 4]
+    ordered = sorted(timed, key=lambda c: float(c[2]))
+    speakers = speakers or {}
+    out = []
+    for prev, cur in zip(ordered, ordered[1:]):
+        if speakers and speakers.get(int(prev[0])) != speakers.get(int(cur[0])):
+            continue
+        ov = float(prev[3]) - float(cur[2])
+        if ov > _OVERLAP_EPS:
+            out.append((prev[0], cur[0], round(ov, 3)))
+    return out
+
+
+def scan(cards: list, rcfg: dict, speakers: dict | None = None) -> dict:
+    """回傳五類異味卡。純函式，方便測試。
+
+    cards 每項 (idx, text) 或 (idx, text, start, end)；④⑤ 只在帶時間時檢。
+    speakers（{idx: 講者}）供 ⑤ 區分分軌同時說話；不傳＝單軌，⑤ 記所有重疊。
     """
     hardlen = rcfg["hardlen"]
     dangle = tuple(rcfg["dangle_endings"])
@@ -128,12 +153,15 @@ def scan(cards: list, rcfg: dict) -> dict:
         if _disp_len(txt) < SHORT_CHARS and compact not in reaction:
             shortc.append((idx, txt))
     straddle = _scan_straddle(cards, float(rcfg.get("straddle_gap", STRADDLE_GAP)))
-    return {"long": longc, "dangle": dangling, "short": shortc, "straddle": straddle}
+    overlap = _scan_overlap(cards, speakers)
+    return {"long": longc, "dangle": dangling, "short": shortc,
+            "straddle": straddle, "overlap": overlap}
 
 
 def _report(name: str, total: int, res: dict, *, limit: int, hardlen: int) -> None:
     longc, dangling, shortc = res["long"], res["dangle"], res["short"]
     straddle = res.get("straddle")
+    overlap = res.get("overlap") or []
     print(f"\n{name}　共 {total} 卡")
     print(f"  ① 過長(>{hardlen}字)：{len(longc)} 卡"
           + ("　✅ 健康（resegment 硬切上限就是此值）" if not longc else "　⚠️ 該為 0，超出代表沒切乾淨"))
@@ -163,7 +191,13 @@ def _report(name: str, total: int, res: dict, *, limit: int, hardlen: int) -> No
         if len(straddle) > limit:
             print(f"      …還有 {len(straddle) - limit} 對")
 
-    tot = len(longc) + len(dangling) + len(shortc) + len(straddle or [])
+    print(f"  ⑤ 時間重疊：{len(overlap)} 對　⚠️ 前卡未結束下一卡已開始 → 疊字/兩短句重疊")
+    for pidx, cidx, ov in overlap[:limit]:
+        print(f"      #{pidx}→#{cidx}  疊 {ov:.3f}s")
+    if len(overlap) > limit:
+        print(f"      …還有 {len(overlap) - limit} 對")
+
+    tot = len(longc) + len(dangling) + len(shortc) + len(straddle or []) + len(overlap)
     pct = tot / total * 100 if total else 0.0
     print(f"  → 異味卡合計 {tot} / {total}（{pct:.1f}%）")
 
@@ -185,6 +219,9 @@ def run(episode_dir: Path, *, limit: int = 12) -> int:
     word_break.configure(rcfg.get("jieba_dict"))
     word_break.add_words([g.get("canonical") for g in (ep.cfg.get("glossary") or [])])
     cards = parse_srt_timed(src)
-    res = scan(cards, rcfg)
+    # ⑤ 時間重疊：載入 speakers（分軌集才有）→ 只記同講者重疊，跨講者同時說話不算
+    from podcast_toolkit import cameras_io
+    speakers = cameras_io.load(ep.output_v2_speakers_json())
+    res = scan(cards, rcfg, speakers)
     _report(src.name, len(cards), res, limit=limit, hardlen=rcfg["hardlen"])
     return 0

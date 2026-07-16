@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from podcast_toolkit.subtitle_cleanup import (
-    destrand_cards, reflow_by_phrases, smooth_speakers,
+    clamp_overlaps, destrand_cards, reflow_by_phrases, smooth_speakers,
 )
 
 
@@ -280,3 +280,48 @@ def test_reflow_gapless_across_speaker_not_joined_when_clean_boundary():
         cards, {1: "a", 2: "c"}, gap=0.3, max_w=16, merge_short=True)
     assert [c["text"] for c in new] == ["你好", "謝謝"]
     assert ns == {1: "a", 2: "c"}
+
+
+# ---- clamp_overlaps（相鄰卡時間重疊夾取，問題一：兩短句疊字）----
+
+def test_clamp_single_track_clamps_overlap():
+    """單軌（不傳 speakers）：前卡 end 越過後卡 start → 夾回後卡 start。"""
+    cards = _cards((0.0, 2.0, "前句"), (1.5, 3.0, "後句"))
+    out = clamp_overlaps(cards)
+    assert (out[0]["start"], out[0]["end"]) == (0.0, 1.5)
+    assert (out[1]["start"], out[1]["end"]) == (1.5, 3.0)   # 後卡不動
+
+
+def test_clamp_does_not_mutate_input():
+    """回傳新 list，不改原輸入卡。"""
+    cards = _cards((0.0, 2.0, "前句"), (1.5, 3.0, "後句"))
+    clamp_overlaps(cards)
+    assert cards[0]["end"] == 2.0                           # 原卡不動
+
+
+def test_clamp_same_speaker_clamps():
+    """分軌同一講者重疊 → 夾（同一人不會同時講兩句）。"""
+    cards = _cards((0.0, 2.0, "前句"), (1.5, 3.0, "後句"))
+    out = clamp_overlaps(cards, {1: "c", 2: "c"})
+    assert out[0]["end"] == 1.5
+
+
+def test_clamp_cross_speaker_preserved():
+    """分軌不同講者重疊 → 雙人同時說話的既定設計，原樣保留。"""
+    cards = _cards((0.0, 2.0, "前句"), (1.5, 3.0, "後句"))
+    out = clamp_overlaps(cards, {1: "a", 2: "c"})
+    assert out[0]["end"] == 2.0                             # 不夾
+
+
+def test_clamp_no_overlap_is_noop():
+    """無重疊 → 時間全不動（僅回排序後的淺複製）。"""
+    cards = _cards((0.0, 1.0, "前句"), (1.0, 2.0, "後句"))
+    out = clamp_overlaps(cards)
+    assert [(c["start"], c["end"]) for c in out] == [(0.0, 1.0), (1.0, 2.0)]
+
+
+def test_clamp_same_start_skipped():
+    """兩卡同 start（夾了會變零長）→ 跳過，交給 seg_check ⑤ 標出。"""
+    cards = _cards((1.0, 3.0, "前句"), (1.0, 2.0, "後句"))
+    out = clamp_overlaps(cards)
+    assert out[0]["end"] == 3.0                             # 沒被夾成 1.0

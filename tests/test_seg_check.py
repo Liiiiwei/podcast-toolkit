@@ -139,3 +139,49 @@ def test_run_on_episode_returns_0(tmp_episode_dir):
 def test_run_missing_v2_returns_3(tmp_episode_dir):
     Episode(tmp_episode_dir).output_v2_srt().unlink()
     assert seg_check.run(tmp_episode_dir) == 3
+
+
+# ---- ⑤ 時間重疊 ----
+
+def test_scan_flags_time_overlap_single_track():
+    """單軌（不傳 speakers）：前卡未結束下一卡已開始 → 記重疊、附秒數。"""
+    cards = [(1, "前面這句", 0.0, 2.0), (2, "後面這句", 1.5, 3.0)]
+    res = seg_check.scan(cards, RCFG4)
+    assert res["overlap"] == [(1, 2, 0.5)]
+
+
+def test_scan_overlap_same_speaker_flagged():
+    """分軌但同一講者重疊 → 仍記（同一人不可能同時講兩句）。"""
+    cards = [(1, "前面這句", 0.0, 2.0), (2, "後面這句", 1.5, 3.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "a", 2: "a"})
+    assert res["overlap"] == [(1, 2, 0.5)]
+
+
+def test_scan_overlap_cross_speaker_preserved():
+    """分軌不同講者重疊 → 雙人同時說話的既定設計，不記味。"""
+    cards = [(1, "前面這句", 0.0, 2.0), (2, "後面這句", 1.5, 3.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "a", 2: "b"})
+    assert res["overlap"] == []
+
+
+def test_scan_overlap_touching_boundary_not_flagged():
+    """前卡 end 剛好等於後卡 start（無縫相接）→ 不算重疊。"""
+    cards = [(1, "前面這句", 0.0, 2.0), (2, "後面這句", 2.0, 3.0)]
+    res = seg_check.scan(cards, RCFG4)
+    assert res["overlap"] == []
+
+
+def test_scan_overlap_untimed_cards_empty():
+    """舊 2 欄格式（無時間）→ 無從判重疊，回空清單。"""
+    res = seg_check.scan([(1, "前面這句"), (2, "後面這句")], RCFG4)
+    assert res["overlap"] == []
+
+
+def test_report_prints_overlap_line(capsys):
+    """報告要印出 ⑤ 時間重疊那一行與對數。"""
+    cards = [(1, "前面這句", 0.0, 2.0), (2, "後面這句", 1.5, 3.0)]
+    res = seg_check.scan(cards, RCFG4)
+    seg_check._report("x.srt", len(cards), res, limit=12, hardlen=23)
+    out = capsys.readouterr().out
+    assert "⑤ 時間重疊：1 對" in out
+    assert "#1→#2" in out
