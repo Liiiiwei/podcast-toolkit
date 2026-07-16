@@ -129,7 +129,7 @@ async function openEpisode(path, cardEl) {
   }
 }
 
-// 設定視窗「選資料夾…」：跳系統原生選資料夾 → 把路徑加進 roots-input（去重），免打字。
+// 設定視窗「選資料夾…」：跳系統原生選資料夾 → 直接填進「集數存放資料夾」欄位，免打字。
 async function pickRootFolder() {
   const btn = document.getElementById("roots-pick-btn");
   const input = document.getElementById("roots-input");
@@ -137,12 +137,7 @@ async function pickRootFolder() {
     const r = await fetch("/api/episode/pick", { method: "POST" });
     const data = await r.json();
     if (data.cancelled || !data.path) return;
-    const existing = input.value
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!existing.includes(data.path)) existing.push(data.path);
-    input.value = existing.join("\n");
+    input.value = data.path;
   });
 }
 
@@ -233,7 +228,7 @@ function openSettingsModal() {
   fetch("/api/config")
     .then((r) => r.json())
     .then((cfg) => {
-      input.value = (cfg.episode_roots || []).join("\n");
+      input.value = (cfg.episode_roots || [])[0] || "";
       renderConfigStatus(cfg);
       modal.showModal();
     });
@@ -243,10 +238,8 @@ async function saveSettings() {
   const btn = document.getElementById("settings-save");
   await withButton(btn, async () => {
     const input = document.getElementById("roots-input");
-    const roots = input.value
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const path = input.value.trim();
+    const roots = path ? [path] : [];
     const r = await fetch("/api/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -324,7 +317,8 @@ for (const id of ["new-date", "new-name"]) {
   });
 }
 document.getElementById("roots-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+  // 單行路徑欄位：Enter 直接儲存（含 Cmd/Ctrl+Enter）。
+  if (e.key === "Enter") {
     e.preventDefault();
     saveSettings();
   }

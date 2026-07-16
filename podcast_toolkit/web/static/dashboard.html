@@ -86,21 +86,22 @@
         </div>
 
         <label class="modal-label" for="roots-input"
-          >集數根目錄（每行一個路徑，預設 ~/Downloads）</label
+          >集數存放資料夾（所有集數都會建在這裡，預設 ~/Downloads）</label
         >
-        <textarea
-          id="roots-input"
-          rows="4"
-          placeholder="~/Downloads&#10;~/Podcasts"
-        ></textarea>
+        <input id="roots-input" type="text" placeholder="例如 ~/Podcasts" />
         <div class="roots-actions">
-          <button type="button" class="btn btn-ghost btn-sm" id="roots-pick-btn">
+          <button
+            type="button"
+            class="btn btn-ghost btn-sm"
+            id="roots-pick-btn"
+          >
             <span data-icon="folder-open"></span>
             <span>選資料夾…</span>
           </button>
           <span class="roots-hint">
-            建議選 Downloads／Desktop／Documents <strong>以外</strong>的資料夾，避開
-            macOS 權限問題（這幾個受保護資料夾常讓背景程式讀不到 → 集顯示「損毀」）。
+            建議選 Downloads／Desktop／Documents
+            <strong>以外</strong>的資料夾，避開 macOS
+            權限問題（這幾個受保護資料夾常讓背景程式讀不到 → 集顯示「損毀」）。
           </span>
         </div>
       </div>

@@ -1,4 +1,5 @@
 """FastAPI 五條路由的整合測試。"""
+import json
 import threading
 from pathlib import Path
 
@@ -570,9 +571,20 @@ def test_post_detect_silence_returns_400_when_no_main_video(client, tmp_episode_
 # --- A3：/api/episode/new 新集 wizard --------------------------------------
 
 
-def test_post_episode_new_creates_folder_and_switches(client, tmp_episode_dir):
-    """傳 date + name → 在當前集的父資料夾下建 'YYYYMMDD 集名' 並 switch holder。"""
-    parent = tmp_episode_dir.parent
+def _set_episode_roots(root: Path) -> None:
+    """把 episode_roots[0] 寫進隔離的 config（conftest 已把 CONFIG_PATH 導到 tmp）。"""
+    from podcast_toolkit.web import api
+
+    api.CONFIG_PATH.write_text(
+        json.dumps({"episode_roots": [str(root)]}), encoding="utf-8"
+    )
+
+
+def test_post_episode_new_creates_folder_and_switches(client, tmp_episode_dir, tmp_path):
+    """傳 date + name → 一律建在 episode_roots[0]（集中存放）並 switch holder。"""
+    lib = tmp_path / "podcast-library"
+    lib.mkdir()
+    _set_episode_roots(lib)
     r = client.post(
         "/api/episode/new",
         json={"date": "20260610", "name": "新一集"},
@@ -580,7 +592,7 @@ def test_post_episode_new_creates_folder_and_switches(client, tmp_episode_dir):
     assert r.status_code == 200, r.text
     body = r.json()
     new_path = Path(body["path"])
-    assert new_path == parent / "20260610 新一集"
+    assert new_path == lib / "20260610 新一集"
     assert new_path.is_dir()
     # init 後該有 episode.yaml 跟三個子資料夾
     assert (new_path / "episode.yaml").is_file()
@@ -592,16 +604,51 @@ def test_post_episode_new_creates_folder_and_switches(client, tmp_episode_dir):
     assert r2.json()["name"] == "新一集"
 
 
-def test_post_episode_new_rejects_existing_target(client, tmp_episode_dir):
+def test_post_episode_new_rejects_existing_target(client, tmp_episode_dir, tmp_path):
     """目標資料夾已存在 → 409。"""
-    parent = tmp_episode_dir.parent
-    (parent / "20260610 重複集").mkdir()
+    lib = tmp_path / "podcast-library"
+    lib.mkdir()
+    _set_episode_roots(lib)
+    (lib / "20260610 重複集").mkdir()
     r = client.post(
         "/api/episode/new",
         json={"date": "20260610", "name": "重複集"},
     )
     assert r.status_code == 409
     assert "已存在" in r.json()["detail"]
+
+
+def test_post_episode_new_ignores_active_ep_location(client, tmp_episode_dir, tmp_path):
+    """核心行為：不管當前開啟的集在哪，新集一律進 episode_roots[0]（集中存放）。"""
+    lib = tmp_path / "另一個資料庫"
+    lib.mkdir()
+    _set_episode_roots(lib)
+    # 當前 active ep 在 tmp_episode_dir（父層 = tmp_path），新集不該建在那父層
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "20260701", "name": "集中集"},
+    )
+    assert r.status_code == 200, r.text
+    new_path = Path(r.json()["path"])
+    assert new_path.parent == lib
+    assert new_path.parent != tmp_episode_dir.parent
+
+
+def test_post_episode_new_falls_back_to_downloads_when_no_roots(
+    client, tmp_episode_dir, tmp_path, monkeypatch
+):
+    """沒設 episode_roots → fallback 到 ~/Downloads（不再看當前開啟的集）。"""
+    fake_home = tmp_path / "home"
+    (fake_home / "Downloads").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    # config 沒有 episode_roots（隔離 config 檔不存在 → _load_config 回 {}）
+    r = client.post(
+        "/api/episode/new",
+        json={"date": "20260702", "name": "無設定集"},
+    )
+    assert r.status_code == 200, r.text
+    new_path = Path(r.json()["path"])
+    assert new_path.parent == fake_home / "Downloads"
 
 
 def test_post_episode_new_rejects_missing_date(client):

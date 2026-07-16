@@ -249,15 +249,12 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 status_code=400,
                 detail=f"集名不可包含路徑分隔字元：{name}",
             )
-        ep = holder["ep"]
-        if ep is not None:
-            parent = ep.dir.parent
-        else:
-            # 沒有 active ep（從 dashboard 開新集）→ 用 config 第一個 root，
-            # 否則 default 到 ~/Downloads。這樣新集才會被 dashboard 掃到。
-            cfg = ctx.load_config()
-            roots = cfg.get("episode_roots") or []
-            parent = Path(os.path.expanduser(roots[0])) if roots else (Path.home() / "Downloads")
+        # 所有新集一律建在使用者於 dashboard 設定的「集數存放資料夾」
+        # （episode_roots 第一個），集中存放；沒設定過才 fallback ~/Downloads。
+        # 刻意不看「當前開啟的是哪一集」，避免新集隨當下編輯的集散落各處。
+        cfg = ctx.load_config()
+        roots = cfg.get("episode_roots") or []
+        parent = Path(os.path.expanduser(roots[0])) if roots else (Path.home() / "Downloads")
         target = (parent / f"{date} {name}").resolve()
         if target.exists():
             raise HTTPException(
