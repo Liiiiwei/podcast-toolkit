@@ -7,6 +7,7 @@ Phase 順序：compress → upload → resegment → done
 """
 from __future__ import annotations
 
+import os
 import re
 import threading
 from datetime import datetime
@@ -385,6 +386,8 @@ def _breeze_dir() -> Path | None:
     認得的條件 = 該資料夾下有 make_subtitle.py。找不到回 None。"""
     import json
 
+    from podcast_toolkit.config import toolkit_root
+
     cands: list[Path] = []
     cfg_path = Path.home() / ".podcast-toolkit" / "config.json"
     try:
@@ -397,11 +400,40 @@ def _breeze_dir() -> Path | None:
         raw = None
     if raw:
         cands.append(Path(str(raw)).expanduser())
+    # 打包版(.app)：Breeze sidecar 內附在 Contents/Resources/breeze（frozen 時 toolkit_root()=Resources）。
+    # 開發樹沒有這個資料夾 → is_file() 判斷自動略過，不影響本機開發流。
+    cands.append(toolkit_root() / "breeze")
     cands.append(Path.home() / "Developer" / "breeze subtitle" / "Breeze-ASR-25")
     for c in cands:
         if (c / "make_subtitle.py").is_file():
             return c
     return None
+
+
+def _breeze_python(bdir: Path) -> tuple[str, dict[str, str] | None]:
+    """挑 Breeze 子進程要用的 python，並備妥 subprocess 環境變數。
+
+    打包版(.app)：sidecar 內含自帶 py-runtime + site-packages（不能用 .venv——它的
+    python 是指向本機 CLT 的 symlink，搬到別台 Mac 就斷）。回傳內附 framework python，
+    並掛：
+      PYTHONPATH      → site-packages（torch/whisper/numpy… 這包 794M ML 依賴）
+      XDG_CACHE_HOME  → sidecar/cache（whisper.load_model 讀 <cache>/whisper/breeze-asr-25.pt，
+                        SHA 相符即離線載入、不重新下載也不寫檔）
+    其餘 os.environ 保留（含 launcher 已前插內附 ffmpeg 的 PATH——whisper 解碼音檔要 ffmpeg）。
+
+    開發版：用 Breeze 專案自己的 .venv（沒有就退回系統 python3），env 不動（回 None＝Popen 繼承）。"""
+    runtime_py = bdir / "py-runtime" / "bin" / "python3.9"
+    site = bdir / "site-packages"
+    if runtime_py.exists() and site.is_dir():
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(site)
+        env["XDG_CACHE_HOME"] = str(bdir / "cache")
+        # 別台 Mac 的 locale 未知（launchd 常給 C/POSIX）；強制 UTF-8 模式，
+        # 免得 make_subtitle 印中文檔名時撞 ascii 編碼雷（PEP 540）。
+        env["PYTHONUTF8"] = "1"
+        return str(runtime_py), env
+    venv_py = bdir / ".venv" / "bin" / "python"
+    return (str(venv_py) if venv_py.exists() else "python3"), None
 
 
 def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[str, Any]:
@@ -441,8 +473,7 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
 
     # 1) Breeze ASR：make_subtitle.py（不帶 --quiet → whisper 把 tqdm 進度吐到
     #    stderr，pump 執行緒即時解析成 breeze-asr 這一 phase 的真實 %；自己找 Track*-Mic*.wav）
-    py = bdir / ".venv" / "bin" / "python"
-    py_str = str(py) if py.exists() else "python3"
+    py_str, run_env = _breeze_python(bdir)
     cmd = [
         py_str, str(bdir / "make_subtitle.py"),
         "--dir", str(ep.dir),
@@ -453,7 +484,7 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         setj(phase="breeze-asr", percent=0.0)
         with open(errf, "w", encoding="utf-8") as ef:
             proc = subprocess.Popen(
-                cmd, cwd=str(bdir),
+                cmd, cwd=str(bdir), env=run_env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, bufsize=0,
             )
             # pump：排空 stderr（避免 pipe 塞滿卡死）＋把 tqdm % 即時餵進狀態、tee 進日誌

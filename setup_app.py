@@ -35,10 +35,10 @@ DATA_FILES = [
         "assets/cover.png",
         "assets/intro_music.m4a",
     ]),
-    # ffmpeg/ffprobe 內附（完全 turnkey 的 .app 用）：放一份 arm64+videotoolbox 靜態 build 到
-    # assets/bin/，再取消下一行註解 → launcher 的 PATH prepend 會優先用它（裝過 brew ffmpeg
-    # 的使用者不放也能跑）。
-    # ("assets/bin", ["assets/bin/ffmpeg", "assets/bin/ffprobe"]),
+    # ffmpeg/ffprobe 內附（完全 turnkey 的 .app 用）：放一份 arm64 靜態 build（含 libass 燒字幕、
+    # 0 個外部 dylib 依賴）到 assets/bin/ → launcher 的 PATH prepend 會優先用它（裝過 brew ffmpeg
+    # 的使用者不放也能跑）。來源 osxexperts.net ffmpeg 7.1 arm64 靜態版。
+    ("assets/bin", ["assets/bin/ffmpeg", "assets/bin/ffprobe"]),
 ]
 OPTIONS = {
     "argv_emulation": False,
@@ -46,10 +46,24 @@ OPTIONS = {
         "podcast_toolkit", "fastapi", "uvicorn", "pydantic", "starlette",
         "numpy", "requests", "opencc", "anyio", "h11", "click", "multipart",
         "charset_normalizer",  # requests 的字元偵測；少了它 requests 啟動噴 warning
+        "jieba",  # word_break 中文斷詞（reflow 品質）；純 Python + dict.txt，不牽 torch
     ],
-    # uvloop 的編譯擴充(uvloop.loop)py2app 打不乾淨 → 啟動 KeyError。排除它，
-    # uvicorn 的 loops.auto 會自動退回 asyncio（localhost 單人 server 綽綽有餘）。
-    "excludes": ["uvloop"],
+    "excludes": [
+        # uvloop 的編譯擴充(uvloop.loop)py2app 打不乾淨 → 啟動 KeyError。排除它，
+        # uvicorn 的 loops.auto 會自動退回 asyncio（localhost 單人 server 綽綽有餘）。
+        "uvloop",
+        # 轉錄在打包版一律走 Breeze subprocess（自帶 py-runtime + site-packages），
+        # 主 app 不需要也不該內嵌 torch/mlx 這整包 ML 依賴。web/transcribe.py 的
+        # mlx_whisper、word_break 的 jieba 都是 lazy import，但 py2app 的 modulegraph
+        # 靜態走 AST，照樣把 mlx_whisper→torch→numba→llvmlite→scipy→sympy→huggingface_hub
+        # →PyInstaller 整包拉進來（並炸在 PyInstaller 的 hook-gi GstGL）。全部排除；
+        # bundle 內這些路徑是死碼（真要本地轉錄請用 Breeze sidecar）。
+        "torch", "torchgen", "torchaudio", "torchvision",
+        "mlx", "mlx_whisper", "whisper",
+        "numba", "llvmlite", "scipy", "sympy",
+        "huggingface_hub", "transformers", "safetensors",
+        "PyInstaller", "pytest",
+    ],
     # uvicorn/starlette 大量動態 import，modulegraph 常漏 → 正式（非 alias）build 必補：
     "includes": [
         "yaml", "eval_type_backport",

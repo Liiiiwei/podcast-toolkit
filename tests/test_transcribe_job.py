@@ -422,10 +422,10 @@ def test_pump_progress_reports_each_refresh_from_stream():
     import io
 
     data = (
-        "\r  0%|  | 0/100 [00:00<?, ?frames/s]"
-        "\r 50%|## | 50/100 [00:01<00:01, 50frames/s]"
-        "\r100%|###| 100/100 [00:02<00:00, 50frames/s]\n"
-    ).encode()
+        b"\r  0%|  | 0/100 [00:00<?, ?frames/s]"
+        b"\r 50%|## | 50/100 [00:01<00:01, 50frames/s]"
+        b"\r100%|###| 100/100 [00:02<00:00, 50frames/s]\n"
+    )
     seen: list[float] = []
     transcribe_job._pump_progress(io.BytesIO(data), seen.append)
     assert seen, "應該至少回報一次"
@@ -443,3 +443,78 @@ def test_pump_progress_tees_raw_output_for_error_log():
     text = tee.getvalue()
     assert "10%" in text
     assert "Traceback boom" in text
+
+
+# --- 打包(.app)/開發雙模式：Breeze 專案路徑 + 子進程 python 解析 ---
+
+def test_breeze_dir_finds_bundled_sidecar(monkeypatch, tmp_path):
+    """打包版：toolkit_root()/breeze 有 make_subtitle.py → _breeze_dir 認得它
+    （沒有 config.json override、也沒有 ~/Developer 開發樹的乾淨 Mac 情境）。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))  # config.json 不存在、~/Developer 預設也不存在
+
+    resources = tmp_path / "Resources"
+    breeze = resources / "breeze"
+    breeze.mkdir(parents=True)
+    (breeze / "make_subtitle.py").write_text("# stub", encoding="utf-8")
+
+    from podcast_toolkit import config
+    monkeypatch.setattr(config, "toolkit_root", lambda: resources)
+
+    assert transcribe_job._breeze_dir() == breeze
+
+
+def test_breeze_python_bundled_uses_runtime_and_env(monkeypatch, tmp_path):
+    """打包版 sidecar：有 py-runtime/bin/python3.9 + site-packages/ →
+    回內附 python + env(PYTHONPATH=site-packages, XDG_CACHE_HOME=cache)，且保留既有環境變數。"""
+    bdir = tmp_path / "breeze"
+    rt = bdir / "py-runtime" / "bin"
+    rt.mkdir(parents=True)
+    py = rt / "python3.9"
+    py.write_text("#!/bin/sh\n", encoding="utf-8")
+    (bdir / "site-packages").mkdir()
+
+    monkeypatch.setenv("PATH", "/sentinel/bin:/usr/bin")  # 既有環境要被保留（whisper 解碼要 ffmpeg）
+    py_str, env = transcribe_job._breeze_python(bdir)
+
+    assert py_str == str(py)
+    assert env is not None
+    assert env["PYTHONPATH"] == str(bdir / "site-packages")
+    assert env["XDG_CACHE_HOME"] == str(bdir / "cache")
+    assert env["PYTHONUTF8"] == "1"  # 別台 Mac locale 未知 → 強制 UTF-8
+    assert env["PATH"] == "/sentinel/bin:/usr/bin"  # 沒被蓋掉
+
+
+def test_breeze_python_dev_uses_venv_and_no_env(tmp_path):
+    """開發版：有 .venv/bin/python → 回它 + env=None（Popen 繼承 os.environ）。"""
+    bdir = tmp_path / "breeze"
+    venv = bdir / ".venv" / "bin"
+    venv.mkdir(parents=True)
+    py = venv / "python"
+    py.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    py_str, env = transcribe_job._breeze_python(bdir)
+    assert py_str == str(py)
+    assert env is None
+
+
+def test_breeze_python_fallback_to_system_python3(tmp_path):
+    """既非打包也沒 .venv → 退回系統 python3、env=None。"""
+    bdir = tmp_path / "breeze"
+    bdir.mkdir()
+    py_str, env = transcribe_job._breeze_python(bdir)
+    assert py_str == "python3"
+    assert env is None
+
+
+def test_breeze_python_bundled_requires_both_runtime_and_sitepackages(tmp_path):
+    """只有 py-runtime、缺 site-packages → 不算打包版，退回 dev 判斷（避免半套 sidecar 誤判）。"""
+    bdir = tmp_path / "breeze"
+    rt = bdir / "py-runtime" / "bin"
+    rt.mkdir(parents=True)
+    (rt / "python3.9").write_text("#!/bin/sh\n", encoding="utf-8")
+    # 沒有 site-packages → 不該當打包版
+    py_str, env = transcribe_job._breeze_python(bdir)
+    assert py_str == "python3"
+    assert env is None

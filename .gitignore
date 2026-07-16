@@ -23,3 +23,7 @@ design-review/
 
 # 本機絕對路徑烤死的 IDE/啟動設定，per-machine 不進 git
 .claude/launch.json
+
+# 打包用 arm64 靜態 ffmpeg（大檔，不入 git；打包時本地放置）
+assets/bin/
+_pkgbuild/
