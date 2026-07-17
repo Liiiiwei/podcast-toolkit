@@ -66,8 +66,8 @@ async function loadEpisodes() {
 
     loading.hidden = true;
 
-    if (data.warnings.length) {
-      warningsBox.textContent = data.warnings.join(" / ");
+    if ((data.warnings || []).length) {
+      warningsBox.textContent = (data.warnings || []).join(" / ");
       warningsBox.hidden = false;
     }
 

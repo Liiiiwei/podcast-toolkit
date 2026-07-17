@@ -283,6 +283,8 @@ document.addEventListener("keydown", (e) => {
   }
   const key = (e.key || "").toLowerCase();
   if (key !== "z") return;
+  // modal 開著時不觸發 undo/redo，避免誤操作字幕歷史
+  if (document.querySelector("dialog[open]")) return;
   if (e.shiftKey) {
     e.preventDefault();
     redo();
@@ -375,7 +377,9 @@ function unsavedCount() {
     state.cardTimings.size +
     (state.cropYt != null ? 1 : 0) +
     (state.cropReels != null ? 1 : 0) +
-    (state.outputDirty ? 1 : 0)
+    (state.outputDirty ? 1 : 0) +
+    (state.headTrimSec !== (state._savedHeadTrimSec || 0) ? 1 : 0) +
+    (state.tailTrimSec !== (state._savedTailTrimSec || 0) ? 1 : 0)
   );
 }
 
@@ -2430,6 +2434,9 @@ async function loadEpisodeState() {
   state.hasMainVideo = data.has_main_video !== false;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
   state.tailTrimSec = Number(data.tail_trim_sec) || 0;
+  // 記住載入值，供 unsavedCount() 偵測是否有未存的 trim 變更
+  state._savedHeadTrimSec = state.headTrimSec;
+  state._savedTailTrimSec = state.tailTrimSec;
   // Reels 片段：來自 episode.yaml；list of {name, start_card, end_card}
   state.reelsClips = Array.isArray(data.reels_clips)
     ? data.reels_clips
@@ -2711,7 +2718,9 @@ async function loadConfig() {
       ? data.provider
       : "breeze";
     state.assetsStatus = data.assets || {};
-  } catch (_) {}
+  } catch (e) {
+    console.warn("[loadConfig] 設定載入失敗：", e);
+  }
 }
 
 async function load() {
@@ -4910,6 +4919,13 @@ let _breezeStartMs = 0;
 
 // 一鍵 Breeze 轉字幕：Breeze ASR → 匯入講者 → 校對，整條龍背景跑，共用 transcribe 進度 UI。
 async function startBreezeTranscribe() {
+  // C3：提醒使用者先填詞庫（來賓/品牌名），若詞庫空白容易轉錯
+  const glossaryOk = window.confirm(
+    "轉錄前確認：來賓姓名、品牌名、節目術語已加入詞庫了嗎？\n\n" +
+      "詞庫空白時 Breeze 容易把專有名詞轉錯，建議先到「詞庫」設定後再轉錄。\n\n" +
+      "按「確定」繼續轉錄，按「取消」先去補詞庫。",
+  );
+  if (!glossaryOk) return;
   $("#transcribe-title").textContent = "Breeze 轉字幕中…";
   $("#transcribe-msg").innerHTML =
     "本地 Breeze 轉錄各軌 → 自動標講者 → 匯入 → 校對，一次跑完。<br>" +
@@ -6372,21 +6388,30 @@ async function saveGlossary() {
       }))
       .filter((e) => e.canonical);
   try {
-    const [r1, r2] = await Promise.all([
+    const [s1, s2] = await Promise.allSettled([
       fetch("/api/glossary/episode", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries: clean(glossaryWork.episode) }),
-      }),
+      }).then((r) =>
+        r.ok ? r : Promise.reject(new Error(`本集 HTTP ${r.status}`)),
+      ),
       fetch("/api/glossary/common", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ entries: clean(glossaryWork.common) }),
-      }),
+      }).then((r) =>
+        r.ok ? r : Promise.reject(new Error(`全域 HTTP ${r.status}`)),
+      ),
     ]);
-    if (!r1.ok) throw new Error(`本集 HTTP ${r1.status}`);
-    if (!r2.ok) throw new Error(`全域 HTTP ${r2.status}`);
-    hideModal("glossary-modal");
+    const failed = [s1, s2].filter((r) => r.status === "rejected");
+    if (failed.length) {
+      alert(
+        `儲存詞庫部分失敗：${failed.map((r) => r.reason.message).join("；")}`,
+      );
+    } else {
+      hideModal("glossary-modal");
+    }
   } catch (e) {
     alert(`儲存詞庫失敗：${e.message}`);
   } finally {
