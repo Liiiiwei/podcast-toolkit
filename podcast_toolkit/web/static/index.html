@@ -388,7 +388,7 @@
                   <div
                     class="caption-size"
                     id="caption-size"
-                    title="字幕字級：依目前的「YT / Reels」分頁套用（兩個版本各自記）。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
+                    title="字幕字級：依目前的「YT」分頁套用。即時預覽，按「完成並儲存」才寫進 episode.yaml。"
                   >
                     <span
                       class="caption-size-label"
@@ -460,59 +460,6 @@
               </div>
             </div>
           </details>
-          <div class="reels-clips-panel hidden" id="reels-clips-panel">
-            <div class="reels-clips-head">
-              <span data-icon="scissors" data-icon-size="14"></span>
-              <span>Reels 片段</span>
-              <span class="reels-clips-count" id="reels-clips-count">0</span>
-              <span class="spacer"></span>
-              <button
-                id="reels-clip-export-btn"
-                type="button"
-                class="btn btn-ghost"
-                title="從已合成 Reels mp4 切出片段（-c copy 快速無損）"
-                disabled
-              >
-                <span data-icon="scissors"></span>
-                <span>輸出片段</span>
-              </button>
-            </div>
-            <div id="reels-clips-list" class="reels-clips-list"></div>
-            <form id="reels-clip-form" class="reels-clip-form">
-              <input
-                type="text"
-                id="reels-clip-name"
-                placeholder="片段名（例：開場 / 重點1）"
-                required
-                maxlength="40"
-              />
-              <input
-                type="number"
-                id="reels-clip-start"
-                placeholder="起卡 #"
-                min="1"
-                step="1"
-                required
-              />
-              <input
-                type="number"
-                id="reels-clip-end"
-                placeholder="迄卡 #"
-                min="1"
-                step="1"
-                required
-              />
-              <button
-                type="submit"
-                class="btn btn-ghost"
-                id="reels-clip-add-btn"
-              >
-                <span data-icon="plus"></span>
-                <span>加</span>
-              </button>
-            </form>
-            <div id="reels-clip-status" class="reels-clip-status"></div>
-          </div>
         </section>
 
         <section class="cards-pane">

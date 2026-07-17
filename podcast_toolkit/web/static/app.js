@@ -224,7 +224,6 @@ function rerenderEditState() {
   renderTypo();
   renderCropInfo();
   renderTrimControls();
-  renderReelsClips();
   // crop ratio 按鈕在 setupCrop IIFE 內，沒 export → 這裡重算
   document.querySelectorAll(".ratio-btn").forEach((btn) => {
     btn.classList.toggle(
@@ -2738,7 +2737,6 @@ async function load() {
   renderCaption();
   renderTypo();
   renderFiles();
-  renderReelsClips();
   setupExternalAudio();
   setupCamBOverlay();
   resumeTranscribeIfRunning();
@@ -3776,175 +3774,6 @@ function setupDrawer() {
   // 載入後同步 active 狀態（如果 episode.yaml 已有 crop，預設不亮，使用者要重新選比例）
   updateRatioButtons();
 })();
-
-function setupVersionTabs() {
-  document.querySelectorAll(".version-tab").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const v = btn.dataset.version;
-      if (v === state.activeVersion) return;
-      state.activeVersion = v;
-      document.querySelectorAll(".version-tab").forEach((b) => {
-        b.classList.toggle("active", b.dataset.version === v);
-      });
-      renderCropInfo();
-      renderReelsClips();
-      // 切版本 → 字幕風格/字級隨之改變：重算預覽字體 + 更新字級控制顯示
-      applyCaptionFontSize();
-      renderCaptionSizeControl();
-      // 同步 ratio 按鈕到 active 版本的狀態
-      document.querySelectorAll(".ratio-btn").forEach((b) => {
-        b.classList.toggle(
-          "active",
-          getActiveCropRatio() === b.dataset.ratio && getActiveCrop() != null,
-        );
-      });
-    });
-  });
-}
-
-// === Reels 片段：sub-panel 渲染 + 表單/匯出 handler ===
-// 只在 activeVersion === "reels" 顯示；後端 /api/clip 從已合成的 Reels mp4 -c copy 切片
-function renderReelsClips() {
-  const panel = $("#reels-clips-panel");
-  if (!panel) return;
-  const isReels = state.activeVersion === "reels";
-  panel.classList.toggle("hidden", !isReels);
-  if (!isReels) return;
-
-  const list = $("#reels-clips-list");
-  const count = $("#reels-clips-count");
-  const exportBtn = $("#reels-clip-export-btn");
-  const clips = state.reelsClips || [];
-  count.textContent = String(clips.length);
-  exportBtn.disabled = clips.length === 0;
-
-  list.innerHTML = "";
-  if (clips.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "reels-clips-empty";
-    empty.textContent = "尚未加片段。下面輸入名稱 + 起卡 # + 迄卡 #。";
-    list.appendChild(empty);
-    return;
-  }
-  clips.forEach((clip, idx) => {
-    const row = document.createElement("div");
-    row.className = "reels-clip-item";
-    const label = document.createElement("span");
-    label.textContent = `${clip.name}`;
-    const range = document.createElement("span");
-    range.textContent = `#${clip.start_card}-${clip.end_card}`;
-    range.className = "reels-clip-range";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.title = "刪除這段";
-    del.innerHTML = window.Icons
-      ? window.Icons.get("trash-2", { size: 14 })
-      : "×";
-    del.addEventListener("click", () => {
-      pushUndo();
-      state.reelsClips.splice(idx, 1);
-      renderReelsClips();
-    });
-    row.appendChild(label);
-    row.appendChild(range);
-    row.appendChild(del);
-    list.appendChild(row);
-  });
-}
-
-function setReelsClipStatus(text, tone) {
-  const el = $("#reels-clip-status");
-  if (!el) return;
-  el.textContent = text || "";
-  el.classList.remove("tone-success", "tone-danger");
-  if (tone) el.classList.add(`tone-${tone}`);
-}
-
-function setupReelsClips() {
-  const form = $("#reels-clip-form");
-  const nameInput = $("#reels-clip-name");
-  const startInput = $("#reels-clip-start");
-  const endInput = $("#reels-clip-end");
-  const exportBtn = $("#reels-clip-export-btn");
-  if (!form || !exportBtn) return;
-
-  form.addEventListener("submit", (e) => {
-    e.preventDefault();
-    const name = nameInput.value.trim();
-    const startCard = Number(startInput.value);
-    const endCard = Number(endInput.value);
-    if (!name) {
-      setReelsClipStatus("片段名不能空", "danger");
-      return;
-    }
-    if (!Number.isInteger(startCard) || !Number.isInteger(endCard)) {
-      setReelsClipStatus("起卡 / 迄卡要是整數", "danger");
-      return;
-    }
-    if (startCard > endCard) {
-      setReelsClipStatus("起卡 # 不能大於迄卡 #", "danger");
-      return;
-    }
-    const idxSet = new Set(state.cards.map((c) => c.idx));
-    if (!idxSet.has(startCard) || !idxSet.has(endCard)) {
-      setReelsClipStatus(
-        `卡 #${startCard} 或 #${endCard} 不存在（或已被刪除）`,
-        "danger",
-      );
-      return;
-    }
-    if (state.reelsClips.some((c) => c.name === name)) {
-      setReelsClipStatus(`片段名「${name}」重複`, "danger");
-      return;
-    }
-    pushUndo();
-    state.reelsClips.push({
-      name,
-      start_card: startCard,
-      end_card: endCard,
-    });
-    nameInput.value = "";
-    startInput.value = "";
-    endInput.value = "";
-    setReelsClipStatus(`已加「${name}」（記得按完成並儲存）`, "success");
-    renderReelsClips();
-  });
-
-  exportBtn.addEventListener("click", async () => {
-    const clips = state.reelsClips || [];
-    if (clips.length === 0) return;
-    exportBtn.disabled = true;
-    const originalLabel = exportBtn.innerHTML;
-    exportBtn.innerHTML = window.Icons
-      ? `${window.Icons.get("loader", { size: 14 })}<span>切片中…</span>`
-      : "切片中…";
-    setReelsClipStatus("正在切片（每段 ffmpeg -c copy 約 1-3 秒）…", null);
-    try {
-      const r = await fetch("/api/clip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force: true }),
-      });
-      const data = await r.json();
-      if (!r.ok || !data.ok) {
-        throw new Error(data.error || `HTTP ${r.status}`);
-      }
-      const outClips = data.clips || [];
-      const summary = outClips
-        .map((c) => `${c.name} (${c.duration.toFixed(1)}s)`)
-        .join(" / ");
-      setReelsClipStatus(
-        `✓ 已輸出 ${outClips.length} 段：${summary}`,
-        "success",
-      );
-    } catch (err) {
-      setReelsClipStatus(`✗ 切片失敗：${err.message}`, "danger");
-    } finally {
-      exportBtn.innerHTML = originalLabel;
-      exportBtn.disabled = state.reelsClips.length === 0;
-    }
-  });
-}
 
 // === 儲存 / 取消 ===
 // 所有 /api/save 共用的序列化通道：主儲存鈕、cam modal 儲存、一鍵對齊 auto-save
@@ -7683,10 +7512,8 @@ function setupPopover(btnId, menuId) {
   return btn._popover;
 }
 
-setupVersionTabs();
 setupCaptionSize();
 $("#transcribe-breeze-btn")?.addEventListener("click", startBreezeTranscribe);
-setupReelsClips();
 setupAssembleButtons();
 setupOutputControls();
 setupSusToolbar();
