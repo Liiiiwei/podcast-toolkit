@@ -14,6 +14,7 @@ from pathlib import Path
 import requests
 
 from podcast_toolkit import srt_io
+from podcast_toolkit.fsutil import atomic_write_text
 
 
 GROK_STT_URL = "https://api.x.ai/v1/stt"
@@ -78,7 +79,7 @@ def _run_cloud_stt_pipeline(
     if post_words is not None:
         words = post_words(words)
     cards = _words_to_cards(words)
-    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    atomic_write_text(out_srt, srt_io.serialize(cards))
     return out_srt
 
 
@@ -560,7 +561,7 @@ def run_whisper_mlx_pipeline(
         raise TranscribeError("過濾完所有幻覺後沒剩字幕；可能 VAD threshold 太鬆")
     words = _dedup_overlapping_times(words)
     cards = _words_to_cards(words)
-    out_srt.write_text(srt_io.serialize(cards), encoding="utf-8")
+    atomic_write_text(out_srt, srt_io.serialize(cards))
     return out_srt
 
 

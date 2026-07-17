@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, Response
 
 from podcast_toolkit import audio_align, silencedetect
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.web import episode_io
 from podcast_toolkit.web.shared import RouteContext, validate_episode_path
 
@@ -141,14 +142,14 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         from podcast_toolkit import srt_io
         cards = srt_io.parse(v2.read_text(encoding="utf-8"))
         backup = v2.with_suffix(v2.suffix + ".bak")
-        backup.write_text(v2.read_text(encoding="utf-8"), encoding="utf-8")
+        atomic_write_text(backup, v2.read_text(encoding="utf-8"))
         shifted = []
         for c in cards:
             new_end = c["end"] + offset_sec
             if new_end <= 0:
                 continue
             shifted.append({**c, "start": max(0.0, c["start"] + offset_sec), "end": new_end})
-        v2.write_text(srt_io.serialize(shifted), encoding="utf-8")
+        atomic_write_text(v2, srt_io.serialize(shifted))
         return {"ok": True, "card_count": len(shifted), "offset_sec": offset_sec}
 
     @app.post("/api/auto-align")

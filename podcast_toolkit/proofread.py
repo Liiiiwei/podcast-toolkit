@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from podcast_toolkit import srt_io
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.gemini_subtitle import format_glossary_lines
 
 
@@ -296,11 +297,11 @@ def run(episode_dir, *, provider=None, model=None, force=False, progress=None) -
         return 0
 
     backup = v2.with_name(f"{v2.stem}.pre-proofread.bak{v2.suffix}")
-    backup.write_text(v2.read_text(encoding="utf-8"), encoding="utf-8")
+    atomic_write_text(backup, v2.read_text(encoding="utf-8"))
     for c in cards:
         if c["idx"] in applied:
             c["text"] = applied[c["idx"]]
-    v2.write_text(srt_io.serialize(cards), encoding="utf-8")
+    atomic_write_text(v2, srt_io.serialize(cards))
 
     print(f"校對({prov}):修正 {len(applied)} 卡 / 安全閘還原可疑 {len(reverted)} 卡 / 共 {len(cards)} 卡")
     if reverted:

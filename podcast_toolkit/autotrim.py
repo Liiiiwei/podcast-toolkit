@@ -14,6 +14,7 @@ from __future__ import annotations
 import yaml
 
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.silencedetect import detect_head_silence, detect_tail_silence
 
 # 靜音短於此值（秒）不值得標 trim（避免把零點幾秒的氣口當成要砍的頭尾）
@@ -54,8 +55,8 @@ def run(ep: Episode, *, force: bool = False, progress=None) -> dict:
 
     if changes:
         data.update(changes)
-        yaml_path.write_text(
+        atomic_write_text(
+            yaml_path,
             yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
         )
     return changes

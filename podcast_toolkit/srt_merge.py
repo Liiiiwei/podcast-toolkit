@@ -17,6 +17,7 @@ import sys
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 
 
 def merge_per_mic_srts(per_mic_srts: dict) -> tuple[str, dict]:
@@ -87,8 +88,7 @@ def run(ep: Episode, force: bool = False) -> int:
         print("  提示：先跑 `podcast subtitle --per-mic` 產生分軌 SRT", file=sys.stderr)
         return 4
 
-    out_srt.parent.mkdir(parents=True, exist_ok=True)
-    out_srt.write_text(srt_text, encoding="utf-8")
+    atomic_write_text(out_srt, srt_text)
     cameras_io.save(out_json, speakers)
     print(f"✓ 合併 {len(per_mic_srts)} 路 mic → {out_srt}")
     print(f"✓ speakers sidecar → {out_json}")

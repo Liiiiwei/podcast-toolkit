@@ -10,6 +10,7 @@ import sys
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 
 
 def run(ep: Episode, force: bool = False) -> int:
@@ -47,7 +48,7 @@ def run(ep: Episode, force: bool = False) -> int:
     # 覆蓋前先備份，誤建議也救得回來
     if cameras_json.exists():
         backup = cameras_json.with_suffix(cameras_json.suffix + ".bak")
-        backup.write_text(cameras_json.read_text(encoding="utf-8"), encoding="utf-8")
+        atomic_write_text(backup, cameras_json.read_text(encoding="utf-8"))
     cameras_io.save_transitions(cameras_json, transitions)
 
     feat_desc = ", ".join(f"{sp}→cam {cam}" for sp, cam in sorted(feature.items())) or "(無)"

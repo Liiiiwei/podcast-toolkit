@@ -13,6 +13,8 @@ import bisect
 import json
 from pathlib import Path
 
+from podcast_toolkit.fsutil import atomic_write_text
+
 
 def load(path: Path) -> dict[int, str]:
     """讀 flat idx→str sidecar（speakers / 舊鏡頭格式用）；不存在 → 回空 dict。"""
@@ -32,9 +34,9 @@ def save(path: Path, mapping: dict[int, str]) -> None:
             path.unlink()
         return
     serializable = {str(int(k)): str(v) for k, v in mapping.items()}
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps(serializable, ensure_ascii=False, sort_keys=True, indent=2),
-        encoding="utf-8",
     )
 
 
@@ -150,6 +152,6 @@ def save_transitions(path: Path, transitions: list[dict]) -> None:
             for tr in sorted(transitions, key=lambda x: float(x["t"]))
         ],
     }
-    path.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    atomic_write_text(
+        path, json.dumps(data, ensure_ascii=False, indent=2)
     )

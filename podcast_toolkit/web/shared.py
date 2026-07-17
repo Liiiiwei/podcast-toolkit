@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from podcast_toolkit import config as pt_config
 from podcast_toolkit.constants import EPISODE_GLOSSARY_FILENAME
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COMMON_GLOSSARY_PATH = Path.home() / ".podcast-toolkit" / "common-glossary.json"
@@ -147,10 +148,9 @@ def _load_glossary_file(path: Path) -> list[dict]:
 
 
 def _save_glossary_file(path: Path, entries: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps(entries, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
 

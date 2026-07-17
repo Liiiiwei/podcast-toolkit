@@ -19,6 +19,8 @@ import os
 import re
 from pathlib import Path
 
+from podcast_toolkit.fsutil import atomic_write_text
+
 CJK = "一-鿿"
 _CJK_RUN = re.compile(f"[{CJK}]+")
 
@@ -396,8 +398,9 @@ def _load_ignore(ep_dir: Path) -> set:
 
 
 def _save_ignore(ep_dir: Path, words: set) -> None:
-    (ep_dir / IGNORE_NAME).write_text(
-        json.dumps(sorted(words), ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(
+        ep_dir / IGNORE_NAME,
+        json.dumps(sorted(words), ensure_ascii=False, indent=2))
 
 
 def add_to_episode_glossary(ep_dir: Path, canonical: str, *, sounds_like=None, note: str = "") -> None:
@@ -423,7 +426,7 @@ def add_to_episode_glossary(ep_dir: Path, canonical: str, *, sounds_like=None, n
             raw = []
     raw.append({"canonical": canonical, "sounds_like": list(sounds_like or []), "note": note})
     merged = config.dedup_glossary(config.normalize_glossary(raw))
-    p.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+    atomic_write_text(p, json.dumps(merged, ensure_ascii=False, indent=2))
 
 
 def generate(episode_dir, *, srt=None, quiet=False) -> list:

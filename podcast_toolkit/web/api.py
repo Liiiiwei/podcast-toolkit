@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import subprocess  # noqa: F401  (測試 monkeypatch api_mod.subprocess.run)
 import sys
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -18,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.web.routes import (
     assemble as assemble_routes,
 )
@@ -64,10 +66,9 @@ def _load_typo_dict() -> list[dict]:
 
 
 def _save_typo_dict(entries: list[dict]) -> None:
-    TYPO_DICT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    TYPO_DICT_PATH.write_text(
+    atomic_write_text(
+        TYPO_DICT_PATH,
         json.dumps(entries, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
 
@@ -76,15 +77,31 @@ def _load_config() -> dict:
         return {}
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError:
+        # 壞 JSON 不能靜默歸零：先把壞檔搬走保留現場（也許能手救），
+        # 否則使用者下次隨手存個設定就把原檔永久蓋掉。
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        corrupt = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.corrupt-{ts}")
+        try:
+            CONFIG_PATH.replace(corrupt)
+            print(
+                f"[podcast-toolkit] 警告：{CONFIG_PATH.name} 解析失敗，"
+                f"已備份成 {corrupt.name} 並重置設定",
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
+        return {}
+    except OSError:
+        # 讀不到（權限等）≠ 檔案壞掉，不搬檔，僅回空設定
         return {}
 
 
 def _save_config(data: dict) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(
+    atomic_write_text(
+        CONFIG_PATH,
         json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
 

@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from podcast_toolkit import cameras_io, srt_io
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.resegment import _HALF_SENTENCE_TAIL
@@ -309,9 +310,9 @@ def save_mics_config(
             "feature": {sp: "b" for sp in guests},
             "min_sec": float(min_sec) if min_sec else 15.0,
         }
-    yaml_path.write_text(
+    atomic_write_text(
+        yaml_path,
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
 
 
@@ -622,7 +623,7 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     if v2.exists():
         original = v2.read_text(encoding="utf-8")
         backup = v2.with_suffix(v2.suffix + ".bak")
-        backup.write_text(original, encoding="utf-8")
+        atomic_write_text(backup, original)
         cards = srt_io.parse(original)
         # 套用時間微調（在 serialize 前改 card.start/end；切過的卡 override 會當 t0/t1 重算 sub-card）
         if time_overrides:
@@ -643,7 +644,7 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             cards, overrides=overrides, splits=splits,
             time_overrides=time_overrides, merges=merges,
         )
-        v2.write_text(new_text, encoding="utf-8")
+        atomic_write_text(v2, new_text)
         for i, key in enumerate(idx_map):
             idx_lookup[key] = i + 1
     elif overrides or splits or time_overrides or new_cards or merges:
@@ -675,9 +676,9 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         data.pop("deletions", None)
 
     # yaml 在 SRT 寫完 + deletions 翻完後才落地，避免中途崩潰留下不一致狀態
-    yaml_path.write_text(
+    atomic_write_text(
+        yaml_path,
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
 
     # 鏡頭：前端傳回 idx→cam（carry-forward 標記）。翻成新 idx 後，用剛寫好的 v2 卡把每個

@@ -25,6 +25,8 @@ import re
 import shutil
 from pathlib import Path
 
+from podcast_toolkit.fsutil import atomic_write_text
+
 
 def _is_cjk(ch: str) -> bool:
     return "㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿"
@@ -373,6 +375,6 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
     shutil.copy(v2, v2.with_name(f"{v2.stem}.pre-reflow.bak{v2.suffix}"))
     if spk_path.exists():
         shutil.copy(spk_path, spk_path.with_name(spk_path.name + ".pre-reflow.bak"))
-    v2.write_text(srt_io.serialize(new_cards), encoding="utf-8")
+    atomic_write_text(v2, srt_io.serialize(new_cards))
     cameras_io.save(spk_path, new_spk)
     return len(new_cards)

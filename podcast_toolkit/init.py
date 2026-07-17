@@ -3,6 +3,7 @@ import re
 import sys
 from pathlib import Path
 from podcast_toolkit import config
+from podcast_toolkit.fsutil import atomic_write_text
 
 SUBDIRS = ["01_母帶", "03_成品", "04_工作檔"]
 
@@ -48,7 +49,7 @@ def run(episode_dir: Path) -> int:
             rendered = rendered.replace("YYYYMMDD", date)
         if name:
             rendered = rendered.replace("集名", name)
-        ep_yaml.write_text(rendered, encoding="utf-8")
+        atomic_write_text(ep_yaml, rendered)
         print("✓ 產生 episode.yaml")
 
     # 複製 TODO.md（不覆蓋）

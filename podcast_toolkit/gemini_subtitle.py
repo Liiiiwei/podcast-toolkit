@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 
 
 def _config_gemini_key() -> str:
@@ -351,8 +352,7 @@ def transcribe_per_mic(
             strip_punctuation=strip_punct,
         )
 
-        srt_path.parent.mkdir(parents=True, exist_ok=True)
-        srt_path.write_text(srt_text, encoding="utf-8")
+        atomic_write_text(srt_path, srt_text)
         print(f"{tag} ✓ → {srt_path}")
         _emit(speaker, "done")
         return speaker, srt_path
@@ -443,8 +443,7 @@ def run(episode_dir: Path, force: bool = False, dry_run: bool = False, per_mic: 
         print("✗ Gemini 回傳空字幕", file=sys.stderr)
         return 4
 
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(srt_text, encoding="utf-8")
+    atomic_write_text(out, srt_text)
     print(f"✓ 輸出：{out}")
     print(f"  下一步：podcast resegment \"{episode_dir}\"")
     return 0

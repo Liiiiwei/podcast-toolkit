@@ -182,6 +182,7 @@ def run(episode_dir, *, maxlen: int = 20, min_chars: int = 3, gapmax: float = 0.
 
     from podcast_toolkit import srt_io
     from podcast_toolkit.episode import Episode
+    from podcast_toolkit.fsutil import atomic_write_text
 
     ep = Episode(Path(episode_dir))
     src = ep.output_srt()                       # 03_成品/{name}_final.srt(逐字 Gemini)
@@ -191,6 +192,6 @@ def run(episode_dir, *, maxlen: int = 20, min_chars: int = 3, gapmax: float = 0.
     char_cards = srt_io.parse(src.read_text(encoding="utf-8"))
     cards = segment_chars(char_cards, maxlen=maxlen, min_chars=min_chars, gapmax=gapmax)
     out = ep.output_v2_srt()
-    out.write_text(srt_io.serialize(cards), encoding="utf-8")
+    atomic_write_text(out, srt_io.serialize(cards))
     print(f"重斷句:{len(char_cards)} 逐字卡 → {len(cards)} 句卡(maxlen={maxlen})")
     return 0

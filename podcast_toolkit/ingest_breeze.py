@@ -18,6 +18,7 @@ from pathlib import Path
 
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.subtitle_cleanup import smooth_speakers
 
 # 行首 [Mic1] / [Mic 1] / [郝慧川] 之類的講者標籤
@@ -110,7 +111,7 @@ def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True) -> in
     if spk_path.exists():
         shutil.copy(spk_path, spk_path.with_name(spk_path.name + ".pre-breeze.bak"))
 
-    v2.write_text(srt_io.serialize(cards), encoding="utf-8")
+    atomic_write_text(v2, srt_io.serialize(cards))
     cameras_io.save(spk_path, speakers)   # 空 dict 會自動刪舊檔(無講者版)
 
     n_people = len(set(speakers.values()))
