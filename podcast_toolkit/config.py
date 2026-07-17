@@ -106,10 +106,25 @@ def glossary_to_fixes(glossary: list) -> list:
     return pairs
 
 
+def _deep_merge_dict(base: dict, override: dict) -> dict:
+    """base dict 深合併 override dict（只深合併一層，值若是 dict 就 {**base_val, **override_val}）。
+    override 值為 None 時保留 base 值（避免 episode 未設的 key 清掉 defaults）。
+    """
+    result = dict(base)
+    for k, v in override.items():
+        if v is None:
+            continue
+        if isinstance(v, dict) and isinstance(result.get(k), dict):
+            result[k] = {**result[k], **v}
+        else:
+            result[k] = v
+    return result
+
+
 def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) -> dict:
     """合併 defaults 與 episode：
     - 純量：episode 覆寫 defaults
-    - dict：逐 key 合併
+    - dict：逐 key 合併（defaults 自動深合併；新欄位不需改白名單）
     - list-of-pairs（fixes / card_fixes）：common + episode 串接，依序套用
     - glossary：通用+專屬串接，normalize 後同時：
         (1) 留在 cfg["glossary"] 給 Gemini prompt 用
@@ -123,7 +138,23 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
     - mics：分軌轉錄用的單人 mic 檔 {a, b, c, ...}；key 對齊 cameras key，
       不設 → 空 dict → 走原本的混音軌 Gemini 轉錄路線（向後相容）。
     - per_mic：分軌轉錄參數（VAD 閘門等），defaults + episode 逐 key 合併。
+
+    架構（deny-list）：
+    - defaults 所有 dict 鍵自動深合併到 cfg（_deep_merge_dict），新欄位無需白名單
+    - 以下鍵有特殊邏輯，不走自動合併（deny-list）：
+        特殊 list 邏輯：common_glossary, common_fixes, glossary, fixes
+        assets：只取 defaults（episode 不覆寫 assets 路徑）
+        subtitle_style_reels：三層疊加（見下方）
+        episode-only 透傳：cameras, camera_sync_offset, audio, mics（由下方明確處理）
     """
+    # deny-list：這些鍵不走自動深合併，由下方明確處理
+    _DENY = {
+        "common_glossary", "common_fixes", "glossary", "fixes",
+        "assets",
+        "subtitle_style_reels",
+        "cameras", "camera_sync_offset", "audio", "mics",
+    }
+
     # cameras：episode["cameras"] 優先；否則 fallback main_video → cameras.a
     cameras = episode.get("cameras")
     if cameras is None:
@@ -140,81 +171,75 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
     user_fixes = list(defaults.get("common_fixes") or []) + list(episode.get("fixes") or [])
     auto_fixes = glossary_to_fixes(glossary)
 
-    cfg = {
-        "resegment": {**defaults["resegment"], **(episode.get("resegment") or {})},
-        "suspicious_pause": {
-            **defaults.get("suspicious_pause", {}),
-            **(episode.get("suspicious_pause") or {}),
-        },
-        "subtitle_style": {**defaults["subtitle_style"], **(episode.get("subtitle_style") or {})},
-        # Reels 專用字幕風格：defaults > subtitle_style_reels > subtitle_style（base） > episode override
-        # 缺欄位時自動回退到 subtitle_style，讓只想微調幾欄的 episode 不用整段重抄
-        "subtitle_style_reels": {
-            **defaults["subtitle_style"],
-            **(defaults.get("subtitle_style_reels") or {}),
-            **(episode.get("subtitle_style") or {}),
-            **(episode.get("subtitle_style_reels") or {}),
-        },
-        "gemini": {**(defaults.get("gemini") or {}), **(episode.get("gemini") or {})},
-        "proofread": {**(defaults.get("proofread") or {}), **(episode.get("proofread") or {})},
-        "assets": dict(defaults["assets"]),
-        # encode 可被 episode.yaml 局部覆寫（例：趕時間時 preset: medium 加速）
-        "encode": {**defaults["encode"], **(episode.get("encode") or {})},
-        # 使用者 fixes 在前（純錯字），glossary 展開的在後（保險絲）
-        "fixes": user_fixes + auto_fixes,
-        "glossary": glossary,
-        "card_fixes": list(episode.get("card_fixes") or []),
-        # episode 自身欄位
-        "date": episode.get("date"),
-        "name": episode.get("name"),
-        "main_video": episode.get("main_video"),
-        "main_srt": episode.get("main_srt"),
-        # 字幕來源 override：cam-modal 手選哪份 .srt 進最終合成 / 編輯器下拉回顯；
-        # 不設 → active_srt() fallback _v2.srt。先前漏列此 key → 寫進 yaml 也讀不回 cfg，
-        # 導致 cam-modal 切字幕檔「存了卻跳回舊值」、最終合成也永遠讀 _v2.srt。
-        "srt_path": episode.get("srt_path"),
-        "cameras": dict(cameras),
-        "camera_sync_offset": dict(episode.get("camera_sync_offset") or {}),
-        "audio": episode.get("audio"),
-        "mics": dict(episode.get("mics") or {}),
-        # Breeze 分軌集標記：有逐卡講者標 → 前端渲染 speaker tag / 兩行。
-        # 與「有無 mic 音檔路徑(mics)」正交：Breeze 集有講者標但沒 mic 路徑。
-        "has_speaker_tags": bool(episode.get("has_speaker_tags") or False),
-        "per_mic": {**(defaults.get("per_mic") or {}), **(episode.get("per_mic") or {})},
-        "force_break": set(episode.get("force_break") or []),
-        "force_join": set(episode.get("force_join") or []),
-        "crop_yt": episode.get("crop_yt"),
-        "crop_reels": episode.get("crop_reels"),
-        # 節目封面 overlay 開關（沿用 watermark 機制：只疊正片、右上角）；defaults + episode 逐 key 合併
-        "watermark": {**(defaults.get("watermark") or {}), **(episode.get("watermark") or {})},
-        # 正片倍速（只加速正片，片頭尾不動）：{enabled, factor}
-        "speed": {**(defaults.get("speed") or {}), **(episode.get("speed") or {})},
-        # 全片去空拍（偵測中段靜音→跳剪）：{enabled, min_silence, pad, noise_db}
-        "silence_trim": {
-            **(defaults.get("silence_trim") or {}),
-            **(episode.get("silence_trim") or {}),
-        },
-        # 畫面拉正旋轉（per cam，度數）：{a, b}
-        "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
-        # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段
-        "camera_rule": {
-            **(defaults.get("camera_rule") or {}),
-            **(episode.get("camera_rule") or {}),
-        },
-        "deletions": list(episode.get("deletions") or []),
-        # 時間版刪段（與字幕脫鉤）：[[start, end], ...] 秒；assemble.cut_intervals_from_cfg 優先吃它
-        "cuts": list(episode.get("cuts") or []),
-        # 刪段往前後延伸吃掉間隙雜音的秒數（每邊上限，夾在鄰卡邊界內）。episode 覆寫；0=關
-        "cut_pad": float(episode.get("cut_pad", defaults.get("cut_pad", 0)) or 0),
-        "head_trim_sec": float(episode.get("head_trim_sec") or 0),
-        "tail_trim_sec": float(episode.get("tail_trim_sec") or 0),
-        # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。漏列此 key 會像 srt_path
-        # 一樣「寫進 yaml 卻讀不回 cfg」，導致存了沒生效。
-        "subtitle_offset_sec": float(episode.get("subtitle_offset_sec") or 0),
-        # Reels 片段截取：list of {name, start_card, end_card}
-        # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
-        "reels_clips": list(episode.get("reels_clips") or []),
+    # --- 自動深合併：對 defaults 所有 dict 類型鍵，跳過 deny-list，episode 蓋上去 ---
+    cfg: dict = {}
+    for key, def_val in defaults.items():
+        if key in _DENY:
+            continue
+        if isinstance(def_val, dict):
+            cfg[key] = _deep_merge_dict(def_val, episode.get(key) or {})
+        else:
+            # 純量（cut_pad、reflow 下的純量等）：episode 有值就蓋，否則用 defaults
+            ep_val = episode.get(key)
+            cfg[key] = ep_val if ep_val is not None else def_val
+
+    # --- 特殊邏輯：deny-list 鍵明確處理 ---
+
+    # assets：只取 defaults，不接受 episode 覆寫路徑
+    cfg["assets"] = dict(defaults["assets"])
+
+    # Reels 專用字幕風格：defaults > subtitle_style_reels > subtitle_style（base） > episode override
+    # 缺欄位時自動回退到 subtitle_style，讓只想微調幾欄的 episode 不用整段重抄
+    cfg["subtitle_style_reels"] = {
+        **defaults["subtitle_style"],
+        **(defaults.get("subtitle_style_reels") or {}),
+        **(episode.get("subtitle_style") or {}),
+        **(episode.get("subtitle_style_reels") or {}),
     }
+
+    # list concat（保留現有邏輯）
+    # 使用者 fixes 在前（純錯字），glossary 展開的在後（保險絲）
+    cfg["fixes"] = user_fixes + auto_fixes
+    cfg["glossary"] = glossary
+    cfg["card_fixes"] = list(episode.get("card_fixes") or [])
+
+    # episode-only 透傳鍵（這些在 defaults 裡不存在）
+    cfg["date"] = episode.get("date")
+    cfg["name"] = episode.get("name")
+    cfg["main_video"] = episode.get("main_video")
+    cfg["main_srt"] = episode.get("main_srt")
+    # 字幕來源 override：cam-modal 手選哪份 .srt 進最終合成 / 編輯器下拉回顯；
+    # 不設 → active_srt() fallback _v2.srt。先前漏列此 key → 寫進 yaml 也讀不回 cfg，
+    # 導致 cam-modal 切字幕檔「存了卻跳回舊值」、最終合成也永遠讀 _v2.srt。
+    cfg["srt_path"] = episode.get("srt_path")
+    cfg["cameras"] = dict(cameras)
+    cfg["camera_sync_offset"] = dict(episode.get("camera_sync_offset") or {})
+    cfg["audio"] = episode.get("audio")
+    cfg["mics"] = dict(episode.get("mics") or {})
+
+    # Breeze 分軌集標記：有逐卡講者標 → 前端渲染 speaker tag / 兩行。
+    # 與「有無 mic 音檔路徑(mics)」正交：Breeze 集有講者標但沒 mic 路徑。
+    cfg["has_speaker_tags"] = bool(episode.get("has_speaker_tags") or False)
+
+    # episode-only list / set / 純量鍵（在 defaults 不存在，需明確設預設值）
+    cfg["force_break"] = set(episode.get("force_break") or [])
+    cfg["force_join"] = set(episode.get("force_join") or [])
+    cfg["crop_yt"] = episode.get("crop_yt")
+    cfg["crop_reels"] = episode.get("crop_reels")
+    cfg["deletions"] = list(episode.get("deletions") or [])
+    # 時間版刪段（與字幕脫鉤）：[[start, end], ...] 秒；assemble.cut_intervals_from_cfg 優先吃它
+    cfg["cuts"] = list(episode.get("cuts") or [])
+    # 刪段往前後延伸吃掉間隙雜音的秒數（每邊上限，夾在鄰卡邊界內）。episode 覆寫；0=關
+    cfg["cut_pad"] = float(episode.get("cut_pad", defaults.get("cut_pad", 0)) or 0)
+    cfg["head_trim_sec"] = float(episode.get("head_trim_sec") or 0)
+    cfg["tail_trim_sec"] = float(episode.get("tail_trim_sec") or 0)
+    # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。漏列此 key 會像 srt_path
+    # 一樣「寫進 yaml 卻讀不回 cfg」，導致存了沒生效。
+    cfg["subtitle_offset_sec"] = float(episode.get("subtitle_offset_sec") or 0)
+    # Reels 片段截取：list of {name, start_card, end_card}
+    # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
+    cfg["reels_clips"] = list(episode.get("reels_clips") or [])
+
     # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
     if cfg["crop_yt"] is None and episode.get("crop") is not None:
         cfg["crop_yt"] = episode["crop"]
