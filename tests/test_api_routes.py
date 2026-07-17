@@ -727,3 +727,24 @@ def test_post_transcribe_rejects_path_traversal(client):
     r = client.post("/api/transcribe", json={"path": "../secret.mp3"})
     assert r.status_code == 400
     assert "集資料夾內" in r.json()["detail"]
+
+
+def test_get_version_returns_memory_build_id(client):
+    """/api/version → 200，且值必須是 import 進記憶體的模組常數。"""
+    from podcast_toolkit.web.routes import version as version_mod
+
+    r = client.get("/api/version")
+    assert r.status_code == 200
+    assert r.json() == {"build_id": version_mod._BUILD_ID}
+
+
+def test_get_version_reads_module_constant_not_disk(monkeypatch, tmp_episode_dir):
+    # 探針正確性關鍵：值取自「記憶體裡的 _BUILD_ID 常數」，不是當場讀磁碟。
+    # monkeypatch 模組常數 → endpoint 回應跟著變，證明它讀記憶體而非 build-info.json。
+    from podcast_toolkit.web.routes import version as version_mod
+
+    monkeypatch.setattr(version_mod, "_BUILD_ID", "0.1.0+gSENTINEL.20260717T0000")
+    ep = Episode(tmp_episode_dir)
+    app = build_app(ep, shutdown=lambda: None)
+    r = TestClient(app).get("/api/version")
+    assert r.json()["build_id"] == "0.1.0+gSENTINEL.20260717T0000"

@@ -44,6 +44,9 @@ from podcast_toolkit.web.routes import (
 from podcast_toolkit.web.routes import (
     transcribe as transcribe_routes,
 )
+from podcast_toolkit.web.routes import (
+    version as version_routes,
+)
 from podcast_toolkit.web.shared import (
     STATIC_DIR,
     RouteContext,
@@ -259,6 +262,7 @@ def build_app(
     transcribe_routes.register(app, ctx)
     assemble_routes.register(app, ctx)
     config_routes.register(app, ctx)
+    version_routes.register(app, ctx)  # GET /api/version：更新偵測用的版本探針
 
     # ── idle-shutdown：心跳 endpoint + watchdog ──────────────────
     # 啟動時間作為初始心跳（避免還沒有瀏覽器連線就被關閉）

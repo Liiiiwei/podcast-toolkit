@@ -6,6 +6,7 @@
 
 產物：dist/Podcast.app
 """
+import os
 import sys
 
 from setuptools import setup
@@ -21,6 +22,9 @@ DATA_FILES = [
         "podcast_toolkit/web/static/app.css",
         "podcast_toolkit/web/static/app.js",
         "podcast_toolkit/web/static/icons.js",       # window.Icons；漏了它正式 build 會破圖
+        # build 識別碼（磁碟端）：由 build_app.sh 每次打包產生，前端從磁碟即時讀來比對
+        # 記憶體版本（/api/version），偵測「App 已更新但行程還是舊的」。漏了它前端探針失效。
+        "podcast_toolkit/web/static/build-info.json",
         "podcast_toolkit/web/static/dashboard.html",
         "podcast_toolkit/web/static/dashboard.css",
         "podcast_toolkit/web/static/dashboard.js",
@@ -79,7 +83,10 @@ OPTIONS = {
         "CFBundleName": "Podcast",
         "CFBundleDisplayName": "Podcast Toolkit",
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
-        "CFBundleVersion": "0.1.0",
+        # CFBundleVersion 帶成每次都變的 build 識別碼（給 Finder / crash log 認版），
+        # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回 0.1.0。
+        # CFBundleShortVersionString 維持 marketing 版號不動。
+        "CFBundleVersion": os.environ.get("BUILD_ID", "0.1.0"),
         "CFBundleShortVersionString": "0.1.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,

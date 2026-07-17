@@ -7523,9 +7523,66 @@ setupPopover("srt-shift-toggle", "srt-shift-menu");
 
 // 心跳：每 20 秒通知 server 有分頁存活，配合後端 idle-shutdown 機制。
 // fire-and-forget，catch 吞錯不干擾 UI；純靠 timeout 判斷（不用 beforeunload 避免多分頁誤殺）。
+//
+// 同時「搭便車」做版本探針，偵測「App 已更新但正在跑的行程還是舊的」：
+//   磁碟版本 /static/build-info.json —— NoCacheStaticFiles 即時送，永遠最新
+//   記憶體版本 /api/version         —— 後端 import 進記憶體，py2app 無 reload → 可能過期
+// 兩者不一致（或 /api/version 回 404＝舊後端還沒這個 endpoint）＝行程過期 → 顯示重啟橫幅。
+// 每個心跳都「重新讀磁碟」再比對記憶體：這樣連「分頁一直開著、跨越一次更新」也偵測得到
+//（見需求書 §4.4 情境 3：改磁碟、不重整、等一次心跳也要出現橫幅）。
+// 探針同樣不可因失敗干擾 UI —— 每個失敗分支都靜默 return（見各分支註解）。
+function showUpdateBanner() {
+  const el = document.getElementById("update-banner");
+  if (el) el.hidden = false; // 一旦顯示就不再收回（correctness 橫幅，不可關閉）
+}
+
+async function probeVersion() {
+  // 1) 磁碟版本（永遠最新）。cache:no-store 確保拿到磁碟真值。
+  let diskId = null;
+  try {
+    const r = await fetch("/static/build-info.json", { cache: "no-store" });
+    if (r.ok) diskId = (await r.json()).build_id;
+  } catch {
+    return; // error 態：App 已關／網路斷 → 不誤報，交給既有錯誤處理
+  }
+  // empty 態：磁碟根本沒這檔（build 流程有問題）。重啟也生不出來，橫幅只會變死巷 →
+  // 只記 log，不顯示橫幅。這是開發者的問題不是使用者的問題。
+  if (!diskId) {
+    console.warn(
+      "[版本探針] 讀不到 /static/build-info.json 的 build_id，停用探針",
+    );
+    return;
+  }
+  // 2) 記憶體版本（可能過期）。
+  let res;
+  try {
+    res = await fetch("/api/version", { cache: "no-store" });
+  } catch {
+    return; // error 態：App 已關 → 不誤報
+  }
+  if (res.status === 404) {
+    // 舊後端還沒有這個 endpoint —— 正是本機制上線後「第一次更新」的真實情境
+    showUpdateBanner();
+    return;
+  }
+  if (!res.ok) return; // 其他 5xx 等異常，不誤報
+  let memId = null;
+  try {
+    memId = (await res.json()).build_id;
+  } catch {
+    return;
+  }
+  // success 態：一致 → 不動作；不一致＝記憶體舊於磁碟＝行程過期 → 橫幅
+  if (memId && memId !== diskId) showUpdateBanner();
+}
+
 setInterval(() => {
   fetch("/api/heartbeat", { method: "POST" }).catch(() => {});
+  probeVersion();
 }, 20000);
+// loading 態：首次探測前不顯示任何東西。載入後也立即探一次，讓「更新後重整頁面」
+// 情境不必等滿 20 秒才看到橫幅（需求書 §4.4 情境 2）。
+probeVersion();
 
 // 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
 if (window.Icons) window.Icons.inject();

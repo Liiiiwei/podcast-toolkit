@@ -39,6 +39,18 @@ git diff --quiet 2>/dev/null || GIT_SHA="${GIT_SHA}-dirty"
 BUILD_TAG="${BUILD_DATE}-${GIT_SHA}"
 DMG="dist/Podcast-Toolkit-${VER}-${BUILD_TAG}.dmg"
 
+# ── build 識別碼（單一真實來源）────────────────────────────────────────────────
+# 每次 build 都不同：marketing 版號 + git 短碼(+dirty) + build 時間戳，
+# 例 0.1.0+g3f9a1c2.20260717T1802。開發期一天可能 build 十次，不用 semver 遞增。
+# $BUILD_ID 是這裡唯一的來源，下面兩份檔都從它寫出 → 內容保證一致：
+#   _build_info.py            → 會被 py2app 編進記憶體（代表「行程正在跑的版本」）
+#   web/static/build-info.json → NoCacheStaticFiles 從磁碟即時送（代表「磁碟上的版本」）
+# 兩者刻意分開：前端比對兩邊即可偵測「App 已更新但行程還是舊的」。詳見更新機制需求書。
+# 也 export 給 setup_app.py 當 CFBundleVersion（Finder / crash log 認版）。
+BUILD_TS=$(date +%Y%m%dT%H%M)
+BUILD_ID="${VER}+g${GIT_SHA}.${BUILD_TS}"
+export BUILD_ID
+
 echo "→ 檢查作業系統與架構"
 if [[ "$(uname)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "✗ 這支腳本只在 Apple Silicon（arm64）macOS 上打包"
@@ -55,6 +67,18 @@ for part in py-runtime/bin/python3.9 site-packages make_subtitle.py cache/whispe
     fi
 done
 echo "  ✓ sidecar 齊備（$(du -sh "$STAGE" | cut -f1)）"
+
+echo "→ [0/5] 寫入 build 識別碼（$BUILD_ID）"
+# 兩份都從同一個 $BUILD_ID 寫出，內容保證一致。這兩檔是每次 build 的產物、
+# 不進 git（.gitignore 已排除），所以要在 py2app 掃描前先產出。
+cat > podcast_toolkit/_build_info.py <<PY
+# 本檔由 build_app.sh 於每次打包自動產生 —— 請勿手改、勿提交進 git。
+# import 當下即把 BUILD_ID「凍」進記憶體，代表「這個行程正在跑的版本」。
+# 對應磁碟端 web/static/build-info.json（內容必須一致）。
+BUILD_ID = "$BUILD_ID"
+PY
+printf '{"build_id": "%s"}\n' "$BUILD_ID" > podcast_toolkit/web/static/build-info.json
+echo "  ✓ _build_info.py + static/build-info.json"
 
 echo "→ [1/5] py2app 打包精簡主 app"
 rm -rf build "$APP"

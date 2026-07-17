@@ -27,3 +27,7 @@ design-review/
 # 打包用 arm64 靜態 ffmpeg（大檔，不入 git；打包時本地放置）
 assets/bin/
 _pkgbuild/
+
+# build 識別碼：每次 build_app.sh 產生的產物（記憶體端＋磁碟端），不入 git
+podcast_toolkit/_build_info.py
+podcast_toolkit/web/static/build-info.json

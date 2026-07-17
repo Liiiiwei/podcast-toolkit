@@ -10,6 +10,15 @@
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body class="theme-dark">
+    <!-- 版本更新橫幅：由 app.js 版本探針控制顯示；預設隱藏、不可關閉（correctness，非提示）。
+         偵測到「磁碟已更新但行程還是舊版」時出現，提示使用者 ⌘Q 重開。 -->
+    <div id="update-banner" role="alert" aria-live="assertive" hidden>
+      <strong>App 已更新，目前執行的是舊版本</strong>
+      請按 <kbd>⌘Q</kbd> 完全結束 App 後重新打開。
+      <span class="update-banner-sub"
+        >（或關閉此分頁，90 秒後 App 會自動結束，再重新打開即可）</span
+      >
+    </div>
     <header class="topbar">
       <div class="topbar-left">
         <div class="topbar-group">
