@@ -17,6 +17,8 @@ from typing import Callable
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
@@ -43,6 +45,22 @@ from podcast_toolkit.web.shared import (
     RouteContext,
     probe_static_access,
 )
+
+class NoCacheStaticFiles(StaticFiles):
+    """靜態檔一律回 Cache-Control: no-cache，廢除手動 ?v= 撞號。
+
+    no-cache ≠ 不快取：瀏覽器每次都會帶 If-None-Match/If-Modified-Since
+    回來 revalidate，檔案沒變就吃 304（StaticFiles 內建 ETag/Last-Modified
+    條件請求）。本地 app 走 localhost，這個成本近零，換到「改了前端
+    永遠立刻生效」，不再發生版號漏撞導致使用者跑舊版 JS。
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        # 200 與 304 都要帶，否則 304 之後瀏覽器可能改用啟發式快取
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
 
 CONFIG_DIR = Path.home() / ".podcast-toolkit"
 TYPO_DICT_PATH = CONFIG_DIR / "typo-dict.json"
@@ -139,7 +157,7 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     )
 
     episodes_routes.register(app, ctx)
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=STATIC_DIR), name="static")
     media_routes.register(app, ctx)
     editor_routes.register(app, ctx)
     transcribe_routes.register(app, ctx)
