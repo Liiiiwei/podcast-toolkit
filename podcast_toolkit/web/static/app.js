@@ -7694,6 +7694,12 @@ setupSrtShift();
 setupPopover("output-menu-btn", "output-menu");
 setupPopover("srt-shift-toggle", "srt-shift-menu");
 
+// 心跳：每 20 秒通知 server 有分頁存活，配合後端 idle-shutdown 機制。
+// fire-and-forget，catch 吞錯不干擾 UI；純靠 timeout 判斷（不用 beforeunload 避免多分頁誤殺）。
+setInterval(() => {
+  fetch("/api/heartbeat", { method: "POST" }).catch(() => {});
+}, 20000);
+
 // 注入靜態 [data-icon] span（topbar、modal head、accordion summary 等）
 if (window.Icons) window.Icons.inject();
 

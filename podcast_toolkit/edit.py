@@ -1,5 +1,6 @@
 """podcast edit / podcast ui：啟動本機 FastAPI + 開瀏覽器。"""
 from __future__ import annotations
+import signal
 import socket
 import sys
 import threading
@@ -45,6 +46,17 @@ def _start_server(ep: Episode | None) -> int:
     app = build_app(ep, shutdown=shutdown_callback)
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server["instance"] = uvicorn.Server(config)
+
+    # SIGTERM / SIGINT handler：只設 should_exit=True，讓 uvicorn 事件迴圈自然結束。
+    # 子進程清理已移入 FastAPI lifespan shutdown hook（api.py），
+    # uvicorn 停止時必然執行那段，不再需要在 signal handler 裡重複清理，
+    # 避免與 uvicorn 自身的 capture_signals 打架。
+    # SIGKILL（-9）攔不了，OS 會回收子進程，無法事先清理。
+    def _signal_handler(signum: int, frame) -> None:  # type: ignore[type-arg]
+        shutdown_callback()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
 
     url = f"http://127.0.0.1:{port}"
     print(f"→ 啟動：{url}")

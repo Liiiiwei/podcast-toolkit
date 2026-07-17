@@ -83,6 +83,12 @@ _STATE: dict[str, Any] = {
 }
 
 
+def is_busy() -> bool:
+    """唯讀查詢：目前是否有轉字幕 job 進行中（idle watchdog 用）。"""
+    with _LOCK:
+        return _STATE["state"] == "running"
+
+
 def get_status() -> dict[str, Any]:
     global _CURRENT_JOB, _ACTIVE_PROC
     stale_proc = None

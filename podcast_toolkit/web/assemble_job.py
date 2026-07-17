@@ -52,6 +52,12 @@ _ACTIVE_PROC: Popen | None = None
 _COORDINATOR: threading.Thread | None = None
 
 
+def is_busy() -> bool:
+    """唯讀查詢：目前是否有合成 job 進行中（idle watchdog 用）。"""
+    with _LOCK:
+        return _STATE["state"] in ("running", "preparing")
+
+
 def get_status() -> dict[str, Any]:
     """前端 poll 用。回傳一份 snapshot 避免 race。"""
     with _LOCK:

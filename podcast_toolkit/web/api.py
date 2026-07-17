@@ -11,8 +11,11 @@ from __future__ import annotations
 import json
 import subprocess  # noqa: F401  (測試 monkeypatch api_mod.subprocess.run)
 import sys
+import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
+from time import monotonic
 from typing import Callable
 
 from fastapi import FastAPI
@@ -22,6 +25,7 @@ from starlette.types import Scope
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
+from podcast_toolkit.web import assemble_job, transcribe_job
 from podcast_toolkit.web.routes import (
     assemble as assemble_routes,
 )
@@ -45,6 +49,15 @@ from podcast_toolkit.web.shared import (
     RouteContext,
     probe_static_access,
 )
+
+# ── idle-shutdown 常數 ──────────────────────────────────────────
+# 閾值：最後一次心跳後超過這個秒數、且無 active job，就自動 graceful shutdown。
+IDLE_SHUTDOWN_SEC = 90
+
+# ── idle-watchdog 防重複啟動 ─────────────────────────────────────
+# 全進程只允許一條 watchdog thread；Lock 保護旗標的讀寫。
+_watchdog_lock = threading.Lock()
+_watchdog_started = False
 
 class NoCacheStaticFiles(StaticFiles):
     """靜態檔一律回 Cache-Control: no-cache，廢除手動 ?v= 撞號。
@@ -123,9 +136,92 @@ def _save_config(data: dict) -> None:
     )
 
 
-def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
-    """建立 FastAPI app。shutdown 是儲存後/取消時呼叫的 callback。"""
-    app = FastAPI(title="podcast-edit")
+def should_idle_shutdown(
+    last_heartbeat_ts: float,
+    now_ts: float,
+    has_active_job: bool,
+    idle_threshold_sec: float,
+) -> bool:
+    """純函式：判斷是否應觸發 idle shutdown。
+
+    - has_active_job 為 True 時一律不關（轉錄/合成進行中）
+    - 距離最後心跳超過 idle_threshold_sec 才關
+    """
+    if has_active_job:
+        return False
+    return (now_ts - last_heartbeat_ts) >= idle_threshold_sec
+
+
+def _start_idle_watchdog(
+    get_last_heartbeat: Callable[[], float],
+    shutdown: Callable[[], None],
+    idle_threshold_sec: float = IDLE_SHUTDOWN_SEC,
+    check_interval_sec: float = 30.0,
+) -> None:
+    """啟動 daemon thread，每 check_interval_sec 秒檢查一次是否閒置過久。
+
+    全進程只啟動一條；重複呼叫（測試多次 build_app）直接 return。
+    """
+    global _watchdog_started
+    with _watchdog_lock:
+        if _watchdog_started:
+            return
+        _watchdog_started = True
+
+    def _watch() -> None:
+        while True:
+            threading.Event().wait(check_interval_sec)
+            has_job = transcribe_job.is_busy() or assemble_job.is_busy()
+            if should_idle_shutdown(
+                get_last_heartbeat(),
+                monotonic(),
+                has_job,
+                idle_threshold_sec,
+            ):
+                # 保險：先清理子進程（理論上此時無 active job，但以防萬一）
+                try:
+                    transcribe_job.cancel_job()
+                except Exception:
+                    pass
+                try:
+                    assemble_job.cancel_job()
+                except Exception:
+                    pass
+                shutdown()
+                return  # watchdog 退出，server 會停止
+
+    t = threading.Thread(target=_watch, daemon=True, name="idle-watchdog")
+    t.start()
+
+
+def build_app(
+    ep: Episode | None,
+    shutdown: Callable[[], None],
+    *,
+    _idle_threshold_sec: float = IDLE_SHUTDOWN_SEC,
+    _idle_check_interval_sec: float = 30.0,
+) -> FastAPI:
+    """建立 FastAPI app。shutdown 是儲存後/取消時呼叫的 callback。
+
+    _idle_threshold_sec / _idle_check_interval_sec：僅供測試注入短值，
+    production 固定使用預設值（IDLE_SHUTDOWN_SEC=90, interval=30s）。
+    """
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):  # type: ignore[type-arg]
+        # startup：無需額外動作
+        yield
+        # shutdown：清理可能殘留的子進程（watchdog 觸發 / SIGTERM / Cmd+Q 三條路都會經過）
+        try:
+            transcribe_job.cancel_job()
+        except Exception:
+            pass
+        try:
+            assemble_job.cancel_job()
+        except Exception:
+            pass
+
+    app = FastAPI(title="podcast-edit", lifespan=lifespan)
 
     # macOS TCC 預檢：toolkit 裝在受保護資料夾時靜態檔 open 會被擋、整頁空白。
     # 啟動時探一次，結果存進 app.state 給 "/" 路由改回明確錯誤頁（FileResponse
@@ -163,5 +259,23 @@ def build_app(ep: Episode | None, shutdown: Callable[[], None]) -> FastAPI:
     transcribe_routes.register(app, ctx)
     assemble_routes.register(app, ctx)
     config_routes.register(app, ctx)
+
+    # ── idle-shutdown：心跳 endpoint + watchdog ──────────────────
+    # 啟動時間作為初始心跳（避免還沒有瀏覽器連線就被關閉）
+    # 存在 app.state 讓 endpoint 寫入、watchdog 讀取、測試直接存取都指向同一份。
+    app.state.last_heartbeat = monotonic()
+
+    @app.post("/api/heartbeat", status_code=204)
+    async def heartbeat() -> None:
+        """前端每 20 秒打一次；更新最後活躍時間戳。"""
+        app.state.last_heartbeat = monotonic()
+
+    # 把 shutdown callback 傳給 watchdog，讓它在判定閒置後觸發 graceful shutdown
+    _start_idle_watchdog(
+        get_last_heartbeat=lambda: app.state.last_heartbeat,
+        shutdown=shutdown,
+        idle_threshold_sec=_idle_threshold_sec,
+        check_interval_sec=_idle_check_interval_sec,
+    )
 
     return app
