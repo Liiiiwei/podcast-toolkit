@@ -36,8 +36,18 @@ DANGLE_TAIL2 = {"然後", "所以", "因為", "但是", "可是", "而且", "或
                 "而是", "就是", "不過", "其實", "譬如", "比如", "如果", "甚至", "後來"}
 DANGLE_PENALTY = 4.0
 
-# 預設繁體大詞典（Breeze 專案內）；resegment.jieba_dict 可覆寫，不存在則用 jieba 內建
-_DEFAULT_DICT = Path("/Users/Mac365/Developer/breeze subtitle/Breeze-ASR-25/dict.txt.big")
+# 預設繁體大詞典（Breeze 專案內，隨 $HOME 變動）；resegment.jieba_dict 可覆寫，
+# 都不存在則用 jieba 內建（斷句品質略降但照常可用）。候選位置與 glossary_candidates 一致。
+def _default_dict() -> Path:
+    home = Path.home()
+    cands = [
+        home / "Developer" / "breeze subtitle" / "Breeze-ASR-25" / "dict.txt.big",
+        home / "Developer" / "Breeze-ASR-25" / "dict.txt.big",
+    ]
+    for c in cands:
+        if c.exists():
+            return c
+    return cands[0]
 
 # 節目固定專有名詞（避免被斷開）；各集來賓/品牌再由 add_words() 動態加入
 _BASE_WORDS = ["印花樂", "過嗨乳牛", "郝慧川", "岳啟儒", "沈奕妤", "惡魔老闆",
@@ -72,7 +82,7 @@ def _jieba():
         else:
             try:
                 _jieba_mod.setLogLevel(20)
-                dic = Path(_DICT_OVERRIDE) if _DICT_OVERRIDE else _DEFAULT_DICT
+                dic = Path(_DICT_OVERRIDE) if _DICT_OVERRIDE else _default_dict()
                 if dic.exists():
                     _jieba_mod.set_dictionary(str(dic))   # 繁體詞典
                 for w in _BASE_WORDS + _EXTRA_WORDS:
