@@ -89,31 +89,23 @@ else
 fi
 
 echo "→ 設定 Breeze 轉字幕後端（本地 AI 聽打、免金鑰；強烈建議，但失敗不擋核心安裝）"
-# Breeze 是獨立的『私有』repo（客製 make_subtitle.py＋節奏斷句），toolkit 用 subprocess 呼叫
+# Breeze 是公開 repo（客製 make_subtitle.py＋節奏斷句），toolkit 用 subprocess 呼叫
 # 它自己的 .venv。裝到 toolkit 認得的預設路徑 → _breeze_dir() 直接找到，免寫 config。
 # 整段包在 set +e：Breeze 裝不起來時只警告（可退回本機 mlx-whisper），不讓 install 中斷。
 set +e
 BREEZE_PARENT="$HOME/Developer/breeze subtitle"
 BREEZE_DIR="$BREEZE_PARENT/Breeze-ASR-25"
 BREEZE_OK=0
-if ! command -v gh >/dev/null; then
-    echo "  ⚠ 找不到 gh（GitHub CLI）。Breeze 是私有 repo，需要 gh 才能下載："
-    echo "      brew install gh && gh auth login"
-    echo "    先跳過 Breeze；裝好並登入後重跑 ./install.sh 即可補上。"
-elif ! gh auth status >/dev/null 2>&1; then
-    echo "  ⚠ gh 尚未登入。請先跑：gh auth login（選 GitHub.com → HTTPS）"
-    echo "    先跳過 Breeze；登入後重跑 ./install.sh 即可補上。"
+if [ ! -f "$BREEZE_DIR/make_subtitle.py" ]; then
+    echo "  → 下載 Breeze 客製版（公開 repo，含子模組 whisper-patch，免 gh／免登入）"
+    mkdir -p "$BREEZE_PARENT"
+    git clone --recurse-submodules https://github.com/Liiiiwei/breeze-podcast-subtitle.git "$BREEZE_DIR"
 else
-    if [ ! -f "$BREEZE_DIR/make_subtitle.py" ]; then
-        echo "  → 下載 Breeze 客製版（私有 repo，含子模組 whisper-patch）"
-        mkdir -p "$BREEZE_PARENT"
-        gh repo clone Liiiiwei/breeze-podcast-subtitle "$BREEZE_DIR" -- --recurse-submodules
-    else
-        echo "  ✓ Breeze 已存在 → 更新"
-        ( cd "$BREEZE_DIR" && git pull --ff-only >/dev/null 2>&1; \
-          git submodule update --init --recursive >/dev/null 2>&1 )
-    fi
-    if [ -f "$BREEZE_DIR/make_subtitle.py" ]; then
+    echo "  ✓ Breeze 已存在 → 更新"
+    ( cd "$BREEZE_DIR" && git pull --ff-only >/dev/null 2>&1; \
+      git submodule update --init --recursive >/dev/null 2>&1 )
+fi
+if [ -f "$BREEZE_DIR/make_subtitle.py" ]; then
         echo "  → 建 Breeze 專用 venv 並裝相依（首次裝 torch 較久，約數分鐘）"
         [ -x "$BREEZE_DIR/.venv/bin/python" ] || python3 -m venv "$BREEZE_DIR/.venv"
         BPIP="$BREEZE_DIR/.venv/bin/pip"
@@ -140,7 +132,6 @@ else
     else
         echo "  ⚠ Breeze 下載失敗（跳過；稍後重跑 ./install.sh 可補）"
     fi
-fi
 set -e
 
 echo "→ 生成雙擊啟動 app（本機 osacompile 生成 → 無 quarantine、不會被 Gatekeeper 擋）"
@@ -183,7 +174,7 @@ fi
 if [ "${BREEZE_OK:-0}" = "1" ]; then
     echo "  轉字幕後端：Breeze 已就緒（編輯器裡按『一鍵 Breeze』即可，首次會下載 2.9G 模型）"
 else
-    echo "  ⚠ Breeze 尚未就緒（上方有原因）。裝好 gh 並 gh auth login 後重跑 ./install.sh 即可；"
+    echo "  ⚠ Breeze 尚未就緒（上方有原因）。排除後重跑 ./install.sh 即可補上；"
     echo "    在此之前可先用本機 mlx-whisper 轉（不標講者）。"
 fi
 cat <<'EOF'
