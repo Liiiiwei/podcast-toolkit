@@ -150,6 +150,15 @@
                   <span>合成 YT</span>
                 </button>
                 <button
+                  id="assemble-reels-btn"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="合成 Reels 9:16 短版（無片頭片尾）"
+                >
+                  <span data-icon="smartphone"></span>
+                  <span>合成 Reels</span>
+                </button>
+                <button
                   id="assemble-mp3-btn"
                   type="button"
                   class="btn btn-ghost"
@@ -186,6 +195,14 @@
     <main class="body">
       <div class="body-top">
         <section class="video-pane">
+          <div class="version-tabs" id="version-tabs">
+            <button class="version-tab active" data-version="yt" type="button">
+              YT 16:9 完整版
+            </button>
+            <button class="version-tab" data-version="reels" type="button">
+              Reels 9:16 短版
+            </button>
+          </div>
           <div
             id="cam-ruler"
             class="cam-ruler"
@@ -1505,6 +1522,6 @@
     </dialog>
 
     <script src="/static/icons.js?v=20260701a"></script>
-    <script src="/static/app.js?v=20260701b" type="module"></script>
+    <script src="/static/app.js?v=20260717a" type="module"></script>
   </body>
 </html>
