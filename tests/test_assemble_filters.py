@@ -171,6 +171,24 @@ def test_prepare_assembly_yt_tail_trim_appends_deletion_at_end(tmp_episode_full)
     assert "between(t,98.000,100.000)" in fc
 
 
+def test_prepare_assembly_yt_burn_with_cuts_burns_ass_not_raw_srt(tmp_episode_full):
+    """回歸：單機 + 燒字幕 + 有 cuts 時，餵給 subtitles filter 的必須是標明 PlayResX/Y
+    的過濾後 .ass，不能是純 .srt。直接燒 SRT 會讓 libass 用預設 PlayResY=288 把
+    FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["cuts"] = [[10.0, 12.0]]
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    fc_idx = plan["cmd"].index("-filter_complex")
+    fc = plan["cmd"][fc_idx + 1]
+    # 燒的是過濾後、帶輸出解析度的 ASS
+    assert "_v2_assembled_yt_1920x1080.ass" in fc
+    # 絕不能把純過濾 SRT 餵給 subtitles filter（bug 路徑）
+    assert "_v2_assembled_yt.srt" not in fc
+
+
 def test_prepare_assembly_yt_trim_reduces_main_dur_for_fade_out(tmp_episode_full):
     """T21: head + tail trim 應該扣 main_dur，否則 fade-out 時間點算錯。
     head=1.5 + tail=2 → main_dur 由 100 變成 96.5。

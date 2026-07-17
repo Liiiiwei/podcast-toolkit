@@ -1293,7 +1293,12 @@ def prepare_assembly(
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
             filter_srt_by_intervals(srt, clean_srt, cut_intervals)
             srt = clean_srt
-            srt_rel = str(srt.relative_to(cwd)) if srt.is_relative_to(cwd) else str(srt)
+            # 過濾後仍要轉成標明 PlayResX/Y 的 ASS 再燒；直接燒 SRT 會讓 libass 用預設
+            # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
+            # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
+            clean_ass = ep.subdir("work") / f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+            _write_ass_from_srt(clean_srt, clean_ass, ass_res_w, ass_res_h)
+            srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
         if deletion_intervals:
             # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
