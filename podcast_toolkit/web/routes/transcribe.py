@@ -146,6 +146,17 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     def get_transcribe_status():
         return JSONResponse(transcribe_job.get_status())
 
+    @app.post("/api/transcribe/cancel")
+    def post_transcribe_cancel():
+        """取消進行中的轉字幕（single / per-mic / breeze 共用）：終結子行程、
+        廢掉舊 worker 寫入權、釋放 slot。cancel_job 同步等收尾完才回，
+        回傳當下 state 讓前端不必再輪詢空窗。沒有 job 在跑也回 200（冪等）。"""
+        cancelled = transcribe_job.cancel_job()
+        st = transcribe_job.get_status()
+        return JSONResponse(
+            {"ok": True, "cancelled": cancelled, "state": st.get("state")}
+        )
+
     @app.post("/api/resegment")
     def post_resegment(payload: dict):
         """同步重新斷句：使用者自帶字幕（不跑雲端 STT）時，只跑 resegment 後處理

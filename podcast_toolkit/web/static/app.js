@@ -4768,6 +4768,101 @@ function stopTranscribePoll() {
   }
 }
 
+// 輪詢 transcribe status 直到離開 running（或 timeout）。回傳最終 state。
+// 後端 cancel 已同步等收尾完才回；這是取消請求網路失敗時的保險。
+async function pollUntilTranscribeIdle(timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "idle";
+  while (Date.now() < deadline) {
+    try {
+      const r = await fetch("/api/transcribe/status");
+      const s = await r.json();
+      last = s.state;
+      if (s.state !== "running") return s.state;
+    } catch (e) {
+      /* 暫時失敗，續試 */
+    }
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  return last;
+}
+
+// 打 /api/transcribe/cancel 並確保後端已離開 running（single / breeze / per-mic 共用）
+async function requestTranscribeCancel() {
+  let finalState = "running";
+  try {
+    const r = await fetch("/api/transcribe/cancel", { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    finalState = d.state || "running";
+  } catch (e) {
+    /* 取消請求失敗：改用輪詢確認後端狀態 */
+  }
+  if (finalState === "running") {
+    finalState = await pollUntilTranscribeIdle();
+  }
+  return finalState;
+}
+
+// 取消後把轉錄 modal 收回「可重轉」狀態（重開 modal 時 requestTranscribe 會重設其餘欄位）
+function resetTranscribeModalAfterCancel() {
+  const go = $("#transcribe-go");
+  const cancel = $("#transcribe-cancel");
+  hideModal("transcribe-modal");
+  $("#transcribe-progress").hidden = true;
+  if (go) {
+    go.hidden = false;
+    go.disabled = false;
+  }
+  if (cancel) {
+    cancel.disabled = false;
+    cancel.textContent = "取消";
+    cancel.onclick = () => hideModal("transcribe-modal");
+  }
+}
+
+// 轉錄中按「取消轉錄」（single / breeze 共用 transcribe modal）：
+// 按鈕禁用防連點 → 停 poll → 通知後端砍 job 並等收尾 → 收回可重轉狀態
+async function abortTranscribeFromModal() {
+  const cancel = $("#transcribe-cancel");
+  if (cancel) {
+    cancel.disabled = true; // async 期間禁用
+    cancel.textContent = "取消中…";
+  }
+  stopTranscribePoll(); // 停進度 poll，避免和取消狀態打架
+  $("#transcribe-phase-label").textContent = "取消中…";
+  await requestTranscribeCancel();
+  resetTranscribeModalAfterCancel();
+}
+
+// 取消後把分軌 modal 收回「可重轉」狀態（重開時 openPerMicTranscribe 會整組重設）
+function resetPerMicModalAfterCancel() {
+  const go = $("#per-mic-go");
+  const cancel = $("#per-mic-cancel");
+  hideModal("per-mic-modal");
+  if (go) {
+    go.hidden = false;
+    go.disabled = false;
+  }
+  if (cancel) {
+    cancel.disabled = false;
+    cancel.textContent = "取消";
+    cancel.onclick = () => hideModal("per-mic-modal");
+  }
+}
+
+// 分軌轉錄中按「取消」：流程同 abortTranscribeFromModal，操作 per-mic modal
+async function abortPerMicFromModal() {
+  const cancel = $("#per-mic-cancel");
+  if (cancel) {
+    cancel.disabled = true;
+    cancel.textContent = "取消中…";
+  }
+  stopPerMicPoll();
+  $("#per-mic-phase-label").textContent = "取消中…";
+  await requestTranscribeCancel();
+  resetPerMicModalAfterCancel();
+}
+
 function renderTranscribePhasePills(currentPhase, state) {
   // pending / active / done 三種狀態，依目前 phase 與 state 推導
   const curIdx = TRANSCRIBE_PHASES.indexOf(bucketOfPhase(currentPhase));
@@ -4836,7 +4931,12 @@ async function startBreezeTranscribe() {
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   if (go) go.disabled = true;
-  if (cancel) cancel.disabled = true;
+  // 轉錄中可取消：按下後禁用按鈕、通知後端砍 Breeze 子行程，收尾後回到可重轉狀態
+  if (cancel) {
+    cancel.disabled = false;
+    cancel.textContent = "取消轉錄";
+    cancel.onclick = abortTranscribeFromModal;
+  }
   try {
     const r = await fetch("/api/transcribe/breeze", {
       method: "POST",
@@ -4872,7 +4972,10 @@ async function runTranscribe(file) {
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   go.disabled = true;
-  cancel.disabled = true;
+  // 轉錄中可取消：按下後禁用按鈕、通知後端砍 job，收尾後回到可重轉狀態
+  cancel.disabled = false;
+  cancel.textContent = "取消轉錄";
+  cancel.onclick = abortTranscribeFromModal;
 
   try {
     const r = await fetch("/api/transcribe", {
@@ -4921,7 +5024,12 @@ async function resumeTranscribeIfRunning() {
       go.hidden = true;
       go.disabled = true;
     }
-    if (cancel) cancel.disabled = true;
+    // 重整後恢復的 job 也要能取消
+    if (cancel) {
+      cancel.disabled = false;
+      cancel.textContent = "取消轉錄";
+      cancel.onclick = abortPerMicFromModal;
+    }
     showModal("per-mic-modal");
     if (!_perMicPollTimer) {
       _perMicPollTimer = setInterval(pollPerMic, 500);
@@ -4949,7 +5057,12 @@ async function resumeTranscribeIfRunning() {
   const goBtn = $("#transcribe-go");
   const cancelBtn = $("#transcribe-cancel");
   if (goBtn) goBtn.disabled = true;
-  if (cancelBtn) cancelBtn.disabled = true;
+  // 重整後恢復的 job 也要能取消
+  if (cancelBtn) {
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = "取消轉錄";
+    cancelBtn.onclick = abortTranscribeFromModal;
+  }
   showModal("transcribe-modal");
   if (!_transcribePollTimer) {
     _transcribePollTimer = setInterval(pollTranscribe, 500);
@@ -5001,6 +5114,13 @@ async function _pollTranscribeOnce() {
   if (s.state === "done") {
     stopTranscribePoll();
     finishTranscribe({ ok: true, out_srt: s.out_srt });
+    return;
+  }
+
+  if (s.state === "cancelled") {
+    // job 被取消（例如另一個分頁按的；本頁的取消流程會先停 poll，不會走到這）
+    stopTranscribePoll();
+    resetTranscribeModalAfterCancel();
     return;
   }
 
@@ -5392,7 +5512,10 @@ async function runPerMicTranscribe() {
   const go = $("#per-mic-go");
   const cancel = $("#per-mic-cancel");
   go.disabled = true;
-  cancel.disabled = true;
+  // 轉錄中可取消：按下後禁用按鈕、通知後端廢掉 job，收尾後回到可重轉狀態
+  cancel.disabled = false;
+  cancel.textContent = "取消轉錄";
+  cancel.onclick = abortPerMicFromModal;
 
   try {
     const r = await fetch("/api/transcribe/per-mic", {
@@ -5457,6 +5580,13 @@ async function _pollPerMicOnce() {
     stopPerMicPoll();
     updatePerMicProgressGrid(s.mics_progress || {});
     finishPerMic({ ok: true, out_srt: s.out_srt });
+    return;
+  }
+
+  if (s.state === "cancelled") {
+    // job 被取消（例如另一個分頁按的；本頁的取消流程會先停 poll，不會走到這）
+    stopPerMicPoll();
+    resetPerMicModalAfterCancel();
     return;
   }
 

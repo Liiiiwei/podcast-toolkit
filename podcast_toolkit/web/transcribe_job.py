@@ -51,12 +51,25 @@ def _backup_existing_srts(ep: Episode) -> list[str]:
 _LOCK = threading.Lock()
 # 無進度更新超過這個秒數 → 視為卡死（Gemini 上傳大檔可能久，給寬鬆值）
 STALL_TIMEOUT_S = 30 * 60
+# 模型載入期（job 開始後尚未解析到任何真實進度）的獨立 grace period：
+# Breeze 載模型的前幾分鐘沒有 tqdm 輸出是正常的，不能用一般 stall 判準；
+# 但真的 hang 在載入也要收得掉，所以給一個獨立（較短）的上限。
+STARTUP_GRACE_S = 15 * 60
+# 取消時等 worker 收尾的上限：Breeze 子行程被 terminate 後 worker 很快返回；
+# 雲端 worker 卡在 HTTP 時 join 逾時就放生 —— 世代已 +1，殘餘寫入會被丟棄。
+CANCEL_JOIN_TIMEOUT_S = 8.0
 # job 世代：start 時 +1。卡死被 timeout 廢棄的舊 worker 之後甦醒，
 # 寫入會因世代不符被丟棄，不會污染新 job 的狀態。
 _CURRENT_JOB = 0
 _HEARTBEAT = 0.0  # 最近一次 worker 更新狀態的 monotonic 時間
+# 本世代 job 是否已回報過至少一筆真實進度（決定 watchdog 用 grace 還是 stall 判準）
+_PROGRESS_SEEN = False
+# 目前 job 的子行程（只有 Breeze 模式有）；只在 _LOCK 內讀寫，terminate/kill 在鎖外做
+_ACTIVE_PROC: Any = None
+# 目前 job 的 worker thread；cancel_job 用來等收尾。只在 _LOCK 內讀寫
+_WORKER: threading.Thread | None = None
 _STATE: dict[str, Any] = {
-    "state": "idle",       # idle | running | done | error
+    "state": "idle",       # idle | running | done | error | cancelled
     "mode": "single",      # single | per-mic
     "phase": None,         # single: None | compress | upload | resegment
                            # per-mic: None | per-mic-transcribe | srt-merge | resegment
@@ -71,21 +84,32 @@ _STATE: dict[str, Any] = {
 
 
 def get_status() -> dict[str, Any]:
-    global _CURRENT_JOB
+    global _CURRENT_JOB, _ACTIVE_PROC
+    stale_proc = None
     with _LOCK:
-        # watchdog：running 但太久沒有任何進度更新 → 視為卡死，翻成 error
-        # 並廢掉舊 worker 的寫入權（世代 +1），讓使用者可以重新開 job。
+        # watchdog：running 但太久沒有任何「真實進度」更新 → 視為卡死，翻成 error
+        # 並廢掉舊 worker 的寫入權（世代 +1）＋終結子行程，讓使用者可以重新開 job。
+        # 還沒解析到任何百分比（模型載入期）用獨立的 STARTUP_GRACE_S 判準，避免誤殺。
+        limit = STALL_TIMEOUT_S if _PROGRESS_SEEN else STARTUP_GRACE_S
         if (
             _STATE["state"] == "running"
             and _HEARTBEAT
-            and monotonic() - _HEARTBEAT > STALL_TIMEOUT_S
+            and monotonic() - _HEARTBEAT > limit
         ):
             _CURRENT_JOB += 1
+            stale_proc, _ACTIVE_PROC = _ACTIVE_PROC, None
             _STATE.update(
                 state="error",
-                error=f"轉字幕逾時：超過 {STALL_TIMEOUT_S // 60} 分鐘沒有進度更新，已視為卡死",
+                error=f"轉字幕逾時：超過 {int(limit) // 60} 分鐘沒有進度更新，已視為卡死",
             )
-        return dict(_STATE)
+        snap = dict(_STATE)
+    # 子行程還活著就終結 —— 否則棄世代的舊行程會繼續寫 _v2.srt，跟下一個 job 互踩
+    if stale_proc is not None and stale_proc.poll() is None:
+        try:
+            stale_proc.terminate()
+        except OSError:
+            pass
+    return snap
 
 
 def _reset_locked(**kwargs) -> None:
@@ -115,13 +139,114 @@ def _set(**kwargs) -> None:
 
 
 def _set_job(job: int, **kwargs) -> None:
-    """worker 專用寫入：job 世代不符（已被 timeout 廢棄或被新 job 取代）就丟棄。"""
-    global _HEARTBEAT
+    """worker 專用寫入：job 世代不符（已被 timeout 廢棄或被新 job 取代）就丟棄。
+
+    心跳語意：這裡的每個既有呼叫點都對應「pipeline 真的往前走」（phase 轉換、
+    解析到新百分比、終態）。禁止用無條件迴圈定期呼叫本函式 —— 那會把 watchdog
+    完全架空（子行程活著但 hang 死時永遠不逾時）。
+    """
+    global _HEARTBEAT, _PROGRESS_SEEN
     with _LOCK:
         if job != _CURRENT_JOB:
             return
         _HEARTBEAT = monotonic()
+        if kwargs.get("percent"):
+            # 有非零百分比 = 已看過真實進度 → watchdog 改用一般 stall 判準
+            _PROGRESS_SEEN = True
         _STATE.update(kwargs)
+
+
+def _job_alive(job: int) -> bool:
+    """worker 在 phase 邊界用：世代還有效才繼續往下走（被取消/棄世代就收手，
+    不再進下一個會寫檔的階段，避免與新 job 互踩）。"""
+    with _LOCK:
+        return job == _CURRENT_JOB
+
+
+def _grab_slot(**reset_kwargs) -> int:
+    """搶單一 job slot（三種 start_* 共用）：檢查 running → 世代 +1 → 重置狀態。
+
+    順便取出上一世代殘留的子行程（watchdog 翻 error 後可能還活著）在鎖外終結。
+    回傳新 job 世代號；slot 被佔時 raise RuntimeError。
+    """
+    global _CURRENT_JOB, _HEARTBEAT, _PROGRESS_SEEN, _ACTIVE_PROC, _WORKER
+    stale_proc = None
+    with _LOCK:
+        if _STATE["state"] == "running":
+            raise RuntimeError("已有轉字幕正在進行中")
+        _CURRENT_JOB += 1
+        job = _CURRENT_JOB
+        _HEARTBEAT = monotonic()
+        _PROGRESS_SEEN = False
+        stale_proc, _ACTIVE_PROC = _ACTIVE_PROC, None
+        _WORKER = None
+        _reset_locked(**reset_kwargs)
+    if stale_proc is not None and stale_proc.poll() is None:
+        try:
+            stale_proc.terminate()
+        except OSError:
+            pass
+    return job
+
+
+def _spawn_worker(target, args) -> None:
+    """啟動 worker thread 並記錄到 _WORKER（cancel_job 收尾時要 join 它）。"""
+    global _WORKER
+    worker = threading.Thread(target=target, args=args, daemon=True)
+    with _LOCK:
+        _WORKER = worker
+    worker.start()
+
+
+def _register_active_proc(job: int, proc) -> bool:
+    """Breeze worker 把子行程掛上 slot。世代已不符（job 已被取消/棄世代）回 False，
+    呼叫端要自己終結剛開出來的行程。"""
+    global _ACTIVE_PROC
+    with _LOCK:
+        if job != _CURRENT_JOB:
+            return False
+        _ACTIVE_PROC = proc
+        return True
+
+
+def _clear_active_proc(proc) -> None:
+    """子行程結束後解除掛載（只清掉自己那顆，避免蓋到新 job 的）。"""
+    global _ACTIVE_PROC
+    with _LOCK:
+        if _ACTIVE_PROC is proc:
+            _ACTIVE_PROC = None
+
+
+def cancel_job() -> bool:
+    """取消進行中的轉字幕：廢掉 worker 寫入權（世代 +1）→ 終結子行程 → 等 worker 收尾。
+
+    回傳 True=有取消到、False=當下沒有 running 的 job。
+    回傳時 state 已是 "cancelled"（slot 守衛只擋 running，故立即可重新開 job）。
+    """
+    global _CURRENT_JOB, _ACTIVE_PROC, _WORKER
+    with _LOCK:
+        if _STATE["state"] != "running":
+            return False
+        _CURRENT_JOB += 1  # 先廢寫入權：worker 之後的 setj 全被丟棄
+        proc, _ACTIVE_PROC = _ACTIVE_PROC, None
+        worker, _WORKER = _WORKER, None
+        _STATE.update(state="cancelled", error=None)
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+    # 等 worker 收尾（Breeze：proc 被砍 → wait 返回 → worker 很快結束；
+    # 雲端：可能卡在 HTTP，join 逾時就放生，殘餘寫入已被世代擋掉）
+    if worker is not None and worker.is_alive():
+        worker.join(timeout=CANCEL_JOIN_TIMEOUT_S)
+    # 保險：terminate 沒收掉（極少數卡 signal handler）就補 kill
+    if proc is not None and proc.poll() is None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return True
 
 
 def start_job(
@@ -138,34 +263,21 @@ def start_job(
     typo_entries：全域錯字字典（~/.podcast-toolkit/typo-dict.json）。
     glossary：本集專有名詞詞庫（episode.yaml + defaults.yaml 合併後 normalize）。
     """
-    global _CURRENT_JOB, _HEARTBEAT
     src = (ep.dir / src_rel).resolve()
     # 防路徑跳脫
     src.relative_to(ep.dir)
     if not src.is_file():
         raise FileNotFoundError(f"找不到檔案：{src_rel}")
 
-    # 檢查 + 佔住 slot 必須在同一把鎖內，否則兩個併發 start 都會通過檢查
-    with _LOCK:
-        if _STATE["state"] == "running":
-            raise RuntimeError("已有轉字幕正在進行中")
-        _CURRENT_JOB += 1
-        job = _CURRENT_JOB
-        _HEARTBEAT = monotonic()
-        _reset_locked(
-            state="running",
-            phase="compress",
-            percent=0.0,
-            src_path=src_rel,
-            started_at=monotonic(),
-        )
-
-    worker = threading.Thread(
-        target=_run,
-        args=(ep, src, provider, api_key, typo_entries, glossary, job),
-        daemon=True,
+    # 檢查 + 佔住 slot 在 _grab_slot 的同一把鎖內完成，兩個併發 start 不會都通過
+    job = _grab_slot(
+        state="running",
+        phase="compress",
+        percent=0.0,
+        src_path=src_rel,
+        started_at=monotonic(),
     )
-    worker.start()
+    _spawn_worker(_run, (ep, src, provider, api_key, typo_entries, glossary, job))
     return {"src_path": src_rel}
 
 
@@ -212,6 +324,10 @@ def _run(
         setj(state="error", error=f"轉字幕失敗：{e}")
         return
 
+    # 被取消/棄世代 → 不進 resegment（會寫 _v2.srt，避免與新 job 互踩）
+    if not _job_alive(job):
+        return
+
     # resegment：把字層 → 句子層 _v2.srt
     setj(phase="resegment", percent=0.0)
     try:
@@ -239,7 +355,6 @@ def start_per_mic_job(
 
     force 預設 True 因為前端要重轉就是要覆寫；舊檔已備份。
     """
-    global _CURRENT_JOB, _HEARTBEAT
     mics = ep.mic_paths()
     if not mics:
         raise RuntimeError("episode.yaml 沒設 mics — 無法分軌轉錄")
@@ -250,28 +365,16 @@ def start_per_mic_job(
         raise RuntimeError("speakers 不能是空清單")
 
     init_progress = {sp: "queued" for sp in sorted(speakers)}
-    # 檢查 + 佔住 slot 必須在同一把鎖內，否則兩個併發 start 都會通過檢查
-    with _LOCK:
-        if _STATE["state"] == "running":
-            raise RuntimeError("已有轉字幕正在進行中")
-        _CURRENT_JOB += 1
-        job = _CURRENT_JOB
-        _HEARTBEAT = monotonic()
-        _reset_locked(
-            state="running",
-            mode="per-mic",
-            phase="per-mic-transcribe",
-            percent=0.0,
-            mics_progress=init_progress,
-            started_at=monotonic(),
-        )
-
-    worker = threading.Thread(
-        target=_run_per_mic,
-        args=(ep, sorted(speakers), force, job),
-        daemon=True,
+    # 檢查 + 佔住 slot 在 _grab_slot 的同一把鎖內完成，兩個併發 start 不會都通過
+    job = _grab_slot(
+        state="running",
+        mode="per-mic",
+        phase="per-mic-transcribe",
+        percent=0.0,
+        mics_progress=init_progress,
+        started_at=monotonic(),
     )
-    worker.start()
+    _spawn_worker(_run_per_mic, (ep, sorted(speakers), force, job))
     return {"speakers": sorted(speakers)}
 
 
@@ -292,11 +395,12 @@ def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> Non
 
     def on_mic_progress(speaker: str, phase: str) -> None:
         """從 gemini_subtitle._emit 進來：更新 mics_progress[speaker] = phase。"""
-        global _HEARTBEAT
+        global _HEARTBEAT, _PROGRESS_SEEN
         with _LOCK:
             if job != _CURRENT_JOB:
                 return
             _HEARTBEAT = monotonic()
+            _PROGRESS_SEEN = True  # 分軌 phase 推進也算真實進度（維持 stall 判準）
             progress = dict(_STATE.get("mics_progress") or {})
             progress[speaker] = phase
             done_count = sum(1 for p in progress.values() if p in ("done", "skipped"))
@@ -314,6 +418,10 @@ def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> Non
         )
     except Exception as e:
         setj(state="error", error=f"分軌轉錄失敗：{e}")
+        return
+
+    # 被取消/棄世代 → 不進 srt_merge（會寫 _final_v2.srt，避免與新 job 互踩）
+    if not _job_alive(job):
         return
 
     # 合併三路 SRT → _final_v2.srt + .speakers.json
@@ -438,33 +546,23 @@ def _breeze_python(bdir: Path) -> tuple[str, dict[str, str] | None]:
 
 def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[str, Any]:
     """一鍵 Breeze：Breeze ASR 產含講者字幕 → ingest_breeze → 本地校對。整條龍背景跑。"""
-    global _CURRENT_JOB, _HEARTBEAT
     bdir = _breeze_dir()
     if bdir is None:
         raise RuntimeError(
             "找不到 Breeze 專案（make_subtitle.py）；請在 ~/.podcast-toolkit/config.json 設 breeze_dir 指向 Breeze-ASR-25 資料夾。"
         )
-    with _LOCK:
-        if _STATE["state"] == "running":
-            raise RuntimeError("已有轉字幕正在進行中")
-        _CURRENT_JOB += 1
-        job = _CURRENT_JOB
-        _HEARTBEAT = monotonic()
-        _reset_locked(
-            state="running", mode="breeze", phase="breeze-asr",
-            percent=0.0, started_at=monotonic(),
-        )
-    worker = threading.Thread(
-        target=_run_breeze, args=(ep, bdir, guest or "", terms or "", job), daemon=True,
+    # 檢查 + 佔住 slot 在 _grab_slot 的同一把鎖內完成，兩個併發 start 不會都通過
+    job = _grab_slot(
+        state="running", mode="breeze", phase="breeze-asr",
+        percent=0.0, started_at=monotonic(),
     )
-    worker.start()
+    _spawn_worker(_run_breeze, (ep, bdir, guest or "", terms or "", job))
     return {"ok": True}
 
 
 def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> None:
     """背景 worker：Breeze ASR → ingest_breeze → proofread → done/error。"""
     import subprocess
-    from time import sleep
 
     from podcast_toolkit import ingest_breeze, proofread
 
@@ -487,17 +585,28 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
                 cmd, cwd=str(bdir), env=run_env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, bufsize=0,
             )
-            # pump：排空 stderr（避免 pipe 塞滿卡死）＋把 tqdm % 即時餵進狀態、tee 進日誌
+            # 掛上 slot：watchdog 逾時或 cancel_job 才有辦法終結它。
+            # 世代已不符（搶 slot 空窗被取消）→ 自己收掉剛開的行程並收工。
+            if not _register_active_proc(job, proc):
+                proc.terminate()
+                proc.wait()
+                return
+            # pump：排空 stderr（避免 pipe 塞滿卡死）＋把 tqdm % 即時餵進狀態、tee 進日誌。
+            # 心跳完全由 pump 解析到的真實進度驅動 —— 不做無條件輪詢心跳，
+            # 否則子行程 hang 死（活著但無輸出）時 watchdog 永遠不會觸發。
             pump = threading.Thread(
                 target=_pump_progress,
                 args=(proc.stderr, lambda p: setj(phase="breeze-asr", percent=p), ef),
                 daemon=True,
             )
             pump.start()
-            while proc.poll() is None:
-                setj(phase="breeze-asr")  # 心跳；模型載入期（還沒 tqdm）也不被 watchdog 誤殺
-                sleep(10)
+            proc.wait()
             pump.join(timeout=10)  # 收尾：讓最後一筆 % + 錯誤日誌寫完
+        _clear_active_proc(proc)
+        # 被取消/棄世代（proc 是被 terminate 收掉的）→ 直接收工，
+        # 不進 ingest 等會寫檔的階段，避免與新 job 互踩
+        if not _job_alive(job):
+            return
         if proc.returncode != 0:
             tail = ""
             try:
@@ -519,6 +628,10 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         return
     if rc != 0:
         setj(state="error", error="匯入 Breeze 字幕失敗：找不到含講者 SRT（Breeze 沒產出？）")
+        return
+
+    # ingest 期間被取消 → 不再進校對/重切（都會改寫 _v2.srt）
+    if not _job_alive(job):
         return
 
     # 3) 本地校對（有引擎才跑；失敗不擋，字幕已匯入）
