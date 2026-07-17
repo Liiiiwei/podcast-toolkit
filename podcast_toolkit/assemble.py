@@ -923,7 +923,7 @@ def build_filter_complex_yt_multicam(
             "concat=n=3:v=1:a=1[vbody][a]"
         )
         parts.append(
-            f"[vbody]subtitles={overlay_ass_rel}:force_style='{style_str}'[v]"
+            f"[vbody]subtitles={escape_filter_path(overlay_ass_rel)}:force_style='{style_str}'[v]"
         )
     else:
         parts.append(

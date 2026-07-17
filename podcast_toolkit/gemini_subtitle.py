@@ -23,6 +23,7 @@ from typing import Callable, Optional
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
+from podcast_toolkit.web.transcribe import TranscribeError
 
 
 def _config_gemini_key() -> str:
@@ -192,6 +193,26 @@ def post_clean_srt(
     return "\n".join(out_lines)
 
 
+def _reraise_timeout(exc: Exception, stage: str) -> None:
+    """若 exc 屬於逾時類例外，轉成中文 TranscribeError 重新丟出；否則靜默返回。"""
+    timeout_types: tuple = (TimeoutError,)
+    # 選擇性引入 google / requests 的逾時型別（套件未裝時不影響）
+    try:
+        from google.api_core.exceptions import DeadlineExceeded
+        timeout_types = (*timeout_types, DeadlineExceeded)
+    except ImportError:
+        pass
+    try:
+        import requests
+        timeout_types = (*timeout_types, requests.exceptions.Timeout)
+    except ImportError:
+        pass
+    if isinstance(exc, timeout_types) or "timeout" in type(exc).__name__.lower():
+        raise TranscribeError(
+            f"Gemini 音檔{stage}逾時（大音檔請改用本地 Breeze 轉錄）"
+        ) from exc
+
+
 def transcribe(audio_path: Path, prompt: str, model: str) -> str:
     """呼叫 Gemini API 把音檔轉成 SRT 文字。
 
@@ -227,7 +248,11 @@ def transcribe(audio_path: Path, prompt: str, model: str) -> str:
         upload_target = link_dir / f"upload{audio_path.suffix}"
         os.symlink(audio_path.resolve(), upload_target)
     try:
-        uploaded = client.files.upload(file=str(upload_target))
+        try:
+            uploaded = client.files.upload(file=str(upload_target))
+        except Exception as exc:
+            _reraise_timeout(exc, "上傳")
+            raise
     finally:
         if link_dir is not None:
             try:
@@ -237,10 +262,14 @@ def transcribe(audio_path: Path, prompt: str, model: str) -> str:
                 pass
 
     print(f"→ 呼叫 {model} 轉字幕（依音檔長度約 1-5 分鐘）")
-    response = client.models.generate_content(
-        model=model,
-        contents=[prompt, uploaded],
-    )
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=[prompt, uploaded],
+        )
+    except Exception as exc:
+        _reraise_timeout(exc, "推論")
+        raise
 
     return response.text or ""
 

@@ -638,9 +638,13 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
     try:
         if proofread.resolve_provider(ep.cfg):
             setj(phase="proofread", percent=0.0)
-            proofread.run(ep.dir)
-    except Exception:
-        pass
+            rc_proof = proofread.run(ep.dir)
+            if rc_proof not in (0, None):
+                setj(note="校對跳過（校對失敗，請確認 Claude Code 已安裝）")
+        else:
+            setj(note="校對跳過（未偵測到本地 Claude Code 引擎）")
+    except Exception as e:
+        setj(note=f"校對跳過（例外：{e}）")
 
     # 4) 依語句重切（要在 proofread 之後，需其加的空格當語句邊界；失敗不擋）
     try:
