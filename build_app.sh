@@ -30,7 +30,14 @@ STAGE="_pkgbuild/breeze-stage"
 APP="dist/Podcast.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
 VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s*\"([^\"]+)\"',open('setup_app.py').read()).group(1))" 2>/dev/null || echo "0.1.0")
-DMG="dist/Podcast-Toolkit-${VER}.dmg"
+# build 標記＝日期＋git short SHA（例 20260717-ddfd83d），讓每顆 DMG 檔名/掛載名/
+# 安裝說明都認得出是哪天、哪版程式碼打的（同一天多次、同一 commit 重打都不撞名）。
+# 非 git 環境或有未提交改動時退回 nogit / 加 -dirty 尾綴。
+BUILD_DATE=$(date +%Y%m%d)
+GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
+git diff --quiet 2>/dev/null || GIT_SHA="${GIT_SHA}-dirty"
+BUILD_TAG="${BUILD_DATE}-${GIT_SHA}"
+DMG="dist/Podcast-Toolkit-${VER}-${BUILD_TAG}.dmg"
 
 echo "→ 檢查作業系統與架構"
 if [[ "$(uname)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
@@ -101,13 +108,15 @@ Podcast Toolkit 安裝說明
 • 若出現「Podcast 已損毀，無法打開」：那是隔離屬性造成，執行上方【方法 B】即可解決。
 • 啟動失敗時，錯誤會記在 ~/.podcast-toolkit/launcher.log。
 TXT
+# build 標記寫進說明檔（版本＋日期＋git SHA），回報問題時報這行就知道是哪顆
+printf '\n【版本標記】%s  build %s\n' "$VER" "$BUILD_TAG" >> "$DMG_STAGE/安裝說明.txt"
 ditto "$APP" "$DMG_STAGE/Podcast.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 echo "  ✓ staging 就緒"
 
 echo "→ [5/5] 產生壓縮 DMG（4G，UDZO，需數分鐘）"
 rm -f "$DMG"
-hdiutil create -volname "Podcast Toolkit" -srcfolder "$DMG_STAGE" \
+hdiutil create -volname "Podcast $BUILD_TAG" -srcfolder "$DMG_STAGE" \
     -fs HFS+ -format UDZO -imagekey zlib-level=6 -ov "$DMG" >/dev/null
 echo "  ✓ $DMG（$(du -sh "$DMG" | cut -f1)）"
 
