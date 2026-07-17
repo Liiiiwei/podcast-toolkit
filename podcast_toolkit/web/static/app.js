@@ -6486,8 +6486,13 @@ $("#cam-auto-align").addEventListener("click", async () => {
   }
 });
 
-// 抓 cam-modal 目前狀態組 /api/save payload；align-all auto-save 跟 cam-save 共用，避免 drift
-function _buildCamModalSavePayload() {
+// 抓 cam-modal 目前狀態組 /api/save payload；align-all auto-save 跟 cam-save 共用。
+// 一律以主存檔的 buildSavePayload() 為基底、只覆蓋 cam 相關欄位 —— 先前這裡手寫第二套
+// builder，漏送 merges / time_overrides / new_cards / reels_clips / rotate / cover_enabled /
+// subtitle_style / silence_trim 等欄位；存檔成功後 loadEpisodeState() 重載，主編輯器尚未
+// 按「儲存」的那些編輯就被靜默清掉（資料遺失級 bug）。禁止再手寫欄位清單，主存檔新增
+// 欄位時這裡自動跟上（tests/test_cam_modal_save_payload.py 鎖住此約定）。
+function _camModalSavePayload() {
   const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
@@ -6495,24 +6500,7 @@ function _buildCamModalSavePayload() {
   const offset = Number($("#cam-sync-offset-b").value || 0);
   const audioOffset = Number($("#audio-sync-offset").value || 0);
   return {
-    crop_yt: serializeCropForSave(state.cropYt, state.cropYtB),
-    crop_reels: serializeCropForSave(state.cropReels, state.cropReelsB),
-    deletions: [...state.deletions],
-    head_trim_sec: state.headTrimSec,
-    tail_trim_sec: state.tailTrimSec,
-    cards: [...state.textOverrides.entries()].map(([idx, text]) => ({
-      idx,
-      text,
-    })),
-    cameras_mapping: Object.fromEntries(state.camerasMapping),
-    speakers_mapping: Object.fromEntries(state.speakersMapping),
-    splits: Object.fromEntries(state.cardSplits),
-    // 時間軸拖拉改的字幕時間：composite key → {start, end}；後端寫進 _v2.srt。
-    // 必須過 toDiskTime() 加回 audioSyncOffset（與主存檔 #save-btn 一致）；否則有外接音檔
-    // offset 的集，經 cam-modal 存檔會把字幕時間少加 offset、每存一次漂一個 offset。
-    card_timings: Object.fromEntries(
-      [...state.cardTimings.entries()].map(([k, t]) => [k, toDiskTime(t)]),
-    ),
+    ...buildSavePayload(),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
     camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
@@ -6592,7 +6580,7 @@ $("#align-all").addEventListener("click", async () => {
     // 全部成功 → 自動 save + 重抓 state + 重綁外接音檔
     stopSpin();
     stopSpin = startBtnSpinner(btn, "儲存中");
-    const payload = _buildCamModalSavePayload();
+    const payload = _camModalSavePayload();
     await postSave(payload);
     await loadEpisodeState();
     renderTopbar();
@@ -6764,7 +6752,7 @@ $("#cam-save").addEventListener("click", async () => {
   // 與 #align-all 共用同一個 payload builder（含 srt_path）：先前 cam-save 內聯自建 payload
   // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。offset/audioOffset
   // 已於上方驗證為數字，builder 重讀同一組 DOM 值不會踩到它內部的靜默歸零。
-  const payload = _buildCamModalSavePayload();
+  const payload = _camModalSavePayload();
   try {
     await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
