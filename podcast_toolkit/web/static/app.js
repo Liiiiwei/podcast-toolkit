@@ -4104,17 +4104,14 @@ $("#save-btn").addEventListener("click", async () => {
     // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
     await loadEpisodeState();
     renderCards();
-    // 引導使用者按合成（兩個版本都高亮，使用者自行挑要先做哪一個）
+    // 引導使用者按合成（高亮輸出鈕）
     const ytBtn = $("#assemble-yt-btn");
-    const reelsBtn = $("#assemble-reels-btn");
     // 合成鈕已收進「輸出」下拉，存檔後自動展開讓引導用的 pulse 看得到
     $("#output-menu-btn")?._popover?.open();
     ytBtn?.classList.add("pulse");
-    reelsBtn?.classList.add("pulse");
     ytBtn?.scrollIntoView({ block: "nearest", inline: "nearest" });
     setTimeout(() => {
       ytBtn?.classList.remove("pulse");
-      reelsBtn?.classList.remove("pulse");
     }, 6000);
     setTimeout(() => {
       setSaveBtnLabel("check", "完成並儲存");
@@ -5951,9 +5948,6 @@ function setupAssembleButtons() {
 
   $("#assemble-yt-btn").addEventListener("click", () => {
     launch(["yt"], "合成 YT 16:9 完整版");
-  });
-  $("#assemble-reels-btn").addEventListener("click", () => {
-    launch(["reels"], "合成 Reels 9:16 短版");
   });
   $("#assemble-mp3-btn")?.addEventListener("click", () => {
     launch(["mp3"], "輸出原速 MP3（純音訊）");
