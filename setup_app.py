@@ -80,6 +80,15 @@ OPTIONS = {
         "CFBundleShortVersionString": "0.1.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
+        # Finder/launchd 啟動時環境沒有 LANG/LC_ALL → Python 3.9 locale 退回
+        # US-ASCII，讀 ffmpeg stderr（含中文集名/路徑）時會 UnicodeDecodeError。
+        # LaunchServices 會在啟動前注入這些變數，強制 Python UTF-8 模式（治本，
+        # 一次免疫全 app 的 open()/subprocess 文字解碼）。
+        "LSEnvironment": {
+            "PYTHONUTF8": "1",
+            "LANG": "en_US.UTF-8",
+            "LC_ALL": "en_US.UTF-8",
+        },
     },
 }
 

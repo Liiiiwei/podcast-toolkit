@@ -297,8 +297,11 @@ def _run_queue(plans: list[dict]) -> None:
             # 預烤完回到該 target 的進度起點
             _set(current=plan["output_kind"], percent=0.0, eta_s=None)
         cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
+        # encoding 明寫 utf-8：ffmpeg stderr 含中文集名/路徑，若靠 locale 預設
+        # （.app 從 Finder 啟動時退回 ascii）會 UnicodeDecodeError。errors=replace
+        # 保底不讓罕見壞位元組炸掉整條合成。
         proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
-                     text=True, bufsize=1)
+                     text=True, encoding="utf-8", errors="replace", bufsize=1)
         _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
 
         # 使用者取消（ffmpeg 已被 kill）：清乾淨收回 idle，不當成錯誤。
@@ -333,7 +336,8 @@ def _run_prebake(pb: dict) -> bool:
     tmp = Path(pb["tmp"])
     _set(current=pb.get("label", "旋轉拉正"), percent=0.0, eta_s=None)
     cmd = list(pb["cmd"]) + ["-progress", "pipe:1", "-nostats"]
-    proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True, bufsize=1)
+    proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True,
+                 encoding="utf-8", errors="replace", bufsize=1)
     _pump_progress(proc, pb["total_dur"], proxy, tmp)
     with _LOCK:
         if _STATE["state"] == "error" or _STATE["cancelled"]:
