@@ -476,6 +476,9 @@ def test_breeze_python_bundled_uses_runtime_and_env(monkeypatch, tmp_path):
     (bdir / "site-packages").mkdir()
 
     monkeypatch.setenv("PATH", "/sentinel/bin:/usr/bin")  # 既有環境要被保留（whisper 解碼要 ffmpeg）
+    # 模擬主 app（py2app launcher）注入的汙染變數：PYTHONHOME 指向殘缺 stdlib、PYTHONEXECUTABLE
+    monkeypatch.setenv("PYTHONHOME", "/main-app/Contents/Resources")
+    monkeypatch.setenv("PYTHONEXECUTABLE", "/main-app/python")
     py_str, env = transcribe_job._breeze_python(bdir)
 
     assert py_str == str(py)
@@ -484,6 +487,11 @@ def test_breeze_python_bundled_uses_runtime_and_env(monkeypatch, tmp_path):
     assert env["XDG_CACHE_HOME"] == str(bdir / "cache")
     assert env["PYTHONUTF8"] == "1"  # 別台 Mac locale 未知 → 強制 UTF-8
     assert env["PATH"] == "/sentinel/bin:/usr/bin"  # 沒被蓋掉
+    # 關鍵迴歸：PYTHONHOME 必須被釘回 sidecar py-runtime（否則子進程讀主 app 殘缺
+    # stdlib → torch.package 觸發 import pickletools 就 ModuleNotFoundError）。
+    # 只「pop 掉」不夠——別台 Mac 環境再塞回就破功，故要「明確覆寫成 py-runtime」。
+    assert env["PYTHONHOME"] == str(bdir / "py-runtime")
+    assert "PYTHONEXECUTABLE" not in env
 
 
 def test_breeze_python_dev_uses_venv_and_no_env(tmp_path):

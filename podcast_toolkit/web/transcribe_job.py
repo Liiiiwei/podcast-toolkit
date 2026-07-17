@@ -542,11 +542,13 @@ def _breeze_python(bdir: Path) -> tuple[str, dict[str, str] | None]:
         env = dict(os.environ)
         # 主 app 是 py2app bundle，其 launcher 會 setenv("PYTHONHOME", 主app/Resources)
         # 指向精簡過的 stdlib（排除 torch 那包時 pickletools 這類 lazy import 也沒打進去）。
-        # 這個變數會蓋掉 sidecar framework python 依相對路徑算出的 prefix → 子進程改去
-        # 讀主 app 殘缺 stdlib，轉錄時 whisper 存模型觸發 import pickletools 就
-        # ModuleNotFoundError。務必連同 py2app 另外注入的 PYTHONEXECUTABLE 一起清掉，
-        # 讓 sidecar python 用自己完整的 py-runtime/lib/python3.9。
-        env.pop("PYTHONHOME", None)
+        # 這個變數會蓋掉 sidecar framework python 的 prefix → 子進程改去讀主 app 殘缺
+        # stdlib，轉錄時 torch.package 觸發 import pickletools 就 ModuleNotFoundError。
+        # 只「pop 掉」不夠硬（靠 python 自動偵測回自己的 stdlib，別台 Mac 或環境再塞回
+        # PYTHONHOME 就破功）——直接把 PYTHONHOME 釘死在 sidecar 自帶的 py-runtime，
+        # prefix 就無條件指向完整的 py-runtime/lib/python3.9，不受外部環境影響。
+        # 連同 py2app 另外注入的 PYTHONEXECUTABLE 一起清掉。
+        env["PYTHONHOME"] = str(bdir / "py-runtime")
         env.pop("PYTHONEXECUTABLE", None)
         env["PYTHONPATH"] = str(site)
         env["XDG_CACHE_HOME"] = str(bdir / "cache")
