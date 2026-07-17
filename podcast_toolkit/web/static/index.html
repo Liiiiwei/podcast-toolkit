@@ -28,7 +28,7 @@
             id="glossary-btn"
             type="button"
             class="btn btn-icon"
-            title="詞庫（給 Gemini 提示的專有名詞表）"
+            title="詞庫（教轉錄引擎正確寫出人名、品牌名）"
             aria-label="詞庫"
           >
             <span data-icon="book-open"></span>
@@ -764,24 +764,14 @@
 
           <label class="modal-label">轉字幕（STT）</label>
           <div class="modal-row modal-row-inline">
-            <!-- 雲端 STT（Gemini/OpenAI）已下架：本產品零雲端金鑰。DOM 隱藏保留以相容既有 app.js 邏輯 -->
-            <label class="modal-radio" style="display: none">
+            <label class="modal-radio">
               <input
                 type="radio"
                 name="settings-provider"
-                value="gemini"
-                id="settings-provider-gemini"
+                value="breeze"
+                id="settings-provider-breeze"
               />
-              Google Gemini
-            </label>
-            <label class="modal-radio" style="display: none">
-              <input
-                type="radio"
-                name="settings-provider"
-                value="openai"
-                id="settings-provider-openai"
-              />
-              OpenAI（whisper-1）
+              本地 Breeze（推薦）
             </label>
             <label class="modal-radio">
               <input
@@ -794,55 +784,12 @@
             </label>
           </div>
           <div class="modal-hint">
-            轉字幕走本地路線、<b>免 API key</b>：① <b>Breeze</b>（推薦）用本地
-            Breeze-ASR-25 產含講者字幕 →
-            <code>podcast ingest-breeze</code> 匯入（會自動接著本地校對）；②
+            轉字幕走本地路線、<b>免金鑰</b>：① <b>Breeze</b>（推薦）用本地
+            Breeze-ASR-25 產含講者字幕並自動匯入、校對，一鍵跑完；②
             <b>本地 Whisper（mlx）</b>
-            Apple Silicon 跑 whisper-large-v3-turbo，免金鑰不打雲端，25 分鐘
-            podcast 約 15-25 分鐘，需先
+            Apple Silicon 跑 whisper-large-v3-turbo，不打雲端，25 分鐘 podcast
+            約 15-25 分鐘，需先
             <code>pip3 install --user mlx-whisper</code>。
-          </div>
-
-          <!-- 雲端 API key 欄位已下架（零雲端金鑰）：DOM 隱藏保留以相容 app.js（不再對外暴露） -->
-          <div hidden>
-            <label class="modal-label">Gemini API key</label>
-            <div class="modal-row">
-              <input
-                type="password"
-                id="settings-gemini-key"
-                placeholder="AIza..."
-                autocomplete="off"
-              />
-              <button
-                id="settings-show-gemini"
-                type="button"
-                class="btn btn-icon"
-                title="顯示/隱藏"
-                aria-label="顯示或隱藏"
-              >
-                <span data-icon="eye"></span>
-              </button>
-            </div>
-            <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
-            <label class="modal-label modal-label-spaced">OpenAI API key</label>
-            <div class="modal-row">
-              <input
-                type="password"
-                id="settings-openai-key"
-                placeholder="sk-..."
-                autocomplete="off"
-              />
-              <button
-                id="settings-show-openai"
-                type="button"
-                class="btn btn-icon"
-                title="顯示/隱藏"
-                aria-label="顯示或隱藏"
-              >
-                <span data-icon="eye"></span>
-              </button>
-            </div>
-            <div class="modal-hint" id="settings-openai-status">尚未設定</div>
           </div>
         </div>
         <div class="modal-actions">
@@ -856,7 +803,7 @@
       </form>
     </dialog>
 
-    <!-- 詞庫 modal：給 Gemini prompt 的專有名詞 + 同音字 -->
+    <!-- 詞庫 modal：教轉錄引擎的專有名詞 + 同音字 -->
     <dialog class="modal modal-wide" id="glossary-modal">
       <div class="modal-head">
         <span data-icon="book-open"></span>
@@ -864,8 +811,8 @@
       </div>
       <div class="modal-body">
         <div class="modal-hint">
-          幫 Gemini
-          把同音/相近發音的字寫成正確的版本。儲存後下次轉字幕會自動帶入 prompt。
+          教轉錄引擎正確寫出人名、品牌名（例如來賓藝名「9m88」「壞特
+          ?te」），把同音/相近發音的字寫成正確版本。儲存後下次轉字幕會自動帶入提示詞。
         </div>
         <div class="glossary-tabs" role="tablist">
           <button
@@ -1328,7 +1275,7 @@
           </button>
           <div class="transcribe-breeze-hint">
             本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 →
-            校對，一次完成、免 API key。最久的是轉錄，請耐心等。
+            校對，一次完成、免金鑰不連網。最久的是轉錄，請耐心等。
           </div>
         </div>
         <details id="transcribe-advanced" class="modal-advanced" hidden>
@@ -1358,20 +1305,6 @@
           </button>
         </details>
         <div id="transcribe-progress" hidden>
-          <div class="phase-pills">
-            <div class="phase-pill" data-phase="compress">
-              <span class="phase-icon" data-icon="package"></span>
-              <span class="phase-label">壓縮音檔</span>
-            </div>
-            <div class="phase-pill" data-phase="upload">
-              <span class="phase-icon" data-icon="cloud-upload"></span>
-              <span class="phase-label">STT</span>
-            </div>
-            <div class="phase-pill" data-phase="resegment">
-              <span class="phase-icon" data-icon="scissors"></span>
-              <span class="phase-label">重新切句</span>
-            </div>
-          </div>
           <div class="progress-bar">
             <div class="progress-fill" id="transcribe-fill"></div>
           </div>

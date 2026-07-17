@@ -44,7 +44,7 @@ const state = {
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
   hasGeminiKey: false,
   hasOpenAIKey: false,
-  sttProvider: "gemini", // "gemini" | "openai"
+  sttProvider: "breeze", // "breeze"（預設，本地）| "whisper_mlx" | "gemini" | "openai"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   hasMainVideo: true, // false = 空集（01_母帶/ 還沒有檔），video player 換成 empty banner
   headTrimSec: 0, // 影片開頭要砍掉幾秒
@@ -2704,10 +2704,12 @@ async function loadConfig() {
     const data = await r.json();
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    // xai 已下架；舊 config 殘留 "xai" 一律當 gemini
-    state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
+    // 後端 /api/config 已收斂（雲端沒 key → breeze）；不認得的值一律回到預設 breeze
+    state.sttProvider = ["breeze", "whisper_mlx", "gemini", "openai"].includes(
+      data.provider,
+    )
       ? data.provider
-      : "gemini";
+      : "breeze";
     state.assetsStatus = data.assets || {};
   } catch (_) {}
 }
@@ -4213,8 +4215,8 @@ function renderFileItem(f) {
     const providerLabel = providerLabelOf(state.sttProvider);
     const hasSelectedKey = hasKeyForProvider(state.sttProvider);
     action.title = hasSelectedKey
-      ? `用 ${providerLabel} STT 轉字幕並覆蓋 _v2.srt`
-      : `請先到設定面板填 ${providerLabel} API key`;
+      ? `用 ${providerLabel} 轉字幕並覆蓋 _v2.srt`
+      : `目前的轉錄引擎（${providerLabel}）尚未就緒，點開有改用本地 Breeze 的入口`;
     action.addEventListener("click", () => requestTranscribe(f));
   } else if (f.path.toLowerCase().endsWith(".srt") && !f.is_main_srt_backup) {
     // 自帶字幕：直接拿這份 .srt 跑斷句 + 改錯字 + 反幻覺（不跑雲端 STT）
@@ -4593,15 +4595,16 @@ function hideModal(id) {
 function providerLabelOf(p) {
   return (
     {
+      breeze: "本地 Breeze",
       gemini: "Gemini",
       openai: "OpenAI whisper-1",
       whisper_mlx: "本地 Whisper（mlx）",
-    }[p] || "Gemini"
+    }[p] || "本地 Breeze"
   );
 }
 function hasKeyForProvider(p) {
-  // 本地 provider 不需 key，視同永遠就緒
-  if (p === "whisper_mlx") return true;
+  // 本地 provider 不需金鑰，視同永遠就緒
+  if (p === "breeze" || p === "whisper_mlx") return true;
   if (p === "openai") return state.hasOpenAIKey;
   return state.hasGeminiKey;
 }
@@ -4642,23 +4645,40 @@ function requestTranscribe(file) {
   cancel.disabled = false;
   cancel.textContent = "取消";
 
+  if (state.sttProvider === "breeze") {
+    // 預設本地 Breeze：不走單檔 STT API，直接引導走一鍵 Breeze 整條龍
+    setModalStatusTitle(
+      "transcribe-title",
+      "mic",
+      "用本地 Breeze 轉字幕",
+      "accent",
+    );
+    $("#transcribe-msg").innerHTML =
+      "本工具內建本地 Breeze 轉錄引擎（免金鑰、免連網），" +
+      "會轉錄本集音訊、自動標講者並校對，一次跑完。<br>" +
+      "點下方按鈕即可開始。";
+    go.textContent = "開始 Breeze 轉字幕";
+    go.disabled = false;
+    go.onclick = () => startBreezeTranscribe();
+    cancel.onclick = () => hideModal("transcribe-modal");
+    showModal("transcribe-modal");
+    return;
+  }
+
   if (!hasSelectedKey) {
-    // 警告色 + alert icon，跟其他錯誤 modal 視覺一致（純 textContent 太低調，
-    // 之前使用者反映「沒看到提醒」）
+    // 雲端引擎缺金鑰：不再指向設定死路，改引導走內建本地 Breeze（免金鑰）
     setModalStatusTitle(
       "transcribe-title",
       "circle-alert",
-      "尚未設定 API key",
+      "轉錄引擎尚未就緒",
       "warning",
     );
     $("#transcribe-msg").innerHTML =
-      `<div class="modal-error-text">請先到右上角「設定」設定 ${providerLabel} API key，才能轉字幕。</div>`;
-    go.textContent = "去設定";
+      `<div class="modal-error-text">目前設定的轉錄引擎（${providerLabel}）缺少金鑰，無法使用。</div>` +
+      "本工具內建本地 Breeze 轉錄（免金鑰、免連網），點下方按鈕即可直接轉字幕。";
+    go.textContent = "改用 Breeze 轉字幕";
     go.disabled = false;
-    go.onclick = () => {
-      hideModal("transcribe-modal");
-      openSettings();
-    };
+    go.onclick = () => startBreezeTranscribe();
     cancel.onclick = () => hideModal("transcribe-modal");
     showModal("transcribe-modal");
     return;
@@ -4678,7 +4698,7 @@ function requestTranscribe(file) {
 }
 
 // 自帶字幕：只跑 resegment 後處理（斷句 + 改錯字 + 反幻覺），不跑雲端 STT。
-// 複用 transcribe-modal 的版面；resegment 是同步秒級，不需要 phase pills / poll。
+// 複用 transcribe-modal 的版面；resegment 是同步秒級，不需要進度 poll。
 function requestResegment(srcPath) {
   $("#transcribe-progress").hidden = true;
   const go = $("#transcribe-go");
@@ -4731,8 +4751,7 @@ async function runResegment(srcPath) {
 // 後端依 provider 送不同細粒度 phase：
 //   雲端 gemini/openai：compress → upload → resegment
 //   本地 whisper_mlx：compress → vad → decode → stt → resegment
-// UI 只有三顆 pill（壓縮 / STT / 切句），把細 phase 收斂到三段桶；
-// 桶決定 pill 高亮與整體百分比，細 phase 名只用在文字 label。
+// UI 用「三段桶」推進度條百分比，細 phase 名只用在文字 label。
 // 漏掉任何細 phase → computeOverallPercent 的 indexOf 回 -1 → 進度條卡 0%。
 const TRANSCRIBE_PHASES = ["compress", "upload", "resegment"];
 const TRANSCRIBE_PHASE_BUCKET = {
@@ -4742,7 +4761,7 @@ const TRANSCRIBE_PHASE_BUCKET = {
   stt: "upload",
   upload: "upload",
   resegment: "resegment",
-  // 一鍵 Breeze：三段對到三桶（pills 會在 breeze 時隱藏，只用桶推進度條 %）
+  // 一鍵 Breeze：三段對到三桶（breeze 另有專屬配重 computeBreezeOverallPercent）
   "breeze-asr": "compress",
   ingest: "upload",
   proofread: "resegment",
@@ -4863,26 +4882,6 @@ async function abortPerMicFromModal() {
   resetPerMicModalAfterCancel();
 }
 
-function renderTranscribePhasePills(currentPhase, state) {
-  // pending / active / done 三種狀態，依目前 phase 與 state 推導
-  const curIdx = TRANSCRIBE_PHASES.indexOf(bucketOfPhase(currentPhase));
-  for (const phase of TRANSCRIBE_PHASES) {
-    const el = document.querySelector(
-      `#transcribe-progress .phase-pill[data-phase="${phase}"]`,
-    );
-    if (!el) continue;
-    el.classList.remove("active", "done");
-    const i = TRANSCRIBE_PHASES.indexOf(phase);
-    if (state === "done") {
-      el.classList.add("done");
-    } else if (i < curIdx) {
-      el.classList.add("done");
-    } else if (i === curIdx) {
-      el.classList.add("active");
-    }
-  }
-}
-
 function computeOverallPercent(phase, percent) {
   const idx = TRANSCRIBE_PHASES.indexOf(bucketOfPhase(phase));
   if (idx < 0) return 0;
@@ -4921,9 +4920,6 @@ async function startBreezeTranscribe() {
   const adv = $("#transcribe-advanced");
   if (adv) adv.hidden = true;
   $("#transcribe-progress").hidden = false;
-  // Breeze 階段跟 STT 三顆 pill 對不上 → 隱藏 pills，只用進度條 + 文字標籤
-  const pills = document.querySelector("#transcribe-progress .phase-pills");
-  if (pills) pills.hidden = true;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動 Breeze…";
@@ -4962,12 +4958,9 @@ async function runTranscribe(file) {
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
   $("#transcribe-advanced").hidden = true;
   $("#transcribe-progress").hidden = false;
-  const _pillsT = document.querySelector("#transcribe-progress .phase-pills");
-  if (_pillsT) _pillsT.hidden = false; // Breeze 會藏 pills，單軌轉錄要還原
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動中…";
-  renderTranscribePhasePills(null, "running");
 
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
@@ -5048,10 +5041,6 @@ async function resumeTranscribeIfRunning() {
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
   $("#transcribe-phase-label").textContent = "啟動中…";
-  renderTranscribePhasePills(s.phase || null, "running");
-  // Breeze 模式：STT pills 對不上 Breeze 階段 → 隱藏，只用進度條 + 文字
-  const _pills = document.querySelector("#transcribe-progress .phase-pills");
-  if (_pills) _pills.hidden = s.mode === "breeze";
   if (s.mode === "breeze")
     $("#transcribe-title").textContent = "Breeze 轉字幕中…";
   const goBtn = $("#transcribe-go");
@@ -5107,7 +5096,6 @@ async function _pollTranscribeOnce() {
       label += `　已 ${fmtElapsed((Date.now() - _breezeStartMs) / 1000)}`;
     }
     $("#transcribe-phase-label").textContent = label;
-    if (!isBreeze) renderTranscribePhasePills(phase, "running");
     return;
   }
 
@@ -5138,7 +5126,6 @@ async function finishTranscribe({ ok, out_srt, error }) {
     $("#transcribe-fill").style.width = "100%";
     $("#transcribe-percent").textContent = "100%";
     $("#transcribe-phase-label").textContent = "完成";
-    renderTranscribePhasePills(null, "done");
     setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
     $("#transcribe-msg").innerHTML =
       `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。`;
@@ -6071,21 +6058,14 @@ function renderAssetsPills() {
 }
 
 function openSettings() {
-  $("#settings-gemini-key").value = "";
-  $("#settings-gemini-key").type = "password";
-  $("#settings-openai-key").value = "";
-  $("#settings-openai-key").type = "password";
-  $("#settings-gemini-status").textContent = state.hasGeminiKey
-    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
-    : "尚未設定";
-  $("#settings-openai-status").textContent = state.hasOpenAIKey
-    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
-    : "尚未設定";
-  const provider = state.sttProvider || "gemini";
-  const radio = document.querySelector(
-    `input[name="settings-provider"][value="${provider}"]`,
-  );
-  if (radio) radio.checked = true;
+  // 轉錄引擎 radio：目前值若沒有對應選項（進階使用者手改 config 選雲端），
+  // 就都不勾，避免誤導；儲存時沒勾選就不送 provider，維持原設定
+  const provider = state.sttProvider || "breeze";
+  for (const r of document.querySelectorAll(
+    'input[name="settings-provider"]',
+  )) {
+    r.checked = r.value === provider;
+  }
   renderAssetsPills();
   showModal("settings-modal");
 }
@@ -6104,26 +6084,13 @@ $("#settings-cancel").addEventListener("click", () =>
   hideModal("settings-modal"),
 );
 
-$("#settings-show-gemini").addEventListener("click", () => {
-  const input = $("#settings-gemini-key");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
-$("#settings-show-openai").addEventListener("click", () => {
-  const input = $("#settings-openai-key");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
 $("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const geminiKey = $("#settings-gemini-key").value.trim();
-  const openaiKey = $("#settings-openai-key").value.trim();
-  const provider =
-    document.querySelector('input[name="settings-provider"]:checked')?.value ||
-    "gemini";
-  const payload = { provider };
-  if (geminiKey) payload.gemini_api_key = geminiKey;
-  if (openaiKey) payload.openai_api_key = openaiKey;
+  // 沒勾任何 radio（例如手改 config 選雲端）就不送 provider，保住原設定
+  const provider = document.querySelector(
+    'input[name="settings-provider"]:checked',
+  )?.value;
+  const payload = provider ? { provider } : {};
   const btn = $("#settings-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
@@ -6140,9 +6107,11 @@ $("#settings-form").addEventListener("submit", async (e) => {
     const data = await r.json();
     state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
+    state.sttProvider = ["breeze", "whisper_mlx", "gemini", "openai"].includes(
+      data.provider,
+    )
       ? data.provider
-      : "gemini";
+      : "breeze";
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {
@@ -6317,7 +6286,7 @@ function buildGlossaryItem(scope, entry, idx) {
     input.className = "glossary-chip-input";
     input.placeholder =
       entry.sounds_like.length === 0
-        ? "Gemini 可能誤聽成（Enter / 逗號分隔）"
+        ? "轉錄引擎可能誤聽成（Enter / 逗號分隔）"
         : "+ 再加一個";
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === ",") {

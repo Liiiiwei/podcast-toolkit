@@ -180,7 +180,6 @@ async function pickFolder() {
   });
 }
 
-const PROVIDER_LABEL = { xai: "xAI", gemini: "Gemini", openai: "OpenAI" };
 const ASSET_LABEL = {
   intro: "intro",
   outro_audio: "outro 音樂",
@@ -198,19 +197,23 @@ function renderStatusPill(label, ok, hintTitle) {
 }
 
 function renderConfigStatus(cfg) {
-  const keysBox = document.getElementById("config-status-keys");
+  const sttBox = document.getElementById("config-status-stt");
   const assetsBox = document.getElementById("config-status-assets");
-  if (!keysBox || !assetsBox) return;
-  keysBox.innerHTML = "";
+  if (!sttBox || !assetsBox) return;
+  sttBox.innerHTML = "";
   assetsBox.innerHTML = "";
 
-  const keyFlags = [
-    ["gemini", cfg.has_gemini_api_key],
-    ["openai", cfg.has_openai_api_key],
-  ];
-  for (const [k, ok] of keyFlags) {
-    keysBox.appendChild(renderStatusPill(PROVIDER_LABEL[k], ok));
-  }
+  // 本地 Breeze 引擎狀態（/api/config 的 breeze 欄位；免金鑰，只看有沒有安裝）
+  const breeze = cfg.breeze || {};
+  sttBox.appendChild(
+    renderStatusPill(
+      "本地 Breeze",
+      !!breeze.available,
+      breeze.available
+        ? breeze.dir || ""
+        : "尚未安裝：請在 toolkit 目錄執行 ./install.sh",
+    ),
+  );
 
   const assets = cfg.assets || {};
   for (const key of ["intro", "outro_audio", "outro_image", "logo"]) {

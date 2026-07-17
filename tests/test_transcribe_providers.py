@@ -156,18 +156,30 @@ def test_get_config_returns_both_keys_and_provider(monkeypatch, app_client):
     body = r.json()
     assert body["has_xai_api_key"] is True
     assert body["has_gemini_api_key"] is True
-    # 零雲端金鑰：雲端 provider（gemini）對外收斂成本地 whisper_mlx
-    assert body["provider"] == "whisper_mlx"
+    # 進階使用者手改 config 選雲端且有 key → 原樣回傳（不強制收斂）
+    assert body["provider"] == "gemini"
 
 
-def test_get_config_provider_defaults_to_whisper_mlx(monkeypatch, app_client):
-    # 零雲端金鑰：空 config 預設 provider = 本地 whisper_mlx（不再是 gemini）
+def test_get_config_cloud_provider_without_key_collapses_to_breeze(
+    monkeypatch, app_client
+):
+    # 零雲端金鑰：選了雲端 provider 但沒設 key → 不可用，收斂成本地 breeze
+    from podcast_toolkit.web import api as api_mod
+    monkeypatch.setattr(api_mod, "_load_config", lambda: {
+        "transcribe": {"provider": "gemini"},
+    })
+    body = app_client.get("/api/config").json()
+    assert body["provider"] == "breeze"
+
+
+def test_get_config_provider_defaults_to_breeze(monkeypatch, app_client):
+    # 零雲端金鑰：空 config 預設 provider = 本地 breeze
     from podcast_toolkit.web import api as api_mod
     monkeypatch.setattr(api_mod, "_load_config", lambda: {})
     body = app_client.get("/api/config").json()
     assert body["has_xai_api_key"] is False
     assert body["has_gemini_api_key"] is False
-    assert body["provider"] == "whisper_mlx"
+    assert body["provider"] == "breeze"
 
 
 def test_post_config_saves_provider_whisper_mlx(monkeypatch, app_client):

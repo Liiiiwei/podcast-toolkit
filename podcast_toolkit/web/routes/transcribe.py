@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from podcast_toolkit.web import transcribe as transcribe_mod
 from podcast_toolkit.web import transcribe_job
+from podcast_toolkit.web.routes.config import DEFAULT_STT_PROVIDER
 from podcast_toolkit.web.shared import (
     TRANSCRIBABLE_EXTS,
     RouteContext,
@@ -38,9 +39,20 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail="不支援的副檔名")
 
         cfg = ctx.load_config()
-        provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
+        # 預設值與 /api/config 共用同一個常數（routes/config.py），不准分家
+        provider = (cfg.get("transcribe") or {}).get("provider") or DEFAULT_STT_PROVIDER
         if provider == "xai":
             provider = "gemini"
+        if provider == DEFAULT_STT_PROVIDER:
+            # breeze 不走單檔 STT pipeline（它整條龍轉錄本集音訊），
+            # 前端在 breeze 模式不會打這支 API；防禦性擋下並指路，不指向不存在的 UI
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "本工具預設用本地 Breeze 轉錄：請點「一鍵 Breeze 轉字幕」。"
+                    "要對單一檔案轉錄，請在設定改選「本地 Whisper（mlx）」。"
+                ),
+            )
         if provider not in transcribe_mod.PROVIDERS:
             raise HTTPException(
                 status_code=400, detail=f"未知的 STT 供應商：{provider}"
