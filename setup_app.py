@@ -42,6 +42,9 @@ DATA_FILES = [
 ]
 OPTIONS = {
     "argv_emulation": False,
+    # app 圖示：銀麥 3D 合成在深藍 macOS squircle 底（assets/AppIcon.icns）。
+    # 換圖示只需重打包一次即生效（py2app 會把它設成 CFBundleIconFile）。
+    "iconfile": "assets/AppIcon.icns",
     "packages": [
         "podcast_toolkit", "fastapi", "uvicorn", "pydantic", "starlette",
         "numpy", "requests", "opencc", "anyio", "h11", "click", "multipart",
