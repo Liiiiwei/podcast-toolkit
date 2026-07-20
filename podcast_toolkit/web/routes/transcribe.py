@@ -1,8 +1,6 @@
 """轉字幕：單軌/分軌 job 啟動與狀態、錯字字典、詞庫。"""
 from __future__ import annotations
 
-import os
-
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -102,9 +100,10 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
 
     @app.post("/api/transcribe/per-mic")
     def post_transcribe_per_mic(payload: dict):
-        """分軌轉錄：背景跑 N 路 Gemini 同步 → srt_merge → _final_v2.srt + speakers.json。
+        """分軌轉錄：背景跑本地能量分講者（mic_diarize）→ _final_v2.srt + speakers.json。
 
         payload: {"speakers": ["a", "b", "c"]} — 必填，要跑的軌子集。
+        本地分軌不需要 Gemini API key（零雲端）。
         """
         ep = ctx.require_ep()
         speakers = payload.get("speakers") or []
@@ -112,13 +111,6 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail="speakers 必須是字串陣列")
         if not speakers:
             raise HTTPException(status_code=400, detail="speakers 不能是空清單")
-
-        cfg = ctx.load_config()
-        api_key = cfg.get("gemini_api_key")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="尚未設定 Gemini API key")
-        # transcribe_per_mic 直接讀 env 變數
-        os.environ["GEMINI_API_KEY"] = api_key
 
         try:
             info = transcribe_job.start_per_mic_job(ep, speakers=speakers, force=True)

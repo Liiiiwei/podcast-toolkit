@@ -89,6 +89,14 @@ def cmd_glossary_review(args):
     return glossary_candidates.review(Path(args.path))
 
 
+def cmd_diarize(args):
+    """本地能量分講者：episode.yaml 有 mics + words.json → _final_v2.srt + speakers.json。"""
+    from podcast_toolkit import mic_diarize
+    from podcast_toolkit.episode import Episode
+    ep = Episode(Path(args.path))
+    return mic_diarize.run(ep, force=args.force)
+
+
 def cmd_merge_per_mic(args):
     from podcast_toolkit import srt_merge
     from podcast_toolkit.episode import Episode
@@ -221,6 +229,14 @@ def build_parser():
     )
     pgr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pgr.set_defaults(func=cmd_glossary_review)
+
+    pd = sub.add_parser(
+        "diarize",
+        help="本地能量分講者：讀混音 words.json + 各軌 mic wav → _final_v2.srt + speakers.json（零雲端）",
+    )
+    pd.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
+    pd.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
+    pd.set_defaults(func=cmd_diarize)
 
     pm = sub.add_parser(
         "merge-per-mic",

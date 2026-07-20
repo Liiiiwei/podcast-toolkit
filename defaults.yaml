@@ -36,13 +36,24 @@ suspicious_pause:
 common_fixes:
   - ["賬", "帳"]   # 異體字殘留；OpenCC s2twp 不會處理，三集都出現
 
-# 分軌轉錄設定（per-mic transcribe 用）
-# 每路 mic 先過 VAD 閘掉串音（RMS < threshold 視為靜音餵給 Gemini），
-# Gemini 就不會幫你「轉錄別人講的話」。三路 SRT merge 時自帶 speaker label。
-per_mic:
-  vad_threshold: 0.02         # RMS 門檻；< threshold 的 frame 壓成靜音
-  vad_min_speech_sec: 0.3     # 連續說話最短時長（過濾爆音 / 咳嗽 / 桌面碰撞）
-  vad_pad_sec: 0.15           # 說話段前後保留 pad，避免切掉氣口
+# 本地能量分講者設定（mic_diarize 用）
+# episode.yaml 有 mics + 混音 words.json 就走本地分軌，零雲端零 API key。
+mic_diarize:
+  frame_ms: 20                # RMS 計算幀長（毫秒）
+  margin_db: 3.0              # 冠軍需領先亞軍 ≥ margin 才採信，否則沿用前一字（遲滯）
+  silence_floor_db: -45.0     # 全軌都低於此 → 該字 None（靜音/無主）
+  min_turn_sec: 0.6           # 短於此的講者段併回鄰段（去抖，抗附和/串音）
+  min_turn_words: 2           # 或字數門檻（取 sec 與 words 較嚴者觸發併回）
+  hysteresis_db: 1.5          # 已在講者 X，換人需比 X 高 hysteresis 才切（黏著）
+  offsets: {}                 # 空＝各軌 offset 0；別台錄音機時逐軌填秒數 {a: 0, b: 0.5}
+
+# 分軌轉錄設定（舊 Gemini 分軌用，已停用）
+# 本地分軌（mic_diarize）不再使用 VAD gate + Gemini 雲端路徑。
+# 保留此區塊供參考，若有需要可手動復原。
+#per_mic:
+#  vad_threshold: 0.02         # RMS 門檻；< threshold 的 frame 壓成靜音
+#  vad_min_speech_sec: 0.3     # 連續說話最短時長（過濾爆音 / 咳嗽 / 桌面碰撞）
+#  vad_pad_sec: 0.15           # 說話段前後保留 pad，避免切掉氣口
 
 # Gemini 轉字幕設定（podcast subtitle 用）
 gemini:

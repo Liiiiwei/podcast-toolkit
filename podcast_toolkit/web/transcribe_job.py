@@ -385,8 +385,8 @@ def start_per_mic_job(
 
 
 def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> None:
-    """背景 worker：分軌轉錄 → srt_merge → done / error。"""
-    from podcast_toolkit import gemini_subtitle, srt_merge
+    """背景 worker：本地分軌能量分講者（mic_diarize）→ done / error。"""
+    from podcast_toolkit import mic_diarize
 
     def setj(**kwargs) -> None:
         _set_job(job, **kwargs)
@@ -399,50 +399,51 @@ def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> Non
         setj(state="error", error=f"備份 _final_v2 失敗：{e}")
         return
 
-    def on_mic_progress(speaker: str, phase: str) -> None:
-        """從 gemini_subtitle._emit 進來：更新 mics_progress[speaker] = phase。"""
+    def on_mic_progress(phase: str, msg: str) -> None:
+        """mic_diarize.run 的 progress callback：phase ∈ {read-mics, assign, segment, write, done}。"""
         global _HEARTBEAT, _PROGRESS_SEEN
         with _LOCK:
             if job != _CURRENT_JOB:
                 return
             _HEARTBEAT = monotonic()
             _PROGRESS_SEEN = True  # 分軌 phase 推進也算真實進度（維持 stall 判準）
-            progress = dict(_STATE.get("mics_progress") or {})
-            progress[speaker] = phase
-            done_count = sum(1 for p in progress.values() if p in ("done", "skipped"))
-            _STATE["mics_progress"] = progress
-            if speakers:
-                _STATE["percent"] = round(done_count / len(speakers) * 100.0, 1)
+            # 把 mic_diarize 的 phase 映射成前端可顯示的進度百分比
+            phase_pct = {
+                "read-mics": 10.0,
+                "assign": 40.0,
+                "segment": 70.0,
+                "write": 90.0,
+                "done": 100.0,
+            }
+            pct = phase_pct.get(phase, 0.0)
+            _STATE["phase"] = f"per-mic-{phase}"
+            _STATE["percent"] = pct
+
+    # 被取消/棄世代 → 不進 mic_diarize（會寫檔，避免與新 job 互踩）
+    if not _job_alive(job):
+        return
 
     try:
-        gemini_subtitle.transcribe_per_mic(
-            ep,
-            speakers=speakers,
-            force=force,
-            parallel=True,
-            progress=on_mic_progress,
-        )
+        rc = mic_diarize.run(ep, force=force, progress=on_mic_progress)
     except Exception as e:
         setj(state="error", error=f"分軌轉錄失敗：{e}")
         return
 
-    # 被取消/棄世代 → 不進 srt_merge（會寫 _final_v2.srt，避免與新 job 互踩）
-    if not _job_alive(job):
+    if rc == 3:
+        setj(state="error", error="找不到 *_字幕_words.json，請先跑混音轉錄再執行分軌")
         return
-
-    # 合併三路 SRT → _final_v2.srt + .speakers.json
-    setj(phase="srt-merge", percent=0.0)
-    try:
-        rc = srt_merge.run(ep, force=True)
-    except Exception as e:
-        setj(state="error", error=f"srt_merge 失敗：{e}")
+    if rc == 4:
+        setj(state="error", error="episode.yaml 缺少 mics 設定，無法執行分軌")
+        return
+    if rc == 1:
+        setj(state="error", error="分軌輸出已存在，請勾選「強制重跑」")
         return
     if rc != 0:
-        setj(state="error", error=f"srt_merge 失敗 (rc={rc})")
+        setj(state="error", error=f"分軌失敗（rc={rc}）")
         return
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
-    setj(state="done", phase="srt-merge", percent=100.0, out_srt=out_srt_rel)
+    setj(state="done", phase="per-mic-done", percent=100.0, out_srt=out_srt_rel)
 
 
 # ── 一鍵 Breeze 轉字幕：Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對 ──
