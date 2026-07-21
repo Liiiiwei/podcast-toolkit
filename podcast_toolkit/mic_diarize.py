@@ -23,6 +23,121 @@ Card = dict          # {"start", "end", "text", "speaker", "word_span":(i0,i1)}
 
 NEG_INF: float = float("-inf")
 
+# ── 主詞掛尾後處理常數 ──────────────────────────────
+# 依長度由長到短排列，比對時長詞優先
+SUBJECT_TOKENS: list = [
+    "我們", "你們", "妳們", "他們", "她們", "它們", "咱們",
+    "這個", "那個", "這些", "那些",
+    "大家",
+    "我", "你", "妳", "他", "她", "它", "咱",
+]
+
+# T 前一字元屬此集合 → T 是受詞，不搬（改動 1：擴充及物動詞末字 + 授受/使役動詞）
+OBJECT_VETO: set = set(
+    "跟對幫替向給被把和與同陪找看問想教叫讓帶送約請救騙害等靠怪勸罵誇念管顧謝信疼愛恨怕欠娶嫁"
+) | {
+    "識", "資", "醒",   # 認識/投資/提醒 的末字也視為受詞語境
+} | set(
+    # 及物動詞末字：訴 知 託 護 煩 服 見 碰 覆 絡 福 喜 嚀 賞 勸 誇 罵 顧 疼 佩 敬 求 謝 娶 嫁 救 騙 害 顧
+    "訴知託護煩服見碰覆絡福喜嚀賞誇顧疼佩敬求"
+    # 授受/使役動詞（直接管後接代名詞當受詞）
+    # 讓/叫/使/令/請/派/逼/勸/求/陪/幫/替/教 已在主集合或下行新增
+    "令派逼陪"
+)
+
+# 介副詞/介詞前字集合 → T 前一字屬此集合，T 是介補語，直接否決
+COVERB_PREP: set = set("跟對幫替向被把為於由從在給和與同陪關比朝往據靠")
+
+# 動補/趨向/體標記：遇到這些字要再往前看一字確認真動詞
+_ASPECT: set = set("到著過了住完起見給掉走上下出回開")
+
+# 謂語起頭一字（B 卡首字命中 → 佐證 T 是 B 的主詞）
+PREDICATE_STARTERS_1: set = set(
+    "就才也都還又再會要想說講做去來選決沒不是有把被讓反甚只知必應能該覺一其已可而便"
+)
+# 謂語起頭二字
+PREDICATE_STARTERS_2: set = {
+    "覺得", "可以", "已經", "其實", "應該", "必須", "反而", "甚至",
+    "一定", "沒有", "不是", "還是", "知道", "選擇", "決定", "可能",
+    "就是", "才是", "開始",
+}
+# B 卡首字為補語/量詞開頭 → 排除（不是謂語起頭）
+_COMP_STARTERS: set = set("的得地之們個")
+
+# ── jieba 本地斷詞（可選相依，零雲端）──────────────
+# 用途：超長句長度硬切時，把切點退回 jieba 詞界，避免把「標準」「董事長」
+# 這類詞從中間劈開。缺 jieba 時整個功能靜默退化為原字元切（不報錯）。
+try:
+    import jieba as _jieba
+    _jieba.setLogLevel(60)  # 靜音啟動 log（dict 載入訊息）
+except Exception:  # pragma: no cover - 環境無 jieba 時
+    _jieba = None
+
+
+def _jieba_char_boundaries(text: str):
+    """回傳 text 的 jieba 詞界「字元位移」集合（含 0 與 len(text)）。
+
+    切點只要落在此集合內，就不會劈開任何 jieba 認得的詞。jieba 不可用或
+    text 為空時回 None，呼叫端據此退回原字元切。
+    """
+    if _jieba is None or not text:
+        return None
+    bounds = {0}
+    pos = 0
+    for tok in _jieba.cut(text, HMM=True):
+        pos += len(tok)
+        bounds.add(pos)
+    return bounds
+
+
+def _glossary_terms(terms):
+    """從各種 glossary 形態抽出要保護的字串詞。
+
+    支援：以逗號/空白分隔的字串；str 清單；dict 清單（取 `canonical`＋
+    `sounds_like`，對齊 episode.yaml glossary 結構）。回去重後的字串清單。
+    """
+    if not terms:
+        return []
+    if isinstance(terms, str):
+        terms = [t for t in terms.replace("，", " ").replace(",", " ").split() if t]
+    out: list = []
+    for item in terms:
+        if isinstance(item, dict):
+            cano = str(item.get("canonical", "")).strip()
+            if cano:
+                out.append(cano)
+            for s in item.get("sounds_like", []) or []:
+                s = str(s).strip()
+                if s:
+                    out.append(s)
+        else:
+            s = str(item).strip()
+            if s:
+                out.append(s)
+    # 去重保序
+    seen: set = set()
+    uniq = []
+    for t in out:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
+
+
+def load_jieba_userdict(terms) -> int:
+    """把片語/人名逐一加入 jieba 詞庫，保護它們不被切散（如來賓藝名、公司名）。
+
+    terms 接受 episode.yaml glossary 的各種形態（見 `_glossary_terms`）；
+    空值安全略過。回實際加入的詞數。jieba 不可用時回 0。
+    """
+    if _jieba is None:
+        return 0
+    n = 0
+    for t in _glossary_terms(terms):
+        _jieba.add_word(t)
+        n += 1
+    return n
+
 
 # ──────────────────────────────────────────────
 # §1.4 參數物件
@@ -50,6 +165,8 @@ class DiarizeParams:
         "因為", "所以", "但是", "可是", "然後", "而且",
         "或是", "還是", "而是", "就是", "就",
     ))
+    # 主詞掛尾後處理開關（True = 開啟，False = 跳過）
+    subject_shift: bool = True
 
 
 # ──────────────────────────────────────────────
@@ -322,7 +439,166 @@ def cards_from_assignments(
         sub_cards = _split_segment(seg_words, seg_i0, spk, params, reaction_set, _is_dangling)
         cards.extend(sub_cards)
 
+    # 主詞掛尾後處理（高精度，寧漏勿錯）
+    if params.subject_shift:
+        cards = _shift_trailing_subjects(cards, words, params)
+
     return cards
+
+
+def _shift_trailing_subjects(cards: list, words: list, params: DiarizeParams) -> list:
+    """主詞掛尾後處理：把「卡尾屬於下一卡的主詞」從 A 卡搬到 B 卡頭。
+
+    高精度優先：需同時滿足「前提」＋「搬移條件」才搬；任一不符就跳過。
+    單趟掃描，不對同批卡二次搬。純函式，不修改輸入 list 或 dict。
+    """
+    if len(cards) < 2:
+        return list(cards)
+
+    result: list = []
+    i = 0
+    # 預先建立 words 索引→word 的快取（words 本身已是 list，直接用下標）
+    while i < len(cards):
+        if i + 1 >= len(cards):
+            result.append(cards[i])
+            i += 1
+            continue
+
+        A = cards[i]
+        B = cards[i + 1]
+
+        # ── 前提：同講者、word_span 連續、gap 合法 ──
+        a0, a1 = A["word_span"]
+        b0, b1 = B["word_span"]
+
+        if A["speaker"] != B["speaker"] or a1 != b0:
+            result.append(A)
+            i += 1
+            continue
+
+        # gap = words[b0].start - words[a1-1].end
+        if a1 == 0 or b0 >= len(words) or (a1 - 1) >= len(words):
+            result.append(A)
+            i += 1
+            continue
+
+        gap = float(words[b0]["start"]) - float(words[a1 - 1]["end"])
+        if gap > params.gapmax:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 搬移條件 1：A 尾以 SUBJECT_TOKENS 某詞結尾 ──
+        a_text = A["text"]
+        matched_token = None
+        for tok in SUBJECT_TOKENS:  # 已按長度由長到短排
+            if a_text.endswith(tok):
+                matched_token = tok
+                break
+
+        if matched_token is None:
+            result.append(A)
+            i += 1
+            continue
+
+        T = matched_token
+        k_len = len(T)
+
+        # ── 搬移條件 2：從 A 尾往前累積 word 剛好拼出 T（word 邊界對齊）──
+        # 逐字從 a1-1 往回累積，看是否能剛好覆蓋 T
+        accumulated = ""
+        k = 0  # 要搬的 word 數
+        j = a1 - 1
+        while j >= a0:
+            accumulated = words[j]["w"] + accumulated
+            k += 1
+            if accumulated == T:
+                break
+            if len(accumulated) >= k_len:
+                # 已超過 T 長度或組不出來
+                k = 0
+                break
+            j -= 1
+        else:
+            # 掃完 A 還組不出 T
+            k = 0
+
+        if k == 0:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 搬移條件 3：受詞否決（改動 2：升級回看邏輯）──
+        # prefix_text = A 的 text 去掉尾端主詞 T 後的字串
+        prefix_text = a_text[: len(a_text) - k_len]
+        _veto = False
+        if prefix_text:
+            c1 = prefix_text[-1]
+            if c1 in COVERB_PREP:
+                # 介副詞/介詞前字 → T 是介補語，直接否決
+                _veto = True
+            elif c1 in _ASPECT and len(prefix_text) >= 2:
+                # 動補標記：回看第二字確認真動詞或介詞
+                c2 = prefix_text[-2]
+                if c2 in OBJECT_VETO or c2 in COVERB_PREP:
+                    _veto = True
+            elif c1 in OBJECT_VETO:
+                # 直接否決（單字回看）
+                _veto = True
+        if _veto:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 搬移條件 4：B 卡首字/前綴 ∈ PREDICATE_STARTERS ──
+        b_text = B["text"]
+        if not b_text:
+            result.append(A)
+            i += 1
+            continue
+
+        # 排除 B 以補語/量詞開頭
+        if b_text[0] in _COMP_STARTERS:
+            result.append(A)
+            i += 1
+            continue
+
+        b_pred_ok = (
+            b_text[:2] in PREDICATE_STARTERS_2
+            or b_text[0] in PREDICATE_STARTERS_1
+        )
+        if not b_pred_ok:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 搬移動作 ──
+        spk = A["speaker"]
+        if k < (a1 - a0):
+            # A 縮：保留 a0 ~ a1-k，T 移入 B 頭
+            new_a1 = a1 - k
+            new_b0 = a1 - k  # == new_a1
+            new_A = _make_card(words, a0, new_a1, spk, a0, new_a1)
+            new_B = _make_card(words, new_b0, b1, spk, new_b0, b1)
+            result.append(new_A)
+            # 直接把修改後的 B 覆蓋回 cards[i+1] 位置（以 new_B 取代 B）
+            cards = list(cards)  # 複製避免改原輸入
+            cards[i + 1] = new_B
+        else:
+            # A 整卡就是主詞 → 合併 A+B 成一張大 B
+            new_B = _make_card(words, a0, b1, spk, a0, b1)
+            cards = list(cards)
+            cards[i + 1] = new_B
+            # A 不輸出（合併掉）
+            i += 1
+            continue
+
+        i += 1
+
+    # 補上最後一張（若沒被合併）
+    # 注意：上面 while 迴圈已把除合併外的所有卡 append 進 result，
+    # 最後一張在 i == len(cards)-1 時由首個分支 append。
+    return result
 
 
 def _split_segment(
@@ -422,10 +698,36 @@ def _greedy_length_split(
 
     僅在單句字數 > maxlen 時被 `_split_segment` 呼叫。行為與舊版 `_split_segment`
     相同，只是作用範圍限縮在 seg_words[lo:hi]。
+
+    差異：長度硬切（over_maxlen）的切點會退回最近的 jieba 詞界，避免把
+    「標準」「董事長」這類詞從中間劈開；jieba 不可用、或整段無合法內部詞界
+    （單一 jieba 詞就超過 maxlen）時，退回原字元切以保證進度、不死循環。
     """
     cards: list = []
     cur_start = lo
     cur_text = ""
+
+    # 預算 jieba 詞界：full_text 為 seg_words[lo:hi] 串接文字，
+    # boundaries 是相對 lo 的字元位移集合；char_at[k] = token k 起點的字元位移。
+    full_text = "".join(seg_words[k]["w"] for k in range(lo, hi))
+    jieba_bounds = _jieba_char_boundaries(full_text)
+    char_at: dict = {}
+    _off = 0
+    for k in range(lo, hi + 1):
+        char_at[k] = _off
+        if k < hi:
+            _off += len(seg_words[k]["w"])
+
+    def _snap_cut(start_idx: int, cut_idx: int) -> int:
+        """把想切在 token cut_idx 前的切點，退回 (start_idx, cut_idx] 內最近的
+        jieba 詞界 token。找不到就回 cut_idx（原字元切）。回值恆 > start_idx，
+        保證每次切都推進，不會死循環。"""
+        if jieba_bounds is None:
+            return cut_idx
+        for j in range(cut_idx, start_idx, -1):
+            if char_at[j] in jieba_bounds:
+                return j
+        return cut_idx
 
     for idx in range(lo, hi):
         word = seg_words[idx]
@@ -472,13 +774,15 @@ def _greedy_length_split(
         if over_maxlen:
             allow_dangle = len(candidate_text) <= params.hardlen and is_dangling(cur_text)
             if not allow_dangle:
-                # 在加入 w 之前斷（斷在前一字後面）
+                # 在加入 w 之前斷（斷在前一字後面）；切點退回 jieba 詞界
                 if idx > cur_start:
+                    cut_idx = _snap_cut(cur_start, idx)
                     i0 = global_offset + cur_start
-                    i1 = global_offset + idx
-                    cards.append(_make_card(seg_words, cur_start, idx, speaker, i0, i1))
-                    cur_start = idx
-                    cur_text = w
+                    i1 = global_offset + cut_idx
+                    cards.append(_make_card(seg_words, cur_start, cut_idx, speaker, i0, i1))
+                    cur_start = cut_idx
+                    # 退回詞界後，cut_idx..idx（含 w）尚未成卡，續累積
+                    cur_text = "".join(seg_words[k]["w"] for k in range(cut_idx, idx + 1))
                     continue
                 # 若當前只有 0 個字（cur_start==idx），還是要加進去，不然會死循環
                 cur_text = candidate_text
@@ -661,6 +965,12 @@ def run(
     n_dropped = sum(1 for a in assignments if a is None)
     if n_dropped:
         print(f"[mic_diarize] 警告：{n_dropped}/{n_words} 個字因靜音/全軌低能量被丟棄（可能缺字幕）。")
+
+    # 載入本集 glossary（來賓藝名、公司名…）進 jieba 詞庫，保護其不被切界劈開
+    gloss = cfg.get("glossary")
+    n_terms = load_jieba_userdict(gloss)
+    if n_terms:
+        print(f"[mic_diarize] 已載入 {n_terms} 個 glossary 詞進 jieba 保護詞庫")
 
     # cards
     _progress("segment", "依規則切卡")

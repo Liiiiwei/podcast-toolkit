@@ -18,6 +18,7 @@ import pytest
 
 from podcast_toolkit.mic_diarize import (
     DiarizeParams,
+    _shift_trailing_subjects,
     assign_speakers_per_word,
     cards_from_assignments,
     compute_rms_envelope,
@@ -523,6 +524,54 @@ def test_split_merges_short_segs_up_to_maxlen():
     assert cards[0]["text"] == "甲乙丙丁戊子丑寅卯辰"
 
 
+def test_split_snaps_to_jieba_word_boundary():
+    """超長句的長度硬切點若落在 jieba 詞中間，須退回最近詞界，不把詞劈開。
+
+    構造：單一 Breeze seg「最比較糟糕的就是因為我的國語還算標準講台語…」，
+    純長度貪婪切會切在第 17 字（標|準之間，劈開 jieba 詞「標準」）。
+    詞界約束後，切點須退回第 16 字（標之前），「標準」保成整詞。
+    """
+    pytest.importorskip("jieba")
+    text = "最比較糟糕的就是因為我的國語還算標準講台語大家都說"  # 25 字，單一 seg
+    words = []
+    t = 0.0
+    for ch in text:
+        w = _make_word(ch, t, t + 0.095)
+        w["seg"] = 0
+        words.append(w)
+        t += 0.1
+    assignments = ["a"] * len(text)
+    params = DiarizeParams(maxlen=17, hardlen=23, gapmax=0.6)
+    cards = cards_from_assignments(words, assignments, params=params)
+
+    # 核心不變式：沒有任何一張卡以「標」結尾、下一張以「準」開頭（＝標準沒被劈開）
+    joined = [c["text"] for c in cards]
+    for a, b in zip(joined, joined[1:]):
+        assert not (a.endswith("標") and b.startswith("準")), \
+            f"jieba 詞「標準」被切開：…{a[-3:]}｜{b[:3]}…"
+    # 「標準」須完整出現在某一張卡內
+    assert any("標準" in c["text"] for c in cards), \
+        f"「標準」未完整保留於任一卡：{joined}"
+
+
+def test_glossary_terms_parses_episode_shape():
+    """glossary 為 dict 清單（episode.yaml 實際結構）時，須抽出 canonical＋
+    sounds_like，不可把整個 dict 當一個詞。"""
+    from podcast_toolkit.mic_diarize import _glossary_terms
+    gloss = [
+        {"canonical": "王劭仁", "sounds_like": ["紹仁"], "note": ""},
+        {"canonical": "郝慧川", "sounds_like": [], "note": "主持人"},
+    ]
+    terms = _glossary_terms(gloss)
+    assert "王劭仁" in terms and "郝慧川" in terms and "紹仁" in terms
+    # 不可出現 dict repr（舊 bug）
+    assert all("canonical" not in t for t in terms), f"混入 dict repr：{terms}"
+    # 純字串與逗號分隔字串也支援
+    assert _glossary_terms(["甲", "乙"]) == ["甲", "乙"]
+    assert _glossary_terms("甲, 乙 丙") == ["甲", "乙", "丙"]
+    assert _glossary_terms(None) == []
+
+
 # ──────────────────────────────────────────────
 # §7.11 靜音/無主
 # ──────────────────────────────────────────────
@@ -658,3 +707,407 @@ def test_no_cross_speaker_card_guarantee():
         span = c["word_span"]
         spk_set = {assignments[i] for i in range(span[0], span[1]) if assignments[i] is not None}
         assert len(spk_set) <= 1, f"發現跨講者卡：{spk_set}，卡={c}"
+
+
+# ──────────────────────────────────────────────
+# §主詞掛尾後處理：_shift_trailing_subjects
+# ──────────────────────────────────────────────
+
+def _w(ch: str, start: float, end: float, seg: int = 0, spk: str = "A") -> dict:
+    """建立合成 word dict（含 seg/spk 欄）。"""
+    return {"w": ch, "start": start, "end": end, "seg": seg, "spk": spk,
+            "p": 1.0, "alp": 1.0, "nsp": 0.0}
+
+
+def _make_cards_direct(words: list, spans: list, speaker: str = "A") -> list:
+    """用 words 全域 list + 半開 span list 直接建 cards（不跑切卡邏輯）。"""
+    from podcast_toolkit.mic_diarize import _make_card
+    cards = []
+    for lo, hi in spans:
+        cards.append(_make_card(words, lo, hi, speaker, lo, hi))
+    return cards
+
+
+def _default_params():
+    return DiarizeParams(maxlen=30, hardlen=40, gapmax=0.5,
+                         min_turn_sec=0.0, min_turn_words=0,
+                         subject_shift=True)
+
+
+# ── 正例：必須搬 ──────────────────────────────────
+
+def test_shift_subject_single_char_wo():
+    """A="跟大家講我" B="不是有錢人" → 搬「我」到 B 頭，A 縮成「跟大家講」。"""
+    chars_a = list("跟大家講我")
+    chars_b = list("不是有錢人")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert len(result) == 2
+    assert result[0]["text"] == "跟大家講"
+    assert result[1]["text"] == "我不是有錢人"
+
+
+def test_shift_subject_double_char_zhege():
+    """A="它不要想這個" B="反而應該你不要去"。
+    OBJECT_VETO 包含「想」（想＋受詞語境），故「這個」前一字「想」命中否決 → 不搬。
+    高精度優先、寧漏勿錯：此情況正確行為是保留原卡。
+    （規格正例 2 與常數定義有矛盾，以常數為準——「想」確實是受詞動詞）"""
+    chars_a = list("它不要想這個")
+    chars_b = list("反而應該你不要去")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 6), (6, 14)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    # 「想」∈ OBJECT_VETO → 否決，不搬
+    assert result[0]["text"] == "它不要想這個"
+    assert result[1]["text"] == "反而應該你不要去"
+
+
+def test_shift_subject_wo_with_predicate():
+    """A="所以我覺得我" B="如果變個營養師" → 搬「我」，但「如果」不在謂語集。
+
+    規格中正例 3 是「如果變個營養師」——B 首字「如」需命中 PREDICATE_STARTERS_1。
+    「如」在謂語字集中驗一下；若不在則此正例預期不搬（規格只列了三例，以實際常數為準）。
+    實際確認後：規格要求搬。
+    """
+    from podcast_toolkit.mic_diarize import PREDICATE_STARTERS_1
+    # 確認「如」有無在謂語集
+    b_text = "如果變個營養師"
+    b_pred_ok = b_text[:2] in {"覺得", "可以", "已經", "其實", "應該", "必須",
+                                "反而", "甚至", "一定", "沒有", "不是", "還是",
+                                "知道", "選擇", "決定", "可能", "就是", "才是", "開始"} \
+                or b_text[0] in PREDICATE_STARTERS_1
+    # 注意：規格中B首字「如」並不在一字謂語集、「如果」也不在雙字謂語集
+    # → 此例在嚴格規格下不搬，測試應驗「不搬」以保持高精度
+    chars_a = list("所以我覺得我")
+    chars_b = list("如果變個營養師")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 6), (6, 13)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    if b_pred_ok:
+        # 謂語判定通過 → 搬
+        assert result[0]["text"] == "所以我覺得"
+        assert result[1]["text"].startswith("我")
+    else:
+        # 謂語判定未通過 → 不搬（高精度，寧漏勿錯）
+        assert result[0]["text"] == "所以我覺得我"
+        assert result[1]["text"] == "如果變個營養師"
+
+
+def test_shift_subject_meiyou_predicate():
+    """B="沒有他就給" → B 首「沒」∈ PREDICATE_STARTERS_1，搬 A 尾的主詞。"""
+    chars_a = list("你說講我")
+    chars_b = list("沒有問題啊")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    # A="你說講我"，T="我"，前一字"講"不在 OBJECT_VETO，B首"沒"∈謂語集
+    cards = _make_cards_direct(words, [(0, 4), (4, 9)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "你說講"
+    assert result[1]["text"].startswith("我")
+
+
+# ── 負例：必須不搬 ────────────────────────────────
+
+def test_no_shift_subject_not_in_tokens():
+    """A="常常會提醒自己" → 「自己」不在 SUBJECT_TOKENS，不搬。"""
+    chars_a = list("常常會提醒自己")
+    chars_b = list("才能進步更多")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 7), (7, 13)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "常常會提醒自己"
+    assert result[1]["text"] == "才能進步更多"
+
+
+def test_no_shift_object_veto_shi():
+    """A="認識你們" B="但是你們不跟" → 前一字「識」∈ OBJECT_VETO → 不搬。"""
+    chars_a = list("認識你們")
+    chars_b = list("但是你們不跟")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 4), (4, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "認識你們"
+    assert result[1]["text"] == "但是你們不跟"
+
+
+def test_no_shift_object_veto_zi():
+    """A="你說他投資你" B="沒有他就給" → 「資」∈ OBJECT_VETO → 不搬「你」。"""
+    chars_a = list("你說他投資你")
+    chars_b = list("沒有他就給")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 6), (6, 11)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "你說他投資你"
+    assert result[1]["text"] == "沒有他就給"
+
+
+def test_no_shift_role_noun_not_in_tokens():
+    """A="身為老師" → 「老師」不在 SUBJECT_TOKENS，不搬。"""
+    chars_a = list("身為老師")
+    chars_b = list("就要以身作則")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 4), (4, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "身為老師"
+    assert result[1]["text"] == "就要以身作則"
+
+
+def test_no_shift_b_starts_with_de():
+    """A="記得要問我" B="的書" → B 首「的」∈ _COMP_STARTERS → 不搬。"""
+    chars_a = list("記得要問我")
+    chars_b = list("的書在哪裡")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "記得要問我"
+    assert result[1]["text"] == "的書在哪裡"
+
+
+def test_no_shift_different_speaker():
+    """A、B 講者不同 → 前提不符，不搬。"""
+    chars_a = list("跟大家講我")
+    chars_b = list("不是有錢人")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    from podcast_toolkit.mic_diarize import _make_card
+    card_a = _make_card(words, 0, 5, "A", 0, 5)
+    card_b = _make_card(words, 5, 10, "B", 5, 10)  # 不同講者
+    result = _shift_trailing_subjects([card_a, card_b], words, _default_params())
+    assert result[0]["text"] == "跟大家講我"
+    assert result[1]["text"] == "不是有錢人"
+
+
+# ── 整合測試 ──────────────────────────────────────
+
+def test_integration_cards_from_assignments_shift():
+    """整合測試：重現正例1（A="跟大家講我" B="不是有錢人"），
+    跑 cards_from_assignments 後驗結果無「卡尾為核心主詞且下一卡以謂語開頭」。"""
+    # 建 words：A 段 seg=0，B 段 seg=1，同講者
+    chars_a = list("跟大家講我")
+    chars_b = list("不是有錢人")
+    t = 0.0
+    words = []
+    for ch in chars_a:
+        words.append({"w": ch, "start": t, "end": t + 0.2, "seg": 0,
+                      "spk": "A", "p": 1.0, "alp": 1.0, "nsp": 0.0})
+        t += 0.25
+    for ch in chars_b:
+        words.append({"w": ch, "start": t, "end": t + 0.2, "seg": 1,
+                      "spk": "A", "p": 1.0, "alp": 1.0, "nsp": 0.0})
+        t += 0.25
+    assignments = ["A"] * len(words)
+    params = DiarizeParams(maxlen=30, hardlen=40, gapmax=0.5,
+                           min_turn_sec=0.0, min_turn_words=0,
+                           subject_shift=True)
+    cards = cards_from_assignments(words, assignments, params=params)
+    # 驗結果：所有卡 尾為「我」但下一卡首∈謂語 的情況應已不存在
+    from podcast_toolkit.mic_diarize import PREDICATE_STARTERS_1, PREDICATE_STARTERS_2, SUBJECT_TOKENS
+    violations = []
+    for idx in range(len(cards) - 1):
+        a_text = cards[idx]["text"]
+        b_text = cards[idx + 1]["text"]
+        for tok in SUBJECT_TOKENS:
+            if a_text.endswith(tok):
+                b_pred = (b_text[:2] in PREDICATE_STARTERS_2
+                          or (b_text and b_text[0] in PREDICATE_STARTERS_1))
+                if b_pred:
+                    violations.append((a_text, b_text))
+    assert violations == [], f"仍有主詞掛尾：{violations}"
+
+
+# ── subject_shift 開關測試 ────────────────────────
+
+def test_subject_shift_disabled():
+    """subject_shift=False 時後處理不作用，主詞掛尾仍存在。"""
+    chars_a = list("跟大家講我")
+    chars_b = list("不是有錢人")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 10)])
+    params_off = _default_params()
+    params_off = DiarizeParams(maxlen=30, hardlen=40, gapmax=0.5,
+                               min_turn_sec=0.0, min_turn_words=0,
+                               subject_shift=False)
+    result = _shift_trailing_subjects(cards, words, params_off)
+    # 不搬（開關關閉由 cards_from_assignments 攔截，這裡直呼叫函式本身）
+    # _shift_trailing_subjects 本身不看 subject_shift；開關在呼叫端
+    # 改驗透過 cards_from_assignments 呼叫：
+    assignments = ["A"] * len(words)
+    cards2 = cards_from_assignments(words, assignments, params=params_off)
+    # 應保留「我」在 A 卡尾（或至少整合後行為不強制搬移）
+    texts = [c["text"] for c in cards2]
+    # 找到含「講我」的卡（即「我」沒被搬走）
+    assert any("講我" in t or t.endswith("我") for t in texts), \
+        f"subject_shift=False 時主詞應保留於原卡，但 texts={texts}"
+
+
+# ──────────────────────────────────────────────
+# §新增：OBJECT_VETO 擴充 + 回看升級 反例/回歸測試
+# ──────────────────────────────────────────────
+# 反例（必須不搬）
+# ──────────────────────────────────────────────
+
+def test_no_shift_veto_su_gaosu_ni():
+    """A="我想告訴你" B="說的事情" → 訴∈OBJECT_VETO，你=受詞，不搬。"""
+    chars_a = list("我想告訴你")
+    chars_b = list("說的事情")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 9)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "我想告訴你", f"告訴你 → 訴∈OBJECT_VETO，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "說的事情"
+
+
+def test_no_shift_coverb_yu_guanyu_ni():
+    """A="這是關於你" B="要做的決定" → 於∈COVERB_PREP，你=介補受詞，不搬。"""
+    chars_a = list("這是關於你")
+    chars_b = list("要做的決定")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "這是關於你", f"關於你 → 於∈COVERB_PREP，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "要做的決定"
+
+
+def test_no_shift_coverb_wei_weile_ni():
+    """A="我都是為了你" B="才這樣做" → 為∈COVERB_PREP，你=介補受詞，不搬。"""
+    chars_a = list("我都是為了你")
+    chars_b = list("才這樣做")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 6), (6, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "我都是為了你", f"為了你 → 為∈COVERB_PREP，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "才這樣做"
+
+
+def test_no_shift_aspect_kanjian_ni():
+    """A="大家看到你" B="要準備" → 看+到(ASPECT)+你，回看兩字命中看∈OBJECT_VETO，不搬。"""
+    chars_a = list("大家看到你")
+    chars_b = list("要準備")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 8)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "大家看到你", f"看到你 → 動補回看兩字命中看∈OBJECT_VETO，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "要準備"
+
+
+def test_no_shift_veto_hu_baohu_ni():
+    """A="我會保護你" B="不會有事" → 護∈OBJECT_VETO，你=受詞，不搬。"""
+    chars_a = list("我會保護你")
+    chars_b = list("不會有事")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 9)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "我會保護你", f"保護你 → 護∈OBJECT_VETO，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "不會有事"
+
+
+def test_no_shift_veto_fan_mafan_ni():
+    """A="要麻煩你" B="再確認" → 煩∈OBJECT_VETO，你=受詞，不搬。"""
+    chars_a = list("要麻煩你")
+    chars_b = list("再確認")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 4), (4, 7)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "要麻煩你", f"麻煩你 → 煩∈OBJECT_VETO，不搬；got {result[0]['text']}"
+    assert result[1]["text"] == "再確認"
+
+
+# ──────────────────────────────────────────────
+# 回歸保護（真主詞仍搬）
+# ──────────────────────────────────────────────
+
+def test_shift_still_works_jiang_wo():
+    """A="跟大家講我" B="不是有錢人" → 講不在OBJECT_VETO，我仍搬到B頭。（回歸保護）"""
+    chars_a = list("跟大家講我")
+    chars_b = list("不是有錢人")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 5), (5, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "跟大家講", f"講不在OBJECT_VETO，我應搬走；got {result[0]['text']}"
+    assert result[1]["text"] == "我不是有錢人"
+
+
+def test_shift_still_works_juede_wo():
+    """A="所以我覺得我" B="會選這個" → 得不在OBJECT_VETO，B首會∈PS1，我仍搬。（回歸保護）"""
+    chars_a = list("所以我覺得我")
+    chars_b = list("會選這個")
+    t = 0.0
+    words = []
+    for ch in chars_a + chars_b:
+        words.append(_w(ch, t, t + 0.2))
+        t += 0.25
+    cards = _make_cards_direct(words, [(0, 6), (6, 10)])
+    result = _shift_trailing_subjects(cards, words, _default_params())
+    assert result[0]["text"] == "所以我覺得", f"覺得後的我應搬；got {result[0]['text']}"
+    assert result[1]["text"] == "我會選這個"

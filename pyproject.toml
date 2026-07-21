@@ -31,7 +31,8 @@ dev = [
 # STT 後端（選裝）：gemini 是預設 provider，但與 openai-whisper / mlx 一樣按需安裝，不綁進核心 runtime
 gemini = ["google-genai"]
 # 中文詞界（選裝）：word_break 評分引擎的 jieba 詞界懲罰＋check-seg ④ 跨卡切詞檢測；
-# 沒裝也能跑（降級純規則評分、④ 跳過），故不進核心 runtime
+# 另 mic_diarize 超長句長度硬切以 jieba 詞界約束切點（避免劈開「標準/董事長」）。
+# 沒裝也能跑（降級純規則評分、④ 跳過、mic_diarize 退回字元切），故不進核心 runtime
 jieba = ["jieba>=0.42"]
 
 [project.scripts]
