@@ -64,6 +64,11 @@ PREDICATE_STARTERS_2: set = {
 # B 卡首字為補語/量詞開頭 → 排除（不是謂語起頭）
 _COMP_STARTERS: set = set("的得地之們個")
 
+# ── 掛頭字回黏後處理常數 ──────────────────────────────
+# 卡首為此集合中的單字 word → 候選回黏到前卡卡尾
+# 極重要：「之」文言前綴（之前/之後/之外）永遠不加入此集合
+LEAD_BAN: set = set("的得地了著過嗎呢吧啊喔耶嘛囉啦呀哦欸唄們兒")
+
 # ── jieba 本地斷詞（可選相依，零雲端）──────────────
 # 用途：超長句長度硬切時，把切點退回 jieba 詞界，避免把「標準」「董事長」
 # 這類詞從中間劈開。缺 jieba 時整個功能靜默退化為原字元切（不報錯）。
@@ -167,6 +172,8 @@ class DiarizeParams:
     ))
     # 主詞掛尾後處理開關（True = 開啟，False = 跳過）
     subject_shift: bool = True
+    # 掛頭字回黏後處理開關（True = 開啟，False = 跳過）
+    reattach_particles: bool = True
 
 
 # ──────────────────────────────────────────────
@@ -443,6 +450,10 @@ def cards_from_assignments(
     if params.subject_shift:
         cards = _shift_trailing_subjects(cards, words, params)
 
+    # 掛頭字回黏後處理（高精度，寧漏勿錯）
+    if params.reattach_particles:
+        cards = _reattach_leading_particles(cards, words, params)
+
     return cards
 
 
@@ -598,6 +609,107 @@ def _shift_trailing_subjects(cards: list, words: list, params: DiarizeParams) ->
     # 補上最後一張（若沒被合併）
     # 注意：上面 while 迴圈已把除合併外的所有卡 append 進 result，
     # 最後一張在 i == len(cards)-1 時由首個分支 append。
+    return result
+
+
+def _reattach_leading_particles(cards: list, words: list, params: DiarizeParams) -> list:
+    """掛頭字回黏後處理：把 B 卡首的結構/語氣/動態助詞（的/了/著…）搬回 A 卡尾。
+
+    高精度優先（寧漏勿錯）：只回黏 100% 安全的單字助詞 word。
+    純函式，不修改輸入 list 或 dict；建新清單而非原地改動。
+    """
+    if len(cards) < 2:
+        return list(cards)
+
+    # 建新清單（鏡像 _shift_trailing_subjects 的「建新清單」寫法）
+    cards = list(cards)  # 複製，避免改原輸入
+    result: list = []
+    i = 0
+
+    while i < len(cards):
+        if i + 1 >= len(cards):
+            result.append(cards[i])
+            i += 1
+            continue
+
+        A = cards[i]
+        B = cards[i + 1]
+
+        a0, a1 = A["word_span"]
+        b0, b1 = B["word_span"]
+
+        # ── 候選條件 1：同講者 ──
+        if A["speaker"] != B["speaker"]:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 候選條件 2：word_span 相鄰（a1 == b0）──
+        if a1 != b0:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 候選條件 3：gap ≤ gapmax ──
+        if b0 >= len(words) or (a1 - 1) < 0 or (a1 - 1) >= len(words):
+            result.append(A)
+            i += 1
+            continue
+        gap = float(words[b0]["start"]) - float(words[a1 - 1]["end"])
+        if gap > params.gapmax:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 候選條件 4：B 首 word 是單字且 ∈ LEAD_BAN ──
+        first_w = words[b0]["w"]
+        if not (len(first_w) == 1 and first_w in LEAD_BAN):
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 護欄 5：jieba 首詞護欄（B 首 jieba token 長度 >= 2 → 跳過）──
+        if _jieba is not None and B["text"]:
+            tokens = list(_jieba.cut(B["text"], HMM=True))
+            if tokens and len(tokens[0]) >= 2:
+                result.append(A)
+                i += 1
+                continue
+
+        # ── 護欄 6：疊字護欄 ──
+        b_text = B["text"]
+        if len(b_text) >= 2 and b_text[0] == b_text[1]:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 護欄 7：hardlen 護欄 ──
+        if len(A["text"]) + 1 > params.hardlen:
+            result.append(A)
+            i += 1
+            continue
+
+        # ── 搬移動作：把 b0 號 word 從 B 搬到 A 尾 ──
+        spk = A["speaker"]
+        new_b0 = b0 + 1
+
+        if new_b0 == b1:
+            # B 只剩這一個 word → 整張 B 消失，A 吸收整段
+            new_A = _make_card(words, a0, b1, spk, a0, b1)
+            # 覆蓋 cards[i+1]，讓下一輪正確往後掃
+            cards[i + 1] = new_A
+            # A 不輸出，改輸出合併後的大卡（取代 B 位置繼續掃）
+            i += 1
+            continue
+        else:
+            # 一般搬：A 延伸一個 word，B 縮短一個 word
+            new_A = _make_card(words, a0, new_b0, spk, a0, new_b0)
+            new_B = _make_card(words, new_b0, b1, spk, new_b0, b1)
+            result.append(new_A)
+            cards[i + 1] = new_B
+            i += 1
+            continue
+
     return result
 
 
