@@ -28,6 +28,9 @@ DATA_FILES = [
     # defaults.yaml + assets → Resources 根（bundle 內 toolkit_root() = Contents/Resources）。
     # 少了它們：開單集會 load_defaults 找不到 defaults.yaml→500、合成找不到 intro/outro/封面。
     ("", ["defaults.yaml"]),
+    # templates/ → Resources/templates（init.py 從 toolkit_root()/templates 讀範本）。
+    # 少了它：新建集會噴 FileNotFoundError episode.yaml，資料夾建了但沒 episode.yaml → dashboard 認不出這集。
+    ("templates", ["templates/episode.yaml", "templates/TODO.md"]),
     ("assets", [
         "assets/intro.mp4",
         "assets/outro.mp3",
@@ -80,6 +83,11 @@ OPTIONS = {
         "CFBundleShortVersionString": "0.1.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
+        # 雙擊/open 啟動的 .app 不繼承終端機的 UTF-8 locale（preferred encoding = ascii），
+        # 一旦 subprocess 讀到含中文路徑的 ffmpeg 輸出就 UnicodeDecodeError（波形/出片/校對全中招）。
+        # LSEnvironment 在 interpreter 啟動「前」由 LaunchServices 注入 → 整個 app 及其所有子程序
+        # 跑 Python UTF-8 Mode，根治此類雷（各 subprocess 另有明確 encoding="utf-8" 當雙保險）。
+        "LSEnvironment": {"PYTHONUTF8": "1"},
     },
 }
 

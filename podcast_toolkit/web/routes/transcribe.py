@@ -1,7 +1,5 @@
-"""轉字幕：單軌/分軌 job 啟動與狀態、錯字字典、詞庫。"""
+"""轉字幕：單軌 job 啟動與狀態、錯字字典、詞庫。"""
 from __future__ import annotations
-
-import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -38,21 +36,17 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             raise HTTPException(status_code=400, detail="不支援的副檔名")
 
         cfg = ctx.load_config()
-        provider = (cfg.get("transcribe") or {}).get("provider") or "gemini"
-        if provider == "xai":
-            provider = "gemini"
+        provider = (cfg.get("transcribe") or {}).get("provider") or "whisper_mlx"
         if provider not in transcribe_mod.PROVIDERS:
             raise HTTPException(
                 status_code=400, detail=f"未知的 STT 供應商：{provider}"
             )
         key_map = {
             "xai": "xai_api_key",
-            "gemini": "gemini_api_key",
             "openai": "openai_api_key",
         }
         label_map = {
             "xai": "xAI",
-            "gemini": "Gemini",
             "openai": "OpenAI",
             "whisper_mlx": "本地 Whisper",
         }
@@ -88,37 +82,6 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             status_code=202,
         )
 
-    @app.post("/api/transcribe/per-mic")
-    def post_transcribe_per_mic(payload: dict):
-        """分軌轉錄：背景跑 N 路 Gemini 同步 → srt_merge → _final_v2.srt + speakers.json。
-
-        payload: {"speakers": ["a", "b", "c"]} — 必填，要跑的軌子集。
-        """
-        ep = ctx.require_ep()
-        speakers = payload.get("speakers") or []
-        if not isinstance(speakers, list) or not all(isinstance(s, str) for s in speakers):
-            raise HTTPException(status_code=400, detail="speakers 必須是字串陣列")
-        if not speakers:
-            raise HTTPException(status_code=400, detail="speakers 不能是空清單")
-
-        cfg = ctx.load_config()
-        api_key = cfg.get("gemini_api_key")
-        if not api_key:
-            raise HTTPException(status_code=400, detail="尚未設定 Gemini API key")
-        # transcribe_per_mic 直接讀 env 變數
-        os.environ["GEMINI_API_KEY"] = api_key
-
-        try:
-            info = transcribe_job.start_per_mic_job(ep, speakers=speakers, force=True)
-        except RuntimeError as e:
-            # 已有 job 在跑 / 不認得的 speaker / mics 沒設
-            raise HTTPException(status_code=409, detail=str(e))
-
-        return JSONResponse(
-            {"ok": True, "speakers": info["speakers"]},
-            status_code=202,
-        )
-
     @app.post("/api/transcribe/breeze")
     def post_transcribe_breeze(payload: dict | None = None):
         """一鍵 Breeze 轉字幕：背景跑 Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對。
@@ -145,6 +108,15 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.get("/api/transcribe/status")
     def get_transcribe_status():
         return JSONResponse(transcribe_job.get_status())
+
+    @app.post("/api/transcribe/cancel")
+    def post_transcribe_cancel():
+        """使用者取消轉字幕：砍掉在跑的 Breeze 子行程並把狀態收回 idle。
+        cancelled=False 代表當下沒有 job 在跑（idle/done/error）。
+        回傳 state 讓前端確認已離開 running，才放行下次轉字幕（避免 409 空窗）。"""
+        cancelled = transcribe_job.cancel_job()
+        st = transcribe_job.get_status()
+        return JSONResponse({"ok": True, "cancelled": cancelled, "state": st["state"]})
 
     @app.post("/api/resegment")
     def post_resegment(payload: dict):

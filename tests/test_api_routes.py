@@ -277,18 +277,19 @@ def test_list_episode_files_classifies_by_kind(tmp_episode_full):
     assert by_path["04_工作檔/switch_list.json"]["kind"] == "work"
 
 
-def test_flag_suspicious_pause_marks_three_rules():
-    """三條規則各自要能命中對應的卡。"""
+def test_flag_suspicious_pause_splits_red_and_info():
+    """兩級分流：reaction_only 標紅（suspicious_pause），short_long / big_gap 只標灰
+    資訊（pause_info），不進紅卡批次刪除。"""
     from podcast_toolkit.web.episode_io import _flag_suspicious_pause
 
     cards = [
-        # 0: 正常句子，長度 8、時長 4.2、沒前一張 → 不可疑
+        # 0: 正常句子，長度 8、時長 4.2、沒前一張 → 全不命中
         {"idx": 1, "start": 0.0,  "end": 4.2,  "text": "大家好歡迎來到我愛上班"},
-        # 1: reaction_only：text 是 "對"
+        # 1: reaction_only：text 是 "對" → 紅卡
         {"idx": 2, "start": 4.2,  "end": 5.0,  "text": "對"},
-        # 2: short_long：1 個字，持續 3 秒（>2.0）
+        # 2: short_long：1 個字，持續 3 秒（>2.0）→ 灰卡
         {"idx": 3, "start": 5.0,  "end": 8.0,  "text": "啊"},
-        # 3: big_gap_before：距上一張 2 秒（>1.5）
+        # 3: big_gap_before：距上一張 2 秒（>1.5）→ 灰卡
         {"idx": 4, "start": 10.0, "end": 12.0, "text": "我們繼續講剛剛的話題"},
         # 4: 完全正常
         {"idx": 5, "start": 12.0, "end": 16.0, "text": "這集會講到產品設計"},
@@ -302,14 +303,24 @@ def test_flag_suspicious_pause_marks_three_rules():
 
     _flag_suspicious_pause(cards, sus_cfg, reactions)
 
+    # 正常卡：兩級都不命中
     assert cards[0]["suspicious_pause"] is False
+    assert cards[0]["pause_info"] is False
+    # reaction_only → 紅卡，且不是灰卡
     assert cards[1]["suspicious_pause"] is True
     assert "reaction_only" in cards[1]["suspicious_reasons"]
-    assert cards[2]["suspicious_pause"] is True
-    assert "short_long" in cards[2]["suspicious_reasons"]
-    assert cards[3]["suspicious_pause"] is True
-    assert "big_gap_before" in cards[3]["suspicious_reasons"]
+    assert cards[1]["pause_info"] is False
+    # short_long → 灰卡（pause_info），且不是紅卡
+    assert cards[2]["suspicious_pause"] is False
+    assert cards[2]["pause_info"] is True
+    assert "short_long" in cards[2]["pause_info_reasons"]
+    # big_gap_before → 灰卡（pause_info），且不是紅卡
+    assert cards[3]["suspicious_pause"] is False
+    assert cards[3]["pause_info"] is True
+    assert "big_gap_before" in cards[3]["pause_info_reasons"]
+    # 正常卡
     assert cards[4]["suspicious_pause"] is False
+    assert cards[4]["pause_info"] is False
 
 
 def test_get_episode_returns_suspicious_pause_per_card(tmp_episode_dir):
@@ -375,8 +386,8 @@ def test_post_transcribe_runs_resegment_to_merge_word_level_into_sentences(
     main_video = tmp_episode_dir / "01_母帶" / "測試集.mp4"
     main_video.write_bytes(b"FAKE" * 1000)
 
-    # 不要動到真實 ~/.podcast-toolkit/config.json（預設 provider 已改 gemini）
-    monkeypatch.setattr(api_mod, "_load_config", lambda: {"gemini_api_key": "fake"})
+    # 不要動到真實 ~/.podcast-toolkit/config.json（預設 provider = whisper_mlx，免金鑰）
+    monkeypatch.setattr(api_mod, "_load_config", lambda: {})
 
     # 模擬 Grok：一個字一張 card 寫到 out_srt（看起來像現在線上 bug）
     def fake_pipeline(*, api_key, src_audio, out_srt, work_dir, progress=None, **_):

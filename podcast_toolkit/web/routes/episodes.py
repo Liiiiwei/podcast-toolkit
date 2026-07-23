@@ -152,6 +152,8 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
                 ["osascript", "-e", script],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=300,
             )
         except FileNotFoundError:

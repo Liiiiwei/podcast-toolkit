@@ -9,6 +9,8 @@ resegment:
                    "哈哈哈", "哈哈", "哇", "喔", "哦", "蛤", "對啦",
                    "好", "是吧", "是喔"]
   use_filler_filter: false
+  flag_half_sentence: false  # 「半句結尾」黃卡旗標：任何結尾是 就/的/然後 的正常句都會中，
+                             # 誤判率高，預設關。true 才把半句結尾標成待複查（重複幻覺一律照標）。
   straddle_gap: 0.35    # check-seg ④ 跨卡切詞：相鄰卡間隔 ≤ N 秒才檢（更大＝真氣口，不算）
   jieba_dict: null      # jieba 詞典路徑；null＝自動偵測（Breeze dict.txt.big 存在就用，否則內建）
   whisper_guard:
@@ -23,8 +25,8 @@ reflow:
                      #（治 Breeze 逐字殘留：『還好／一點』併成『還好一點』）。false＝只併單字碎卡
   merge_target: 9    # merge_short 的併接上限字數（人手實測中位數 ≈9，避免併過頭跨子句）
 
-# 編輯介面標紅「可疑空拍卡」的門檻。三條 OR，命中任一條就標紅。
-# reaction_words 沿用 resegment.reaction_words。
+# 編輯介面「可疑空拍卡」門檻。分兩級：reaction_only（純語助詞）標紅、可批次刪；
+# short_long / big_gap 誤判率高，只標淡灰資訊、不進批次刪。reaction_words 沿用 resegment。
 suspicious_pause:
   short_long_max_chars: 3      # 文字 < N 字
   short_long_min_dur_sec: 2.0  # 但持續 > N 秒 → 短句拖很久

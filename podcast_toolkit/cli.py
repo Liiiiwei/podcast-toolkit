@@ -9,13 +9,6 @@ def cmd_init(args):
     return init_mod.run(Path(args.path))
 
 
-def cmd_subtitle(args):
-    from podcast_toolkit import gemini_subtitle
-    return gemini_subtitle.run(
-        Path(args.path), force=args.force, dry_run=args.dry_run, per_mic=args.per_mic,
-    )
-
-
 def cmd_resegment(args):
     from podcast_toolkit import resegment
     return resegment.run(Path(args.path), force=args.force)
@@ -89,13 +82,6 @@ def cmd_glossary_review(args):
     return glossary_candidates.review(Path(args.path))
 
 
-def cmd_merge_per_mic(args):
-    from podcast_toolkit import srt_merge
-    from podcast_toolkit.episode import Episode
-    ep = Episode(Path(args.path))
-    return srt_merge.run(ep, force=args.force)
-
-
 def cmd_suggest_cameras(args):
     from podcast_toolkit import cameras_suggest
     from podcast_toolkit.episode import Episode
@@ -136,16 +122,6 @@ def build_parser():
     pi = sub.add_parser("init", help="腳手架：建立子資料夾 + episode.yaml")
     pi.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pi.set_defaults(func=cmd_init)
-
-    ps = sub.add_parser("subtitle", help="Gemini API 把 01_母帶/ 音檔轉成 SRT 字幕")
-    ps.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
-    ps.add_argument("--force", action="store_true", help="覆寫已存在的字幕")
-    ps.add_argument("--dry-run", action="store_true", help="只印 prompt 不呼叫 API")
-    ps.add_argument(
-        "--per-mic", action="store_true",
-        help="分軌轉錄：用 episode.yaml.mics 的逐路 mic，先 VAD 閘掉串音再上傳 Gemini",
-    )
-    ps.set_defaults(func=cmd_subtitle)
 
     pr = sub.add_parser("resegment", help="字幕重新斷句 + 錯字修正")
     pr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
@@ -221,14 +197,6 @@ def build_parser():
     )
     pgr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pgr.set_defaults(func=cmd_glossary_review)
-
-    pm = sub.add_parser(
-        "merge-per-mic",
-        help="把 04_工作檔/_mic_*.srt 合併成 03_成品/_final_v2.srt + _final_v2.speakers.json",
-    )
-    pm.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
-    pm.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
-    pm.set_defaults(func=cmd_merge_per_mic)
 
     psc = sub.add_parser(
         "suggest-cameras",

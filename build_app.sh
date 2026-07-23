@@ -58,6 +58,28 @@ echo "→ [2/5] 注入 Breeze sidecar 到 Contents/Resources/breeze"
 ditto "$STAGE" "$APP/Contents/Resources/breeze"
 echo "  ✓ 注入完成（app 現為 $(du -sh "$APP" | cut -f1)）"
 
+# sidecar 的 py-runtime 是「相對化的 CLT Python3.9」，過去手動組 stage 時把不常用的純 Python 標準庫
+# 一併裁掉了（如 pickletools）。torch.package 會 lazy import 這些模組 → 轉字幕時噴
+# ModuleNotFoundError: No module named 'pickletools'。這裡每次打包都用系統 CLT 標準庫「補齊」：
+#   --ignore-existing：只補缺的 .py，不覆蓋既有（不動已相對化的檔）
+#   只含 *.py：純 Python 模組；不碰 lib-dynload 的 .so（那些已相對化，覆蓋會壞 @rpath）
+echo "→ [2.5/5] 補齊 Breeze py-runtime 純 Python 標準庫（防 torch lazy import 缺件）"
+CLT_STDLIB="/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9"
+BREEZE_STDLIB="$APP/Contents/Resources/breeze/py-runtime/lib/python3.9"
+if [[ -d "$CLT_STDLIB" && -d "$BREEZE_STDLIB" ]]; then
+    rsync -a --ignore-existing --include='*/' --include='*.py' --exclude='*' \
+        "$CLT_STDLIB/" "$BREEZE_STDLIB/"
+    if [[ -f "$BREEZE_STDLIB/pickletools.py" ]]; then
+        echo "  ✓ 標準庫補齊（pickletools.py 已就位；只補缺、未動 .so）"
+    else
+        echo "✗ 補齊後仍缺 pickletools.py — 檢查 CLT 是否裝妥（xcode-select --install）"
+        exit 1
+    fi
+else
+    echo "✗ 找不到 CLT 標準庫（$CLT_STDLIB）或 Breeze runtime；轉字幕會缺件。先跑 xcode-select --install"
+    exit 1
+fi
+
 echo "→ [3/5] ad-hoc 簽章整個 bundle（含巢狀 python3.9 / torch .so）"
 codesign --deep --force -s - "$APP"
 codesign --verify --deep --strict "$APP" && echo "  ✓ 簽章驗證通過"

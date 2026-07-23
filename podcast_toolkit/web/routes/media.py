@@ -84,7 +84,21 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             try:
                 target = ep.main_audio()
             except FileNotFoundError:
-                raise HTTPException(status_code=404, detail="這集還沒有音訊")
+                # 舊版面配置的集：單軌母帶（Stereo Mix.wav）放在集根目錄而非 01_母帶，
+                # main_audio() 只掃 01_母帶會找不到 → 這裡 fallback 掃根目錄。只收與字幕
+                # 同一時間軸的音訊（單軌 mix / stereo），優先取名字含 mix/stereo 者；
+                # 絕不 fallback 到 main_video —— 它在攝影機軸（有 head_trim/sync_offset），
+                # 波形會與字幕錯位，比沒有更糟。都找不到才回 404（空集本來就沒音訊）。
+                roots = sorted(
+                    (p for p in ep.dir.glob("*")
+                     if p.is_file() and p.suffix.lower() in (".wav", ".m4a", ".mp3")),
+                    key=lambda p: ("mix" not in p.stem.lower()
+                                   and "stereo" not in p.stem.lower(),
+                                   -p.stat().st_mtime),
+                )
+                if not roots:
+                    raise HTTPException(status_code=404, detail="這集還沒有音訊")
+                target = roots[0]
         cache = ep.subdir("work") / f"{ep.name}_waveform_{target.stem}.json"
         try:
             data = waveform.build_waveform(target, cache)

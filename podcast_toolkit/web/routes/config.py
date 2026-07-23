@@ -17,11 +17,10 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         cfg = ctx.load_config()
         # 零雲端金鑰：對外只暴露本地 whisper_mlx；雲端/未知 provider 一律收斂成 whisper_mlx
         provider = (cfg.get("transcribe") or {}).get("provider") or "whisper_mlx"
-        if provider not in transcribe_mod.PROVIDERS or provider in ("xai", "gemini", "openai"):
+        if provider not in transcribe_mod.PROVIDERS or provider in ("xai", "openai"):
             provider = "whisper_mlx"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
-            "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
             "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],
@@ -31,7 +30,7 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.post("/api/config")
     def post_config(payload: dict):
         cfg = ctx.load_config()
-        for key_name in ("xai_api_key", "gemini_api_key", "openai_api_key"):
+        for key_name in ("xai_api_key", "openai_api_key"):
             if key_name in payload:
                 key = (payload.get(key_name) or "").strip()
                 if key:
@@ -54,11 +53,10 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
             cfg["episode_roots"] = [r.strip() for r in roots if r.strip()]
         ctx.save_config(cfg)
         out_provider = (cfg.get("transcribe") or {}).get("provider") or "whisper_mlx"
-        if out_provider not in transcribe_mod.PROVIDERS or out_provider in ("xai", "gemini", "openai"):
+        if out_provider not in transcribe_mod.PROVIDERS or out_provider in ("xai", "openai"):
             out_provider = "whisper_mlx"
         return JSONResponse({
             "has_xai_api_key": bool(cfg.get("xai_api_key")),
-            "has_gemini_api_key": bool(cfg.get("gemini_api_key")),
             "has_openai_api_key": bool(cfg.get("openai_api_key")),
             "provider": out_provider,
             "episode_roots": cfg.get("episode_roots") or [str(Path.home() / "Downloads")],

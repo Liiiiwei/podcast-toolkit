@@ -19,19 +19,6 @@ from podcast_toolkit.episode import Episode
 from podcast_toolkit.web import transcribe as _transcribe
 
 
-def _backup_existing_per_mic_outputs(ep: Episode) -> list[str]:
-    """重跑分軌前把 _final_v2.srt + .speakers.json 備份成時間戳檔，避免覆蓋手動編輯版本。"""
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backed_up: list[str] = []
-    for src in (ep.output_v2_srt(), ep.output_v2_speakers_json()):
-        if not src.exists():
-            continue
-        dst = src.with_name(f"{src.stem}.{stamp}.bak{src.suffix}")
-        dst.write_bytes(src.read_bytes())
-        backed_up.append(str(dst.relative_to(ep.dir)))
-    return backed_up
-
-
 def _backup_existing_srts(ep: Episode) -> list[str]:
     """重轉字幕前把現有 _v2.srt / main_srt 備份成 .<timestamp>.bak.srt，避免覆蓋丟掉原稿。
     回傳實際備份的相對路徑清單（前端可顯示）；不存在的檔案略過。
@@ -55,6 +42,8 @@ STALL_TIMEOUT_S = 30 * 60
 # 寫入會因世代不符被丟棄，不會污染新 job 的狀態。
 _CURRENT_JOB = 0
 _HEARTBEAT = 0.0  # 最近一次 worker 更新狀態的 monotonic 時間
+# 目前在跑的 Breeze 子行程；cancel_job 用它 kill。只在 _LOCK 內讀寫。
+_ACTIVE_PROC: Any = None
 _STATE: dict[str, Any] = {
     "state": "idle",       # idle | running | done | error
     "mode": "single",      # single | per-mic
@@ -124,6 +113,31 @@ def _set_job(job: int, **kwargs) -> None:
         _STATE.update(kwargs)
 
 
+def cancel_job() -> bool:
+    """使用者取消轉字幕：廢掉當前 job 世代、砍掉在跑的 Breeze 子行程、把狀態收回 idle。
+
+    回傳是否真的有 job 被取消（idle / done / error 時回 False）。
+    用世代機制而非旗標：_CURRENT_JOB +1 後，被砍的舊 worker 之後所有 setj
+    （含它因 kill 產生的 error）都因世代不符被丟棄，不會污染收回的 idle 狀態，
+    使用者可立即重開新 job。
+    """
+    global _CURRENT_JOB, _ACTIVE_PROC
+    with _LOCK:
+        if _STATE["state"] != "running":
+            return False
+        _CURRENT_JOB += 1  # 廢掉舊 worker 的寫入權
+        proc = _ACTIVE_PROC
+        _ACTIVE_PROC = None  # 清掉指向已砍行程的參照；worker finally 的 identity 檢查會變 no-op
+        _reset_locked(state="idle")
+    # kill 放在鎖外：避免 kill 阻塞時佔住鎖擋掉 get_status
+    if proc is not None:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return True
+
+
 def start_job(
     ep: Episode,
     *,
@@ -133,7 +147,7 @@ def start_job(
     typo_entries: list[dict] | None = None,
     glossary: list[dict] | None = None,
 ) -> dict[str, Any]:
-    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "gemini"。
+    """開新 job；src_rel 是相對 ep.dir 的檔案路徑。provider: "xai" | "openai" | "whisper_mlx"。
 
     typo_entries：全域錯字字典（~/.podcast-toolkit/typo-dict.json）。
     glossary：本集專有名詞詞庫（episode.yaml + defaults.yaml 合併後 normalize）。
@@ -227,108 +241,6 @@ def _run(
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
     setj(state="done", phase="resegment", percent=100.0, out_srt=out_srt_rel)
-
-
-def start_per_mic_job(
-    ep: Episode,
-    *,
-    speakers: list[str],
-    force: bool = True,
-) -> dict[str, Any]:
-    """開新分軌轉錄 job；speakers 是要跑的軌（episode.yaml.mics 的 key 子集）。
-
-    force 預設 True 因為前端要重轉就是要覆寫；舊檔已備份。
-    """
-    global _CURRENT_JOB, _HEARTBEAT
-    mics = ep.mic_paths()
-    if not mics:
-        raise RuntimeError("episode.yaml 沒設 mics — 無法分軌轉錄")
-    unknown = [s for s in speakers if s not in mics]
-    if unknown:
-        raise RuntimeError(f"speakers 含未知軌 {unknown}，episode.yaml mics 只有 {sorted(mics)}")
-    if not speakers:
-        raise RuntimeError("speakers 不能是空清單")
-
-    init_progress = {sp: "queued" for sp in sorted(speakers)}
-    # 檢查 + 佔住 slot 必須在同一把鎖內，否則兩個併發 start 都會通過檢查
-    with _LOCK:
-        if _STATE["state"] == "running":
-            raise RuntimeError("已有轉字幕正在進行中")
-        _CURRENT_JOB += 1
-        job = _CURRENT_JOB
-        _HEARTBEAT = monotonic()
-        _reset_locked(
-            state="running",
-            mode="per-mic",
-            phase="per-mic-transcribe",
-            percent=0.0,
-            mics_progress=init_progress,
-            started_at=monotonic(),
-        )
-
-    worker = threading.Thread(
-        target=_run_per_mic,
-        args=(ep, sorted(speakers), force, job),
-        daemon=True,
-    )
-    worker.start()
-    return {"speakers": sorted(speakers)}
-
-
-def _run_per_mic(ep: Episode, speakers: list[str], force: bool, job: int) -> None:
-    """背景 worker：分軌轉錄 → srt_merge → done / error。"""
-    from podcast_toolkit import gemini_subtitle, srt_merge
-
-    def setj(**kwargs) -> None:
-        _set_job(job, **kwargs)
-
-    try:
-        backed = _backup_existing_per_mic_outputs(ep)
-        if backed:
-            setj(backups=backed)
-    except Exception as e:
-        setj(state="error", error=f"備份 _final_v2 失敗：{e}")
-        return
-
-    def on_mic_progress(speaker: str, phase: str) -> None:
-        """從 gemini_subtitle._emit 進來：更新 mics_progress[speaker] = phase。"""
-        global _HEARTBEAT
-        with _LOCK:
-            if job != _CURRENT_JOB:
-                return
-            _HEARTBEAT = monotonic()
-            progress = dict(_STATE.get("mics_progress") or {})
-            progress[speaker] = phase
-            done_count = sum(1 for p in progress.values() if p in ("done", "skipped"))
-            _STATE["mics_progress"] = progress
-            if speakers:
-                _STATE["percent"] = round(done_count / len(speakers) * 100.0, 1)
-
-    try:
-        gemini_subtitle.transcribe_per_mic(
-            ep,
-            speakers=speakers,
-            force=force,
-            parallel=True,
-            progress=on_mic_progress,
-        )
-    except Exception as e:
-        setj(state="error", error=f"分軌轉錄失敗：{e}")
-        return
-
-    # 合併三路 SRT → _final_v2.srt + .speakers.json
-    setj(phase="srt-merge", percent=0.0)
-    try:
-        rc = srt_merge.run(ep, force=True)
-    except Exception as e:
-        setj(state="error", error=f"srt_merge 失敗：{e}")
-        return
-    if rc != 0:
-        setj(state="error", error=f"srt_merge 失敗 (rc={rc})")
-        return
-
-    out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
-    setj(state="done", phase="srt-merge", percent=100.0, out_srt=out_srt_rel)
 
 
 # ── 一鍵 Breeze 轉字幕：Breeze ASR(make_subtitle.py) → ingest_breeze → 本地校對 ──
@@ -426,8 +338,24 @@ def _breeze_python(bdir: Path) -> tuple[str, dict[str, str] | None]:
     site = bdir / "site-packages"
     if runtime_py.exists() and site.is_dir():
         env = dict(os.environ)
+        # py2app 主 app 會設 PYTHONHOME 指向主 app 自己的 python。子進程若原封繼承，
+        # 內附的 breeze python3.9 會跑去「主 app」那份找標準庫 —— 而主 app 的 stdlib 被
+        # py2app 精簡過、沒有 pickletools 等純 py 模組 → torch.package 一 import pickletools
+        # 就噴 ModuleNotFoundError。
+        #
+        # 只「拿掉」PYTHONHOME 不夠穩：那是賭 breeze python 自己 landmark 找對 prefix，一旦
+        # py2app（或別台 Mac 的 launchd 環境）殘留任何把 prefix 導偏的變數就破功——這正是別台
+        # 電腦「裸 python 正常、app 啟動就掛」的症狀。改成**正面釘住** PYTHONHOME 指向 sidecar
+        # 自己的 py-runtime，強制 sys.prefix=py-runtime、從那份完整 stdlib bootstrap，
+        # 不管環境裡還洩漏什麼都覆蓋掉。PYTHONEXECUTABLE/__PYVENV_LAUNCHER__ 一併清掉免干擾。
+        env["PYTHONHOME"] = str(bdir / "py-runtime")
+        for _k in ("PYTHONEXECUTABLE", "__PYVENV_LAUNCHER__"):
+            env.pop(_k, None)
         env["PYTHONPATH"] = str(site)
         env["XDG_CACHE_HOME"] = str(bdir / "cache")
+        # 別台 Mac 可能有 ~/Library/Python/3.9/site-packages 裝了不相容的 torch 等套件，
+        # 預設會被 site 模組加進 sys.path 蓋掉內附版 → 隔離掉，只用 sidecar 自帶的 site-packages。
+        env["PYTHONNOUSERSITE"] = "1"
         # 別台 Mac 的 locale 未知（launchd 常給 C/POSIX）；強制 UTF-8 模式，
         # 免得 make_subtitle 印中文檔名時撞 ascii 編碼雷（PEP 540）。
         env["PYTHONUTF8"] = "1"
@@ -463,6 +391,7 @@ def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[s
 
 def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> None:
     """背景 worker：Breeze ASR → ingest_breeze → proofread → done/error。"""
+    global _ACTIVE_PROC
     import subprocess
     from time import sleep
 
@@ -480,6 +409,7 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         "--guest", guest, "--terms", terms,
     ]
     errf = ep.subdir("work") / "_breeze_stderr.log"
+    proc = None
     try:
         setj(phase="breeze-asr", percent=0.0)
         with open(errf, "w", encoding="utf-8") as ef:
@@ -487,6 +417,15 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
                 cmd, cwd=str(bdir), env=run_env,
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, bufsize=0,
             )
+            # 註冊給 cancel_job kill 用；若這空窗內已被取消（世代已換）自己收掉不要跑
+            with _LOCK:
+                if job != _CURRENT_JOB:
+                    try:
+                        proc.kill()
+                    except OSError:
+                        pass
+                    return
+                _ACTIVE_PROC = proc
             # pump：排空 stderr（避免 pipe 塞滿卡死）＋把 tqdm % 即時餵進狀態、tee 進日誌
             pump = threading.Thread(
                 target=_pump_progress,
@@ -498,6 +437,9 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
                 setj(phase="breeze-asr")  # 心跳；模型載入期（還沒 tqdm）也不被 watchdog 誤殺
                 sleep(10)
             pump.join(timeout=10)  # 收尾：讓最後一筆 % + 錯誤日誌寫完
+        # 被 cancel_job 砍掉 → 世代已換，這裡的 error 寫入會被丟棄，直接收工
+        if job != _CURRENT_JOB:
+            return
         if proc.returncode != 0:
             tail = ""
             try:
@@ -509,6 +451,10 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
     except Exception as e:
         setj(state="error", error=f"Breeze 轉錄啟動失敗：{e}")
         return
+    finally:
+        with _LOCK:
+            if _ACTIVE_PROC is proc and proc is not None:
+                _ACTIVE_PROC = None
 
     # 2) 匯入 Breeze 含講者 SRT → _v2.srt + speakers.json（去 [MicN]、MicN→speaker）
     setj(phase="ingest", percent=0.0)

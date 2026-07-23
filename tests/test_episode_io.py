@@ -1113,12 +1113,17 @@ def test_per_mic_srt_path(tmp_episode_dir):
 
 
 def test_flag_review_half_sentence_tail_char():
-    """結尾落在 _HALF_SENTENCE_TAIL（如「把」）且 len>=4 → half_sentence。"""
+    """flag_half_sentence 開啟時，結尾落在 _HALF_SENTENCE_TAIL（如「把」）且 len>=4
+    → half_sentence。"""
     cards = [
         {"idx": 1, "start": 0.0, "end": 2.0, "text": "我等一下要把"},
         {"idx": 2, "start": 2.0, "end": 4.0, "text": "大家好歡迎收看節目"},
     ]
-    episode_io._flag_review(cards, {"dangle_endings": ["然後", "可是"]}, _guard())
+    episode_io._flag_review(
+        cards,
+        {"dangle_endings": ["然後", "可是"], "flag_half_sentence": True},
+        _guard(),
+    )
     assert cards[0]["needs_review"] is True
     assert "half_sentence" in cards[0]["review_reasons"]
     assert cards[1]["needs_review"] is False
@@ -1126,11 +1131,28 @@ def test_flag_review_half_sentence_tail_char():
 
 
 def test_flag_review_dangle_ending_suffix():
-    """結尾是 config 的 dangle_endings（如「然後」）→ half_sentence。"""
+    """flag_half_sentence 開啟時，結尾是 config 的 dangle_endings（如「然後」）
+    → half_sentence。"""
     cards = [{"idx": 1, "start": 0.0, "end": 2.0, "text": "我覺得這個然後"}]
-    episode_io._flag_review(cards, {"dangle_endings": ["然後"]}, _guard())
+    episode_io._flag_review(
+        cards, {"dangle_endings": ["然後"], "flag_half_sentence": True}, _guard()
+    )
     assert cards[0]["needs_review"] is True
     assert "half_sentence" in cards[0]["review_reasons"]
+
+
+def test_flag_review_half_sentence_off_by_default():
+    """flag_half_sentence 預設關閉：半句結尾卡不標 half_sentence（誤判率高）。
+    重複幻覺不受影響、照標。"""
+    cards = [
+        {"idx": 1, "start": 0.0, "end": 2.0, "text": "我等一下要把"},
+        {"idx": 2, "start": 2.0, "end": 5.0, "text": "哈" * 20},
+    ]
+    episode_io._flag_review(cards, {"dangle_endings": ["然後"]}, _guard())
+    assert cards[0]["needs_review"] is False
+    assert cards[0]["review_reasons"] == []
+    assert cards[1]["needs_review"] is True
+    assert "repetition" in cards[1]["review_reasons"]
 
 
 def test_flag_review_repetition_long_loop():
@@ -1150,20 +1172,31 @@ def test_flag_review_short_chinese_clean():
 
 
 def test_flag_review_too_short_not_half_sentence():
-    """len<4 即使結尾是尾字也不算半句（對齊 resegment.py 的 len>=4 門檻）。"""
+    """len<4 即使結尾是尾字、且 flag_half_sentence 開啟也不算半句
+    （對齊 resegment.py 的 len>=4 門檻）。"""
     cards = [{"idx": 1, "start": 0.0, "end": 2.0, "text": "要把"}]
-    episode_io._flag_review(cards, {"dangle_endings": []}, _guard())
+    episode_io._flag_review(
+        cards, {"dangle_endings": [], "flag_half_sentence": True}, _guard()
+    )
     assert cards[0]["needs_review"] is False
 
 
 def test_load_state_includes_needs_review_fields(tmp_episode_dir):
-    """整合：load_state 後每張卡都帶 needs_review / review_reasons，半句卡標 True。"""
+    """整合：load_state 後每張卡都帶 needs_review / review_reasons；episode.yaml 開
+    flag_half_sentence 後半句卡標 True。"""
     srt = (
         "1\n00:00:00,000 --> 00:00:03,000\n我等一下要把\n\n"
         "2\n00:00:03,000 --> 00:00:06,000\n大家好歡迎收看節目\n\n"
     )
     (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").write_text(
         srt, encoding="utf-8"
+    )
+    # half_sentence 預設關；本測試要驗它會標，故在 episode.yaml 明確開啟
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "resegment:\n  flag_half_sentence: true\n",
+        encoding="utf-8",
     )
     ep = Episode(tmp_episode_dir)
     state = episode_io.load_state(ep)
@@ -1174,7 +1207,7 @@ def test_load_state_includes_needs_review_fields(tmp_episode_dir):
 
 
 def test_needs_review_independent_from_suspicious_pause(tmp_episode_dir):
-    """needs_review 與 suspicious_pause 是兩套獨立欄位，互不取代。"""
+    """needs_review 與 suspicious_pause / pause_info 是獨立欄位，互不取代。"""
     ep = Episode(tmp_episode_dir)
     state = episode_io.load_state(ep)
     for c in state["cards"]:
@@ -1182,6 +1215,48 @@ def test_needs_review_independent_from_suspicious_pause(tmp_episode_dir):
         assert "review_reasons" in c
         assert "suspicious_pause" in c
         assert "suspicious_reasons" in c
+        assert "pause_info" in c
+        assert "pause_info_reasons" in c
+
+
+def test_save_state_writes_review_seen(tmp_episode_dir):
+    """「看過」簽章清單存進 episode.yaml，load_state 再原封讀回。"""
+    ep = Episode(tmp_episode_dir)
+    sigs = ["4.2|對", "10.0|我們繼續講剛剛的話題"]
+    episode_io.save_state(ep, payload={"cards": [], "review_seen": sigs})
+    data = yaml.safe_load(
+        (tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8")
+    )
+    assert data["review_seen"] == sigs
+    # cfg 在 Episode.__init__ 算一次，要新建才讀得到剛存的值
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["review_seen"] == sigs
+
+
+def test_save_state_empty_review_seen_removes_key(tmp_episode_dir):
+    """明確送空清單 → 把 review_seen key 從 yaml 移除（保持乾淨）。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + "review_seen:\n  - '4.2|對'\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(ep, payload={"cards": [], "review_seen": []})
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "review_seen" not in data
+
+
+def test_save_state_partial_payload_preserves_review_seen(tmp_episode_dir):
+    """局部存檔（payload 不帶 review_seen）不可抹掉既有「看過」記憶。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8") + "review_seen:\n  - '4.2|對'\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    episode_io.save_state(ep, payload={"cuts": [[3.0, 4.0]], "cards": []})
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert data["review_seen"] == ["4.2|對"]
 
 
 # --- 功能2A：save_state 的 card_timings（手動拖拉改時間）---

@@ -2516,6 +2516,18 @@ dialog.modal::backdrop {
 .card-sus-check.hidden {
   visibility: hidden;
 }
+/* 灰色資訊卡（短句拖長 / 大空隙）：降級自舊紅卡，只做極淡標示、不搶注意力、無批次刪除。
+   刻意不改背景色（避免與 .card.suspicious 紅底、playing 藍底打架），只加一條淡灰左框。 */
+.card.pause-info {
+  border-left: 2px solid var(--text-faint);
+}
+.card-pause-info {
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-faint);
+  cursor: help;
+}
 .card.playing {
   border-color: var(--accent);
   background: var(--accent-soft);

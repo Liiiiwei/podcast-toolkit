@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="/static/tokens.css" />
     <!-- ?v 版本號 = 快取破除：index.html 是 no-store 一定拿到最新 HTML，瀏覽器看到新版本號就會
          抓新的 app.js/app.css（否則 module 腳本/CSS 會死命吃舊快取，改了也沒生效）。改前端就 +1。 -->
-    <link rel="stylesheet" href="/static/app.css?v=20260629c" />
+    <link rel="stylesheet" href="/static/app.css?v=20260723a" />
   </head>
   <body class="theme-dark">
     <header class="topbar">
@@ -28,7 +28,7 @@
             id="glossary-btn"
             type="button"
             class="btn btn-icon"
-            title="詞庫（給 Gemini 提示的專有名詞表）"
+            title="詞庫（轉字幕校對用的專有名詞表）"
             aria-label="詞庫"
           >
             <span data-icon="book-open"></span>
@@ -747,16 +747,7 @@
 
           <label class="modal-label">轉字幕（STT）</label>
           <div class="modal-row modal-row-inline">
-            <!-- 雲端 STT（Gemini/OpenAI）已下架：本產品零雲端金鑰。DOM 隱藏保留以相容既有 app.js 邏輯 -->
-            <label class="modal-radio" style="display: none">
-              <input
-                type="radio"
-                name="settings-provider"
-                value="gemini"
-                id="settings-provider-gemini"
-              />
-              Google Gemini
-            </label>
+            <!-- 雲端 STT（OpenAI）已下架：本產品零雲端金鑰。DOM 隱藏保留以相容既有 app.js 邏輯 -->
             <label class="modal-radio" style="display: none">
               <input
                 type="radio"
@@ -788,26 +779,7 @@
 
           <!-- 雲端 API key 欄位已下架（零雲端金鑰）：DOM 隱藏保留以相容 app.js（不再對外暴露） -->
           <div hidden>
-            <label class="modal-label">Gemini API key</label>
-            <div class="modal-row">
-              <input
-                type="password"
-                id="settings-gemini-key"
-                placeholder="AIza..."
-                autocomplete="off"
-              />
-              <button
-                id="settings-show-gemini"
-                type="button"
-                class="btn btn-icon"
-                title="顯示/隱藏"
-                aria-label="顯示或隱藏"
-              >
-                <span data-icon="eye"></span>
-              </button>
-            </div>
-            <div class="modal-hint" id="settings-gemini-status">尚未設定</div>
-            <label class="modal-label modal-label-spaced">OpenAI API key</label>
+            <label class="modal-label">OpenAI API key</label>
             <div class="modal-row">
               <input
                 type="password"
@@ -839,7 +811,7 @@
       </form>
     </dialog>
 
-    <!-- 詞庫 modal：給 Gemini prompt 的專有名詞 + 同音字 -->
+    <!-- 詞庫 modal：轉字幕校對用的專有名詞 + 同音字 -->
     <dialog class="modal modal-wide" id="glossary-modal">
       <div class="modal-head">
         <span data-icon="book-open"></span>
@@ -847,8 +819,7 @@
       </div>
       <div class="modal-body">
         <div class="modal-hint">
-          幫 Gemini
-          把同音/相近發音的字寫成正確的版本。儲存後下次轉字幕會自動帶入 prompt。
+          幫轉字幕校對把同音/相近發音的字寫成正確的版本。儲存後下次轉字幕會自動帶入。
         </div>
         <div class="glossary-tabs" role="tablist">
           <button
@@ -1309,37 +1280,7 @@
             <span data-icon="mic"></span>
             <span>一鍵 Breeze 轉字幕（推薦）</span>
           </button>
-          <div class="transcribe-breeze-hint">
-            本地 Breeze-ASR-25 轉各軌 mic → 自動標講者 → 匯入 →
-            校對，一次完成、免 API key。最久的是轉錄，請耐心等。
-          </div>
         </div>
-        <details id="transcribe-advanced" class="modal-advanced" hidden>
-          <summary>進階：分軌轉錄</summary>
-          <div class="modal-body-text">
-            分軌轉錄會對每支麥克風獨立跑
-            STT，理想狀況下能標出每張字卡的講者。<br />
-            <strong>⚠ 但三支麥克風之間容易串音</strong>， Whisper
-            可能把鄰桌講者的話辨識成自己，造成字卡內容誤判。<br />
-            預設用混音檔轉錄，比較穩定。
-          </div>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            id="transcribe-per-mic-btn"
-            hidden
-          >
-            改用分軌轉錄
-          </button>
-          <button
-            type="button"
-            class="btn btn-ghost btn-sm"
-            id="transcribe-mic-setup-btn"
-            hidden
-          >
-            設定並啟用分軌轉錄
-          </button>
-        </details>
         <div id="transcribe-progress" hidden>
           <div class="phase-pills">
             <div class="phase-pill" data-phase="compress">
@@ -1369,61 +1310,6 @@
           取消
         </button>
         <button id="transcribe-go" type="button" class="btn btn-primary">
-          開始
-        </button>
-      </div>
-    </dialog>
-
-    <!-- 分軌轉錄 modal：episode.yaml.mics 有設時走這條 -->
-    <dialog class="modal" id="per-mic-modal">
-      <div class="modal-head" id="per-mic-title">分軌轉錄</div>
-      <div class="modal-body">
-        <!-- 視圖 1：勾選列 -->
-        <div id="per-mic-pick">
-          <div class="modal-body-text">
-            選擇要轉的軌；已轉過的預設不勾，避免誤覆寫。
-          </div>
-          <div id="per-mic-list" class="per-mic-list"></div>
-          <div class="per-mic-actions-row">
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              id="per-mic-select-all"
-            >
-              全選
-            </button>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              id="per-mic-select-unconverted"
-            >
-              只選未轉
-            </button>
-          </div>
-          <div class="modal-hint" id="per-mic-overwrite-hint" hidden>
-            ⚠ 已轉過的 SRT 將會被覆寫（舊版會自動備份成時間戳檔）。
-          </div>
-        </div>
-        <!-- 視圖 2：跑進度 -->
-        <div id="per-mic-progress" hidden>
-          <div class="modal-body-text" id="per-mic-progress-msg">
-            分軌轉錄中…請保留分頁。
-          </div>
-          <div id="per-mic-progress-grid" class="per-mic-progress-grid"></div>
-          <div class="progress-bar">
-            <div class="progress-fill" id="per-mic-fill"></div>
-          </div>
-          <div class="progress-meta">
-            <span id="per-mic-phase-label">啟動中…</span>
-            <span id="per-mic-percent">0%</span>
-          </div>
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button id="per-mic-cancel" type="button" class="btn btn-ghost">
-          取消
-        </button>
-        <button id="per-mic-go" type="button" class="btn btn-primary">
           開始
         </button>
       </div>
@@ -1460,51 +1346,7 @@
       </div>
     </dialog>
 
-    <!-- 分軌設定 modal：episode.yaml 沒設 mics 但偵測到多軌音檔時跳 -->
-    <dialog class="modal" id="mic-setup-modal">
-      <div class="modal-head" id="mic-setup-title">設定分軌</div>
-      <div class="modal-body">
-        <div class="modal-body-text">
-          偵測到
-          <code id="mic-setup-detected-count">0</code>
-          個音檔；分配每軌對應哪個檔，再開始轉字幕。設定會寫進 episode.yaml 的
-          <code>mics:</code>。
-        </div>
-        <div id="mic-setup-list" class="mic-setup-list"></div>
-        <div
-          class="mic-setup-rule"
-          title="主持一律待在 cam A（全景）；來賓連續講滿這個秒數，才把那整段切到 cam B（特寫），講完回 A。"
-        >
-          <span>來賓講滿</span>
-          <input
-            type="number"
-            id="mic-setup-min-sec"
-            class="mic-setup-min-sec"
-            value="15"
-            min="1"
-            step="1"
-          />
-          <span>秒才切特寫（cam B）</span>
-        </div>
-        <div class="modal-body-text mic-setup-rule-note">
-          角色決定鏡頭：<b>主持</b>＝全景 cam A、<b>來賓</b>＝特寫 cam
-          B。轉完字幕後在編輯器按「依講者推 A/B」即可套用。
-        </div>
-        <div class="modal-hint" id="mic-setup-warn" hidden>
-          ⚠ 同一個檔被指派到多軌，請調整。
-        </div>
-      </div>
-      <div class="modal-actions">
-        <button id="mic-setup-cancel" type="button" class="btn btn-ghost">
-          取消
-        </button>
-        <button id="mic-setup-go" type="button" class="btn btn-primary">
-          儲存並開始
-        </button>
-      </div>
-    </dialog>
-
     <script src="/static/icons.js?v=20260701a"></script>
-    <script src="/static/app.js?v=20260701b" type="module"></script>
+    <script src="/static/app.js?v=20260723a" type="module"></script>
   </body>
 </html>

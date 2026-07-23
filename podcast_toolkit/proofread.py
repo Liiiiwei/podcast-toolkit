@@ -6,11 +6,10 @@
 Provider(鏡像 web.transcribe 的 PROVIDERS 抽象):
 - claude_code:shell 呼叫本地 ``claude -p``。用使用者已登入的 Claude Code,
   **不需在工具裡設任何 API key、不外聯第三方 API**。Apple/一般機器皆可,前提是裝了 claude CLI。
-- gemini:google-genai SDK,需 GEMINI_API_KEY。給「沒有 Claude Code」的使用者沿用原本路線。
 - off:跳過(維持純手動)。
 
-provider="auto"(預設)解析順序:claude CLI 在 → claude_code;否則有 gemini key → gemini;
-否則 None(跳過)。所以非 Claude Code 使用者完全不受影響。
+provider="auto"(預設)解析順序:claude CLI 在 → claude_code;否則 None(跳過)。
+零雲端金鑰,不走任何第三方 API。
 """
 from __future__ import annotations
 
@@ -113,7 +112,7 @@ def _claude_one_chunk(chunk, glossary, *, model, timeout, context) -> dict:
     if model:
         cmd += ["--model", str(model)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired as e:
         raise ProofreadError(f"claude -p 逾時({timeout}s)") from e
     if proc.returncode != 0:
@@ -138,7 +137,7 @@ def _run_claude_code(cards, glossary, *, cfg, progress=None) -> dict:
     if not shutil.which("claude"):
         raise ProofreadError(
             "找不到 claude CLI(本地 Claude Code)。請先安裝 Claude Code,"
-            "或用 --provider gemini / 在設定改 proofread.provider。"
+            "或在設定把 proofread.provider 設為 off 跳過校對。"
         )
     pcfg = cfg.get("proofread") or {}
     size = int(pcfg.get("chunk_size") or 150)
@@ -251,7 +250,7 @@ def proofread_cards(cards, glossary, cfg, *, provider=None, progress=None):
 def run(episode_dir, *, provider=None, model=None, force=False, progress=None) -> int:
     """CLI 進入點:讀 _v2.srt → 校對 → 備份 → 寫回。回傳 exit code。
 
-    model 覆寫 provider 的模型(claude_code 用 ``claude --model``;gemini 用 model id);
+    model 覆寫 provider 的模型(claude_code 用 ``claude --model``);
     None → 用 episode.yaml / defaults.yaml 的 proofread.model(再 None → provider 預設)。
     """
     from podcast_toolkit.episode import Episode
@@ -288,7 +287,7 @@ def run(episode_dir, *, provider=None, model=None, force=False, progress=None) -
         return 1
 
     if prov is None:
-        print("校對 provider = off(無 claude CLI 也無 Gemini key),已跳過。", file=sys.stderr)
+        print("校對 provider = off(無 claude CLI),已跳過。", file=sys.stderr)
         return 0
 
     if not applied and not reverted:

@@ -214,6 +214,9 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
         # Reels 片段截取：list of {name, start_card, end_card}
         # start_card / end_card 是 1-indexed 字幕卡編號（含頭含尾）
         "reels_clips": list(episode.get("reels_clips") or []),
+        # 「看過」跨 session 記憶：待複查卡的內容簽章清單（前端算、後端純存取）。
+        # 頂層 key，必須列在這裡否則「寫進 yaml 卻讀不回 cfg」（config.merge 白名單陷阱）。
+        "review_seen": list(episode.get("review_seen") or []),
     }
     # legacy 遷移：episode.yaml 還在用 crop → 視為 crop_yt
     if cfg["crop_yt"] is None and episode.get("crop") is not None:

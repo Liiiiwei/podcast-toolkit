@@ -21,18 +21,24 @@ def _flag_review(
     """重算 resegment.py 寫進 _resegment_review.txt 的兩條「待複查」旗標，
     讓前端不用開文字檔就能在卡片上看到 ⚠：
 
-    - half_sentence：句子斷在連接詞/介詞上（像沒講完），判斷對齊 resegment.py。
-    - repetition：whisper 重複幻覺（guard.is_repetitive）。
+    - half_sentence：句子斷在連接詞/介詞上（像沒講完）。誤判率高（任何結尾是
+      就/的/然後 的正常句都會中），預設**關閉**；要開就在 defaults.yaml 或
+      episode.yaml 設 resegment.flag_half_sentence: true。
+    - repetition：whisper 重複幻覺（guard.is_repetitive）。一律啟用——這是唯一
+      能抓到轉錄幻覺迴圈的訊號，價值高。
 
     與 _flag_suspicious_pause 並列、用獨立欄位（needs_review / review_reasons），
     刻意不塞進 suspicious_pause，避免紅卡批次刪除 toolbar 誤收這些卡。
     in-place 加欄位後回傳同一份 cards。
     """
     dangle = tuple(rcfg.get("dangle_endings") or ())
+    flag_half = bool(rcfg.get("flag_half_sentence", False))
     for c in cards:
         txt = (c.get("text") or "").replace("\n", "").strip()
         reasons: list[str] = []
-        if len(txt) >= 4 and (txt[-1] in _HALF_SENTENCE_TAIL or (dangle and txt.endswith(dangle))):
+        if flag_half and len(txt) >= 4 and (
+            txt[-1] in _HALF_SENTENCE_TAIL or (dangle and txt.endswith(dangle))
+        ):
             reasons.append("half_sentence")
         if guard.is_repetitive(txt):
             reasons.append("repetition")
@@ -46,8 +52,14 @@ def _flag_suspicious_pause(
     sus_cfg: dict,
     reaction_words: list[str],
 ) -> list[dict]:
-    """對每張卡判 reaction_only / short_long / big_gap_before 三條規則，
-    命中任一條就標 suspicious_pause=True，並把命中的原因塞進 suspicious_reasons。
+    """對每張卡判規則，分成兩級（避免紅卡批次刪除誤收）：
+
+    - 紅卡（suspicious_pause / suspicious_reasons）：只留 reaction_only —— 純語助詞
+      （對/嗯/欸…），可安心進「刪純反應詞」批次刪除。
+    - 灰卡（pause_info / pause_info_reasons）：short_long（短句拖很長）、big_gap_before
+      （前面有大空隙）—— 這兩條誤判率高（正常停頓、慢語速都會中），降級為淡色資訊
+      提示，不進紅卡批次刪除、也不進待複查導覽，只讓使用者眼睛掃到自行判斷。
+
     回傳同一份 cards（in-place 加欄位，再回傳，方便鏈式呼叫）。
     """
     max_chars = int(sus_cfg.get("short_long_max_chars", 3))
@@ -62,16 +74,19 @@ def _flag_suspicious_pause(
             float(c["start"]) - float(cards[i - 1]["end"]) if i > 0 else 0.0
         )
 
-        reasons: list[str] = []
+        red: list[str] = []
+        info: list[str] = []
         if text and text in reactions:
-            reasons.append("reaction_only")
+            red.append("reaction_only")
         if len(text) < max_chars and dur > min_dur:
-            reasons.append("short_long")
+            info.append("short_long")
         if gap_before > big_gap:
-            reasons.append("big_gap_before")
+            info.append("big_gap_before")
 
-        c["suspicious_pause"] = bool(reasons)
-        c["suspicious_reasons"] = reasons
+        c["suspicious_pause"] = bool(red)
+        c["suspicious_reasons"] = red
+        c["pause_info"] = bool(info)
+        c["pause_info_reasons"] = info
     return cards
 
 
@@ -226,6 +241,9 @@ def load_state(ep: Episode) -> dict[str, Any]:
         "subtitle_offset_sec": float(ep.cfg.get("subtitle_offset_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
         "cards": cards,
+        # 「看過」跨 session 記憶：episode.yaml 存的是卡片內容簽章（前端算），這裡原封
+        # 回傳；前端載入時比對簽章把 reviewSeen 重建回來（idx 會因分割/刪除重編，故存簽章）。
+        "review_seen": list(ep.cfg.get("review_seen") or []),
         "needs_transcribe": needs_transcribe,
         "has_main_video": has_main_video,
         # T23a：雙鏡頭資訊（單機集 cameras 只有 a；前端要知道 b 在不在）
@@ -528,6 +546,15 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["subtitle_offset_sec"] = sub_off
         else:
             data.pop("subtitle_offset_sec", None)
+
+    # 「看過」跨 session 記憶：前端送卡片內容簽章清單（純字串，後端不解讀）；
+    # key-presence 區分「沒動」vs「明確清空」。空清單→移除 key，保持 yaml 乾淨。
+    if "review_seen" in payload:
+        seen = [str(s) for s in (payload.get("review_seen") or []) if s]
+        if seen:
+            data["review_seen"] = seen
+        else:
+            data.pop("review_seen", None)
 
     # 外接音檔 + 同步偏移；用 key-presence 區分「沒動 UI」vs「明確清空」
     if "audio" in payload:

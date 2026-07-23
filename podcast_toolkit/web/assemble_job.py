@@ -292,7 +292,7 @@ def _run_queue(plans: list[dict]) -> None:
             _set(current=plan["output_kind"], percent=0.0, eta_s=None)
         cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
         proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
-                     text=True, bufsize=1)
+                     text=True, encoding="utf-8", errors="replace", bufsize=1)
         _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
 
         # 使用者取消（ffmpeg 已被 kill）：清乾淨收回 idle，不當成錯誤。
@@ -327,7 +327,7 @@ def _run_prebake(pb: dict) -> bool:
     tmp = Path(pb["tmp"])
     _set(current=pb.get("label", "旋轉拉正"), percent=0.0, eta_s=None)
     cmd = list(pb["cmd"]) + ["-progress", "pipe:1", "-nostats"]
-    proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True, bufsize=1)
+    proc = Popen(cmd, cwd=pb.get("cwd"), stdout=PIPE, stderr=PIPE, text=True, encoding="utf-8", errors="replace", bufsize=1)
     _pump_progress(proc, pb["total_dur"], proxy, tmp)
     with _LOCK:
         if _STATE["state"] == "error" or _STATE["cancelled"]:

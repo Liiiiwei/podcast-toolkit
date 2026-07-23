@@ -1,14 +1,12 @@
-"""STT 轉字幕 pipeline：ffmpeg 壓縮 → xAI / Gemini STT → OpenCC s2tw → 寫 SRT。
+"""STT 轉字幕 pipeline：ffmpeg 壓縮 → xAI / OpenAI / 本地 Whisper STT → OpenCC s2tw → 寫 SRT。
 
 呼叫方：web/api.py 的 POST /api/transcribe → transcribe_job.start_job → run_pipeline。
 單一同步函式：失敗丟 TranscribeError，成功回寫到的 SRT 路徑。
 """
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
-import time
 from pathlib import Path
 
 import requests
@@ -17,8 +15,6 @@ from podcast_toolkit import srt_io
 
 
 GROK_STT_URL = "https://api.x.ai/v1/stt"
-# Gemini：用 google-genai SDK（Files API + generateContent）
-GEMINI_MODEL = "gemini-2.5-flash"
 # OpenAI Whisper-1：/v1/audio/transcriptions verbose_json + word timestamps；
 # prompt 欄接受 224 token 的詞庫提詞偏值（_build_whisper_prompt 串成頓號分隔字串）
 OPENAI_MODEL = "whisper-1"
@@ -113,175 +109,6 @@ def run_grok_pipeline(
         progress=progress,
         typo_entries=typo_entries,
     )
-
-
-def run_gemini_pipeline(
-    *,
-    api_key: str,
-    src_audio: Path,
-    out_srt: Path,
-    work_dir: Path,
-    progress=None,
-    typo_entries: list[dict] | None = None,
-    glossary: list[dict] | None = None,
-) -> Path:
-    """Gemini STT pipeline：壓縮 → Files API 上傳 → generateContent → s2tw → 寫 SRT。
-
-    typo_entries：使用者錯字字典（全域），塞進 prompt + _convert_word 兜底。
-    glossary：本集專有名詞詞庫（episode-level），同樣塞進 prompt；
-              sounds_like→canonical 由 run_pipeline 統一展開到 typo_entries。
-    """
-    # SDK import 在壓縮前就檢查，缺套件不要等壓完才失敗
-    try:
-        from google import genai
-        from google.genai import types as genai_types
-    except ImportError as e:
-        raise TranscribeError(
-            "缺少 google-genai；請跑 `pip3 install --user google-genai`"
-        ) from e
-
-    # 給 post_words 的幻覺 cue 過濾用；ffprobe 失敗就不過濾（None）
-    probed = {"duration": None}
-
-    def _gemini_transcribe(compressed: Path) -> list[dict]:
-        try:
-            from podcast_toolkit.assemble import ffprobe_duration
-            probed["duration"] = ffprobe_duration(compressed)
-        except Exception:
-            probed["duration"] = None
-        try:
-            client = genai.Client(api_key=api_key)
-            uploaded = client.files.upload(file=str(compressed))
-            # Files API 上傳後可能需要等狀態變 ACTIVE
-            for _ in range(60):
-                state = getattr(uploaded.state, "name", str(uploaded.state))
-                if state == "ACTIVE":
-                    break
-                if state == "FAILED":
-                    raise TranscribeError(f"Gemini 檔案處理失敗：{uploaded.name}")
-                time.sleep(1)
-                uploaded = client.files.get(name=uploaded.name)
-            prompt = build_gemini_prompt(typo_entries, glossary=glossary)
-            resp = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=[uploaded, prompt],
-                # max_output_tokens 拉到 Flash 上限 65536；不設的話預設 8192，長集 STT
-                # 字幕陣列會被截斷 → json.loads 壞在尾段（症狀：頭看似正常的 JSON）
-                config=genai_types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    # schema 約束 [{start,end,text}]，從源頭消滅格式錯誤
-                    response_schema=_GEMINI_WORDS_SCHEMA,
-                    max_output_tokens=65536,
-                ),
-            )
-            text = (resp.text or "").strip()
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError as e:
-                head = text[:200]
-                tail = text[-200:] if len(text) > 200 else ""
-                diag = (
-                    f"Gemini 回應不是 JSON（長度={len(text)}, decode_pos={e.pos}, "
-                    f"err={e.msg}）\n頭 200 字：{head}\n尾 200 字：{tail}"
-                )
-                # 截斷救援：Gemini 偶爾提前結束回應，JSON 在尾段被截斷。
-                # 找最後一個完整 entry（"},"}），把後面的殘段切掉再補 "]"。
-                if e.pos is not None and e.pos >= len(text) - 200:
-                    last_close = text.rfind("},")
-                    if last_close > 0:
-                        try:
-                            recovered = json.loads(text[:last_close + 1] + "]")
-                            import sys
-                            print(
-                                f"[警告] Gemini JSON 截斷，已救回 {len(recovered)} 條字幕\n{diag}",
-                                file=sys.stderr,
-                            )
-                            return recovered
-                        except json.JSONDecodeError:
-                            pass
-                raise TranscribeError(diag) from e
-        except TranscribeError:
-            raise
-        except Exception as e:
-            raise TranscribeError(f"Gemini STT 失敗：{e}") from e
-
-    def _gemini_post_words(words: list[dict]) -> list[dict]:
-        # Gemini 2.5 Flash 偶爾把 start/end 用 mod 60 回傳（只剩秒分量），
-        # 導致 SRT 內 segment 時間不單調遞增 → 預覽時右側字幕卡片亂跳。
-        # 用單調遞增假設重建絕對秒。
-        words = _unwrap_mod60_times(words)
-        # Gemini 也常把一句話拆成多條 entry 但給相同 start/end → 預覽時
-        # activeCardAt(t) 永遠只回第一條，後面的卡片不顯示。把同時段平均切分。
-        words = _dedup_overlapping_times(words)
-        # 殘留標點 → 空格 + 幻覺 cue 過濾（對齊 per-mic 的 post_clean_srt 防線）
-        return _clean_gemini_words(words, duration_sec=probed["duration"])
-
-    return _run_cloud_stt_pipeline(
-        transcribe_fn=_gemini_transcribe,
-        compressed_name=f"_gemini_stt_{_ascii_safe_stem(src_audio.stem)}.mp3",
-        empty_msg="Gemini 沒回傳任何字幕",
-        src_audio=src_audio,
-        out_srt=out_srt,
-        work_dir=work_dir,
-        progress=progress,
-        typo_entries=typo_entries,
-        post_words=_gemini_post_words,
-    )
-
-
-def _ascii_safe_stem(stem: str) -> str:
-    """壓縮檔名給 Gemini Files API 用時必須 ASCII：
-    google-genai 把 basename 塞進 X-Goog-Upload-File-Name header，httpx header
-    走 ascii encode，CJK 檔名（中文集名）會 UnicodeEncodeError。
-    （per-mic 路徑在 gemini_subtitle 用 symlink 解；這裡檔名是內部產物，直接轉短碼。）
-    """
-    if stem.isascii():
-        return stem
-    import hashlib
-    return hashlib.md5(stem.encode("utf-8")).hexdigest()[:10]
-
-
-def _clean_gemini_words(
-    words: list[dict],
-    duration_sec: float | None = None,
-) -> list[dict]:
-    """單軌 Gemini 的兜底清理（對齊 per-mic 的 post_clean_srt 防線）：
-
-    - 殘留標點 → 半形空格（Gemini 不一定服從 prompt 禁標點；prompt 規則本來就是
-      「逗號處放空格」，這裡只是把漏網標點補成同樣形狀；resegment 會再把空格收掉）
-    - 清掉變成空字串的 word
-    - duration_sec 給定時，過濾 start > 1.05 × duration 的幻覺 cue
-      （實測尾段靜音時 Gemini 會幻覺出數倍音檔長度的字幕）
-    """
-    from podcast_toolkit.gemini_subtitle import _PUNCT_PATTERN
-
-    cutoff = duration_sec * 1.05 if duration_sec else float("inf")
-    out: list[dict] = []
-    for w in words:
-        if float(w.get("start", 0.0)) > cutoff:
-            continue
-        text = _PUNCT_PATTERN.sub(" ", w.get("text") or "")
-        text = _re.sub(r"\s+", " ", text).strip()
-        if not text:
-            continue
-        out.append({**w, "text": text})
-    return out
-
-
-# Gemini JSON mode 的結構約束：強制回傳 [{start, end, text}]，
-# 從源頭消滅「回傳不是 JSON / 欄位缺漏」這類解析失敗。
-_GEMINI_WORDS_SCHEMA = {
-    "type": "ARRAY",
-    "items": {
-        "type": "OBJECT",
-        "properties": {
-            "start": {"type": "NUMBER"},
-            "end": {"type": "NUMBER"},
-            "text": {"type": "STRING"},
-        },
-        "required": ["start", "end", "text"],
-    },
-}
 
 
 def run_openai_pipeline(
@@ -611,7 +438,6 @@ def _filter_whisper_hallucinations(words: list[dict]) -> list[dict]:
 # 供應商分流表：UI 切換靠這個（順序也是 UI 顯示順序）
 PROVIDERS: dict[str, callable] = {
     "xai": run_grok_pipeline,
-    "gemini": run_gemini_pipeline,
     "openai": run_openai_pipeline,
     "whisper_mlx": run_whisper_mlx_pipeline,
 }
@@ -631,7 +457,7 @@ def run_pipeline(
     """根據 provider 分流到對應 pipeline。未知 provider 丟 TranscribeError。
 
     glossary 兩用：
-    - 整包丟給 gemini provider，在 prompt 注入「必須寫成 X」段落
+    - 整包丟給支援 prompt 的 provider（openai / whisper_mlx），做 vocabulary biasing
     - sounds_like→canonical 展開成 typo_entries 形式 merge 進去，給 _convert_word 兜底
       （Grok STT 沒 prompt，全靠這個兜底）
     """
@@ -690,7 +516,7 @@ def _ffmpeg_compress(src: Path, dst: Path) -> None:
         "-b:a", COMPRESS_BITRATE,
         str(dst),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-5:]
         raise TranscribeError(f"ffmpeg 壓縮失敗：{' / '.join(tail)}")
@@ -752,68 +578,6 @@ def apply_typo_dict(text: str, entries: list[dict] | None) -> str:
     return text
 
 
-def build_gemini_prompt(
-    typo_entries: list[dict] | None,
-    *,
-    glossary: list[dict] | None = None,
-) -> str:
-    """組 Gemini prompt：要求斷句 + 錯字修正 + 填充詞處理 + 英文保留 + JSON 結構。
-
-    glossary：本集專屬詞庫（episode.yaml + defaults.yaml 合併後的 normalize 結果），
-    結構為 [{canonical, sounds_like, note}]。獨立於全域 typo_entries 之外，
-    優先順序最高（來賓姓名 / 本集獨有的品牌名）。
-    """
-    base = (
-        "請把這段中文音訊轉成繁體中文字幕，做到以下六件事：\n"
-        "1. 依語意斷句：每句 15-30 字為佳；不要把完整意思切成兩半。\n"
-        "2. 修正同音 / 近音錯字：依上下文判斷正確用字（例如「在」vs「再」、"
-        "「的」vs「得」vs「地」、「製作」vs「致勝」這類）。\n"
-        "3. 移除填充詞：「嗯」「啊」「呃」「就是」「然後就是」這類無意義口頭禪，"
-        "可以刪除；但口語感的「然後」「所以」如果承載語意請保留。\n"
-        "4. 英文人名 / 品牌 / 技術名詞保留原拼寫：例如 Claude、ChatGPT、"
-        "Python、Notion 等不要硬翻譯成中文。\n"
-        "5. text 內**絕對不要使用任何標點符號**：句號、逗號、問號、驚嘆號、頓號、"
-        "冒號、分號、引號、括號、破折號等中英文標點全部不要。"
-        "**原本會放逗號或頓號的地方改放一個半形空格**——也就是子句之間 / 短停頓 / "
-        "語氣轉折處用空格分隔；但一個子句內部的字詞要連在一起，不要每兩三個字就插空格。"
-        "正確示範：「我們今天要聊一個重要主題 就是 AI 對工作的影響」"
-        "（兩個空格分三個子句，每個子句內字詞連寫）。"
-        "錯誤示範 1（內部過度空格）：「我們 今天 要聊 一個 重要 主題」。"
-        "錯誤示範 2（完全沒空格、句子糊在一起）：「我們今天要聊一個重要主題就是AI對工作的影響」。\n"
-        "6. 輸出純 JSON 陣列，每筆 {\"start\": 秒（float）, \"end\": 秒（float）, "
-        "\"text\": 字串}。不要包含 markdown 反引號。\n"
-        "重要：start/end 是「從音訊 0 秒起的累計絕對秒數」，必須單調遞增；"
-        "請勿用 mm:ss 拆開或對 60 取餘數（例如第 62 秒要寫成 62.0，不是 2.0）。"
-    )
-
-    if glossary:
-        from podcast_toolkit.gemini_subtitle import format_glossary_lines
-
-        lines = format_glossary_lines(glossary)
-        if lines:
-            base += (
-                "\n\n本集專有名詞詞庫（來賓姓名 / 品牌 / 術語，最優先套用）：\n"
-                + "\n".join(lines)
-            )
-
-    if typo_entries:
-        lines = []
-        for e in typo_entries:
-            if not isinstance(e, dict):
-                continue
-            wrong = e.get("wrong")
-            right = e.get("right")
-            if not wrong or not right:
-                continue
-            note = e.get("note", "")
-            tail = f"（{note}）" if note else ""
-            lines.append(f"- 「{wrong}」→「{right}」{tail}")
-        if lines:
-            base += "\n\n以下是使用者標註的常見錯字，請特別注意一律改正：\n"
-            base += "\n".join(lines)
-    return base
-
-
 _OPENCC = None  # 延遲載入，第一次呼叫才實例化
 
 
@@ -828,31 +592,6 @@ def _s2tw(text: str) -> str:
             ) from e
         _OPENCC = OpenCC("s2tw")
     return _OPENCC.convert(text)
-
-
-def _unwrap_mod60_times(words: list[dict]) -> list[dict]:
-    """Gemini 2.5 Flash 常把 start/end 用「秒 mod 60」回傳（少了分鐘分量）。
-    例：seg N end=58.764 → seg N+1 start=59.204 end=1.764（end wrap）
-         → seg N+2 start=2.224 end=7.954（start wrap，實為 62.224）
-    用單調遞增 + 60s 步進重建絕對秒；若 start 突然倒退 >30s，視為跨分鐘。
-    """
-    out = []
-    offset = 0.0
-    last_end_abs = 0.0
-    for w in words:
-        s = float(w["start"]) + offset
-        e = float(w["end"]) + offset
-        # start 比上次 end 倒退 >30s → 視為 wrap，補一個 60s
-        while s + 30 < last_end_abs:
-            offset += 60.0
-            s += 60.0
-            e += 60.0
-        # end < start → 該 segment 的 end 在分鐘界線後 wrap，補 60s
-        while e < s:
-            e += 60.0
-        out.append({**w, "start": s, "end": e})
-        last_end_abs = e
-    return out
 
 
 def _dedup_overlapping_times(words: list[dict]) -> list[dict]:

@@ -15,7 +15,7 @@ const state = {
   deletions: new Set(),
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
-  reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；session 內、不寫檔、不進 undo、換集即清
+  reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；存檔時以內容簽章寫進 episode.yaml → 跨 session 記憶
   cards: [],
   textOverrides: new Map(), // idx -> text
   // 在 UI 上按 Enter 切句：oldIdx -> [part0_text, part1_text, ...]；存檔時翻譯成
@@ -42,9 +42,8 @@ const state = {
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
   previewPath: null, // null = main_video；否則為 ep.dir 內的相對路徑
-  hasGeminiKey: false,
   hasOpenAIKey: false,
-  sttProvider: "gemini", // "gemini" | "openai"
+  sttProvider: "whisper_mlx", // "whisper_mlx" | "openai"
   needsTranscribe: false, // true 代表這集還沒跑過 transcribe/resegment，沒 _v2.srt
   hasMainVideo: true, // false = 空集（01_母帶/ 還沒有檔），video player 換成 empty banner
   headTrimSec: 0, // 影片開頭要砍掉幾秒
@@ -1664,9 +1663,23 @@ function reviewReasonLabel(r) {
   return { half_sentence: "半句結尾", repetition: "疑似重複幻覺" }[r] || r;
 }
 
-// 「待複查卡」= resegment 旗標（半句 / 幻覺）或空拍卡。導覽 / 篩選共用這個判斷。
+// 灰色資訊卡（pause_info）原因 → 中文標籤。短句拖長 / 前面有大空隙。
+function pauseInfoLabel(r) {
+  return { short_long: "短句拖很久", big_gap_before: "前有大空隙" }[r] || r;
+}
+
+// 「待複查卡」= resegment 旗標（半句 / 幻覺）或紅卡（純語助詞）。導覽 / 篩選共用這個判斷。
+// 注意：灰色 pause_info（短句拖長 / 大空隙）刻意不算待複查，不進導覽、不占注意力。
 function cardNeedsReview(c) {
   return !!(c.needs_review || c.suspicious_pause);
+}
+
+// 「看過」跨 session 記憶用的穩定簽章：起始時間(0.1s 桶) + 去空白文字。
+// 用 idx 會因分割/刪除/合併重編而失效，故改存內容簽章；純文字會讓重複的反應卡
+//（「對」「嗯」）互相污染，故加時間錨定。卡被改字/挪時間時簽章變→「看過」自動失效
+//（該卡內容已不同，本就該重看），這是可接受的取捨。存/讀兩端共用此函式＝單一真相。
+function cardReviewSig(c) {
+  return `${(Number(c.start) || 0).toFixed(1)}|${(c.text || "").replace(/\s/g, "")}`;
 }
 
 function renderCards() {
@@ -1748,6 +1761,9 @@ function renderCards() {
     }
     if (state.deletions.has(key)) div.classList.add("deleted");
     if (c.suspicious_pause && !isSub) div.classList.add("suspicious");
+    // 灰色資訊卡（短句拖長 / 大空隙）：淡色標示、不進批次刪除、不進待複查導覽。
+    if (c.pause_info && !c.suspicious_pause && !isSub)
+      div.classList.add("pause-info");
     // 待複查卡標記（給「只看待複查」篩選 + 導覽用）；sub-card 也標，沿用原卡旗標
     // 待複查卡：標過「看過」的掛 review-seen（淡化、退出篩選/導覽），否則 review-hit
     if (cardNeedsReview(c))
@@ -1881,8 +1897,18 @@ function renderCards() {
         ` ${reasons.map(reviewReasonLabel).join("、")}`;
       time.appendChild(flag);
     }
-    // 「看過」標記（session 內）：所有待複查卡（半句/幻覺 + 空拍）都可標，
-    // 標過就淡化、退出待辦計數與 J/K 導覽。不寫檔、不進 undo、換集即清。
+    // 灰色資訊提示（短句拖長 / 大空隙）：淡色、無 icon、不進導覽，只讓眼睛掃到。
+    // 紅卡不重複標（reaction_only 已有紅框）；子卡不標。
+    if (c.pause_info && !c.suspicious_pause && !isSub) {
+      const reasons = c.pause_info_reasons || [];
+      const info = document.createElement("div");
+      info.className = "card-pause-info";
+      info.textContent = reasons.map(pauseInfoLabel).join("、");
+      info.title = `資訊提示：${reasons.map(pauseInfoLabel).join("、")}（僅供參考，非待複查）`;
+      time.appendChild(info);
+    }
+    // 「看過」標記：所有待複查卡（半句/幻覺 + 純語助詞紅卡）都可標，標過就淡化、
+    // 退出待辦計數與 J/K 導覽。存檔時以內容簽章寫進 episode.yaml → 跨 session 記憶。
     if (cardNeedsReview(c) && !isSub) {
       const seen = state.reviewSeen.has(c.idx);
       const seenBtn = document.createElement("button");
@@ -2417,7 +2443,15 @@ async function loadEpisodeState() {
   state.cards = data.cards || [];
   state.textOverrides = new Map();
   state.susChecked = new Set();
-  state.reviewSeen = new Set(); // 換集即清「看過」標記（session 內、不跨集）
+  // 「看過」跨 session 記憶：episode.yaml 存的是內容簽章清單，這裡比對重建成 idx 集合。
+  // 簽章對不上的（卡被改字/挪時間/刪除）自動失效 → 該卡回到未看過，符合預期。
+  state.reviewSeen = new Set();
+  const seenSigs = new Set(data.review_seen || []);
+  if (seenSigs.size) {
+    for (const c of state.cards) {
+      if (seenSigs.has(cardReviewSig(c))) state.reviewSeen.add(c.idx);
+    }
+  }
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
   state.cardMerges = new Set();
@@ -2702,12 +2736,11 @@ async function loadConfig() {
     const r = await fetch("/api/config");
     if (!r.ok) return;
     const data = await r.json();
-    state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
-    // xai 已下架；舊 config 殘留 "xai" 一律當 gemini
+    // 雲端 provider 已下架；未知/殘留 provider 一律當本地 whisper_mlx
     state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
       ? data.provider
-      : "gemini";
+      : "whisper_mlx";
     state.assetsStatus = data.assets || {};
   } catch (_) {}
 }
@@ -4037,6 +4070,11 @@ function buildSavePayload({ withSpeed = false } = {}) {
       start_card: c.start_card,
       end_card: c.end_card,
     })),
+    // 「看過」跨 session 記憶：把 reviewSeen 的 idx 轉成內容簽章清單寫進 episode.yaml。
+    // 空清單後端會把 key 砍掉；簽章由 cardReviewSig 統一產（與載入端同一函式）。
+    review_seen: state.cards
+      .filter((c) => state.reviewSeen.has(c.idx))
+      .map((c) => cardReviewSig(c)),
   };
   // 倍速只在「合成設定 modal」→「開始合成」時送（withSpeed=true）；改字卡的主存檔不送。
   // 否則 state.speed.enabled 一旦 stale 成 false，改個字卡存檔就無聲無息把 episode.yaml 的
@@ -4102,15 +4140,7 @@ $("#save-btn").addEventListener("click", async () => {
     // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
     await loadEpisodeState();
     renderCards();
-    // 引導使用者按合成（高亮輸出鈕）
-    const ytBtn = $("#assemble-yt-btn");
-    // 合成鈕已收進「輸出」下拉，存檔後自動展開讓引導用的 pulse 看得到
-    $("#output-menu-btn")?._popover?.open();
-    ytBtn?.classList.add("pulse");
-    ytBtn?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    setTimeout(() => {
-      ytBtn?.classList.remove("pulse");
-    }, 6000);
+    // 存檔後停在編輯畫面，不自動展開「輸出」下拉／不跳輸出流程 —— 出片與否由使用者自己按。
     setTimeout(() => {
       setSaveBtnLabel("check", "完成並儲存");
       $("#save-btn").disabled = false;
@@ -4590,44 +4620,20 @@ function hideModal(id) {
 function providerLabelOf(p) {
   return (
     {
-      gemini: "Gemini",
       openai: "OpenAI whisper-1",
       whisper_mlx: "本地 Whisper（mlx）",
-    }[p] || "Gemini"
+    }[p] || "本地 Whisper（mlx）"
   );
 }
 function hasKeyForProvider(p) {
   // 本地 provider 不需 key，視同永遠就緒
-  if (p === "whisper_mlx") return true;
   if (p === "openai") return state.hasOpenAIKey;
-  return state.hasGeminiKey;
+  return true;
 }
 
 // === 轉字幕流程 ===
 function requestTranscribe(file) {
-  // 預設一律走 mix 路徑（單一檔案 STT）。分軌轉錄串音問題明顯，改成進階手動開關。
-  // 視情況顯示「改用分軌轉錄」or「設定並啟用分軌轉錄」按鈕在進階區塊。
-  const hasMics = state.mics && Object.keys(state.mics).length > 0;
-  const candidates = state.audioCandidates || [];
-  const canSetupMics = !hasMics && candidates.length >= 2;
-  const advanced = $("#transcribe-advanced");
-  const perMicBtn = $("#transcribe-per-mic-btn");
-  const micSetupBtn = $("#transcribe-mic-setup-btn");
-  if (advanced) advanced.hidden = !(hasMics || canSetupMics);
-  if (perMicBtn) {
-    perMicBtn.hidden = !hasMics;
-    perMicBtn.onclick = () => {
-      hideModal("transcribe-modal");
-      openPerMicTranscribe();
-    };
-  }
-  if (micSetupBtn) {
-    micSetupBtn.hidden = !canSetupMics;
-    micSetupBtn.onclick = () => {
-      hideModal("transcribe-modal");
-      openMicSetup();
-    };
-  }
+  // 一律走 mix 路徑（單一檔案 STT）。分軌轉錄已下架。
   const providerLabel = providerLabelOf(state.sttProvider);
   const hasSelectedKey = hasKeyForProvider(state.sttProvider);
   // 重置上次跑剩的進度條 + 兩顆按鈕（避免 success 殘留把 #transcribe-go 藏起來）
@@ -4726,7 +4732,7 @@ async function runResegment(srcPath) {
 
 // 三段進度條：每段佔總長 1/3
 // 後端依 provider 送不同細粒度 phase：
-//   雲端 gemini/openai：compress → upload → resegment
+//   雲端 openai：compress → upload → resegment
 //   本地 whisper_mlx：compress → vad → decode → stt → resegment
 // UI 只有三顆 pill（壓縮 / STT / 切句），把細 phase 收斂到三段桶；
 // 桶決定 pill 高亮與整體百分比，細 phase 名只用在文字 label。
@@ -4763,6 +4769,31 @@ function stopTranscribePoll() {
     clearInterval(_transcribePollTimer);
     _transcribePollTimer = null;
   }
+}
+
+// 使用者按「取消」：通知後端砍掉在跑的轉錄（Breeze 子行程）並收回 idle，
+// 然後停 poll、還原按鈕、關 modal。後端 cancel_job 是同步的（回應前已把 state
+// 收回 idle），所以不需要像合成那樣輪詢等收尾。
+async function cancelTranscribeJob() {
+  const cancel = $("#transcribe-cancel");
+  const go = $("#transcribe-go");
+  cancel.disabled = true;
+  cancel.textContent = "取消中…";
+  stopTranscribePoll(); // 停進度 poll，避免和取消狀態打架
+  $("#transcribe-phase-label").textContent = "取消中…";
+  try {
+    await fetch("/api/transcribe/cancel", { method: "POST" });
+  } catch (_) {
+    /* 取消請求失敗也照樣收 UI；後端 watchdog（30 分無進度）兜底 */
+  }
+  stopTranscribePoll();
+  // 還原按鈕 + 收 modal，讓下次可重開轉字幕
+  cancel.disabled = false;
+  cancel.textContent = "取消";
+  cancel.onclick = null;
+  if (go) go.hidden = false;
+  $("#transcribe-progress").hidden = true;
+  hideModal("transcribe-modal");
 }
 
 function renderTranscribePhasePills(currentPhase, state) {
@@ -4820,8 +4851,6 @@ async function startBreezeTranscribe() {
   $("#transcribe-msg").innerHTML =
     "本地 Breeze 轉錄各軌 → 自動標講者 → 匯入 → 校對，一次跑完。<br>" +
     '<em style="color:#888;font-size:12px">轉錄那段最久，請保留分頁、不要關閉。</em>';
-  const adv = $("#transcribe-advanced");
-  if (adv) adv.hidden = true;
   $("#transcribe-progress").hidden = false;
   // Breeze 階段跟 STT 三顆 pill 對不上 → 隱藏 pills，只用進度條 + 文字標籤
   const pills = document.querySelector("#transcribe-progress .phase-pills");
@@ -4833,7 +4862,11 @@ async function startBreezeTranscribe() {
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   if (go) go.disabled = true;
-  if (cancel) cancel.disabled = true;
+  if (cancel) {
+    cancel.disabled = false; // 轉錄中可取消（會真的砍掉 Breeze 子行程）
+    cancel.textContent = "取消";
+    cancel.onclick = cancelTranscribeJob;
+  }
   try {
     const r = await fetch("/api/transcribe/breeze", {
       method: "POST",
@@ -4857,7 +4890,6 @@ async function runTranscribe(file) {
   $("#transcribe-msg").innerHTML =
     `處理中：<code>${file.path}</code><br>` +
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
-  $("#transcribe-advanced").hidden = true;
   $("#transcribe-progress").hidden = false;
   const _pillsT = document.querySelector("#transcribe-progress .phase-pills");
   if (_pillsT) _pillsT.hidden = false; // Breeze 會藏 pills，單軌轉錄要還原
@@ -4869,7 +4901,9 @@ async function runTranscribe(file) {
   const go = $("#transcribe-go");
   const cancel = $("#transcribe-cancel");
   go.disabled = true;
-  cancel.disabled = true;
+  cancel.disabled = false; // 轉錄中可取消（釋放 slot；雲端 STT 無法即時砍，靠世代作廢寫入）
+  cancel.textContent = "取消";
+  cancel.onclick = cancelTranscribeJob;
 
   try {
     const r = await fetch("/api/transcribe", {
@@ -4903,36 +4937,11 @@ async function resumeTranscribeIfRunning() {
   }
   if (s.state !== "running") return;
 
-  if (s.mode === "per-mic") {
-    setModalStatusTitle("per-mic-title", null, "分軌轉錄中…", "");
-    $("#per-mic-pick").hidden = true;
-    $("#per-mic-progress").hidden = false;
-    $("#per-mic-fill").style.width = "0%";
-    $("#per-mic-percent").textContent = "0%";
-    $("#per-mic-phase-label").textContent = "啟動中…";
-    const speakers = Object.keys(s.mics_progress || {});
-    if (speakers.length) renderPerMicProgressGrid(speakers);
-    const go = $("#per-mic-go");
-    const cancel = $("#per-mic-cancel");
-    if (go) {
-      go.hidden = true;
-      go.disabled = true;
-    }
-    if (cancel) cancel.disabled = true;
-    showModal("per-mic-modal");
-    if (!_perMicPollTimer) {
-      _perMicPollTimer = setInterval(pollPerMic, 500);
-    }
-    return;
-  }
-
-  // single mode（混音檔 STT）
+  // single mode（混音檔 STT）／ Breeze
   $("#transcribe-title").textContent = "轉字幕中…";
   $("#transcribe-msg").innerHTML =
     `處理中：<code>${s.src_path || ""}</code><br>` +
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
-  const adv = $("#transcribe-advanced");
-  if (adv) adv.hidden = true;
   $("#transcribe-progress").hidden = false;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
@@ -4946,7 +4955,11 @@ async function resumeTranscribeIfRunning() {
   const goBtn = $("#transcribe-go");
   const cancelBtn = $("#transcribe-cancel");
   if (goBtn) goBtn.disabled = true;
-  if (cancelBtn) cancelBtn.disabled = true;
+  if (cancelBtn) {
+    cancelBtn.disabled = false; // 重整後仍可取消在跑的轉錄
+    cancelBtn.textContent = "取消";
+    cancelBtn.onclick = cancelTranscribeJob;
+  }
   showModal("transcribe-modal");
   if (!_transcribePollTimer) {
     _transcribePollTimer = setInterval(pollTranscribe, 500);
@@ -5041,458 +5054,6 @@ async function finishTranscribe({ ok, out_srt, error }) {
     cancel.textContent = "取消";
     go.hidden = false;
     $("#transcribe-progress").hidden = true;
-  };
-}
-
-// === 分軌設定 modal（yaml 沒設 mics 但有多軌音檔時跳這條） ===
-// 流程：列出 audioCandidates → 三個 dropdown 對應 a/b/c → 預設用 Track*.wav 順序自動配
-//   → 儲存 → POST /api/episode/mics → 重載 episode → 進分軌轉錄 modal
-const MIC_SETUP_SPEAKERS = ["a", "b", "c", "d"];
-
-function guessMicAssignment(candidates) {
-  // 嘗試從檔名抓 Track[1-3] / Mic[1-3] / Track 1 / Track-1 數字，依序配 a/b/c
-  // 抓不到順序就照 candidates 原順序前 3 個配 a/b/c
-  const numbered = [];
-  for (const path of candidates) {
-    const name = path.split("/").pop() || path;
-    const m = name.match(/Track[\s_-]?(\d+)|Mic[\s_-]?(\d+)/i);
-    if (m) {
-      const n = parseInt(m[1] || m[2], 10);
-      if (n >= 1 && n <= 3) numbered.push({ n, path });
-    }
-  }
-  const result = { a: "", b: "", c: "" };
-  if (numbered.length >= 2) {
-    // 用 Track 編號配對
-    numbered.sort((x, y) => x.n - y.n);
-    const slots = ["a", "b", "c"];
-    for (let i = 0; i < numbered.length && i < 3; i++) {
-      result[slots[numbered[i].n - 1] || slots[i]] = numbered[i].path;
-    }
-  } else {
-    // fallback：前 3 個檔依序給 a/b/c
-    for (let i = 0; i < Math.min(3, candidates.length); i++) {
-      result[MIC_SETUP_SPEAKERS[i]] = candidates[i];
-    }
-  }
-  return result;
-}
-
-function renderMicSetupList(candidates, assignment) {
-  const list = $("#mic-setup-list");
-  list.innerHTML = "";
-  for (const sp of MIC_SETUP_SPEAKERS) {
-    const row = document.createElement("div");
-    row.className = "mic-setup-row";
-    row.dataset.speaker = sp;
-    const options = ['<option value="">— 不設定 —</option>'];
-    for (const path of candidates) {
-      const selected = assignment[sp] === path ? " selected" : "";
-      // path 可能含 " 等需要 escape
-      const safe = path
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-      options.push(`<option value="${safe}"${selected}>${safe}</option>`);
-    }
-    // 角色：feature 裡有這軌 = 來賓，否則主持（沿用已存的 camera_rule 回填）
-    const feature = (state.cameraRule && state.cameraRule.feature) || {};
-    const role = feature[sp] ? "guest" : "host";
-    row.innerHTML = `
-      <span class="mic-setup-row-key">軌 ${sp}</span>
-      <select class="mic-setup-row-select" data-speaker="${sp}">${options.join("")}</select>
-      <select class="mic-setup-row-role" data-speaker="${sp}" title="主持一律全景（cam A）；來賓連續講滿門檻秒數才切特寫（cam B）">
-        <option value="host"${role === "host" ? " selected" : ""}>主持</option>
-        <option value="guest"${role === "guest" ? " selected" : ""}>來賓</option>
-      </select>
-    `;
-    list.appendChild(row);
-  }
-  list.querySelectorAll(".mic-setup-row-select").forEach((sel) => {
-    sel.addEventListener("change", updateMicSetupConflicts);
-  });
-  updateMicSetupConflicts();
-}
-
-function collectMicSetupAssignment() {
-  const out = {};
-  document.querySelectorAll(".mic-setup-row-select").forEach((sel) => {
-    const sp = sel.dataset.speaker;
-    const val = sel.value;
-    if (val) out[sp] = val;
-  });
-  return out;
-}
-
-// 收角色：只收「有指派音檔」的軌（沒設檔的軌角色沒意義）。host/guest → 後端生成 camera_rule。
-function collectMicSetupRoles() {
-  const mics = collectMicSetupAssignment();
-  const roles = {};
-  document.querySelectorAll(".mic-setup-row-role").forEach((sel) => {
-    const sp = sel.dataset.speaker;
-    if (mics[sp]) roles[sp] = sel.value === "guest" ? "guest" : "host";
-  });
-  return roles;
-}
-
-function updateMicSetupConflicts() {
-  const assignment = collectMicSetupAssignment();
-  const counts = {};
-  for (const p of Object.values(assignment)) {
-    counts[p] = (counts[p] || 0) + 1;
-  }
-  let hasConflict = false;
-  document.querySelectorAll(".mic-setup-row").forEach((row) => {
-    const sp = row.dataset.speaker;
-    const val = assignment[sp];
-    if (val && counts[val] > 1) {
-      row.classList.add("conflict");
-      hasConflict = true;
-    } else {
-      row.classList.remove("conflict");
-    }
-  });
-  $("#mic-setup-warn").hidden = !hasConflict;
-  // 至少要有一軌才能開始
-  const anyPicked = Object.keys(assignment).length > 0;
-  $("#mic-setup-go").disabled = hasConflict || !anyPicked;
-}
-
-function openMicSetup() {
-  setModalStatusTitle("mic-setup-title", null, "設定分軌", null);
-  const candidates = state.audioCandidates || [];
-  $("#mic-setup-detected-count").textContent = String(candidates.length);
-  const assignment = guessMicAssignment(candidates);
-  renderMicSetupList(candidates, assignment);
-  // min_sec 回填已存的 camera_rule（沒設預設 15）
-  const minSecInput = $("#mic-setup-min-sec");
-  if (minSecInput) {
-    const m = Number((state.cameraRule || {}).min_sec);
-    minSecInput.value = String(m > 0 ? m : 15);
-  }
-
-  const go = $("#mic-setup-go");
-  const cancel = $("#mic-setup-cancel");
-  go.textContent = "儲存並開始";
-  go.disabled = false;
-  cancel.disabled = false;
-  cancel.textContent = "取消";
-  go.onclick = saveMicSetup;
-  cancel.onclick = () => hideModal("mic-setup-modal");
-
-  showModal("mic-setup-modal");
-}
-
-async function saveMicSetup() {
-  const mics = collectMicSetupAssignment();
-  if (!Object.keys(mics).length) {
-    alert("至少要設定一軌");
-    return;
-  }
-  const roles = collectMicSetupRoles();
-  const minSecRaw = Number(($("#mic-setup-min-sec") || {}).value);
-  const minSec = Number.isFinite(minSecRaw) && minSecRaw > 0 ? minSecRaw : 15;
-  const go = $("#mic-setup-go");
-  const cancel = $("#mic-setup-cancel");
-  go.disabled = true;
-  cancel.disabled = true;
-  go.textContent = "儲存中…";
-
-  try {
-    const r = await fetch("/api/episode/mics", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mics, roles, min_sec: minSec }),
-    });
-    if (!r.ok) {
-      const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail || `HTTP ${r.status}`);
-    }
-  } catch (e) {
-    setModalStatusTitle(
-      "mic-setup-title",
-      "circle-alert",
-      "儲存失敗",
-      "danger",
-    );
-    $("#mic-setup-warn").textContent = `儲存失敗：${e.message}`;
-    $("#mic-setup-warn").hidden = false;
-    go.disabled = false;
-    cancel.disabled = false;
-    go.textContent = "重試";
-    return;
-  }
-
-  // 重載 episode state → state.mics 才有值 → 接著開分軌轉錄 modal
-  await loadEpisodeState();
-  renderTopbar();
-  renderCards();
-  hideModal("mic-setup-modal");
-  openPerMicTranscribe();
-}
-
-// === 分軌轉錄流程（episode.yaml.mics 有設時走這條） ===
-// 流程：點轉字幕 → 開 modal 列 mics → 預設只勾「未轉過」的軌
-//   → 按開始 → POST /api/transcribe/per-mic {speakers}
-//   → 切到 progress 視圖 → 每軌 phase pill 即時更新（queued/vad/gemini/done/skipped/error）
-//   → 全部 done 後跑 srt-merge → 完成 → 重載 episode 狀態
-const PER_MIC_PHASE_LABELS = {
-  queued: "等待中",
-  vad: "VAD 切軌",
-  gemini: "Gemini 轉錄",
-  done: "完成",
-  skipped: "已跳過",
-  error: "失敗",
-};
-const PER_MIC_TOP_PHASE_LABELS = {
-  "per-mic-transcribe": "分軌轉錄中",
-  "srt-merge": "合併字幕",
-};
-let _perMicPollTimer = null;
-
-function stopPerMicPoll() {
-  if (_perMicPollTimer) {
-    clearInterval(_perMicPollTimer);
-    _perMicPollTimer = null;
-  }
-}
-
-function renderPerMicList() {
-  const list = $("#per-mic-list");
-  const mics = state.mics || {};
-  const existing = new Set(state.mic_srt_existing || []);
-  const keys = Object.keys(mics).sort();
-  if (!keys.length) {
-    list.innerHTML = `<div class="modal-body-text">episode.yaml 沒有 mics 設定。</div>`;
-    return;
-  }
-  list.innerHTML = "";
-  for (const sp of keys) {
-    const hasSrt = existing.has(sp);
-    const path = mics[sp] || "";
-    const row = document.createElement("label");
-    row.className = "per-mic-row";
-    row.innerHTML = `
-      <input type="checkbox" class="per-mic-check" data-speaker="${sp}" ${hasSrt ? "" : "checked"}>
-      <span class="per-mic-row-key">${sp}</span>
-      <span class="per-mic-row-path">${path}</span>
-      <span class="per-mic-row-status${hasSrt ? " existing" : ""}">${hasSrt ? "已轉過" : "未轉"}</span>
-    `;
-    list.appendChild(row);
-  }
-  list.querySelectorAll(".per-mic-check").forEach((cb) => {
-    cb.addEventListener("change", updatePerMicOverwriteHint);
-  });
-  updatePerMicOverwriteHint();
-}
-
-function updatePerMicOverwriteHint() {
-  const existing = new Set(state.mic_srt_existing || []);
-  const checked = Array.from(
-    document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
-  ).map((cb) => cb.dataset.speaker);
-  const overwriting = checked.some((sp) => existing.has(sp));
-  $("#per-mic-overwrite-hint").hidden = !overwriting;
-}
-
-function openPerMicTranscribe() {
-  // reset 視圖
-  setModalStatusTitle("per-mic-title", null, "分軌轉錄", null);
-  $("#per-mic-pick").hidden = false;
-  $("#per-mic-progress").hidden = true;
-  $("#per-mic-progress-grid").innerHTML = "";
-  $("#per-mic-fill").style.width = "0%";
-  $("#per-mic-percent").textContent = "0%";
-  $("#per-mic-phase-label").textContent = "啟動中…";
-
-  renderPerMicList();
-
-  const go = $("#per-mic-go");
-  const cancel = $("#per-mic-cancel");
-  go.hidden = false;
-  go.disabled = false;
-  go.textContent = "開始";
-  cancel.disabled = false;
-  cancel.textContent = "取消";
-  go.onclick = runPerMicTranscribe;
-  cancel.onclick = () => hideModal("per-mic-modal");
-
-  $("#per-mic-select-all").onclick = () => {
-    document
-      .querySelectorAll("#per-mic-list .per-mic-check")
-      .forEach((cb) => (cb.checked = true));
-    updatePerMicOverwriteHint();
-  };
-  $("#per-mic-select-unconverted").onclick = () => {
-    const existing = new Set(state.mic_srt_existing || []);
-    document.querySelectorAll("#per-mic-list .per-mic-check").forEach((cb) => {
-      cb.checked = !existing.has(cb.dataset.speaker);
-    });
-    updatePerMicOverwriteHint();
-  };
-
-  showModal("per-mic-modal");
-}
-
-function renderPerMicProgressGrid(speakers) {
-  const grid = $("#per-mic-progress-grid");
-  grid.innerHTML = "";
-  for (const sp of speakers) {
-    const row = document.createElement("div");
-    row.className = "per-mic-progress-row";
-    row.dataset.speaker = sp;
-    row.innerHTML = `
-      <span class="mic-tag">${sp}</span>
-      <span class="mic-phase">等待中</span>
-    `;
-    grid.appendChild(row);
-  }
-}
-
-function updatePerMicProgressGrid(micsProgress) {
-  if (!micsProgress) return;
-  for (const [sp, phase] of Object.entries(micsProgress)) {
-    const row = document.querySelector(
-      `#per-mic-progress-grid .per-mic-progress-row[data-speaker="${sp}"]`,
-    );
-    if (!row) continue;
-    row.classList.remove("active", "done", "error");
-    if (phase === "done" || phase === "skipped") {
-      row.classList.add("done");
-    } else if (phase === "error") {
-      row.classList.add("error");
-    } else if (phase === "vad" || phase === "gemini") {
-      row.classList.add("active");
-    }
-    const ph = row.querySelector(".mic-phase");
-    if (ph) ph.textContent = PER_MIC_PHASE_LABELS[phase] || phase;
-  }
-}
-
-async function runPerMicTranscribe() {
-  const speakers = Array.from(
-    document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
-  ).map((cb) => cb.dataset.speaker);
-  if (!speakers.length) {
-    alert("至少要選一軌");
-    return;
-  }
-
-  $("#per-mic-pick").hidden = true;
-  $("#per-mic-progress").hidden = false;
-  renderPerMicProgressGrid(speakers);
-  $("#per-mic-fill").style.width = "0%";
-  $("#per-mic-percent").textContent = "0%";
-  $("#per-mic-phase-label").textContent = "啟動中…";
-
-  const go = $("#per-mic-go");
-  const cancel = $("#per-mic-cancel");
-  go.disabled = true;
-  cancel.disabled = true;
-
-  try {
-    const r = await fetch("/api/transcribe/per-mic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ speakers }),
-    });
-    if (!r.ok && r.status !== 202) {
-      const body = await r.json().catch(() => ({}));
-      throw new Error(body.detail || `HTTP ${r.status}`);
-    }
-  } catch (e) {
-    finishPerMic({ ok: false, error: e.message });
-    return;
-  }
-
-  _perMicPollTimer = setInterval(pollPerMic, 500);
-}
-
-// in-flight 防護：同 pollTranscribe
-let _pollPerMicBusy = false;
-async function pollPerMic() {
-  if (_pollPerMicBusy) return;
-  _pollPerMicBusy = true;
-  try {
-    await _pollPerMicOnce();
-  } finally {
-    _pollPerMicBusy = false;
-  }
-}
-
-async function _pollPerMicOnce() {
-  let s;
-  try {
-    const r = await fetch("/api/transcribe/status");
-    s = await r.json();
-  } catch (e) {
-    return;
-  }
-
-  if (s.state === "idle") return;
-
-  if (s.state === "running") {
-    updatePerMicProgressGrid(s.mics_progress || {});
-    const pct = Math.max(0, Math.min(100, s.percent || 0));
-    const phase = s.phase || "per-mic-transcribe";
-    // 整體進度條：分軌階段 0-90%，srt-merge 階段 90-100%
-    let overall;
-    if (phase === "srt-merge") {
-      overall = 90 + pct * 0.1;
-    } else {
-      overall = pct * 0.9;
-    }
-    $("#per-mic-fill").style.width = `${overall.toFixed(1)}%`;
-    $("#per-mic-percent").textContent = `${overall.toFixed(0)}%`;
-    $("#per-mic-phase-label").textContent =
-      PER_MIC_TOP_PHASE_LABELS[phase] || phase;
-    return;
-  }
-
-  if (s.state === "done") {
-    stopPerMicPoll();
-    updatePerMicProgressGrid(s.mics_progress || {});
-    finishPerMic({ ok: true, out_srt: s.out_srt });
-    return;
-  }
-
-  if (s.state === "error") {
-    stopPerMicPoll();
-    updatePerMicProgressGrid(s.mics_progress || {});
-    finishPerMic({ ok: false, error: s.error || "未知錯誤" });
-    return;
-  }
-}
-
-async function finishPerMic({ ok, out_srt, error }) {
-  const cancel = $("#per-mic-cancel");
-  const go = $("#per-mic-go");
-  if (ok) {
-    $("#per-mic-fill").style.width = "100%";
-    $("#per-mic-percent").textContent = "100%";
-    $("#per-mic-phase-label").textContent = "完成";
-    setModalStatusTitle("per-mic-title", "circle-check", "完成", "success");
-    $("#per-mic-progress-msg").innerHTML =
-      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入。`;
-
-    await loadEpisodeState();
-    renderTopbar();
-    renderCards();
-    renderCaption();
-    renderTypo();
-  } else {
-    setModalStatusTitle("per-mic-title", "circle-alert", "失敗", "danger");
-    $("#per-mic-progress-msg").innerHTML =
-      `<div class="modal-error-text">${error}</div>`;
-  }
-  go.hidden = true;
-  cancel.disabled = false;
-  cancel.textContent = ok ? "繼續編輯" : "關閉";
-  cancel.onclick = () => {
-    hideModal("per-mic-modal");
-    cancel.textContent = "取消";
-    go.hidden = false;
   };
 }
 
@@ -5935,17 +5496,12 @@ function renderAssetsPills() {
 }
 
 function openSettings() {
-  $("#settings-gemini-key").value = "";
-  $("#settings-gemini-key").type = "password";
   $("#settings-openai-key").value = "";
   $("#settings-openai-key").type = "password";
-  $("#settings-gemini-status").textContent = state.hasGeminiKey
-    ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
-    : "尚未設定";
   $("#settings-openai-status").textContent = state.hasOpenAIKey
     ? "已存在（重新輸入會覆蓋；留空則維持原樣）"
     : "尚未設定";
-  const provider = state.sttProvider || "gemini";
+  const provider = state.sttProvider || "whisper_mlx";
   const radio = document.querySelector(
     `input[name="settings-provider"][value="${provider}"]`,
   );
@@ -5968,11 +5524,6 @@ $("#settings-cancel").addEventListener("click", () =>
   hideModal("settings-modal"),
 );
 
-$("#settings-show-gemini").addEventListener("click", () => {
-  const input = $("#settings-gemini-key");
-  input.type = input.type === "password" ? "text" : "password";
-});
-
 $("#settings-show-openai").addEventListener("click", () => {
   const input = $("#settings-openai-key");
   input.type = input.type === "password" ? "text" : "password";
@@ -5980,13 +5531,11 @@ $("#settings-show-openai").addEventListener("click", () => {
 
 $("#settings-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const geminiKey = $("#settings-gemini-key").value.trim();
   const openaiKey = $("#settings-openai-key").value.trim();
   const provider =
     document.querySelector('input[name="settings-provider"]:checked')?.value ||
-    "gemini";
+    "whisper_mlx";
   const payload = { provider };
-  if (geminiKey) payload.gemini_api_key = geminiKey;
   if (openaiKey) payload.openai_api_key = openaiKey;
   const btn = $("#settings-save");
   btn.disabled = true;
@@ -6002,11 +5551,10 @@ $("#settings-form").addEventListener("submit", async (e) => {
       throw new Error(`HTTP ${r.status}：${body}`);
     }
     const data = await r.json();
-    state.hasGeminiKey = !!data.has_gemini_api_key;
     state.hasOpenAIKey = !!data.has_openai_api_key;
     state.sttProvider = ["openai", "whisper_mlx"].includes(data.provider)
       ? data.provider
-      : "gemini";
+      : "whisper_mlx";
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {
@@ -6181,7 +5729,7 @@ function buildGlossaryItem(scope, entry, idx) {
     input.className = "glossary-chip-input";
     input.placeholder =
       entry.sounds_like.length === 0
-        ? "Gemini 可能誤聽成（Enter / 逗號分隔）"
+        ? "轉錄可能誤聽成（Enter / 逗號分隔）"
         : "+ 再加一個";
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === ",") {

@@ -1,9 +1,8 @@
-"""T19: Gemini 一次到位 — 斷句 + 錯字校正 + 填充詞處理。
+"""T19: 錯字字典套用 + typo_entries 一路傳到 provider / job。
 
 設計：
 - transcribe.apply_typo_dict(text, entries) — 把使用者字典套到任意字串
-- transcribe.build_gemini_prompt(typo_entries) — 組 Gemini prompt（含錯字 / 斷句 / 填充詞 / 英文保留指令）
-- run_pipeline / run_grok_pipeline / run_gemini_pipeline 多收 typo_entries 參數
+- run_pipeline / run_grok_pipeline 多收 typo_entries 參數
 - transcribe_job.start_job 多收 typo_entries 參數
 - /api/transcribe 自動讀 _load_typo_dict() 傳給 start_job
 """
@@ -53,41 +52,7 @@ def test_apply_typo_dict_skips_malformed_entries():
     assert out == "這是新的"
 
 
-# ---------- build_gemini_prompt ----------
-
-def test_build_gemini_prompt_includes_required_directives():
-    """prompt 要明示：斷句、錯字、填充詞、英文保留、JSON 結構。"""
-    p = transcribe_mod.build_gemini_prompt([])
-    # JSON 結構
-    assert "JSON" in p
-    assert "start" in p and "end" in p and "text" in p
-    # 斷句
-    assert "斷句" in p or "分句" in p
-    # 錯字
-    assert "錯字" in p
-    # 填充詞
-    assert "填充詞" in p or "嗯" in p
-    # 英文人名 / 品牌 / 技術名保留
-    assert "英文" in p
-
-
-def test_build_gemini_prompt_with_typo_entries_lists_them():
-    entries = [
-        {"wrong": "舊詞", "right": "新詞", "note": "備註"},
-        {"wrong": "誤", "right": "正", "note": ""},
-    ]
-    p = transcribe_mod.build_gemini_prompt(entries)
-    assert "舊詞" in p and "新詞" in p
-    assert "誤" in p and "正" in p
-
-
-def test_build_gemini_prompt_without_typo_entries_omits_list_header():
-    """沒字典時不該硬塞「使用者錯字字典」段（避免 prompt 看起來缺項）。"""
-    p = transcribe_mod.build_gemini_prompt([])
-    assert "字典：" not in p  # 沒有 entries 時不該有冒號開頭的清單段
-
-
-# ---------- run_pipeline / run_grok_pipeline / run_gemini_pipeline 多帶 typo_entries ----------
+# ---------- run_pipeline / run_grok_pipeline 多帶 typo_entries ----------
 
 def test_run_pipeline_passes_typo_entries_to_provider(tmp_path, monkeypatch):
     captured = {}
@@ -197,8 +162,8 @@ def test_post_transcribe_loads_typo_dict_and_passes_to_start_job(
     main_video.write_bytes(b"FAKE")
 
     monkeypatch.setattr(api_mod, "_load_config", lambda: {
-        "gemini_api_key": "K",
-        "transcribe": {"provider": "gemini"},
+        "xai_api_key": "K",
+        "transcribe": {"provider": "xai"},
     })
     entries = [{"wrong": "舊", "right": "新", "note": ""}]
     monkeypatch.setattr(api_mod, "_load_typo_dict", lambda: entries)

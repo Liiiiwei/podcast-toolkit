@@ -180,7 +180,7 @@ async function pickFolder() {
   });
 }
 
-const PROVIDER_LABEL = { xai: "xAI", gemini: "Gemini", openai: "OpenAI" };
+const PROVIDER_LABEL = { xai: "xAI", openai: "OpenAI" };
 const ASSET_LABEL = {
   intro: "intro",
   outro_audio: "outro 音樂",
@@ -204,10 +204,7 @@ function renderConfigStatus(cfg) {
   keysBox.innerHTML = "";
   assetsBox.innerHTML = "";
 
-  const keyFlags = [
-    ["gemini", cfg.has_gemini_api_key],
-    ["openai", cfg.has_openai_api_key],
-  ];
+  const keyFlags = [["openai", cfg.has_openai_api_key]];
   for (const [k, ok] of keyFlags) {
     keysBox.appendChild(renderStatusPill(PROVIDER_LABEL[k], ok));
   }
