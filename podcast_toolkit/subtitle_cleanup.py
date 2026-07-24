@@ -17,7 +17,15 @@
    保守化：一個 run 若「沒有可用空格邊界、也沒有任何卡超過 max_w」→ 原卡原時間直接保留
    （不重併重切），保住 Breeze 逐字時間精度。會改卡數，故另存 speakers。
 
-smooth/destrand 不需重轉、卡數不變；reflow 會重編卡（speakers 一併重對）。沒問題的集近 no-op。
+4. **掛尾挪卡（carry_dangle_tail，接在 reflow 之後）**：reflow 把語句 group 切在真停頓上，
+   落在 group 尾端的連接詞（然後/所以/但是…）沒人挪 → 卡尾懸空（seg_check ② 標的就是這種）。
+   把「卡尾＝連接詞、下一卡同講者且緊接（無真氣口）」的連接詞搬到下一卡開頭；有真停頓或
+   換講者（連接詞收尾後換人接話）則不動。卡數不變。
+
+5. **相鄰去重（dedup_adjacent，接在 reflow 之後）**：同講者、同文字、緊接的重覆卡併成一張
+   （Breeze 逐字殘留重覆）；跨講者同文字是兩人一搭一唱的真話，必須保留。會改卡數。
+
+smooth/destrand/carry 不重轉、carry 卡數不變；reflow / dedup 會重編卡（speakers 一併重對）。沒問題的集近 no-op。
 """
 from __future__ import annotations
 
@@ -123,6 +131,123 @@ def destrand_cards(
         prev["end"] = split_t
         cur["text"] = rest
         cur["start"] = split_t
+    return cards
+
+
+def carry_dangle_tail(
+    cards: list[dict],
+    speakers: dict[int, str],
+    *,
+    dangle,
+    gap: float = 0.3,
+) -> list[dict]:
+    """把「卡尾＝懸空連接詞、下一卡同講者且緊接」的連接詞，搬到下一卡開頭。
+
+    掛尾＝這張卡以連接詞（然後/所以/但是…）收尾、語意懸在下一句（seg_check ② 標的就是
+    這種）：reflow 把語句 group 切在真停頓上，連接詞落在 group 尾端就沒人挪。這裡補一道——
+    只在「下一卡同講者、間隔 < gap（無真氣口）」時把尾連接詞搬到下一卡開頭
+    （國際貿易啊然後 ｜ 國貿啊 → 國際貿易啊 ｜ 然後國貿啊）。有真停頓（gap ≥ 門檻）＝講者
+    說完一段的自然收束，不動；不同講者也不動（連接詞收尾後換人接話是設計，見 172–174 三卡型）。
+    就地改 text/start/end（時間在原卡內線性插值取切點），卡數與 idx 不變、speakers 仍對齊。
+    dangle 傳入要挪的尾詞集合（通常＝resegment.dangle_endings）。回傳同一個 cards。
+    """
+    tails = tuple(sorted({d for d in dangle if d}, key=len, reverse=True))  # 長詞優先比對
+    if not tails:
+        return cards
+    ordered = sorted(cards, key=lambda c: float(c["start"]))
+    for i in range(len(ordered) - 1):
+        cur, nxt = ordered[i], ordered[i + 1]
+        if speakers.get(int(cur["idx"])) != speakers.get(int(nxt["idx"])):
+            continue                                  # 不同講者 → 換人接話，不挪
+        if float(nxt["start"]) - float(cur["end"]) >= gap:
+            continue                                  # 有真氣口 → 收尾連接詞是自然收束，不挪
+        text = cur["text"]
+        tail = next((d for d in tails if text.endswith(d) and len(text) > len(d)), "")
+        if not tail:
+            continue                                  # 不掛尾、或整卡就是連接詞（無前文）→ 不動
+        head = text[:-len(tail)]
+        frac = len(head) / max(1, len(text))          # head 佔的時間比 → 切點
+        split_t = float(cur["start"]) + frac * (float(cur["end"]) - float(cur["start"]))
+        cur["text"] = head
+        cur["end"] = split_t
+        nxt["text"] = tail + nxt["text"]              # 連接詞接到下一卡開頭（無空格＝連續）
+        nxt["start"] = split_t
+    return cards
+
+
+def _plan_heal(a: str, b: str, max_w: int):
+    """規劃「跨界的詞」怎麼歸位：回 (k, forward) 或 None（無解）。
+
+    把兩卡文字接起來跑 jieba 拿全部詞界；卡界（＝len(a)）若已在詞界上→None（不必動）。
+    否則找卡界左右最近的兩個詞界當候選：forward＝把後卡開頭 k 字接到前卡（詞尾在後卡）、
+    backward＝把前卡結尾 k 字歸到後卡（詞頭在前卡）。兩候選都須讓兩側 ≤max_w，
+    取較近者（同距選 forward，把詞往前收較符合閱讀順序）。"""
+    from podcast_toolkit import word_break
+    total = a + b
+    pts = word_break.word_break_ok(total)
+    if pts is None:                          # 無 jieba → 無從判詞界
+        return None
+    split, n = len(a), len(total)
+    if split in pts:                         # 卡界本就在詞界上 → 不動
+        return None
+    left = max((t for t in pts if t < split), default=None)
+    right = min((t for t in pts if t > split), default=None)
+    cands = []
+    if right is not None and right < n and right <= max_w and (n - right) <= max_w:
+        cands.append((right - split, right, True))    # 前推：後卡頭 (right-split) 字補到前卡
+    if left is not None and left > 0 and left <= max_w and (n - left) <= max_w:
+        cands.append((split - left, left, False))     # 後拉：前卡尾 (split-left) 字歸後卡
+    if not cands:
+        return None
+    cands.sort(key=lambda c: (c[0], 0 if c[2] else 1))  # 較近優先；同距選 forward
+    dist, _t, forward = cands[0]
+    return (dist, forward)
+
+
+def heal_straddle(
+    cards: list[dict],
+    speakers: dict[int, str] | None = None,
+    *,
+    gap: float = 0.08,
+    max_w: int = 16,
+) -> list[dict]:
+    """reflow 後補的最後一道防線：把「真硬斷落在詞中間」的卡界，就近搬回詞界。
+
+    balanced_split 的「非詞界重罰」是軟懲罰（score -= 8）不是硬禁——group 超長時仍可能被迫
+    切在詞中間；或 Breeze 逐字 0 秒硬斷正好落在 jieba 認得的詞內（耳｜機、巧克｜力）。
+    carry_dangle_tail 只管連接詞、dedup 只管重複，都碰不到這種「詞被切開」。這裡補齊：
+
+    只在「相接近乎 0 秒（gap < 門檻，＝無真氣口的連續音）」且「卡界落在 jieba 詞中間」時動手，
+    把跨界的詞整個挪到最近一側的詞界（_plan_heal 決定方向與字數），時間沿卡內線性插值取切點。
+    gap 是關鍵判別器：真硬斷 gap≈0；jieba 誤黏出的假詞界（其實斷得對）gap≥0.12 有真停頓 → 跳過，
+    絕不去動那些邊界正確的卡。跨講者不搬（別把別人的字挪過來，交回 reflow_by_phrases）。
+    就地改 text/start/end，卡數與 idx 不變、speakers 仍對齊。回傳同一個 cards。
+    """
+    ordered = sorted(cards, key=lambda c: float(c["start"]))
+    for i in range(len(ordered) - 1):
+        cur, nxt = ordered[i], ordered[i + 1]
+        if float(nxt["start"]) - float(cur["end"]) >= gap:
+            continue                                  # 有真氣口 → 邊界正確，不動
+        if speakers is not None and \
+                speakers.get(int(cur["idx"])) != speakers.get(int(nxt["idx"])):
+            continue                                  # 跨講者 → 不搬別人的字
+        a, b = cur["text"], nxt["text"]
+        if not _boundary_midword(a, b):
+            continue                                  # 卡界沒切在詞中間 → 不動
+        plan = _plan_heal(a, b, max_w)
+        if plan is None:
+            continue
+        k, forward = plan
+        if forward:
+            frac = k / len(b)                         # 後卡前 k 字佔的時間比 → 切點
+            split_t = float(nxt["start"]) + frac * (float(nxt["end"]) - float(nxt["start"]))
+            cur["text"], nxt["text"] = a + b[:k], b[k:]
+        else:
+            frac = (len(a) - k) / len(a)              # 前卡留 (len(a)-k) 字 → 切點
+            split_t = float(cur["start"]) + frac * (float(cur["end"]) - float(cur["start"]))
+            cur["text"], nxt["text"] = a[:len(a) - k], a[len(a) - k:] + b
+        cur["end"] = split_t
+        nxt["start"] = split_t
     return cards
 
 
@@ -336,6 +461,44 @@ def clamp_overlaps(
     return ordered
 
 
+def dedup_adjacent(
+    cards: list[dict],
+    speakers: dict[int, str],
+    *,
+    gap: float = 0.3,
+) -> tuple[list[dict], dict[int, str]]:
+    """相鄰、同講者、同文字、且緊接（間隔 < gap）的重覆卡併成一張。
+
+    reflow / Breeze 偶爾把同一句話的逐字殘留重覆成兩張一模一樣的卡。同一人身上的重覆
+    ＝殘留，要併；但**不同講者的同文字是兩人一搭一唱的真話**（外文系啊｜外文系啊＝Mic2/Mic3
+    各講一次），必須保留，故限同講者。有真停頓（gap ≥ 門檻）的同文字＝刻意重覆講，也保留。
+    併時保前卡 start、後卡 end、文字不變（本就相同）。會刪卡 → idx 從 1 重編、speakers 一併
+    重對。回傳 (新 cards, 新 speakers)。speakers 空（單軌）→ 不併（無從判同講者），原樣回傳。
+    """
+    if not speakers:
+        return [dict(c) for c in sorted(cards, key=lambda c: float(c["start"]))], {}
+    ordered = sorted(cards, key=lambda c: float(c["start"]))
+    kept: list[dict] = []
+    for c in ordered:
+        if kept:
+            prev = kept[-1]
+            same_sp = speakers.get(int(prev["idx"])) == speakers.get(int(c["idx"]))
+            contig = float(c["start"]) - float(prev["end"]) < gap
+            if same_sp and contig and prev["text"].strip() == c["text"].strip():
+                prev["end"] = float(c["end"])         # 併：延伸結束時間，文字相同不動
+                continue
+        kept.append(dict(c))
+    new_cards: list[dict] = []
+    new_spk: dict[int, str] = {}
+    for nid, c in enumerate(kept, 1):
+        sp = speakers.get(int(c["idx"]))              # 併後 idx 取 group 首卡（＝同講者）
+        new_cards.append({"idx": nid, "start": c["start"],
+                          "end": c["end"], "text": c["text"]})
+        if sp:
+            new_spk[nid] = sp
+    return new_cards, new_spk
+
+
 def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
     """讀 _final_v2.srt + speakers.json → 依語句重切 → 寫回（先備份 .pre-reflow.bak）。
 
@@ -354,13 +517,16 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
         return 0
     cards = srt_io.parse(v2.read_text(encoding="utf-8"))
     speakers = cameras_io.load(spk_path)
-    # 反應詞（對／嗯…）單字卡不被併回鄰卡
-    reaction = frozenset((ep.cfg.get("resegment") or {}).get("reaction_words", []))
+    rcfg = ep.cfg.get("resegment") or {}
+    # 反應詞（對／嗯…）單字卡不被併回鄰卡；掛尾連接詞集合供 carry_dangle_tail 挪卡
+    reaction = frozenset(rcfg.get("reaction_words", []))
+    dangle = rcfg.get("dangle_endings", [])
     # reflow 設定段可 per-episode 覆寫；缺段時全用預設 → 既有各集行為位元組不變
     rf = ep.cfg.get("reflow") or {}
+    rgap = rf.get("gap", gap)
     new_cards, new_spk = reflow_by_phrases(
         cards, speakers,
-        gap=rf.get("gap", gap),
+        gap=rgap,
         max_w=rf.get("max_w", 16),
         reaction=reaction,
         merge_short=rf.get("merge_short", False),
@@ -368,6 +534,16 @@ def reflow_episode(episode_dir, *, gap: float = 0.3) -> int:
     )
     if not new_cards:
         return 0
+    # 掛尾挪卡：卡尾懸空連接詞（然後/所以…）搬到下一張同講者緊接卡的開頭（reflow 補味，卡數不變）
+    if rf.get("carry_dangle", True) and dangle:
+        carry_dangle_tail(new_cards, new_spk, dangle=dangle, gap=rgap)
+    # 詞界歸位：真硬斷（≈0 秒相接）落在 jieba 詞中間 → 就近搬回詞界（根治「詞被切開」，卡數不變）
+    if rf.get("heal_straddle", True):
+        heal_straddle(new_cards, new_spk,
+                      gap=rf.get("heal_gap", 0.08), max_w=rf.get("max_w", 16))
+    # 相鄰去重：同講者、同文字、緊接的重覆卡併成一張（跨講者同文字＝兩人真話，保留）
+    if rf.get("dedup_adjacent", True):
+        new_cards, new_spk = dedup_adjacent(new_cards, new_spk, gap=rgap)
     # 夾掉相鄰同講者卡的時間重疊（單軌無 speakers → 全夾）：避免 UI 兩短句疊字
     new_cards = clamp_overlaps(new_cards, new_spk)
     shutil.copy(v2, v2.with_name(f"{v2.stem}.pre-reflow.bak{v2.suffix}"))

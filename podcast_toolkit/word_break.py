@@ -43,6 +43,21 @@ _DEFAULT_DICT = Path("/Users/Mac365/Developer/breeze subtitle/Breeze-ASR-25/dict
 _BASE_WORDS = ["印花樂", "過嗨乳牛", "郝慧川", "岳啟儒", "沈奕妤", "惡魔老闆",
                "我愛上班", "育成中心", "孵化器", "客製化", "大稻埕", "台灣八哥"]
 
+# 繁體詞典缺口補丁：dict.txt.big（繁體大詞典）竟缺這些常用詞（FREQ=None），
+# 缺了 jieba 會亂拆成假詞（好啟｜發人｜心），連帶讓「非詞界重罰」失準、seg_check 誤報、
+# heal_straddle 可能被假詞界誤導。這些都是無歧義常用詞，補進去讓它們恆為單一 token。
+# 全數經實測確認為 dict.txt.big 缺漏（見 word_break 測試）。
+# 「球評」＝球賽評論員（實例：魁哥集 422/423 被切成 球｜評）、「一開始」（實例 878/879 被切
+# 成 一｜開始）、「國中」（dict.txt.big 內 FREQ=3 過低，句中被 國＋中 蓋過→實例 932/933 切成
+# 國｜中）；缺詞或詞頻過低時 jieba 在句中會把多字詞拆開、甚至黏出垃圾 token 使 context 詞界看
+# 似乾淨、heal 漏修——補進（add_word 會拉高詞頻）後恆整詞、balanced_split 不切其中、heal 也搬得回。
+_TRAD_FIX = ["認為", "啟發", "啟蒙", "啟示", "開啟", "啟動", "啟用", "球評", "一開始", "國中"]
+
+# 成語/固定搭配整體保留：登記為單一 token → balanced_split 不會切在成語中間，
+# heal_straddle 也會把已被切開的（如「啟發｜人心」跨卡）自動搬回同一卡。
+# 只收「有實例、無歧義」的四字成語，不灌整本成語辭典（避免過度合併）。
+_IDIOM_KEEP = ["啟發人心"]
+
 _JIEBA = None            # None=未初始化、False=不可用、module=可用
 _DICT_OVERRIDE = None    # config 指定的詞典路徑（str）；None=自動偵測
 _EXTRA_WORDS: list[str] = []   # add_words 累積的自訂詞（重新初始化時重灌）
@@ -75,7 +90,7 @@ def _jieba():
                 dic = Path(_DICT_OVERRIDE) if _DICT_OVERRIDE else _DEFAULT_DICT
                 if dic.exists():
                     _jieba_mod.set_dictionary(str(dic))   # 繁體詞典
-                for w in _BASE_WORDS + _EXTRA_WORDS:
+                for w in _BASE_WORDS + _TRAD_FIX + _IDIOM_KEEP + _EXTRA_WORDS:
                     _jieba_mod.add_word(w)
                 _JIEBA = _jieba_mod
             except Exception:

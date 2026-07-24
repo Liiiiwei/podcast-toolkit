@@ -185,3 +185,57 @@ def test_report_prints_overlap_line(capsys):
     out = capsys.readouterr().out
     assert "⑤ 時間重疊：1 對" in out
     assert "#1→#2" in out
+
+
+# ---- ⑥ 相鄰重複 ----
+
+def test_scan_flags_adjacent_dup_same_speaker():
+    """同講者、緊接、同文字 → 記一味、附文字。"""
+    cards = [(1, "外文系啊", 0.0, 1.0), (2, "外文系啊", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "c", 2: "c"})
+    assert res["dup"] == [(1, 2, "外文系啊")]
+
+
+def test_scan_dup_cross_speaker_preserved():
+    """跨講者同文字（Mic2/Mic3 各講一次）＝兩人真話 → 不記味。"""
+    cards = [(1, "外文系啊", 0.0, 1.0), (2, "外文系啊", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "b", 2: "c"})
+    assert res["dup"] == []
+
+
+def test_scan_dup_skips_across_pause():
+    """同講者同文字但有真停頓（刻意重覆講）→ 不記味。"""
+    cards = [(1, "真的假的", 0.0, 1.0), (2, "真的假的", 1.5, 2.5)]
+    res = seg_check.scan(cards, RCFG4, {1: "c", 2: "c"})
+    assert res["dup"] == []
+
+
+def test_scan_dup_single_track_empty():
+    """單軌（不傳 speakers）無從判同講者 → 不檢，回空清單。"""
+    cards = [(1, "外文系啊", 0.0, 1.0), (2, "外文系啊", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4)
+    assert res["dup"] == []
+
+
+def test_scan_dup_strips_mic_label():
+    """含 [MicN] 前綴要先剝掉再比對文字。"""
+    cards = [(1, "[Mic2] 外文系啊", 0.0, 1.0), (2, "[Mic2] 外文系啊", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "c", 2: "c"})
+    assert [(p, c, t) for p, c, t in res["dup"]] == [(1, 2, "外文系啊")]
+
+
+def test_scan_dup_different_text_not_flagged():
+    """同講者緊接但文字不同 → 不算重複。"""
+    cards = [(1, "這個", 0.0, 1.0), (2, "那個", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "c", 2: "c"})
+    assert res["dup"] == []
+
+
+def test_report_prints_dup_line(capsys):
+    """報告要印出 ⑥ 相鄰重複那一行與對數。"""
+    cards = [(1, "外文系啊", 0.0, 1.0), (2, "外文系啊", 1.0, 2.0)]
+    res = seg_check.scan(cards, RCFG4, {1: "c", 2: "c"})
+    seg_check._report("x.srt", len(cards), res, limit=12, hardlen=23)
+    out = capsys.readouterr().out
+    assert "⑥ 相鄰重複：1 對" in out
+    assert "「外文系啊」" in out

@@ -194,6 +194,12 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
             **(defaults.get("silence_trim") or {}),
             **(episode.get("silence_trim") or {}),
         },
+        # 字幕重切（reflow_episode）設定：defaults + episode 逐 key 合併。漏列此 key 會像
+        # srt_path 一樣「寫進 yaml 卻讀不回 cfg」→ defaults.yaml 的 reflow 段等同失效。
+        "reflow": {
+            **(defaults.get("reflow") or {}),
+            **(episode.get("reflow") or {}),
+        },
         # 畫面拉正旋轉（per cam，度數）：{a, b}
         "rotate": {**(defaults.get("rotate") or {}), **(episode.get("rotate") or {})},
         # 鏡頭自動建議規則：{home, feature:{speaker:cam}, min_sec}；episode 覆寫整段

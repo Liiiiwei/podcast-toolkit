@@ -21,9 +21,15 @@ resegment:
 reflow:
   gap: 0.3            # 同講者、間隔 < 此值 → 同一 run 一起重切（放大＝更少被換氣打斷）
   max_w: 16          # 單一語句 > 此值才交 word_break 評分切
-  merge_short: true  # 全域啟用：保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target
-                     #（治 Breeze 逐字殘留：『還好／一點』併成『還好一點』）。false＝只併單字碎卡
+  merge_short: false # 保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target（治 Breeze 逐字殘留：
+                     #『還好／一點』併成『還好一點』）。false＝只併單字碎卡。此前 reflow 段沒接進
+                     # cfg 白名單而失效，實際生效值一直是 false；接上後續用 false 保持既有各集行為不變
   merge_target: 9    # merge_short 的併接上限字數（人手實測中位數 ≈9，避免併過頭跨子句）
+  carry_dangle: true # 掛尾挪卡：卡尾懸空連接詞（然後/所以…）搬到下一張同講者緊接卡的開頭
+                     # （用 resegment.dangle_endings 那組詞；有真氣口或換講者則不挪）。false＝關
+  dedup_adjacent: true # 相鄰去重：同講者、同文字、緊接的重覆卡併成一張（跨講者同文字＝兩人真話，保留）
+  heal_straddle: true # 詞界歸位：真硬斷（≈0 秒相接）落在 jieba 詞中間 → 就近搬回詞界（根治「詞被切開」）
+  heal_gap: 0.08     # 相鄰卡間隔 < 此值才視為「無氣口真硬斷」動手歸位；≥ 此值＝有真停頓（斷得對）不動
 
 # 編輯介面「可疑空拍卡」門檻。分兩級：reaction_only（純語助詞）標紅、可批次刪；
 # short_long / big_gap 誤判率高，只標淡灰資訊、不進批次刪。reaction_words 沿用 resegment。
