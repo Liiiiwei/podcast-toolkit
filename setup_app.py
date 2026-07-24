@@ -79,8 +79,8 @@ OPTIONS = {
         "CFBundleName": "Podcast",
         "CFBundleDisplayName": "Podcast Toolkit",
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
-        "CFBundleVersion": "0.1.0",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "0.2.0",
+        "CFBundleShortVersionString": "0.2.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
         # Finder/launchd 啟動時環境沒有 LANG/LC_ALL → Python 3.9 locale 退回
