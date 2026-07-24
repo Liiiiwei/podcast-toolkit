@@ -30,7 +30,9 @@ STAGE="_pkgbuild/breeze-stage"
 APP="dist/Podcast.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
 VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s*\"([^\"]+)\"',open('setup_app.py').read()).group(1))" 2>/dev/null || echo "0.1.0")
-DMG="dist/Podcast-Toolkit-${VER}.dmg"
+# DMG 檔名帶「打包日期」戳記，讓每次重打包可分辨是哪一版（不改動 app 內部版本號）
+BUILD_DATE=$(date +%Y%m%d)
+DMG="dist/Podcast-Toolkit-${VER}-${BUILD_DATE}.dmg"
 
 echo "→ 檢查作業系統與架構"
 if [[ "$(uname)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
