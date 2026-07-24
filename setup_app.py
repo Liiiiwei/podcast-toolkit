@@ -79,8 +79,8 @@ OPTIONS = {
         "CFBundleName": "Podcast",
         "CFBundleDisplayName": "Podcast Toolkit",
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
-        "CFBundleVersion": "0.1.0",
-        "CFBundleShortVersionString": "0.1.0",
+        "CFBundleVersion": "0.2.0",
+        "CFBundleShortVersionString": "0.2.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
         # 雙擊/open 啟動的 .app 不繼承終端機的 UTF-8 locale（preferred encoding = ascii），
