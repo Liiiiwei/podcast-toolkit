@@ -1,9 +1,16 @@
 """講者平滑 + 去甩尾（subtitle_cleanup）測試。"""
 from __future__ import annotations
 
+import pytest
+
 from podcast_toolkit.subtitle_cleanup import (
-    clamp_overlaps, destrand_cards, reflow_by_phrases, smooth_speakers,
+    carry_dangle_tail, clamp_overlaps, dedup_adjacent, destrand_cards,
+    heal_straddle, reflow_by_phrases, smooth_speakers,
 )
+
+# resegment.dangle_endings 預設集（掛尾挪卡測試共用）
+DANGLE = ["因為", "所以", "但是", "可是", "然後", "而且",
+          "或是", "還是", "而是", "就是", "就"]
 
 
 def _cards(*spans):
@@ -325,3 +332,182 @@ def test_clamp_same_start_skipped():
     cards = _cards((1.0, 3.0, "前句"), (1.0, 2.0, "後句"))
     out = clamp_overlaps(cards)
     assert out[0]["end"] == 3.0                             # 沒被夾成 1.0
+
+
+# ---- carry_dangle_tail（掛尾挪卡）----
+
+def test_carry_moves_tail_connector_to_next_same_speaker():
+    """卡尾連接詞（然後）搬到下一張同講者緊接卡的開頭；切點一致、時間連續。"""
+    cards = _cards((0.0, 4.0, "國際貿易啊然後"), (4.0, 6.0, "國貿啊"))
+    carry_dangle_tail(cards, {1: "c", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "國際貿易啊"
+    assert cards[1]["text"] == "然後國貿啊"
+    assert cards[0]["end"] == cards[1]["start"]
+
+
+def test_carry_skips_different_speaker():
+    """卡尾連接詞但下一卡是別人（連接詞收尾後換人接話）→ 不挪。"""
+    cards = _cards((0.0, 4.0, "國際貿易啊然後"), (4.0, 6.0, "國貿啊"))
+    carry_dangle_tail(cards, {1: "b", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "國際貿易啊然後"            # 原樣
+
+
+def test_carry_skips_real_pause():
+    """卡尾連接詞但下一卡有真氣口（gap ≥ 門檻）＝自然收束 → 不挪。"""
+    cards = _cards((0.0, 4.0, "國際貿易啊然後"), (5.0, 7.0, "國貿啊"))
+    carry_dangle_tail(cards, {1: "c", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "國際貿易啊然後"
+
+
+def test_carry_skips_connector_only_card():
+    """整卡就是連接詞（無前文）→ 不挪（不能挪成空卡）。"""
+    cards = _cards((0.0, 1.0, "然後"), (1.0, 3.0, "我們繼續"))
+    carry_dangle_tail(cards, {1: "c", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "然後"
+    assert cards[1]["text"] == "我們繼續"
+
+
+def test_carry_noop_when_no_dangle_tail():
+    """卡尾不是連接詞 → 完全不動。"""
+    cards = _cards((0.0, 3.0, "這件事很重要"), (3.0, 5.0, "我們再看"))
+    carry_dangle_tail(cards, {1: "c", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert [c["text"] for c in cards] == ["這件事很重要", "我們再看"]
+
+
+def test_carry_moves_multichar_connector_whole():
+    """卡尾「就是」整詞挪到下一卡，不是拆字。"""
+    cards = _cards((0.0, 4.0, "我的意思就是"), (4.0, 6.0, "這樣子"))
+    carry_dangle_tail(cards, {1: "c", 2: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "我的意思"
+    assert cards[1]["text"] == "就是這樣子"
+
+
+def test_carry_last_card_untouched():
+    """最後一張卡（無下一卡可挪）即使掛尾也不動。"""
+    cards = _cards((0.0, 2.0, "先講到這然後"),)
+    carry_dangle_tail(cards, {1: "c"}, dangle=DANGLE, gap=0.3)
+    assert cards[0]["text"] == "先講到這然後"
+
+
+# ---- dedup_adjacent（相鄰同講者去重）----
+
+def test_dedup_merges_same_speaker_identical():
+    """同講者、同文字、緊接的重覆卡 → 併成一張，時間跨兩卡、idx 重編。"""
+    cards = _cards((0.0, 1.0, "外文系啊"), (1.0, 2.0, "外文系啊"))
+    new, ns = dedup_adjacent(cards, {1: "c", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["外文系啊"]
+    assert (new[0]["start"], new[0]["end"]) == (0.0, 2.0)
+    assert [c["idx"] for c in new] == [1]
+    assert ns == {1: "c"}
+
+
+def test_dedup_keeps_cross_speaker_identical():
+    """跨講者同文字（Mic2/Mic3 各講一次「外文系啊」）＝兩人真話 → 保留兩張。"""
+    cards = _cards((0.0, 1.0, "外文系啊"), (1.0, 2.0, "外文系啊"))
+    new, ns = dedup_adjacent(cards, {1: "b", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["外文系啊", "外文系啊"]
+    assert ns == {1: "b", 2: "c"}
+
+
+def test_dedup_keeps_identical_across_pause():
+    """同講者同文字但有真停頓（刻意重覆講）→ 保留。"""
+    cards = _cards((0.0, 1.0, "真的假的"), (3.0, 4.0, "真的假的"))
+    new, _ = dedup_adjacent(cards, {1: "c", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["真的假的", "真的假的"]
+
+
+def test_dedup_reindexes_and_rebuilds_speakers():
+    """併中間一組後 idx 從 1 重編、speakers 依新 idx 重對。"""
+    cards = _cards((0.0, 1.0, "甲"), (1.0, 2.0, "乙"),
+                   (2.0, 3.0, "乙"), (3.0, 4.0, "丙"))
+    new, ns = dedup_adjacent(cards, {1: "c", 2: "c", 3: "c", 4: "b"}, gap=0.3)
+    assert [c["text"] for c in new] == ["甲", "乙", "丙"]
+    assert [c["idx"] for c in new] == [1, 2, 3]
+    assert ns == {1: "c", 2: "c", 3: "b"}
+
+
+def test_dedup_noop_when_different_text():
+    cards = _cards((0.0, 1.0, "這個"), (1.0, 2.0, "那個"))
+    new, _ = dedup_adjacent(cards, {1: "c", 2: "c"}, gap=0.3)
+    assert [c["text"] for c in new] == ["這個", "那個"]
+
+
+def test_dedup_single_track_no_merge():
+    """單軌（無 speakers）無從判同講者 → 不併，原樣回傳。"""
+    cards = _cards((0.0, 1.0, "外文系啊"), (1.0, 2.0, "外文系啊"))
+    new, ns = dedup_adjacent(cards, {}, gap=0.3)
+    assert [c["text"] for c in new] == ["外文系啊", "外文系啊"]
+    assert ns == {}
+
+
+# ---- heal_straddle（詞被切開歸位，flag4 根治）----
+# 情境：balanced_split 的「非詞界重罰」是軟懲罰不是硬禁——group 超長時仍可能切在詞中間；
+# 或 Breeze 0 秒硬斷落在 jieba 認得的詞內（耳|機、巧克|力）。carry/dedup 都碰不到它。
+# 修法：reflow 後補一道——只在「近乎 0 秒相接（無真氣口）＋卡界落在 jieba 詞中間」時，
+# 把跨界的詞整個挪到最近的一側詞界（就近搬、雙向、夾 max_w），時間線性插值切點，卡數不變。
+# gap 門檻是關鍵判別器：真硬斷 gap≈0（連續音）、jieba 誤黏的假詞界 gap≥0.12（有真停頓）。
+
+def test_heal_moves_forward_to_reunite_word():
+    """詞頭在前卡尾、詞尾在後卡頭（耳｜機，0 秒）→ 前推一字補回「耳機」，切點插值、時間連續。"""
+    cards = _cards((0.0, 1.0, "他戴著耳"), (1.0, 2.0, "機聽音樂"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["他戴著耳機", "聽音樂"]
+    assert out[0]["end"] == out[1]["start"] == pytest.approx(1.25)  # frac=1/4
+    assert [c["idx"] for c in out] == [1, 2]                        # 卡數/idx 不變
+
+
+def test_heal_moves_backward_when_nearer_boundary_is_left():
+    """最近詞界在左側（超好吃的｜巧克力）→ 後拉一字把整個「巧克力」歸下一卡。"""
+    cards = _cards((0.0, 1.0, "超好吃的巧"), (1.0, 2.0, "克力蛋糕吧"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["超好吃的", "巧克力蛋糕吧"]
+    assert out[0]["end"] == out[1]["start"] == pytest.approx(0.8)   # frac=(5-1)/5
+
+
+def test_heal_skips_when_real_pause():
+    """卡界落在詞中間但有真氣口（gap 0.2 ≥ 門檻）＝jieba 誤黏的假詞界（正確斷句）→ 不動。"""
+    cards = _cards((0.0, 1.0, "他戴著耳"), (1.2, 2.0, "機聽音樂"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["他戴著耳", "機聽音樂"]
+    assert (out[0]["end"], out[1]["start"]) == (1.0, 1.2)           # 時間全不動
+
+
+def test_heal_noop_on_clean_boundary():
+    """卡界本來就在詞界上（你好嗎｜謝謝你）→ 不動。"""
+    cards = _cards((0.0, 1.0, "你好嗎"), (1.0, 2.0, "謝謝你"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["你好嗎", "謝謝你"]
+
+
+def test_heal_respects_max_w_picks_other_direction():
+    """前推會撐爆 max_w（前卡已 9 字）→ 改後拉，把「耳機」整個歸下一卡。"""
+    cards = _cards((0.0, 1.0, "他戴著一個大大的耳"), (1.0, 2.0, "機聽音樂"))
+    out = heal_straddle(cards, gap=0.08, max_w=9)
+    assert [c["text"] for c in out] == ["他戴著一個大大的", "耳機聽音樂"]
+    assert all(len(c["text"]) <= 9 for c in out)
+
+
+def test_heal_skips_cross_speaker():
+    """跨講者的 0 秒詞中斷（reflow_by_phrases 已處理過的類型）→ 不搬跨人字，交回上游。"""
+    cards = _cards((0.0, 1.0, "他戴著耳"), (1.0, 2.0, "機聽音樂"))
+    out = heal_straddle(cards, {1: "a", 2: "c"}, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["他戴著耳", "機聽音樂"]
+
+
+def test_heal_noop_without_jieba(monkeypatch):
+    """jieba 缺席（word_break_ok 回 None）→ 無從判詞界，整段降級成 no-op。"""
+    from podcast_toolkit import word_break
+    monkeypatch.setattr(word_break, "word_break_ok", lambda _t: None)
+    cards = _cards((0.0, 1.0, "他戴著耳"), (1.0, 2.0, "機聽音樂"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["他戴著耳", "機聽音樂"]
+
+
+def test_heal_preserves_continuity_and_count_on_multi():
+    """多卡混合（一處該補、一處乾淨）→ 只動該補的那處，卡數不變、全序時間連續。"""
+    cards = _cards((0.0, 1.0, "你好嗎"), (1.0, 2.0, "謝謝你"),
+                   (2.0, 3.0, "他戴著耳"), (3.0, 4.0, "機聽音樂"))
+    out = heal_straddle(cards, gap=0.08, max_w=16)
+    assert [c["text"] for c in out] == ["你好嗎", "謝謝你", "他戴著耳機", "聽音樂"]
+    assert len(out) == 4
+    assert out[2]["end"] == out[3]["start"] == pytest.approx(3.25)
