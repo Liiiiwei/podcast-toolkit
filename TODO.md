@@ -113,3 +113,14 @@
 - [ ] **自訂圖示**：預設是 AppleScript applet 灰色圖；之後換成節目 icon（需 `.icns`，套到 `Podcast.app/Contents/Resources/applet.icns` + 重簽 + `touch` app）。
 - [ ] **釘 Dock**：之後把 app 拖進 Dock 固定一鍵開。
 - 注意：app 把 repo 路徑烤死，搬專案資料夾後要重生成（或重跑 `./install.sh`）。
+
+## 2026-07-28 後續（雙行字幕 + 六項 UX 落地後）
+
+- [ ] **重打包 .app / DMG**：本次改了 `index.html` / `app.js` / `app.css` 三個前端檔，
+  `/Applications/Podcast.app` 內是舊碼 → 開 app 看不到新 UI。要等分支合回 main 後跑 `./build_app.sh`。
+- [ ] **`_v2.srt` 缺席時的 fallback 對不回 speakers sidecar**：走 fallback 路徑時字幕卡與
+  `speakers.json` 的索引對不上，雙行/講者標會失準。不阻斷（正常流程都有 `_v2.srt`）。
+- [ ] **`mic_srt_existing` 實務上恆為空**：`episode_io.py:291` 掃 `04_工作檔/{name}_mic_{speaker}.srt`，
+  但 per-mic 轉錄已否決、那些檔不會產生 → `app.js:5468/5495/5532` 的「已轉/未轉」標記永遠顯示未轉。
+  要嘛接回實際來源、要嘛連同 per-mic modal 一起拿掉。
+- [ ] **Phase 2（單軌集手動配對 UI）**：等使用者授權才開工，未授權前不要動。
