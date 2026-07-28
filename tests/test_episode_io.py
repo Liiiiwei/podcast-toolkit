@@ -164,10 +164,10 @@ def test_save_state_speed_only_changes_when_in_payload(tmp_episode_dir):
     episode_io.save_state(ep, payload={"cards": [], "cuts": [[3.0, 4.0]]})
     data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
     assert data["speed"] == {"enabled": True, "factor": 1.15}, "主存檔把倍速洗掉了（53 分災難回歸）"
-    # 合成 modal 明確取消勾選（送 speed.enabled=false）→ 才清掉
+    # 合成 modal 明確取消勾選（送 speed.enabled=false）→ 寫 explicit false
     episode_io.save_state(ep, payload={"cards": [], "speed": {"enabled": False}})
     data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
-    assert "speed" not in data, "合成 modal 明確取消勾選時應清掉 speed"
+    assert data["speed"] == {"enabled": False}, "取消勾選要壓過預設的 enabled:true"
 
 
 def test_save_state_writes_cuts_to_yaml(tmp_episode_dir):
@@ -193,8 +193,10 @@ def test_save_state_empty_cuts_removes_key(tmp_episode_dir):
     assert "cuts" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
 
 
-def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
-    """旋轉全 0 / 倍速關閉 / 封面取消 → 對應 key 從 yaml 移除（回退預設）。"""
+def test_save_state_clears_rotate_and_writes_explicit_off_flags(tmp_episode_dir):
+    """旋轉全 0 → 移除 key（預設就是不轉）；倍速/封面取消 → 寫 explicit false。
+    後兩者的預設都是「開」（defaults.yaml speed.enabled / watermark.enabled），
+    pop 掉會被 config.merge 補回來 → 取消勾選卻仍生效。"""
     yaml_path = tmp_episode_dir / "episode.yaml"
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     data["rotate"] = {"a": 3.0}
@@ -213,8 +215,8 @@ def test_save_state_clears_rotate_and_speed_when_zero_or_off(tmp_episode_dir):
     )
     after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert "rotate" not in after
-    assert "speed" not in after
-    # 封面預設已開，取消要寫 explicit false（不能 pop，否則回退成預設 true）
+    # 倍速/封面預設已開，取消要寫 explicit false（不能 pop，否則回退成預設 true）
+    assert after["speed"] == {"enabled": False}
     assert after["watermark"] == {"enabled": False}
 
 
@@ -1266,3 +1268,89 @@ def test_load_state_has_speaker_tags_from_yaml_flag(tmp_episode_dir):
     yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
     state = episode_io.load_state(Episode(tmp_episode_dir))
     assert state["has_speaker_tags"] is True
+
+
+# --- 音檔候選分類（轉字幕面板的偵測結果）---
+
+
+def _put_audio(ep_dir, rel: str, size_bytes: int = 0) -> None:
+    """在集資料夾放一個假音檔（內容不重要，只有檔名與大小會被讀）。"""
+    path = ep_dir / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\0" * size_bytes)
+
+
+def test_classify_audio_tracks_marks_numbered_tracks_as_mic(tmp_episode_dir):
+    """檔名含 Track1 / Mic_2 → 判成分軌並抓出軌號，前端才能顯示「已辨識到 N 軌」。"""
+    _put_audio(tmp_episode_dir, "01_母帶/Track1-Mic 1.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/Mic_2.wav")
+    ep = Episode(tmp_episode_dir)
+    tracks = episode_io._classify_audio_tracks(ep, episode_io._list_audio_candidates(ep))
+    by_name = {t["name"]: t for t in tracks}
+    assert by_name["Track1-Mic 1.wav"]["kind"] == "mic"
+    assert by_name["Track1-Mic 1.wav"]["index"] == 1
+    assert by_name["Mic_2.wav"]["kind"] == "mic"
+    assert by_name["Mic_2.wav"]["index"] == 2
+
+
+def test_classify_audio_tracks_marks_plain_names_as_mix(tmp_episode_dir):
+    """沒有軌號的檔名 → 混音檔，index 為 None（不能亂猜軌號）。"""
+    _put_audio(tmp_episode_dir, "01_母帶/混音.wav")
+    ep = Episode(tmp_episode_dir)
+    (track,) = episode_io._classify_audio_tracks(
+        ep, episode_io._list_audio_candidates(ep)
+    )
+    assert track["kind"] == "mix"
+    assert track["index"] is None
+
+
+def test_classify_audio_tracks_rejects_out_of_range_index(tmp_episode_dir):
+    """只認 1-8 軌：Mic 2026.wav 這種年份／日期檔名不能被誤判成第 2026 軌。"""
+    _put_audio(tmp_episode_dir, "01_母帶/Mic 2026.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/Track9.wav")
+    ep = Episode(tmp_episode_dir)
+    tracks = episode_io._classify_audio_tracks(ep, episode_io._list_audio_candidates(ep))
+    assert {t["kind"] for t in tracks} == {"mix"}
+    assert all(t["index"] is None for t in tracks)
+
+
+def test_classify_audio_tracks_sorts_mics_first_by_index(tmp_episode_dir):
+    """排序：分軌在前依軌號遞增、混音檔在後 —— 前端直接照序渲染不再排一次。"""
+    _put_audio(tmp_episode_dir, "01_母帶/zz混音.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/Track3-Mic 3.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/Track1-Mic 1.wav")
+    ep = Episode(tmp_episode_dir)
+    tracks = episode_io._classify_audio_tracks(ep, episode_io._list_audio_candidates(ep))
+    assert [t["name"] for t in tracks] == [
+        "Track1-Mic 1.wav",
+        "Track3-Mic 3.wav",
+        "zz混音.wav",
+    ]
+
+
+def test_classify_audio_tracks_reports_size_mb(tmp_episode_dir):
+    """帶檔案大小，讓使用者一眼看出「這軌是不是空的／抓錯檔」。"""
+    _put_audio(tmp_episode_dir, "01_母帶/Track1.wav", size_bytes=2 * 1024 * 1024)
+    ep = Episode(tmp_episode_dir)
+    (track,) = episode_io._classify_audio_tracks(
+        ep, episode_io._list_audio_candidates(ep)
+    )
+    assert track["size_mb"] == 2.0
+
+
+def test_load_state_audio_tracks_matches_candidates(tmp_episode_dir):
+    """state.audio_tracks 與 audio_candidates 必須是同一批檔案（面板顯示的
+    就是下拉選單能選的），只是多帶分類欄位。"""
+    _put_audio(tmp_episode_dir, "01_母帶/Track1-Mic 1.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/Track2-Mic 2.wav")
+    _put_audio(tmp_episode_dir, "01_母帶/混音.wav")
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert {t["path"] for t in state["audio_tracks"]} == set(state["audio_candidates"])
+    assert sum(1 for t in state["audio_tracks"] if t["kind"] == "mic") == 2
+
+
+def test_load_state_audio_tracks_empty_when_no_audio(tmp_episode_dir):
+    """沒有外接音檔 → 空陣列（前端據此顯示 empty 態，不是 loading 態）。"""
+    state = episode_io.load_state(Episode(tmp_episode_dir))
+    assert state["audio_tracks"] == []
+    assert state["audio_candidates"] == []

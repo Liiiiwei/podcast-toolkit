@@ -402,10 +402,10 @@ h2 {
 
 .body {
   --drawer-h: 32vh;
-  /* 318 = topbar + body padding + version-tabs + controls + trim-controls + crop-info
-     + framing-row(旋轉/封面/倍速) + gaps。每加一排影片下方的控制列就要往上加，
-     否則影片撐太高、那排會被 .body-top 的 overflow:hidden 切掉（220→270→318 沿革）。 */
-  --video-budget: calc(100vh - 318px - var(--drawer-h));
+  /* 280 = topbar + body padding + version-tabs + controls + trim-controls + crop-info
+     + gaps。每加一排影片下方的控制列就要往上加，否則影片撐太高、那排會被
+     .body-top 的 overflow:hidden 切掉（220→270→318 沿革；旋轉/封面那排移走後 318→280）。 */
+  --video-budget: calc(100vh - 280px - var(--drawer-h));
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-columns: 1fr;
@@ -430,7 +430,7 @@ h2 {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* 安全網：萬一影片下方控制列（裁切比例 / 旋轉 / 倍速）在某些螢幕高度還是擠不下，
+  /* 安全網：萬一影片下方控制列（裁切比例 / 頭尾 / 字級）在某些螢幕高度還是擠不下，
      讓 video-pane 自己可捲動，控制列永遠摸得到，不會被硬切掉看不到。 */
   overflow-y: auto;
 }
@@ -641,39 +641,7 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
-/* === 輸出設定列：旋轉拉正 / 節目封面 / 倍速 === */
-.framing-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding-top: 6px;
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-.rotate-control {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.framing-label {
-  font-weight: 600;
-  color: var(--text);
-}
-.rotate-cam-badge {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  color: var(--accent);
-}
-.rotate-cam-badge:empty {
-  display: none;
-}
-.rotate-slider {
-  width: 120px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.rotate-input,
+/* === 合成設定 modal 的輸出選項：倍速 / 去空拍 / 節目封面 === */
 .speed-factor {
   width: 56px;
   padding: 4px 6px;
@@ -688,7 +656,8 @@ h2 {
 .speed-factor:disabled {
   opacity: 0.45;
 }
-.rotate-unit {
+/* chip 內的單位文字（「×」「停頓≥」「秒才剪」） */
+.chip-unit {
   color: var(--text-faint);
 }
 .btn-sm {
@@ -975,15 +944,19 @@ h2 {
     rgba(255, 255, 255, 0.16) var(--seek-pct) 100%
   );
 }
+/* 播放頭：白芯 + accent 環 + 深色外暈。加大到 16px 並補一圈暗影，
+   在淺色畫面上也看得出把手中心在哪（trim 把手是橘色方塊，兩者不會混淆）。 */
 .controls input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  margin-top: -4px; /* (thumb 14 - track 6) / 2 置中 */
+  width: 16px;
+  height: 16px;
+  margin-top: -5px; /* (thumb 16 - track 6) / 2 置中 */
   border-radius: 50%;
   background: var(--text);
-  border: 2px solid var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  border: 3px solid var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 1px 4px rgba(0, 0, 0, 0.5);
   transition: transform 0.1s ease;
 }
 .controls input[type="range"]:hover::-webkit-slider-thumb,
@@ -1001,12 +974,14 @@ h2 {
   background: var(--accent);
 }
 .controls input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--text);
-  border: 2px solid var(--accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  border: 3px solid var(--accent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 1px 4px rgba(0, 0, 0, 0.5);
 }
 .seek-wrap {
   flex: 1;
@@ -1085,8 +1060,11 @@ h2 {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-/* 拖曳中的浮動時間提示，跟著拖把走 */
-.trim-tooltip {
+/* 浮動時間提示，跟著把手走：.trim-tooltip 是頭尾裁切拖曳中顯示、
+   .seek-tooltip 是播放頭滑過 / 拖曳 / 鍵盤微調時顯示。兩者同時只會有一個亮
+   （拖 trim 把手時 pointer capture 在把手上，seek 收不到 pointermove）。 */
+.trim-tooltip,
+.seek-tooltip {
   position: absolute;
   bottom: calc(100% + 8px);
   transform: translateX(-50%);
@@ -2483,21 +2461,31 @@ dialog.modal::backdrop {
   display: none;
 }
 
+/* 卡片資訊層級：字幕本文是主角（.card-text 15px、亮色），左欄時間/卡號與右側
+   膠囊一律降到 11px 暗色當配角。邊框用 --border（比卡面亮一階）才切得出卡界線 ——
+   舊值跟背景同色等於沒有邊框，整串卡糊成一片。 */
 .card {
   display: grid;
   grid-template-columns: 18px 60px 1fr 24px;
-  gap: 8px;
+  gap: 10px;
   align-items: start;
   background: var(--surface-raised);
-  border: 1px solid var(--surface-raised);
-  border-radius: 4px;
-  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
   margin-bottom: 6px;
   font-size: var(--text-base);
   /* T60：先用 content-visibility 量測；長集 1000+ 卡時跳過離畫面區的 layout/paint。
      若日後仍卡頓再導入 windowing 庫（react-window 等）。 */
   content-visibility: auto;
-  contain-intrinsic-size: auto 56px;
+  contain-intrinsic-size: auto 64px;
+}
+/* 滑過提亮邊框：長列表裡看得出游標停在哪一張（不動背景，免得跟 playing/可疑態打架）。
+   只提亮三邊 —— 左邊框被鏡頭色 / 講者色徵用了，整條 border-color 會把它蓋掉。 */
+.card:hover {
+  border-top-color: var(--border-strong);
+  border-right-color: var(--border-strong);
+  border-bottom-color: var(--border-strong);
 }
 .card.suspicious {
   background: var(--danger-soft);
@@ -3019,11 +3007,16 @@ dialog.modal::backdrop {
     0 0 0 2px var(--accent-soft),
     0 2px 8px rgba(0, 0, 0, 0.35);
 }
+/* 字幕本文＝這張卡的主角。字級刻意比卡片基準（13px）大兩階到 15px，
+   跟左欄時間（11px mono）拉開層級，長時間校稿也比較不吃力。 */
 .card-text {
   color: var(--text);
-  line-height: 1.5;
+  font-size: var(--text-lg);
+  line-height: 1.6;
   outline: none;
   border-radius: 3px;
+  padding: 1px 3px;
+  margin: -1px -3px; /* 補回 padding，讓文字左緣仍對齊格線 */
   transition:
     background 0.1s,
     box-shadow 0.1s;
@@ -3128,7 +3121,7 @@ dialog.modal::backdrop {
   display: inline-block;
   margin-top: 4px;
   padding: 1px 6px;
-  font-size: 9px;
+  font-size: 10px; /* 原 9px 已低於字級階梯下限（11px），小到看不清 */
   font-weight: 700;
   border-radius: 8px;
   color: #fff;
@@ -3557,4 +3550,91 @@ dialog.modal::backdrop {
   font-size: var(--text-xs);
   color: var(--text-faint);
   line-height: 1.4;
+}
+
+/* 音檔偵測面板：轉字幕 modal 最上方，先讓使用者看到「系統認出了什麼」再選動作。
+   四態靠 data-state 切換配色：loading（讀取中）/ empty（沒外接音檔）/
+   ready（偵測到但沒設定）/ done（已設定分軌對應）。 */
+.track-detect {
+  margin: var(--space-sm) 0 var(--space-md);
+  padding: 10px 12px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-md);
+}
+.track-detect[data-state="ready"] {
+  border-left-color: var(--accent);
+}
+.track-detect[data-state="done"] {
+  border-left-color: var(--success);
+}
+.track-detect[data-state="empty"] {
+  border-left-color: var(--warning);
+}
+.track-detect-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text);
+}
+.track-detect-head [data-icon] {
+  color: var(--text-dim);
+  flex: none;
+}
+.track-detect-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.track-detect-list:empty {
+  display: none;
+}
+.track-detect-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+/* 軌別徽章：分軌用 accent、混音用中性色，一眼分得出哪些是麥克風軌 */
+.track-detect-badge {
+  flex: none;
+  min-width: 46px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  text-align: center;
+  background: var(--surface-raised);
+  color: var(--text-faint);
+}
+.track-detect-item[data-kind="mic"] .track-detect-badge {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.track-detect-name {
+  flex: 1;
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+.track-detect-size {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.track-detect-hint {
+  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+.track-detect-hint:empty {
+  display: none;
 }

@@ -88,9 +88,18 @@ def tmp_episode_full(tmp_episode_dir: Path, monkeypatch) -> Path:
     - 01_母帶/{name}.mp4 stub（空檔，由 monkeypatch ffprobe_duration 蓋掉量測）
     - assemble.ffprobe_duration 回傳固定 100.0 秒
     - shutil.which 對 ffmpeg / ffprobe 都回傳 True（避免本機沒裝測試直接掛掉）
+    - speed.enabled=false：預設倍速已改成開啟 1.1x，會把所有時間軸斷言（main_dur、
+      字幕時間、雙行 margin）乘上 1/1.1。這裡刻意關掉當基準線，測倍速的測試自己覆寫。
     """
     # 母帶 stub
     (tmp_episode_dir / "01_母帶" / "測試集.mp4").write_bytes(b"")
+
+    ep_yaml = tmp_episode_dir / "episode.yaml"
+    _data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    _data["speed"] = {"enabled": False}
+    ep_yaml.write_text(
+        yaml.safe_dump(_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
 
     from podcast_toolkit import assemble as _asm
 

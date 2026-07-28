@@ -227,7 +227,18 @@
             </button>
             <span id="time" class="time-readout">00:00 / 00:00</span>
             <div class="seek-wrap">
-              <input type="range" id="seek" min="0" max="100" value="0" />
+              <!-- step=0.01：原生 range 不寫 step 預設是 1，整條軸只有 101 個落點
+                   （37 分鐘的片每格 22 秒）根本對不準；0.01 → 10001 格，每格 0.22 秒。 -->
+              <input
+                type="range"
+                id="seek"
+                min="0"
+                max="100"
+                step="0.01"
+                value="0"
+                aria-label="播放進度，鍵盤 ← → 微調"
+                title="拖曳定位；滑過看目標時間，鍵盤 ← → 微調"
+              />
               <div class="trim-band head" id="trim-band-head"></div>
               <div class="trim-band tail" id="trim-band-tail"></div>
               <div
@@ -247,6 +258,8 @@
                 title="拖曳或鍵盤 ← → 微調（Shift=0.5s、Cmd=1s）"
               ></div>
               <div class="trim-tooltip" id="trim-tooltip" hidden></div>
+              <!-- 播放頭時間標籤：滑過 / 拖曳 / 鍵盤微調時顯示 m:ss.d，跟著把手走 -->
+              <div class="seek-tooltip" id="seek-tooltip" hidden></div>
             </div>
           </div>
           <div class="card-timeline-wrap" id="card-timeline-wrap" hidden>
@@ -296,9 +309,7 @@
             <summary class="framing-summary">
               <span data-icon="settings" data-icon-size="14"></span>
               <span>出片設定</span>
-              <span class="framing-summary-hint"
-                >裁切比例 · 頭尾 · 旋轉 · 字級 · 封面</span
-              >
+              <span class="framing-summary-hint">裁切比例 · 頭尾 · 字級</span>
               <span
                 class="framing-summary-caret"
                 data-icon="chevron-down"
@@ -414,49 +425,6 @@
                     </button>
                   </div>
                 </div>
-              </div>
-              <div class="framing-row">
-                <div
-                  class="rotate-control"
-                  title="把傾斜的畫面轉正（旋轉露出的黑角靠裁切內縮裁掉）"
-                >
-                  <span data-icon="rotate-cw" data-icon-size="14"></span>
-                  <span class="framing-label">旋轉</span>
-                  <span id="rotate-cam-badge" class="rotate-cam-badge"></span>
-                  <input
-                    type="range"
-                    id="rotate-slider"
-                    class="rotate-slider"
-                    min="-10"
-                    max="10"
-                    step="0.1"
-                    value="0"
-                  />
-                  <input
-                    type="number"
-                    id="rotate-input"
-                    class="rotate-input"
-                    min="-15"
-                    max="15"
-                    step="0.1"
-                    value="0"
-                  />
-                  <span class="rotate-unit">°</span>
-                  <button
-                    id="rotate-reset"
-                    type="button"
-                    class="btn btn-ghost btn-sm"
-                  >
-                    歸零
-                  </button>
-                </div>
-                <label
-                  class="toggle-chip"
-                  title="正片右上角放節目封面（片頭片尾不放）"
-                >
-                  <input type="checkbox" id="cover-toggle" />
-                  <span>節目封面</span>
-                </label>
               </div>
             </div>
           </details>
@@ -915,9 +883,9 @@
               min="1"
               max="2"
               step="0.05"
-              value="1.15"
+              value="1.1"
             />
-            <span class="rotate-unit">×</span>
+            <span class="chip-unit">×</span>
           </label>
         </div>
         <div>
@@ -927,7 +895,7 @@
           >
             <input type="checkbox" id="silence-toggle" checked />
             <span>去空拍</span>
-            <span class="rotate-unit">停頓≥</span>
+            <span class="chip-unit">停頓≥</span>
             <input
               type="number"
               id="silence-min"
@@ -937,7 +905,16 @@
               step="0.1"
               value="0.8"
             />
-            <span class="rotate-unit">秒才剪</span>
+            <span class="chip-unit">秒才剪</span>
+          </label>
+        </div>
+        <div>
+          <label
+            class="toggle-chip"
+            title="正片右上角放節目封面（片頭片尾不放）"
+          >
+            <input type="checkbox" id="cover-toggle" />
+            <span>節目封面</span>
           </label>
         </div>
         <div class="modal-hint">
@@ -1196,6 +1173,17 @@
       <div class="modal-head" id="transcribe-title">準備轉字幕</div>
       <div class="modal-body">
         <div id="transcribe-msg">…</div>
+        <!-- 音檔偵測結果：開這個 modal 之前使用者無從得知系統認出了哪幾軌，
+             只看到一顆按鈕。這裡把 audio_tracks 攤開（分軌 / 混音 / 已設定對應），
+             四態由 app.js 的 renderTranscribeTracks() 切換。 -->
+        <div class="track-detect" id="transcribe-tracks" data-state="loading">
+          <div class="track-detect-head">
+            <span data-icon="mic"></span>
+            <span id="transcribe-tracks-summary">讀取音檔清單中…</span>
+          </div>
+          <ul class="track-detect-list" id="transcribe-tracks-list"></ul>
+          <div class="track-detect-hint" id="transcribe-tracks-hint"></div>
+        </div>
         <div id="transcribe-breeze-row">
           <button
             type="button"
