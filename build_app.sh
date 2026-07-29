@@ -9,9 +9,15 @@
 # 設計：主 app 走精簡路線（不含 torch），轉字幕交給內附的 Breeze sidecar 子進程。
 #       sidecar = 相對化的 CLT Python3.9 framework + arm64 cp39 site-packages + Breeze 程式 + 權重。
 #
-# ── 先決條件：已組好的 Breeze sidecar 放在 _pkgbuild/breeze-stage/ ──────────────────
-#   這份 sidecar「組一次即可」，之後每次改程式重打包都沿用。其結構與來源：
-#     _pkgbuild/breeze-stage/
+# ── 先決條件：已組好的 Breeze sidecar 放在 ~/.podcast-toolkit/breeze-stage/ ─────────
+#   這份 sidecar「組一次即可」，之後每次改程式重打包都沿用。
+#   刻意放在 repo 外：它 3.7G、無法用腳本重建（py-runtime 相對化、arm64 site-packages
+#   都是手工組的），放在 git worktree 裡的話那個 worktree 被刪就跟著消失。2026-07-29
+#   之前它的實體在 Conductor 的 tashkent worktree、主樹只有 symlink 指過去 —— 刪掉那個
+#   workspace 就會靜默壞掉打包。搬到 ~/.podcast-toolkit/（本專案既有的使用者層狀態目錄，
+#   config.json / common-glossary.json 也在那）後，任何 worktree 都能打包。
+#   找尋順序：$BREEZE_STAGE 環境變數 → ~/.podcast-toolkit/breeze-stage → _pkgbuild/breeze-stage
+#   其結構與來源：
 #       py-runtime/            ← 複製 CLT 的 Python3.framework/Versions/3.9 並相對化（install_name 改 @rpath）
 #                                 來源：/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework
 #       site-packages/         ← arm64 cp39 wheels：torch、openai-whisper、numpy、jieba…（用 Breeze 專案 .venv 裝好後複製）
@@ -26,7 +32,16 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
-STAGE="_pkgbuild/breeze-stage"
+# sidecar 落腳處：環境變數優先（想暫時換一份時用），否則家目錄的固定家，
+# 最後才退回舊的 in-repo 路徑（向後相容，別台機器沿用舊佈局也還能打包）。
+STAGE="${BREEZE_STAGE:-}"
+if [[ -z "$STAGE" ]]; then
+    if [[ -d "$HOME/.podcast-toolkit/breeze-stage" ]]; then
+        STAGE="$HOME/.podcast-toolkit/breeze-stage"
+    else
+        STAGE="_pkgbuild/breeze-stage"
+    fi
+fi
 APP="dist/Podcast.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
 VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s*\"([^\"]+)\"',open('setup_app.py').read()).group(1))" 2>/dev/null || echo "0.1.0")
@@ -62,7 +77,7 @@ echo "→ 檢查 Breeze sidecar（$STAGE）"
 for part in py-runtime/bin/python3.9 site-packages make_subtitle.py cache/whisper/breeze-asr-25.pt; do
     if [[ ! -e "$STAGE/$part" ]]; then
         echo "✗ sidecar 缺件：$STAGE/$part"
-        echo "  請先依本檔頂端註解組好 _pkgbuild/breeze-stage/（組一次即可）。"
+        echo "  請先依本檔頂端註解組好 ~/.podcast-toolkit/breeze-stage/（組一次即可）。"
         exit 1
     fi
 done
