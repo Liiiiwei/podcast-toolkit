@@ -121,7 +121,8 @@
 - [x] **`_v2.srt` 缺席時的 fallback 對不回 speakers sidecar** ✅ 2026-07-29：改成
   `_v2.srt` 不在就整集關掉雙行（退回單行），不拿別份字幕的 idx 去配 sidecar。
   `assemble.py:1285`＋回歸測試 `test_prepare_assembly_without_v2_srt_falls_back_to_single_row`。
-- [ ] **`mic_srt_existing` 實務上恆為空**：`episode_io.py:291` 掃 `04_工作檔/{name}_mic_{speaker}.srt`，
-  但 per-mic 轉錄已否決、那些檔不會產生 → `app.js:5468/5495/5532` 的「已轉/未轉」標記永遠顯示未轉。
-  要嘛接回實際來源、要嘛連同 per-mic modal 一起拿掉。
+- [x] **`mic_srt_existing` 實務上恆為空** ✅ 2026-07-29：原判斷（「per-mic 轉錄已否決所以檔不會產生」）
+  是錯的 —— 寫檔端還活著（`gemini_subtitle.py:384`，走 `/api/transcribe/per-mic`）。真正的
+  bug 在前端：`loadEpisodeState()` 逐欄轉 camelCase 時漏接這欄，三處讀的
+  `state.mic_srt_existing` 恆為 `undefined`。已補接線並改讀 `state.micSrtExisting`。
 - [ ] **Phase 2（單軌集手動配對 UI）**：等使用者授權才開工，未授權前不要動。

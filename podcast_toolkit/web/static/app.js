@@ -2556,6 +2556,11 @@ async function loadEpisodeState() {
   // 合法 speaker = mics 的 key ∪ speakers_mapping 實際出現的 value。
   // Breeze 集 mics 為空、但 speakers.json 有逐卡講者 → 靠後者放行（has_speaker_tags=true）。
   state.mics = data.mics || {};
+  // 已轉過的分軌 SRT（speaker key 陣列）— 分軌轉錄 modal 標「已轉過/未轉」、
+  // 預設勾選、覆寫警告都看這個。key 是 snake_case 的後端欄位，state 存 camelCase。
+  state.micSrtExisting = Array.isArray(data.mic_srt_existing)
+    ? data.mic_srt_existing
+    : [];
   state.hasSpeakerTags = !!data.has_speaker_tags;
   state.cameraRule = data.camera_rule || {};
   // 雙行字幕設定：跟出片端同一份 cfg（沒回傳時當開啟，與 defaults.yaml 一致）
@@ -5465,7 +5470,7 @@ function stopPerMicPoll() {
 function renderPerMicList() {
   const list = $("#per-mic-list");
   const mics = state.mics || {};
-  const existing = new Set(state.mic_srt_existing || []);
+  const existing = new Set(state.micSrtExisting || []);
   const keys = Object.keys(mics).sort();
   if (!keys.length) {
     list.innerHTML = `<div class="modal-body-text">episode.yaml 沒有 mics 設定。</div>`;
@@ -5492,7 +5497,7 @@ function renderPerMicList() {
 }
 
 function updatePerMicOverwriteHint() {
-  const existing = new Set(state.mic_srt_existing || []);
+  const existing = new Set(state.micSrtExisting || []);
   const checked = Array.from(
     document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
   ).map((cb) => cb.dataset.speaker);
@@ -5529,7 +5534,7 @@ function openPerMicTranscribe() {
     updatePerMicOverwriteHint();
   };
   $("#per-mic-select-unconverted").onclick = () => {
-    const existing = new Set(state.mic_srt_existing || []);
+    const existing = new Set(state.micSrtExisting || []);
     document.querySelectorAll("#per-mic-list .per-mic-check").forEach((cb) => {
       cb.checked = !existing.has(cb.dataset.speaker);
     });
