@@ -116,8 +116,13 @@
 
 ## 2026-07-28 後續（雙行字幕 + 六項 UX 落地後）
 
-- [ ] **重打包 .app / DMG**：本次改了 `index.html` / `app.js` / `app.css` 三個前端檔，
-  `/Applications/Podcast.app` 內是舊碼 → 開 app 看不到新 UI。要等分支合回 main 後跑 `./build_app.sh`。
+- [x] **重打包 .app / DMG** ✅ 2026-07-29：合回 main（`da5b586`）後跑 `./build_app.sh`，
+  產出 `dist/Podcast-Toolkit-0.2.0-20260729-da5b586.dmg`，並安裝到 `/Applications/`
+  （舊 0.1.0 已移到垃圾桶）。實跑驗證 `/api/version` = `0.2.0+gda5b586.20260729T1320`。
+  - ⚠ **裝好還是可能看到舊 UI**：`launcher` 偵測到「已有 podcast server 在跑」就直接開既有
+    instance，不會啟新的。本次就撞到一個從 2026-07-16 起、跑了 12 天的舊 build（來自
+    tashkent worktree 的 `dist/`，port 55754）—— 裝新版後 `open -a` 只是把它叫到前景。
+    之後重打包完若 UI 沒變，先 `pgrep -fl Podcast` 看有沒有殘留舊行程，砍掉再開。
 - [x] **`_v2.srt` 缺席時的 fallback 對不回 speakers sidecar** ✅ 2026-07-29：改成
   `_v2.srt` 不在就整集關掉雙行（退回單行），不拿別份字幕的 idx 去配 sidecar。
   `assemble.py:1285`＋回歸測試 `test_prepare_assembly_without_v2_srt_falls_back_to_single_row`。
