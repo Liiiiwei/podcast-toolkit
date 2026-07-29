@@ -518,3 +518,24 @@ def test_prepare_assembly_dual_line_survives_subtitle_offset(tmp_episode_full):
     _set_cfg(tmp_episode_full, subtitle_offset_sec=5.0)
     margins = _yt_ass_margins(tmp_episode_full)
     assert sorted(m for m in margins if m) == [SAMPLE_STACKED_MARGIN] * 3
+
+
+def test_prepare_assembly_without_v2_srt_falls_back_to_single_row(tmp_episode_full):
+    """_v2.srt 缺席 → 整集關掉雙行，不要拿別份字幕的 idx 去配 sidecar。
+
+    sidecar 只存 flat 的「_v2 卡 idx → 講者」。_v2.srt 不在時 canonical 卡會 fallback
+    成 active_srt 指的那份（這裡是 01_母帶 的原 srt），編號體系不同 → 同一個 idx 指到
+    完全不同的時間，講者會貼到錯的人身上。寧可退回單行，也不要貼錯。
+    """
+    _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
+    # 原 srt：四張首尾相接的卡，但時間與 _v2 完全不同（idx 1 在這裡是 0~3 秒不是 0~4.2 秒）
+    (tmp_episode_full / "01_母帶" / "測試集.srt").write_text(
+        "1\n00:00:00,000 --> 00:00:03,000\n甲\n\n"
+        "2\n00:00:03,000 --> 00:00:06,000\n乙\n\n"
+        "3\n00:00:06,000 --> 00:00:09,000\n丙\n\n"
+        "4\n00:00:09,000 --> 00:00:12,000\n丁\n",
+        encoding="utf-8",
+    )
+    (tmp_episode_full / "03_成品" / "測試集_final_v2.srt").unlink()
+    # 沒有守衛的話這四張相接的卡會被 hold 撐出三處重疊 → 三筆抬高的 MarginV
+    assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))

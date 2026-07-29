@@ -1279,9 +1279,12 @@ def prepare_assembly(
     # 單軌集沒有 speakers sidecar → None → 產出的 ASS 與單行時代逐字相同。
     # 但真實素材的卡是一張接一張、幾乎不重疊（實測五集共 6636 張只有 1 筆重疊），
     # 所以還要 hold：換人接話時讓上一句多留幾秒，重疊才存在。
+    # sidecar 存的是 flat 的「_v2 卡 idx → 講者」，只有配上真的 _v2 卡才對得起來。
+    # _v2.srt 缺席時上面會 fallback 成 all_cards（來自 srt_path 指的那份），idx 編號體系
+    # 不同 → 講者會貼到錯的卡上。寧可整個關掉雙行（退回單行），也不要貼錯人。
     dual_spans = (
         _speaker_spans(ep, v2_canon_cards, srt_total_shift)
-        if cfg.get("subtitle_dual_line") else None
+        if cfg.get("subtitle_dual_line") and v2_canon_path.exists() else None
     )
     dual_hold = float(cfg.get("subtitle_dual_line_hold") or 0) if dual_spans else 0.0
 
