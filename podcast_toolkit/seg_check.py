@@ -1,6 +1,6 @@
 """podcast check-seg：斷句體檢（純讀取，不改字幕）。
 
-對一集的 _final_v2.srt 掃五類「斷句異味卡」，輸出卡號清單讓人到編輯器跳對：
+對一集的 _final_v2.srt 掃六類「斷句異味卡」，輸出卡號清單讓人到編輯器跳對：
   ① 過長        顯示字數 > resegment.hardlen（resegment 硬切上限，照定義不該超）
   ② 掛尾連接詞   卡尾停在 dangle_endings（然後/所以/因為…），讀起來像沒講完
   ③ 過短非反應詞 顯示字數 < SHORT_CHARS 且不在 reaction_words（多為自然停頓，可忽略大半）
@@ -8,6 +8,8 @@
                 （然/後、耳/機…）；jieba 未安裝時此味跳過並註明
   ⑤ 時間重疊     相鄰卡時間相疊（前卡未結束、後卡已開始）→ UI 疊字/兩短句重疊；
                 有 speakers（分軌）時只記同講者重疊，跨講者同時說話是設計不算
+  ⑥ 相鄰重複     同講者、時間緊接、文字相同的相鄰卡（分軌串接殘留）→ reflow 的
+                dedup_adjacent 會併，體檢後應為 0；跨講者同文字是兩人真話不算
 
 門檻全讀 cfg["resegment"]，字數用 sentence_resegment._is_punct 算（與斷句引擎同一把尺）。
 """
@@ -29,6 +31,8 @@ STRADDLE_GAP = 0.35
 _STRADDLE_WIN = 6
 # ⑤ 時間重疊：相鄰卡 前卡 end > 後卡 start + 此秒數 才判為重疊（濾浮點雜訊）
 _OVERLAP_EPS = 0.001
+# ⑥ 相鄰重複：同講者、卡間隔 < 此秒數、文字相同才判重複（對齊 subtitle_cleanup.dedup_adjacent）
+_DUP_GAP = 0.3
 # 行首 [Mic1] / [郝慧川] 之類講者標籤（對齊 ingest_breeze._LABEL_RE）
 _LABEL_RE = re.compile(r"^\s*\[\s*([^\]]+?)\s*\]\s*")
 
@@ -129,6 +133,31 @@ def _scan_overlap(cards: list, speakers: dict | None = None) -> list:
     return out
 
 
+def _scan_dup(cards: list, speakers: dict | None = None) -> list:
+    """⑥ 相鄰重複：回傳 [(前卡idx, 後卡idx, 文字), ...]。
+
+    同一講者、時間緊接（間隔 < _DUP_GAP）、去空白後文字相同的相鄰對——多為分軌串接
+    殘留的重覆卡（reflow 的 dedup_adjacent 會併，體檢後應為 0）。跨講者同文字
+    （Mic2/Mic3 各說一次「外文系啊」）是兩人真話、不算；speakers 空／None（單軌）
+    無從判同講者 → 不檢（與 dedup_adjacent 的單軌 no-op 一致）。
+    """
+    if not speakers:
+        return []
+    timed = [c for c in cards if len(c) >= 4]
+    ordered = sorted(timed, key=lambda c: float(c[2]))
+    out = []
+    for prev, cur in zip(ordered, ordered[1:]):
+        if speakers.get(int(prev[0])) != speakers.get(int(cur[0])):
+            continue
+        if float(cur[2]) - float(prev[3]) >= _DUP_GAP:
+            continue
+        pt = _strip_label(str(prev[1]))
+        ct = _strip_label(str(cur[1]))
+        if pt and pt == ct:
+            out.append((prev[0], cur[0], pt))
+    return out
+
+
 def scan(cards: list, rcfg: dict, speakers: dict | None = None) -> dict:
     """回傳五類異味卡。純函式，方便測試。
 
@@ -154,14 +183,16 @@ def scan(cards: list, rcfg: dict, speakers: dict | None = None) -> dict:
             shortc.append((idx, txt))
     straddle = _scan_straddle(cards, float(rcfg.get("straddle_gap", STRADDLE_GAP)))
     overlap = _scan_overlap(cards, speakers)
+    dup = _scan_dup(cards, speakers)
     return {"long": longc, "dangle": dangling, "short": shortc,
-            "straddle": straddle, "overlap": overlap}
+            "straddle": straddle, "overlap": overlap, "dup": dup}
 
 
 def _report(name: str, total: int, res: dict, *, limit: int, hardlen: int) -> None:
     longc, dangling, shortc = res["long"], res["dangle"], res["short"]
     straddle = res.get("straddle")
     overlap = res.get("overlap") or []
+    dup = res.get("dup") or []
     print(f"\n{name}　共 {total} 卡")
     print(f"  ① 過長(>{hardlen}字)：{len(longc)} 卡"
           + ("　✅ 健康（resegment 硬切上限就是此值）" if not longc else "　⚠️ 該為 0，超出代表沒切乾淨"))
@@ -197,7 +228,13 @@ def _report(name: str, total: int, res: dict, *, limit: int, hardlen: int) -> No
     if len(overlap) > limit:
         print(f"      …還有 {len(overlap) - limit} 對")
 
-    tot = len(longc) + len(dangling) + len(shortc) + len(straddle or []) + len(overlap)
+    print(f"  ⑥ 相鄰重複：{len(dup)} 對　⚠️ 同講者緊接同文字（分軌串接殘留）→ 應為 0，非 0 代表 dedup 沒跑或關掉")
+    for pidx, cidx, t in dup[:limit]:
+        print(f"      #{pidx}→#{cidx}  「{t}」")
+    if len(dup) > limit:
+        print(f"      …還有 {len(dup) - limit} 對")
+
+    tot = len(longc) + len(dangling) + len(shortc) + len(straddle or []) + len(overlap) + len(dup)
     pct = tot / total * 100 if total else 0.0
     print(f"  → 異味卡合計 {tot} / {total}（{pct:.1f}%）")
 

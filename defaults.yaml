@@ -19,9 +19,15 @@ resegment:
 reflow:
   gap: 0.3            # 同講者、間隔 < 此值 → 同一 run 一起重切（放大＝更少被換氣打斷）
   max_w: 16          # 單一語句 > 此值才交 word_break 評分切
-  merge_short: true  # 全域啟用：保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target
-                     #（治 Breeze 逐字殘留：『還好／一點』併成『還好一點』）。false＝只併單字碎卡
+  merge_short: false # 保守回退用「加強併接」把過碎短卡貪婪併到 ≤merge_target（治 Breeze 逐字殘留：
+                     #『還好／一點』併成『還好一點』）。false＝只併單字碎卡。此前 reflow 段沒接進
+                     # cfg 白名單而失效，實際生效值一直是 false；接上後續用 false 保持既有各集行為不變
   merge_target: 9    # merge_short 的併接上限字數（人手實測中位數 ≈9，避免併過頭跨子句）
+  carry_dangle: true # 掛尾挪卡：卡尾懸空連接詞（然後/所以…）搬到下一張同講者緊接卡的開頭
+                     # （用 resegment.dangle_endings 那組詞；有真氣口或換講者則不挪）。false＝關
+  dedup_adjacent: true # 相鄰去重：同講者、同文字、緊接的重覆卡併成一張（跨講者同文字＝兩人真話，保留）
+  heal_straddle: true # 詞界歸位：真硬斷（≈0 秒相接）落在 jieba 詞中間 → 就近搬回詞界（根治「詞被切開」）
+  heal_gap: 0.08     # 相鄰卡間隔 < 此值才視為「無氣口真硬斷」動手歸位；≥ 此值＝有真停頓（斷得對）不動
 
 # 編輯介面標紅「可疑空拍卡」的門檻。三條 OR，命中任一條就標紅。
 # reaction_words 沿用 resegment.reaction_words。
@@ -85,9 +91,23 @@ common_glossary:
   - canonical: "惡魔老闆"
     note: "岳啟儒的稱號；ASR 常聽錯成『莫老闆』等"
 
+# 雙行字幕：分軌集（有 speakers sidecar）兩人同時說話時，把重疊的字幕卡排成上下兩排
+# （上排＝先開始講的那句：新來的字從下排進場、舊的往上讓）。單軌集沒 sidecar 自動 no-op。
+# 設 false 可整集關掉：libass 本來就會把重疊事件自動錯開，只是上下順序與間距都不受控
+# （實測 YT 開啟後間距 = 字級×1.3 = 62px 精準；關閉則由 libass 自行決定）。
+subtitle_dual_line: true
+
+# 換人接話時，讓上一句多留在畫面上幾秒（0 = 關掉，雙行就幾乎不會出現）。
+# 為什麼要這一味：字幕來自單軌混音轉錄，卡是一張接一張產生的（間隔 0~0.15 秒），
+# 講者標是事後貼的能量標籤——「兩人同時說話」在資料層面不存在。實測五集分軌集
+# 共 6636 張卡，時間真正重疊的只有 1 筆，不製造重疊雙行永遠不會觸發。
+# 1.0 秒的實測覆蓋率（排到上排的事件佔全部字幕事件）：沈奕妤 8.1%、魁哥 9.8%、
+# 王奕翔 6.4%、象總 7.5%、王劭 21.3%。調大 → 更多雙行但上一句留得更久。
+subtitle_dual_line_hold: 1.0
+
 subtitle_style:
   font_name: "Hiragino Sans GB"
-  font_size: 48
+  font_size: 60
   bold: 1
   primary_colour: "&H00FFFFFF"
   outline_colour: "&H00000000"
@@ -130,8 +150,8 @@ watermark:
 # 燒字幕模式：字幕先燒進畫面再 setpts → 自動同步；sidecar 模式：另存的 .srt 同步 ÷ 倍率。
 # factor 夾在 atempo 合法區間 0.5–2.0。
 speed:
-  enabled: false
-  factor: 1.25
+  enabled: true
+  factor: 1.1
 
 # 全片去空拍（偵測中段靜音→跳剪掉）。合成設定視窗可開關。預設關。
 # min_silence：停頓 >= 幾秒才剪（避免砍掉氣口/自然停頓）。

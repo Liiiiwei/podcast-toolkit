@@ -1,5 +1,6 @@
 """把 Episode 物件 + _v2.srt 組成前端要的 JSON state，並負責寫回。"""
 from __future__ import annotations
+import re
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +134,43 @@ def _list_audio_candidates(ep: Episode) -> list[str]:
     return out
 
 
+# 分軌檔名慣例：Track1-Mic 1.wav / Mic_2.wav / Track-3.wav。與前端 guessMicAssignment
+# 的 regex 同一套規則，兩邊判斷才會一致（前端負責配對 a/b/c，這裡只負責「是不是分軌」）。
+_MIC_TRACK_RE = re.compile(r"(?:track|mic)[\s_-]?(\d+)", re.IGNORECASE)
+
+
+def _classify_audio_tracks(ep: Episode, rels: list[str]) -> list[dict]:
+    """把音檔候選標上「分軌 / 混音」與檔案大小，給轉字幕面板顯示偵測結果。
+
+    刻意不動 _list_audio_candidates 的扁平回傳型別（前端四個消費端都吃字串陣列），
+    改用獨立的 state key。分類只是 heuristic：檔名有 Track/Mic + 數字視為分軌，
+    其餘視為混音檔。前端顯示會標明是自動判斷，使用者仍可在「設定分軌」裡手動改。
+    """
+    out: list[dict] = []
+    for rel in rels:
+        name = Path(rel).name
+        m = _MIC_TRACK_RE.search(name)
+        idx = int(m.group(1)) if m else None
+        # 只認 1-8 軌；Mic 2026.wav 這種年份誤判擋掉
+        is_mic = idx is not None and 1 <= idx <= 8
+        try:
+            size_mb = round((ep.dir / rel).stat().st_size / (1024 * 1024), 1)
+        except OSError:
+            size_mb = 0.0
+        out.append(
+            {
+                "path": rel,
+                "name": name,
+                "kind": "mic" if is_mic else "mix",
+                "index": idx if is_mic else None,
+                "size_mb": size_mb,
+            }
+        )
+    # 分軌排前面（依軌號），混音檔排後面；前端不用再排序
+    out.sort(key=lambda t: (t["kind"] != "mic", t["index"] or 0, t["name"]))
+    return out
+
+
 def _list_srt_candidates(ep: Episode) -> list[str]:
     """找字幕檔候選；掃集根目錄 + 03_成品/ + 04_工作檔/，回相對路徑。
 
@@ -208,6 +246,8 @@ def load_state(ep: Episode) -> dict[str, Any]:
         has_main_video = ep.main_video().is_file()
     except Exception:
         has_main_video = False
+    # 掃一次，扁平清單（下拉選單用）與分類結果（轉字幕偵測面板用）共用
+    audio_cands = _list_audio_candidates(ep)
     return {
         "name": ep.name,
         "crop_yt": ep.cfg.get("crop_yt"),
@@ -257,7 +297,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # T23a-followup：cam B 候選清單（前端下拉用，避免使用者手改 yaml）
         "cam_b_candidates": _list_cam_b_candidates(ep),
         # 外接音檔候選（.wav/.mp3/.m4a/...，掃 01_母帶 + 02_素材）
-        "audio_candidates": _list_audio_candidates(ep),
+        "audio_candidates": audio_cands,
+        # 同一批候選但帶分類（分軌 / 混音 / 軌號 / 檔案大小）：轉字幕面板顯示
+        # 「已辨識到幾軌」用，讓使用者不必開設定就知道系統看到什麼。
+        "audio_tracks": _classify_audio_tracks(ep, audio_cands),
         # 「最終合成檔案總覽」用：cam A 候選 + 目前 cam A + 字幕檔（read-only 顯示）
         "cam_a_candidates": _list_mother_videos(ep),
         "cam_a_path": cam_a_rel,
@@ -267,6 +310,11 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # 前端 caption preview 用：對齊 ffmpeg ASS 實際輸出字幕大小（font_size / output_height）
         "subtitle_style": dict(ep.cfg.get("subtitle_style") or {}),
         "subtitle_style_reels": dict(ep.cfg.get("subtitle_style_reels") or {}),
+        # 雙行字幕（分軌集重疊時排上下兩排）+ hold 秒數：前端 caption preview 要跟出片端
+        # 同一套規則（見 dual_line.hold_tail / assemble.py 的 dual_spans），否則真實素材的卡
+        # 幾乎不重疊 → 預覽永遠單行、成品卻是雙行，使用者看預覽做的判斷會失準。
+        "subtitle_dual_line": bool(ep.cfg.get("subtitle_dual_line")),
+        "subtitle_dual_line_hold": float(ep.cfg.get("subtitle_dual_line_hold") or 0),
         "output_resolution_yt": (ep.cfg.get("encode") or {}).get("resolution") or "1920x1080",
         "output_resolution_reels": "1080x1920",
     }
@@ -373,17 +421,19 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     if "cover_enabled" in payload:
         data["watermark"] = {"enabled": bool(payload.get("cover_enabled"))}
 
-    # 正片倍速：enabled 時寫 {enabled, factor}（夾在 0.5–2.0）；關閉 → 移除整段（回退預設不加速）
+    # 正片倍速：enabled 時寫 {enabled, factor}（夾在 0.5–2.0）。
+    # 關閉要寫 explicit false，不能 pop —— 預設已改成開啟 1.1x（defaults.yaml），
+    # pop 掉會被預設補回來變成「取消勾選卻還是加速」。同 cover_enabled 的處理。
     if "speed" in payload:
         sp = payload.get("speed") or {}
         if sp.get("enabled"):
             try:
-                factor = float(sp.get("factor") or 1.25)
+                factor = float(sp.get("factor") or 1.1)
             except (TypeError, ValueError):
-                factor = 1.25
+                factor = 1.1
             data["speed"] = {"enabled": True, "factor": min(2.0, max(0.5, factor))}
         else:
-            data.pop("speed", None)
+            data["speed"] = {"enabled": False}
 
     # 全片去空拍：enabled 時寫 {enabled, min_silence}；關閉 → 移除整段（回退預設不去空拍）
     if "silence_trim" in payload:

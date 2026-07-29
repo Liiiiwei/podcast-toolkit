@@ -284,3 +284,28 @@ def test_merge_resegment_straddle_keys_readback():
     assert cfg2["resegment"]["straddle_gap"] == 0.5
     assert cfg2["resegment"]["jieba_dict"] == "/tmp/dict.txt"
     assert cfg2["resegment"]["min_chars"] == 8  # 其餘欄位仍走 defaults
+
+
+def test_merge_reflow_keys_readback():
+    """reflow 走整段 dict merge：defaults 透出、episode.yaml 逐 key 覆寫讀得回。
+    修白名單前此段沒接進 cfg → 寫進 yaml 也讀不回（merge_short 等同永遠 false）。"""
+    defaults = {**DEFAULTS,
+                "reflow": {"gap": 0.3, "max_w": 16, "merge_short": False,
+                           "heal_straddle": True, "heal_gap": 0.08}}
+    cfg = config.merge(defaults, {"name": "t"})
+    assert cfg["reflow"]["merge_short"] is False
+    assert cfg["reflow"]["heal_straddle"] is True
+    assert cfg["reflow"]["heal_gap"] == 0.08
+    # episode 只覆寫部分欄位 → 其餘走 defaults
+    cfg2 = config.merge(defaults, {"name": "t",
+                                   "reflow": {"heal_gap": 0.05, "merge_short": True}})
+    assert cfg2["reflow"]["heal_gap"] == 0.05
+    assert cfg2["reflow"]["merge_short"] is True
+    assert cfg2["reflow"]["max_w"] == 16  # 其餘欄位仍走 defaults
+
+
+def test_merge_reflow_missing_returns_empty_dict():
+    """defaults 無 reflow 段 → cfg 不含 reflow key（deny-list 深合併只掃 defaults 有的鍵）。
+    消費端 reflow_episode 走 `cfg.get("reflow") or {}`，取不到就退空 dict、各 key 走保守預設。"""
+    cfg = config.merge(DEFAULTS, {"name": "t"})
+    assert (cfg.get("reflow") or {}) == {}

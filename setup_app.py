@@ -84,10 +84,10 @@ OPTIONS = {
         "CFBundleDisplayName": "Podcast Toolkit",
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
         # CFBundleVersion 帶成每次都變的 build 識別碼（給 Finder / crash log 認版），
-        # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回 0.1.0。
-        # CFBundleShortVersionString 維持 marketing 版號不動。
-        "CFBundleVersion": os.environ.get("BUILD_ID", "0.1.0"),
-        "CFBundleShortVersionString": "0.1.0",
+        # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回版號。
+        # CFBundleShortVersionString 維持 marketing 版號不動（0.2.0）。
+        "CFBundleVersion": os.environ.get("BUILD_ID", "0.2.0"),
+        "CFBundleShortVersionString": "0.2.0",
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
         # Finder/launchd 啟動時環境沒有 LANG/LC_ALL → Python 3.9 locale 退回

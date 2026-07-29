@@ -73,12 +73,17 @@ const state = {
   outputResReels: { w: 1080, h: 1920 },
   // 節目封面（右上角小徽章）開關 / 正片倍速 {enabled,factor} / 合成字幕模式
   coverEnabled: false,
-  speed: { enabled: true, factor: 1.15 },
+  speed: { enabled: true, factor: 1.1 },
   // 全片去空拍（偵測中段靜音→跳剪）：{enabled, minSilence 秒}。在合成設定視窗設、存進 episode.yaml
   silenceTrim: { enabled: true, minSilence: 0.8 },
   subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
   // 非破壞性字幕偏移（秒）：存 episode.yaml，預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
   subtitleOffsetSec: 0,
+  // 雙行字幕（分軌集）：預覽要跟出片端同一套規則，不然預覽單行、成品雙行。
+  // subtitleDualLineHold = 換人接話時上一句多留在畫面上的秒數（0/負 = 關）。
+  // 兩個值都來自 episode cfg（defaults.yaml: subtitle_dual_line / subtitle_dual_line_hold）。
+  subtitleDualLine: true,
+  subtitleDualLineHold: 1.0,
   // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
   outputDirty: false,
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
@@ -537,6 +542,8 @@ function setupCaptionSize() {
 
 // 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
 // 「先 rotate 源、再從軸對齊矩形 crop」語意。crop-frame / caption-overlay 不旋轉（維持軸對齊）。
+// UI 的旋轉控制項已移除，但後端仍吃 episode.yaml 的 rotate：舊集手寫過角度時，
+// 預覽要跟著轉才不會與成品不一致，所以這段保留。
 function applyRotationPreview() {
   const a = Number(state.rotate?.a) || 0;
   const b = Number(state.rotate?.b) || 0;
@@ -546,29 +553,8 @@ function applyRotationPreview() {
   if (vb) vb.style.transform = b ? `rotate(${b}deg)` : "";
 }
 
-// 旋轉控制目前編哪台（跟 crop 共用 A/B context）；單機集恆 "a"
-function activeRotateCam() {
-  return getActiveCropCam();
-}
-
-// 同步旋轉滑桿 / 數字 / 徽章到目前 active cam 的角度
-function syncRotateControls() {
-  const cam = activeRotateCam();
-  const deg = Number(state.rotate?.[cam]) || 0;
-  const slider = document.querySelector("#rotate-slider");
-  const num = document.querySelector("#rotate-input");
-  const badge = document.querySelector("#rotate-cam-badge");
-  if (slider) slider.value = String(deg);
-  if (num) num.value = String(deg);
-  if (badge) {
-    const hasCamB = !!(state.cameras && state.cameras.b);
-    badge.textContent = hasCamB ? (cam === "b" ? "B" : "A") : "";
-  }
-}
-
 function renderCropInfo() {
   applyRotationPreview();
-  syncRotateControls();
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
   // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
@@ -658,11 +644,120 @@ function activeCardAt(t) {
   return null;
 }
 
+// === 雙行字幕的 hold（與出片端同一套規則）===
+// 這兩個常數必須跟後端 podcast_toolkit/dual_line.py 的同名常數一致，
+// 改一邊就要改另一邊，否則預覽與成品的雙行時機會對不上。
+const HOLD_GAP_SEC = 0.3; // 相鄰兩卡間隔小於這個秒數才算「接話」，超過當換話題不延長
+const MIN_STACK_SEC = 0.25; // 延不出這個長度的重疊就整個放棄（抬起來只閃一下）
+
+// 逐條對應 dual_line.py 的 hold_tail()：換人接話時，把上一句的結束時間往後延最多
+// holdSec 秒，人為製造重疊，雙行才有機會觸發（真實素材的卡一張接一張、幾乎不重疊，
+// 光靠「重疊才分排」這條規則等於永遠不觸發）。
+// rows 每筆需要 {key, start, end, speaker}；回傳 Map(key → 延長後的 end)，
+// 沒被延長的卡不進 Map（呼叫端用 ?? r.end 退回原值）。
+function computeHoldEnds(rows, holdSec) {
+  const out = new Map();
+  // holdSec <= 0 完全不動（含負數：負數只能當關掉，絕不可縮短任何卡）
+  if (!(holdSec > 0)) return out;
+  // 與 dual_line.py 一樣先按 (start, end) 升冪；expandedCards 只按 start 排，同 start 未定序
+  const ordered = rows
+    .slice()
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 0; i + 1 < ordered.length; i++) {
+    const cur = ordered[i];
+    const nxt = ordered[i + 1];
+    const spk = cur.speaker;
+    const nxtSpk = nxt.speaker;
+    // 沒講者標 → 分不出是不是換人；同一人接自己 → 不算接話
+    if (!spk || !nxtSpk || spk === nxtSpk) continue;
+    const gap = nxt.start - cur.end;
+    if (gap < 0 || gap >= HOLD_GAP_SEC) continue; // 已重疊 → 不必動；隔太久 → 不是接話
+    const cap = cur.end + holdSec;
+    let limit = nxt.end; // 不超過接話那句的結束（否則它消失了上一句還掛著）
+    for (let j = i + 2; j < ordered.length; j++) {
+      if (ordered[j].start >= cap) break; // 再後面的卡都碰不到，不影響上限
+      if (ordered[j].speaker === spk) {
+        limit = Math.min(limit, ordered[j].start); // 不撞到同一位講者的下一句
+        break;
+      }
+    }
+    const newEnd = Math.min(cap, limit);
+    if (newEnd - nxt.start >= MIN_STACK_SEC) out.set(cur.key, newEnd);
+  }
+  return out;
+}
+
+// 有講者標（分軌 mics 或 Breeze speakers.json）→ 預覽走雙行那條路（renderCaption 與 hold 共用）
+function showsTwoLineCaption() {
+  return (
+    (state.mics && Object.keys(state.mics).length > 0) || !!state.hasSpeakerTags
+  );
+}
+
+// hold 結果快取：1400+ 張卡不能每幀重算（排序 + 逐卡查講者 + 掃描）。
+// 失效判斷 = cards 陣列 / speakersMapping 換了新物件（換集、undo、重新載入），
+// 或 signature 變了（卡片張數、時間、講者標數、刪除狀態、hold 設定）。
+let _holdCache = { cards: null, speakers: null, sig: null, map: new Map() };
+
+// 只 fold 會影響 hold 的欄位，純算術不配置記憶體 → 比重跑一次 hold 便宜一個量級。
+// 刪除狀態逐卡 fold（不是只 fold 張數）：這樣「復原 A 同時刪掉 B」張數沒變也抓得到。
+function _holdSignature(exp, holdSec) {
+  let sig = exp.length * 31 + state.speakersMapping.size;
+  sig = sig * 31 + holdSec * 1000;
+  for (let i = 0; i < exp.length; i++) {
+    sig =
+      (sig * 31 +
+        exp[i].start * 1000 +
+        exp[i].end * 997 +
+        (state.deletions.has(exp[i].key) ? 13 : 0)) %
+      4294967296;
+  }
+  return sig;
+}
+
+// 這一集會不會雙行 → 決定要不要套 hold（沿用 renderCaption 的 showsTwoLineCaption 條件）
+function holdEndMap(exp) {
+  const holdSec =
+    state.subtitleDualLine && showsTwoLineCaption()
+      ? Number(state.subtitleDualLineHold) || 0
+      : 0;
+  const sig = _holdSignature(exp, holdSec);
+  if (
+    _holdCache.cards === state.cards &&
+    _holdCache.speakers === state.speakersMapping &&
+    _holdCache.sig === sig
+  ) {
+    return _holdCache.map;
+  }
+  // 刪掉的卡不進 hold 計算：出片端是先濾掉刪段卡才排雙行的（assemble.py 的
+  // filter_srt_by_intervals → _write_ass_from_srt）。預覽若把刪卡也算進去，
+  // 「換人接話」會判斷成不同結果 —— 刪掉中間那張就會多算或少算一次雙行。
+  const rows = exp
+    .filter((r) => !state.deletions.has(r.key))
+    .map((r) => ({
+      key: r.key,
+      start: r.start,
+      end: r.end,
+      speaker: computeEffectiveSpeaker(r.key),
+    }));
+  _holdCache = {
+    cards: state.cards,
+    speakers: state.speakersMapping,
+    sig,
+    map: computeHoldEnds(rows, holdSec),
+  };
+  return _holdCache.map;
+}
+
 // 分軌版：拿出 t 當下所有 active 卡（可能不只一張：兩人同時講話 → 兩張不同 speaker 的卡同時在跑）。
 // 單軌集 / 沒重疊 → 回 [activeCardAt] 退化結果，給 renderCaption 統一邏輯用。
+// 結束時間吃 hold 延長後的值（沒被延長的卡就是原本的 end），預覽才跟成品一致。
 function activeCardsAt(t) {
   const exp = expandedCards();
-  const hits = exp.filter((r) => t >= r.start && t < r.end);
+  const holds = holdEndMap(exp);
+  const hits = exp.filter(
+    (r) => t >= r.start && t < (holds.get(r.key) ?? r.end),
+  );
   if (hits.length) return hits;
   // fallback 同 activeCardAt：尾段空窗找最後一張 sub-card
   for (let i = exp.length - 1; i >= 0; i--) {
@@ -1614,8 +1709,7 @@ function renderCaption() {
   // 有講者標（分軌 mics 或 Breeze speakers.json）→ 找所有 active 卡分行
   //   （兩人同時講話 → 上下兩行 + speaker 著色；分講者切卡的集多半每刻單卡 = 單行帶著色）
   // 純單軌無講者 → 退回單張卡的純文字（舊行為）
-  const showTwoLine =
-    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
+  const showTwoLine = showsTwoLineCaption();
   if (!showTwoLine) {
     const r = activeCardAt(t);
     if (!r || state.deletions.has(r.key)) {
@@ -1633,8 +1727,11 @@ function renderCaption() {
     overlay.classList.remove("multi-speaker");
     return;
   }
-  // 依 speaker key 字典序排（同 srt_merge），保證重疊時上下行順序穩定
+  // 陣列順序 = 畫面由上到下：先開始的排上面（新來的從下排進場、舊的往上讓），
+  // 同時開始才比講者 key 當 tie-break。與後端 dual_line.layout 的排序鍵
+  // (start, speaker, i) 一致，否則預覽與成品的上下兩排會相反。
   rows.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start;
     const sa = computeEffectiveSpeaker(a.key) || "";
     const sb = computeEffectiveSpeaker(b.key) || "";
     return sa.localeCompare(sb);
@@ -2402,12 +2499,12 @@ async function loadEpisodeState() {
   const rot = data.rotate || {};
   state.rotate = { a: Number(rot.a) || 0, b: Number(rot.b) || 0 };
   state.coverEnabled = !!data.cover_enabled;
-  // 預設 ON：episode.yaml 沒有 speed/silence_trim 欄位時，合成 YT 預設 1.15x 倍速 + 去空拍。
+  // 預設 ON：episode.yaml 沒有 speed/silence_trim 欄位時，合成 YT 預設 1.1x 倍速 + 去空拍。
   // 只有明確寫 enabled:false 才關（respect explicit false）；避免舊集重新輸出時被迫加速。
   const sp = data.speed || {};
   state.speed = {
     enabled: sp.enabled !== undefined ? !!sp.enabled : true,
-    factor: Number(sp.factor) || 1.15,
+    factor: Number(sp.factor) || 1.1,
   };
   const stm = data.silence_trim || {};
   state.silenceTrim = {
@@ -2461,6 +2558,9 @@ async function loadEpisodeState() {
   state.mics = data.mics || {};
   state.hasSpeakerTags = !!data.has_speaker_tags;
   state.cameraRule = data.camera_rule || {};
+  // 雙行字幕設定：跟出片端同一份 cfg（沒回傳時當開啟，與 defaults.yaml 一致）
+  state.subtitleDualLine = data.subtitle_dual_line !== false;
+  state.subtitleDualLineHold = Number(data.subtitle_dual_line_hold) || 0;
   const validSpeakers = new Set([
     ...Object.keys(state.mics),
     ...Object.values(data.speakers_mapping || {}),
@@ -2479,6 +2579,11 @@ async function loadEpisodeState() {
   state.audioCandidates = Array.isArray(data.audio_candidates)
     ? data.audio_candidates
     : [];
+  // 同一批音檔的分類結果（kind: mic|mix / index / size_mb），轉字幕面板顯示偵測狀態用。
+  // 後端沒給就留 null（不是 []）—— 面板要能分辨「還沒載到 state」和「真的沒有音檔」。
+  state.audioTracks = Array.isArray(data.audio_tracks)
+    ? data.audio_tracks
+    : null;
   state.audioPath = (data.audio && data.audio.path) || "";
   state.audioSyncOffset = Number((data.audio || {}).sync_offset || 0);
   // 「最終合成總覽」：cam A 候選 / 目前 cam A / 字幕檔（read-only）
@@ -3055,6 +3160,9 @@ $("#video").addEventListener("timeupdate", () => {
   const pct = dur ? (t / dur) * 100 : 0;
   seekEl.value = pct;
   seekEl.style.setProperty("--seek-pct", `${pct}%`); // 已播進度填色
+  // 標籤已亮著又不是在滑過預覽（＝鍵盤 focus 在軸上）→ 跟著播放頭走，別留舊時間
+  const seekTip = $("#seek-tooltip");
+  if (seekTip && !seekTip.hidden && !_seekHover) showSeekTip(pct);
 
   const activeCard = activeCardAt(t);
   const activeKey = activeCard ? String(activeCard.key) : null;
@@ -3148,12 +3256,45 @@ $("#video").addEventListener("pause", () => {
   setPlayIcon("play");
 });
 
+// === 播放頭時間標籤 ===
+// 時間軸難以對準特定秒數：index.html 的 step=0.01 把落點從 101 格提到 10001 格，
+// 這裡再補一個跟著把手走的 m:ss.d 標籤 —— 滑過先看會跳到哪，拖曳/鍵盤微調時即時更新。
+function showSeekTip(pct) {
+  const tip = $("#seek-tooltip");
+  const dur = $("#video").duration;
+  if (!tip || !dur || !isFinite(dur)) return;
+  const p = Math.max(0, Math.min(100, Number(pct) || 0));
+  tip.textContent = fmtTimeD((p / 100) * dur);
+  tip.style.left = `${p.toFixed(2)}%`;
+  tip.hidden = false;
+}
+function hideSeekTip() {
+  const tip = $("#seek-tooltip");
+  if (tip) tip.hidden = true;
+}
+let _seekHover = false; // 滑鼠在軸上 → 標籤顯示「滑過的目標時間」，優先於播放頭
+
 $("#seek").addEventListener("input", (e) => {
   const v = $("#video");
   _auditionEnd = null; // 手動拖時間軸 → 取消試聽守門
   if (v.duration) v.currentTime = (e.target.value / 100) * v.duration;
   e.target.style.setProperty("--seek-pct", `${e.target.value}%`);
+  showSeekTip(e.target.value);
 });
+
+// 滑過先預覽目標時間（還沒按下去就知道會跳到哪），移開就收
+$("#seek").addEventListener("pointermove", (e) => {
+  _seekHover = true;
+  const r = e.currentTarget.getBoundingClientRect();
+  if (r.width) showSeekTip(((e.clientX - r.left) / r.width) * 100);
+});
+$("#seek").addEventListener("pointerleave", () => {
+  _seekHover = false;
+  // 鍵盤操作中（焦點還在軸上）不收，否則 ← → 微調時看不到時間
+  if (document.activeElement !== $("#seek")) hideSeekTip();
+});
+$("#seek").addEventListener("focus", () => showSeekTip($("#seek").value));
+$("#seek").addEventListener("blur", hideSeekTip);
 
 // 影片載入完才能算頭尾 trim 在 seek 上的百分比，所以這裡也要重畫
 $("#video").addEventListener("loadedmetadata", () => {
@@ -3942,15 +4083,7 @@ $("#save-btn").addEventListener("click", async () => {
     // loadEpisodeState 重抓 /api/episode 並清空 cardSplits / textOverrides，讓下一輪從乾淨狀態開始。
     await loadEpisodeState();
     renderCards();
-    // 引導使用者按合成（高亮輸出鈕）
-    const ytBtn = $("#assemble-yt-btn");
-    // 合成鈕已收進「輸出」下拉，存檔後自動展開讓引導用的 pulse 看得到
-    $("#output-menu-btn")?._popover?.open();
-    ytBtn?.classList.add("pulse");
-    ytBtn?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    setTimeout(() => {
-      ytBtn?.classList.remove("pulse");
-    }, 6000);
+    // 存檔是高頻操作，不再自動展開「輸出」下拉引導合成（會一直打斷編輯節奏）
     setTimeout(() => {
       setSaveBtnLabel("check", "完成並儲存");
       $("#save-btn").disabled = false;
@@ -4445,15 +4578,113 @@ function hasKeyForProvider(p) {
 }
 
 // === 轉字幕流程 ===
+
+// 把路徑塞進 innerHTML 前先跳脫（檔名可能含 & < > "，例如「Track1 & 2.wav」）
+function escAttr(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// 轉字幕 modal 的音檔偵測面板：把後端 audio_tracks 攤開給使用者看。
+// 四態：loading（state 還沒載到）/ empty（沒外接音檔）/ done（已設定分軌對應）/
+// ready（偵測到音檔但還沒設定）。設定過的集顯示「軌 a → 檔名」而不是原始清單，
+// 因為那才是實際會被拿去分軌轉錄的對應。
+function renderTranscribeTracks() {
+  const box = $("#transcribe-tracks");
+  const summary = $("#transcribe-tracks-summary");
+  const list = $("#transcribe-tracks-list");
+  const hint = $("#transcribe-tracks-hint");
+  if (!box || !summary || !list || !hint) return;
+  box.hidden = false; // 上一輪轉錄把它收起來過
+  list.innerHTML = "";
+  hint.textContent = "";
+
+  const tracks = state.audioTracks;
+  if (!Array.isArray(tracks)) {
+    box.dataset.state = "loading";
+    summary.textContent = "讀取音檔清單中…";
+    return;
+  }
+  if (!tracks.length) {
+    box.dataset.state = "empty";
+    summary.textContent = "沒有偵測到外接音檔";
+    hint.textContent =
+      "將直接用影片本身的聲音轉錄。若有分軌 wav，請放進集資料夾或 01_母帶／02_素材 後重開此視窗。";
+    return;
+  }
+
+  const mics = state.mics || {};
+  const hasMics = Object.keys(mics).length > 0;
+  const byPath = new Map(tracks.map((t) => [t.path, t]));
+  const micCount = tracks.filter((t) => t.kind === "mic").length;
+  const mixCount = tracks.length - micCount;
+
+  const rows = [];
+  if (hasMics) {
+    // 已設定：只列出實際被指派的軌，前綴軌別（a/b/c/d）
+    box.dataset.state = "done";
+    for (const sp of MIC_SETUP_SPEAKERS) {
+      const path = mics[sp];
+      if (!path) continue;
+      const t = byPath.get(path) || { name: path, size_mb: 0 };
+      rows.push({
+        kind: "mic",
+        badge: `軌 ${sp}`,
+        name: t.name || path,
+        size: t.size_mb,
+      });
+    }
+    summary.textContent = `已設定分軌：${rows.length} 軌`;
+    hint.textContent =
+      "字幕會標上講者。要改對應請點下方進階區的「重新設定分軌」。";
+  } else {
+    box.dataset.state = "ready";
+    for (const t of tracks) {
+      rows.push({
+        kind: t.kind,
+        badge: t.kind === "mic" ? `分軌 ${t.index}` : "混音",
+        name: t.name || t.path,
+        size: t.size_mb,
+      });
+    }
+    const parts = [];
+    if (micCount) parts.push(`分軌 ${micCount} 軌`);
+    if (mixCount) parts.push(`混音 ${mixCount} 個`);
+    summary.textContent = `已辨識到音檔：${parts.join("、")}`;
+    hint.textContent =
+      micCount >= 2
+        ? "軌別由檔名自動判斷。要讓字幕標出講者，請在下方進階區設定分軌對應。"
+        : "軌別由檔名自動判斷（檔名含 Track1／Mic 2 才會認成分軌）。分軌少於 2 軌，將用混音檔轉錄。";
+  }
+
+  for (const r of rows) {
+    const li = document.createElement("li");
+    li.className = "track-detect-item";
+    li.dataset.kind = r.kind;
+    const sizeText = r.size ? `${r.size} MB` : "";
+    li.innerHTML =
+      `<span class="track-detect-badge">${escAttr(r.badge)}</span>` +
+      `<span class="track-detect-name">${escAttr(r.name)}</span>` +
+      `<span class="track-detect-size">${escAttr(sizeText)}</span>`;
+    list.appendChild(li);
+  }
+}
+
 function requestTranscribe(file) {
   // 預設一律走 mix 路徑（單一檔案 STT）。分軌轉錄串音問題明顯，改成進階手動開關。
   // 視情況顯示「改用分軌轉錄」or「設定並啟用分軌轉錄」按鈕在進階區塊。
   const hasMics = state.mics && Object.keys(state.mics).length > 0;
   const candidates = state.audioCandidates || [];
-  const canSetupMics = !hasMics && candidates.length >= 2;
+  // 只要偵測到 ≥2 個音檔就能設定分軌 —— 舊版加了 !hasMics，導致設定過的集永遠改不回來
+  // （沒有任何入口可以修改既有對應，只能手改 episode.yaml）。
+  const canSetupMics = candidates.length >= 2;
   const advanced = $("#transcribe-advanced");
   const perMicBtn = $("#transcribe-per-mic-btn");
   const micSetupBtn = $("#transcribe-mic-setup-btn");
+  renderTranscribeTracks();
   if (advanced) advanced.hidden = !(hasMics || canSetupMics);
   if (perMicBtn) {
     perMicBtn.hidden = !hasMics;
@@ -4464,6 +4695,7 @@ function requestTranscribe(file) {
   }
   if (micSetupBtn) {
     micSetupBtn.hidden = !canSetupMics;
+    micSetupBtn.textContent = hasMics ? "重新設定分軌" : "設定並啟用分軌轉錄";
     micSetupBtn.onclick = () => {
       hideModal("transcribe-modal");
       openMicSetup();
@@ -4761,6 +4993,7 @@ async function startBreezeTranscribe() {
     '<em style="color:#888;font-size:12px">轉錄那段最久，請保留分頁、不要關閉。</em>';
   const adv = $("#transcribe-advanced");
   if (adv) adv.hidden = true;
+  $("#transcribe-tracks").hidden = true; // 轉錄中不再需要看偵測結果
   $("#transcribe-progress").hidden = false;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
@@ -4799,6 +5032,7 @@ async function runTranscribe(file) {
     `處理中：<code>${file.path}</code><br>` +
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
   $("#transcribe-advanced").hidden = true;
+  $("#transcribe-tracks").hidden = true; // 轉錄中不再需要看偵測結果
   $("#transcribe-progress").hidden = false;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
@@ -4879,6 +5113,7 @@ async function resumeTranscribeIfRunning() {
     `<em style="color:#888;font-size:12px">請保留這個分頁，不要關閉。</em>`;
   const adv = $("#transcribe-advanced");
   if (adv) adv.hidden = true;
+  $("#transcribe-tracks").hidden = true; // 轉錄中不再需要看偵測結果
   $("#transcribe-progress").hidden = false;
   $("#transcribe-fill").style.width = "0%";
   $("#transcribe-percent").textContent = "0%";
@@ -5112,11 +5347,28 @@ function updateMicSetupConflicts() {
 }
 
 function openMicSetup() {
-  setModalStatusTitle("mic-setup-title", null, "設定分軌", null);
+  const saved = state.mics || {};
+  const hasSaved = Object.keys(saved).length > 0;
+  setModalStatusTitle(
+    "mic-setup-title",
+    null,
+    hasSaved ? "重新設定分軌" : "設定分軌",
+    null,
+  );
   const candidates = state.audioCandidates || [];
   $("#mic-setup-detected-count").textContent = String(candidates.length);
-  const assignment = guessMicAssignment(candidates);
-  renderMicSetupList(candidates, assignment);
+  // 已設定過的集要回填既有指派，不能再用檔名猜測 —— 否則使用者一開「重新設定」
+  // 就被猜測值覆蓋，連他刻意留空的軌也會被填回去。
+  const assignment = hasSaved
+    ? Object.fromEntries(MIC_SETUP_SPEAKERS.map((sp) => [sp, saved[sp] || ""]))
+    : guessMicAssignment(candidates);
+  // 已存的路徑若不在候選清單裡（檔案被搬走/改名）也要補進下拉，否則那一軌會顯示
+  // 「不設定」，使用者一按儲存就把設定弄丟了，而且看不出發生過什麼事。
+  const options = candidates.slice();
+  for (const p of Object.values(assignment)) {
+    if (p && !options.includes(p)) options.push(p);
+  }
+  renderMicSetupList(options, assignment);
   // min_sec 回填已存的 camera_rule（沒設預設 15）
   const minSecInput = $("#mic-setup-min-sec");
   if (minSecInput) {
@@ -7320,7 +7572,7 @@ $("#new-ep-date").addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitNewEpisode();
 });
 
-// === 輸出設定：旋轉拉正 / 節目封面 / 倍速 / 合成字幕模式 ===
+// === 輸出設定：節目封面 / 倍速 / 去空拍 / 合成字幕模式 ===
 // state → UI 控制項（換集載入、undo 後呼叫）
 function syncOutputControls() {
   const cover = document.querySelector("#cover-toggle");
@@ -7329,7 +7581,7 @@ function syncOutputControls() {
   const spf = document.querySelector("#speed-factor");
   if (spd) spd.checked = !!(state.speed && state.speed.enabled);
   if (spf) {
-    spf.value = String((state.speed && state.speed.factor) || 1.15);
+    spf.value = String((state.speed && state.speed.factor) || 1.1);
     spf.disabled = !(state.speed && state.speed.enabled);
   }
   const sil = document.querySelector("#silence-toggle");
@@ -7344,7 +7596,6 @@ function syncOutputControls() {
   const sm = document.querySelector("#subtitle-mode-select");
   if (sm) sm.value = state.subtitleMode || "burn";
   syncOverlayControls();
-  syncRotateControls();
 }
 
 // 抽換字幕：依字幕模式顯示/隱藏 overlay 控制項，並用集內 .srt 候選填字幕檔下拉
@@ -7382,42 +7633,7 @@ function syncOverlayControls() {
 }
 
 function setupOutputControls() {
-  const clampDeg = (v) => {
-    v = Number(v);
-    if (!isFinite(v)) v = 0;
-    return Math.round(Math.max(-15, Math.min(15, v)) * 10) / 10;
-  };
-  // 旋轉：滑桿 + 數字雙向綁定，編目前 active cam（跟 crop 共用 A/B context）
-  const slider = document.querySelector("#rotate-slider");
-  const num = document.querySelector("#rotate-input");
-  function setRotate(deg, push) {
-    const cam = activeRotateCam();
-    const v = clampDeg(deg);
-    if ((Number(state.rotate[cam]) || 0) === v) {
-      syncRotateControls();
-      return;
-    }
-    if (push) pushUndo();
-    state.rotate[cam] = v;
-    state.outputDirty = true;
-    renderCropInfo(); // 套 CSS 旋轉預覽 + 同步滑桿/數字/徽章
-    renderTopbar();
-  }
-  let rotateDragPushed = false;
-  if (slider) {
-    slider.addEventListener("input", () => {
-      setRotate(slider.value, !rotateDragPushed); // 拖一次只 push 一筆 undo
-      rotateDragPushed = true;
-    });
-    slider.addEventListener("change", () => {
-      rotateDragPushed = false;
-    });
-  }
-  if (num) num.addEventListener("change", () => setRotate(num.value, true));
-  const reset = document.querySelector("#rotate-reset");
-  if (reset) reset.addEventListener("click", () => setRotate(0, true));
-
-  // 節目封面開關
+  // 節目封面開關（已移入合成設定 modal 的「輸出選項」）
   const cover = document.querySelector("#cover-toggle");
   if (cover)
     cover.addEventListener("change", () => {
@@ -7439,7 +7655,7 @@ function setupOutputControls() {
   if (spf)
     spf.addEventListener("change", () => {
       let v = Number(spf.value);
-      if (!isFinite(v)) v = 1.15;
+      if (!isFinite(v)) v = 1.1;
       v = Math.round(Math.max(0.5, Math.min(2, v)) * 100) / 100;
       state.speed.factor = v;
       spf.value = String(v);

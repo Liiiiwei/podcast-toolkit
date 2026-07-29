@@ -245,15 +245,33 @@ def shift_srt(src: Path, dst: Path, offset_sec: float) -> None:
     dst.write_text(srt_io.serialize(shifted), encoding="utf-8")
 
 
-def _write_ass_from_srt(src: Path, dst: Path, play_res_x: int, play_res_y: int) -> None:
+def _write_ass_from_srt(
+    src: Path,
+    dst: Path,
+    play_res_x: int,
+    play_res_y: int,
+    *,
+    speaker_spans: list[tuple[float, float, str]] | None = None,
+    style: dict | None = None,
+    hold_sec: float = 0.0,
+) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
     libass 對 SRT 預設 PlayResY=288，會把 MarginV/FontSize 用 frame_h/288 放大
     （MarginV=100 在 1080 frame 變成 374px from bottom），跟前端預覽的
     「字幕距裁切框底 8%」對不上。把 PlayResY 設為 output frame 高度後，
     MarginV=N 就等同於最終輸出的 N 像素，預覽 / 輸出一致。
+
+    speaker_spans（分軌集才有）＋ style 兩個都給時啟用雙行：時間重疊的卡依講者
+    分上下排，位置寫進**每個事件自己的 MarginV 欄位**。不用「第二個 ASS Style」
+    來做是因為 ffmpeg 的 force_style token 沒有 `Style.` 前綴時會套用到所有
+    style，MarginV 會把第二個 style 一起蓋掉；每事件 MarginV 是 force_style
+    碰不到的地方。沒有 speaker_spans → 產出與單行時代完全相同（MarginV 全 0）。
+
+    hold_sec > 0 時，先讓換人接話前的那一句多留在畫面上這麼久（dual_line.hold_tail）。
+    真實素材的卡一張接一張、時間不重疊，不先製造重疊就永遠排不出雙行。
     """
-    from podcast_toolkit import srt_io
+    from podcast_toolkit import dual_line, srt_io
 
     def _fmt(t: float) -> str:
         t = max(0.0, float(t))
@@ -280,13 +298,52 @@ def _write_ass_from_srt(src: Path, dst: Path, play_res_x: int, play_res_y: int) 
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
+    if speaker_spans and style:
+        align = style.get("alignment")
+        # alignment 是 SSA v3 內部編碼（見 build_style_string）：1/2/3=底部、+4=頂部、
+        # +8=畫面中央。沒設 → ASS Style 的 Alignment=2（底部置中）。底部對齊時第二排
+        # 往上疊（MarginV 變大 = 離底部更遠），中央/頂部對齊時往下疊。
+        bottom = align is None or (int(align) & 12) == 0
+        tagged = dual_line.assign_speakers(cards, speaker_spans)
+        events = dual_line.layout(
+            dual_line.hold_tail(tagged, hold_sec), bottom_anchored=bottom
+        )
+        base = int(style.get("margin_v") or 0)
+        size = float(style.get("font_size") or 0)
+        offsets = [dual_line.stack_offset_px(e, size) for e in events]
+        margins = [base + off if off else 0 for off in offsets]
+    else:
+        events, margins = cards, [0] * len(cards)
+
     rows = [head]
-    for c in cards:
-        text = (c["text"] or "").replace("\r\n", "\n").replace("\n", "\\N")
+    for e, margin_v in zip(events, margins):
+        text = (e["text"] or "").replace("\r\n", "\n").replace("\n", "\\N")
         rows.append(
-            f"Dialogue: 0,{_fmt(c['start'])},{_fmt(c['end'])},Default,,0,0,0,,{text}\n"
+            f"Dialogue: 0,{_fmt(e['start'])},{_fmt(e['end'])},Default,,0,0,{margin_v},,{text}\n"
         )
     dst.write_text("".join(rows), encoding="utf-8")
+
+
+def _speaker_spans(
+    ep: Episode, v2_cards: list[dict], shift: float
+) -> list[tuple[float, float, str]] | None:
+    """讀 speakers sidecar → [(start, end, speaker)]，時間已對到燒字幕用的時間軸。
+
+    sidecar 只存 flat 的 idx→講者，時間得從 canonical _v2 卡取；shift 用與 srt
+    同一個 srt_total_shift，assign_speakers 才對得上被 shift 過的那份 SRT。
+    單軌集沒這個檔（或全空）→ 回 None，呼叫端就走原本的單行路徑。
+    """
+    from podcast_toolkit import cameras_io
+
+    tags = cameras_io.load(ep.output_v2_speakers_json())
+    if not tags:
+        return None
+    spans = []
+    for c in v2_cards:
+        spk = tags.get(int(c["idx"]))
+        if spk:
+            spans.append((float(c["start"]) + shift, float(c["end"]) + shift, str(spk)))
+    return spans or None
 
 
 def _wm_overlay_params(wm_cfg: dict, res_w, res_h) -> tuple[int, str]:
@@ -1209,16 +1266,43 @@ def prepare_assembly(
 
     main_rel = str(main_video.relative_to(cwd)) if main_video.is_relative_to(cwd) else str(main_video)
 
+    # 刪段已改**時間版**（cuts，存 _v2 時間軸，與字幕脫鉤）。canonical _v2 卡供 legacy idx
+    # 換算，也供鏡頭 legacy 換算共用（不依賴 active_srt，避免 srt_path 指到別份字幕時錯位），
+    # 以及雙行字幕的講者時間（speakers sidecar 只有 idx，時間得從這份卡取）。
+    v2_canon_path = ep.output_v2_srt()
+    v2_canon_cards = (
+        srt_io.parse(v2_canon_path.read_text(encoding="utf-8"))
+        if v2_canon_path.exists() else all_cards
+    )
+
+    # 雙行字幕：分軌集兩人同時說話時，出片端跟編輯器預覽一樣排成上下兩排。
+    # 單軌集沒有 speakers sidecar → None → 產出的 ASS 與單行時代逐字相同。
+    # 但真實素材的卡是一張接一張、幾乎不重疊（實測五集共 6636 張只有 1 筆重疊），
+    # 所以還要 hold：換人接話時讓上一句多留幾秒，重疊才存在。
+    # sidecar 存的是 flat 的「_v2 卡 idx → 講者」，只有配上真的 _v2 卡才對得起來。
+    # _v2.srt 缺席時上面會 fallback 成 all_cards（來自 srt_path 指的那份），idx 編號體系
+    # 不同 → 講者會貼到錯的卡上。寧可整個關掉雙行（退回單行），也不要貼錯人。
+    dual_spans = (
+        _speaker_spans(ep, v2_canon_cards, srt_total_shift)
+        if cfg.get("subtitle_dual_line") and v2_canon_path.exists() else None
+    )
+    dual_hold = float(cfg.get("subtitle_dual_line_hold") or 0) if dual_spans else 0.0
+
     # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
     # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
     srt_rel: str | None = None
     if burn_subs:
         if output_kind == "yt":
             ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
+            sub_style = cfg["subtitle_style"]
         else:
             ass_res_w, ass_res_h = 1080, 1920
+            sub_style = cfg.get("subtitle_style_reels") or cfg["subtitle_style"]
         ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
-        _write_ass_from_srt(srt, ass_path, ass_res_w, ass_res_h)
+        _write_ass_from_srt(
+            srt, ass_path, ass_res_w, ass_res_h,
+            speaker_spans=dual_spans, style=sub_style, hold_sec=dual_hold,
+        )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
     # 抽換字幕：把成品時間軸的 overlay_srt 轉成成品解析度的 ASS，最後一段直接疊在全幀上
@@ -1234,13 +1318,6 @@ def prepare_assembly(
     head_trim = float(cfg.get("head_trim_sec") or 0)
     tail_trim = float(cfg.get("tail_trim_sec") or 0)
 
-    # 刪段已改**時間版**（cuts，存 _v2 時間軸，與字幕脫鉤）。canonical _v2 卡供 legacy idx 換算，
-    # 也供鏡頭 legacy 換算共用（不依賴 active_srt，避免 srt_path 指到別份字幕時錯位）。
-    v2_canon_path = ep.output_v2_srt()
-    v2_canon_cards = (
-        srt_io.parse(v2_canon_path.read_text(encoding="utf-8"))
-        if v2_canon_path.exists() else all_cards
-    )
     cut_intervals = cut_intervals_from_cfg(
         cfg, v2_canon_cards, deletions_override, extra_intervals=silence_cuts
     )
@@ -1297,7 +1374,10 @@ def prepare_assembly(
             # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
             # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
             clean_ass = ep.subdir("work") / f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
-            _write_ass_from_srt(clean_srt, clean_ass, ass_res_w, ass_res_h)
+            _write_ass_from_srt(
+                clean_srt, clean_ass, ass_res_w, ass_res_h,
+                speaker_spans=dual_spans, style=sub_style, hold_sec=dual_hold,
+            )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
         if deletion_intervals:
