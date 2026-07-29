@@ -372,9 +372,11 @@ glossary:
 - `podcast check-seg <集>` — 斷句體檢：列出過長／掛尾連接詞／過短的卡號（只讀不改）
 - `podcast proofread <集>` — 本地校對（Claude Code；沒裝就跳過）
 - `podcast glossary-suggest <集>` / `podcast glossary-review <集>` — 掃全稿挑疑似錯字專名 → 終端逐條勾選入本集詞庫
+- `podcast diarize <集>` — 本地能量分講者：讀混音 `words.json` + 各軌 mic wav 重算講者標（零雲端）。**想改講者標只能走這條**，重跑 Breeze 沒有用（講者是靠能量貼的，不是 ASR 認的）
 - `podcast auto <集>` — 一鍵自動後製（校對 + 推鏡頭 + 去頭尾）
 - `podcast assemble <集> [--force]` — 合成 YT 完整版
 - `podcast edit <集>` / `podcast ui` — 開瀏覽器介面
+- `podcast publish-doc <集> [--ep N]` — 產 YouTube 上架文案：標題／說明欄／章節／重點／社群短文（章節時間對齊成品時間軸，本地 Claude Code 跑，介面上沒有這個功能）
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 
