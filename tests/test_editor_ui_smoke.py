@@ -178,3 +178,21 @@ def test_mic_setup_reachable_after_already_configured():
     而不是像舊版那樣（canSetupMics 加了 !hasMics）永遠隱藏、只能手改 episode.yaml。"""
     assert "重新設定分軌" in APP_JS
     assert "const canSetupMics = candidates.length >= 2;" in APP_JS
+
+
+def test_mic_srt_existing_reaches_frontend_state():
+    """後端算好的「哪幾軌已轉過」要真的進 state —— 漏接的話標記永遠顯示「未轉」。
+
+    state 一律 camelCase、後端欄位 snake_case，中間靠 loadEpisodeState 逐欄轉。
+    這條漏了三年也不會壞頁面（`|| []` 吞掉 undefined），只會靜靜地全部標成未轉，
+    所以用靜態斷言把「有轉」和「讀對名字」兩件事一起釘住。
+    """
+    assert "state.micSrtExisting = Array.isArray(data.mic_srt_existing)" in APP_JS, (
+        "loadEpisodeState 沒把 mic_srt_existing 接進 state"
+    )
+    assert "state.mic_srt_existing" not in APP_JS, (
+        "還有地方讀 snake_case 的 state.mic_srt_existing（state 是 camelCase）"
+    )
+    assert APP_JS.count("new Set(state.micSrtExisting || [])") == 3, (
+        "分軌 modal 該有三處讀 micSrtExisting（列表、覆寫警告、只選未轉）"
+    )
