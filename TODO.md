@@ -128,17 +128,14 @@
   **搬 repo 資料夾不會壞**。本條原本寫「app 把 repo 路徑烤死」是 AppleScript launcher 時代的事，
   已不適用（2026-08-05 實測：bundle 內 grep 專案絕對路徑零命中；`config.py:21-26` 凍結態改走
   `RESOURCEPATH` 解析根目錄）。
-- ⚠ **`install.sh` 已廢棄且會造成倒退，不要跑**：它走的是舊的 osacompile／AppleScript 路線
-  （`install.sh:137,157`），而 `:147-158` 會把 py2app 版的 `/Applications/Podcast.app` 丟進垃圾桶、
-  換成一個指回 repo 的 launcher —— 等於把自包含的 4G app 換成搬家就壞的捷徑。要重裝一律走
-  `./build_app.sh` ＋拖 DMG。（是否乾脆刪掉 install.sh 待決，見下。）
-- [ ] **拿掉 `install.sh:137-165` 的 app 生成段**（不要整支刪 —— 前 136 行是有用的）：
-  `:1-135` 做的是真正的環境安裝 —— macOS／Python 3.9+／Homebrew 檢查、`ffmpeg`、8 個 Python
-  套件、`podcast` CLI symlink，以及整套 Breeze 後端（clone repo ＋建 venv ＋裝打過補丁的
-  whisper ＋抓 jieba 繁中詞典），那是轉字幕的地基，必須留。有害的只有 `:137-165`（osacompile
-  生 AppleScript app，且 `:147-148` 會先把既有的 `/Applications/Podcast.app` 移進垃圾桶）。
-  做法：刪 `:137-165` ＋ 把結尾的「雙擊開介面」提示（`:171-173`）改成「要雙擊 app 請跑
-  `./build_app.sh` 產 DMG 後拖進 Applications」。
+- [x] **拿掉 `install.sh` 的 osacompile app 生成段** ✅ 2026-08-05：原本那段走的是舊的
+  AppleScript 路線，而且會**先把 py2app 版的 `/Applications/Podcast.app` 移進垃圾桶**、
+  換成一個指回 repo 的 launcher —— 等於把自包含的 4G app 換成搬家就壞的捷徑。已刪掉整段
+  （原 `:137-165`），結尾提示改成「開介面打 `podcast ui`；想雙擊啟動請跑 `./build_app.sh`
+  產 DMG 拖進 Applications」。**前 136 行原封不動保留** —— macOS／Python 3.9+／Homebrew 檢查、
+  `ffmpeg`、Python 套件（pyyaml ＋ fastapi 等 9 個）、`podcast` CLI symlink，以及整套 Breeze
+  後端（clone repo ＋建 venv ＋裝打過補丁的 whisper ＋抓 jieba 繁中詞典），那是轉字幕的地基。
+  所以 **`./install.sh` 現在可以安心跑**：它只做環境安裝，不再碰 `/Applications`。
 
 ## 2026-07-28 後續（雙行字幕 + 六項 UX 落地後）
 
