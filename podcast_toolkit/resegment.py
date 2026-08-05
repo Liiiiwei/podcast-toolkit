@@ -6,6 +6,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from typing import Optional
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
@@ -54,20 +55,34 @@ def remap_speakers_by_time(
     return new_spk
 
 
-def run(episode_dir: Path, force: bool = False) -> int:
+def run(episode_dir: Path, force: bool = False, src: Optional[Path] = None) -> int:
+    """重新斷句。
+
+    src 給定 → 拿那份字幕當來源；省略 → 沿用 episode.yaml 的主字幕檔（main_srt）。
+    不論來源是哪份，輸出一律寫回 _v2.srt：編輯器只認這份，寫到別的位置等於產出一個
+    介面上看不到的孤兒檔。
+    """
     ep = Episode(episode_dir)
     cfg = ep.cfg
     rcfg = cfg["resegment"]
 
-    src = ep.main_srt()
-    if not src.exists():
-        print(f"✗ 找不到字幕：{src}", file=sys.stderr)
-        srt_list = list(ep.subdir("output").glob("*.srt"))
-        if srt_list:
-            print("  03_成品/ 內現有 srt：", file=sys.stderr)
-            for p in srt_list:
-                print(f"    {p.name}", file=sys.stderr)
-        return 3
+    if src is not None:
+        # 指定的來源不存在就直接停。靜默退回主字幕的話，使用者會以為重切的是自己挑的
+        # 那份，實際切的是另一份 —— 而且 _v2 當場被覆寫，錯得無聲無息又救不回來。
+        src = Path(src)
+        if not src.is_file():
+            print(f"✗ 找不到指定的來源字幕：{src}", file=sys.stderr)
+            return 3
+    else:
+        src = ep.main_srt()
+        if not src.exists():
+            print(f"✗ 找不到字幕：{src}", file=sys.stderr)
+            srt_list = list(ep.subdir("output").glob("*.srt"))
+            if srt_list:
+                print("  03_成品/ 內現有 srt：", file=sys.stderr)
+                for p in srt_list:
+                    print(f"    {p.name}", file=sys.stderr)
+            return 3
 
     out = ep.output_v2_srt()
     review = ep.review_file()
@@ -168,7 +183,9 @@ def run(episode_dir: Path, force: bool = False) -> int:
     for c in cards:
         c[2] = card_fix(c[2])
 
-    # 講者 sidecar 要在覆寫 _v2 之前先讀舊的（新舊卡靠時間軸對應，見 remap_speakers_by_time）
+    # 講者 sidecar 要在覆寫 _v2 之前先讀舊的（新舊卡靠時間軸對應，見 remap_speakers_by_time）。
+    # 舊卡片固定取自 _v2（即使有 src override 也一樣）：講者標的 idx 是對著 _v2 編的，
+    # 拿 src 當基準會對錯人。
     spk_path = ep.output_v2_speakers_json()
     old_spk = cameras_io.load(spk_path)
     old_cards = srt_io.parse(out.read_text(encoding="utf-8")) if out.exists() else []
@@ -213,6 +230,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
     fw = f"，疊字填充詞清理 {guard_stats['fillers']} 段" if use_filler else ""
     print(f"whisper-guard：移除字元迴圈 {guard_stats['loops']} 處{fw}")
     print(f"待複查的卡: {len(risky)} 張 → {sorted(risky)}")
+    print(f"來源: {src}")  # 有 --src 時要能一眼確認切的是哪份，別事後靠猜
     print(f"輸出: {out}")
     print(f"複查: {review}")
     return 0

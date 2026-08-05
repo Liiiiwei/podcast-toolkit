@@ -18,7 +18,10 @@ def cmd_subtitle(args):
 
 def cmd_resegment(args):
     from podcast_toolkit import resegment
-    return resegment.run(Path(args.path), force=args.force)
+    return resegment.run(
+        Path(args.path), force=args.force,
+        src=Path(args.src) if args.src else None,
+    )
 
 
 def cmd_check_seg(args):
@@ -158,6 +161,11 @@ def build_parser():
     pr = sub.add_parser("resegment", help="字幕重新斷句 + 錯字修正")
     pr.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pr.add_argument("--force", action="store_true", help="覆寫已存在的輸出")
+    pr.add_argument(
+        "--src", default=None, metavar="PATH",
+        help="來源字幕檔（例如某份 .bak.srt）；省略時吃 episode.yaml 設定的主字幕檔 main_srt。"
+             "不論來源是哪份，結果一律寫回 03_成品/…_final_v2.srt",
+    )
     pr.set_defaults(func=cmd_resegment)
 
     pcs = sub.add_parser("check-seg", help="斷句體檢：列出過長/掛尾連接詞/過短卡的卡號（純讀取，不改字幕）")
