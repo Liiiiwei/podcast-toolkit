@@ -113,7 +113,10 @@
 
 ## 啟動 App（雙擊開介面）
 
-- 已生成 `/Applications/Podcast.app`（本機 osacompile + adhoc 簽章，無 quarantine），雙擊 → 跑 `scripts/podcast-ui.sh` 開 dashboard。
+- 打包＝py2app（`setup_app.py`）＋ ad-hoc 簽章（`build_app.sh:100,108`）；雙擊執行的是
+  `podcast_toolkit/launcher.py` → `edit.run_dashboard()`，不再經過任何 shell script。
+- 安裝＝`./build_app.sh` 產 DMG → 開啟 → 手動拖進 Applications（`build_app.sh` 本身**不會**自動安裝）
+  → 首次右鍵開啟。`/Applications/Podcast.app` 目前已裝 v0.2.0（2026-08-05 複驗：4.0G、adhoc、無 quarantine）。
 - [x] **自訂圖示** ✅ 2026-07-17（commit `fdf9b15`，銀麥 3D ＋深藍 squircle 底）：素材是
   `assets/AppIcon.icns`（1024×1024，802KB），由 `setup_app.py:51` 的 `iconfile` 掛上，py2app
   打包時自動寫進 `CFBundleIconFile`，不必手動塞檔也不用重簽。本條原本寫的「套到
@@ -121,7 +124,21 @@
   改用 py2app 後已不適用。（2026-08-05 複驗：`dist/Podcast.app/Contents/Resources/AppIcon.icns`
   與 repo 版 SHA256 一致，用的確實是自訂圖示。）
 - [ ] **釘 Dock**：之後把 app 拖進 Dock 固定一鍵開。
-- 注意：app 把 repo 路徑烤死，搬專案資料夾後要重生成（或重跑 `./install.sh`）。
+- app 是**自包含**的（Python runtime、程式碼、ffmpeg、Breeze 全複製進 bundle，共 4.0G），
+  **搬 repo 資料夾不會壞**。本條原本寫「app 把 repo 路徑烤死」是 AppleScript launcher 時代的事，
+  已不適用（2026-08-05 實測：bundle 內 grep 專案絕對路徑零命中；`config.py:21-26` 凍結態改走
+  `RESOURCEPATH` 解析根目錄）。
+- ⚠ **`install.sh` 已廢棄且會造成倒退，不要跑**：它走的是舊的 osacompile／AppleScript 路線
+  （`install.sh:137,157`），而 `:147-158` 會把 py2app 版的 `/Applications/Podcast.app` 丟進垃圾桶、
+  換成一個指回 repo 的 launcher —— 等於把自包含的 4G app 換成搬家就壞的捷徑。要重裝一律走
+  `./build_app.sh` ＋拖 DMG。（是否乾脆刪掉 install.sh 待決，見下。）
+- [ ] **拿掉 `install.sh:137-165` 的 app 生成段**（不要整支刪 —— 前 136 行是有用的）：
+  `:1-135` 做的是真正的環境安裝 —— macOS／Python 3.9+／Homebrew 檢查、`ffmpeg`、8 個 Python
+  套件、`podcast` CLI symlink，以及整套 Breeze 後端（clone repo ＋建 venv ＋裝打過補丁的
+  whisper ＋抓 jieba 繁中詞典），那是轉字幕的地基，必須留。有害的只有 `:137-165`（osacompile
+  生 AppleScript app，且 `:147-148` 會先把既有的 `/Applications/Podcast.app` 移進垃圾桶）。
+  做法：刪 `:137-165` ＋ 把結尾的「雙擊開介面」提示（`:171-173`）改成「要雙擊 app 請跑
+  `./build_app.sh` 產 DMG 後拖進 Applications」。
 
 ## 2026-07-28 後續（雙行字幕 + 六項 UX 落地後）
 
