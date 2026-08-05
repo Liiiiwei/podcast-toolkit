@@ -125,3 +125,69 @@ def test_api_resegment_blocked_while_transcribing(client, tmp_episode_dir):
         assert r.status_code == 409
     finally:
         transcribe_job._reset()
+
+
+# --- 講者 sidecar 重建（重切後 idx 全部重編，舊 idx 留著就錯位）---
+
+
+def _write_speakers(ep_dir: Path, mapping: dict) -> Path:
+    from podcast_toolkit import cameras_io
+
+    path = ep_dir / "03_成品" / "測試集_final_v2.speakers.json"
+    cameras_io.save(path, mapping)
+    return path
+
+
+def test_resegment_rebuilds_speakers_onto_new_cards(tmp_episode_dir):
+    """舊 bug：resegment 重切完不動 speakers.json，舊 idx 直接套到新卡 → 講者標
+    貼到不相干的句子上（燒進成品就是講錯人），而且多出來的 idx 指向不存在的卡。"""
+    from podcast_toolkit import cameras_io, srt_io
+
+    _write_main_srt(tmp_episode_dir)
+    # conftest 的 SAMPLE_SRT 是 4 張卡，講者 a/b/c/a
+    spk_path = _write_speakers(tmp_episode_dir, {1: "a", 2: "b", 3: "c", 4: "a"})
+
+    rc = resegment.run(tmp_episode_dir, force=True)
+
+    assert rc == 0
+    ep = Episode(tmp_episode_dir)
+    cards = srt_io.parse(ep.output_v2_srt().read_text(encoding="utf-8"))
+    new_spk = cameras_io.load(spk_path)
+    # 新字幕只有 2 張卡：0–3.0 全落在舊卡1(0–4.2) → a；3.0–9.0 與舊卡2(4.2–12) 重疊最多 → b
+    assert [c["idx"] for c in cards] == [1, 2]
+    assert new_spk == {1: "a", 2: "b"}
+    # 舊檔要留一份 —— 對應關係萬一貼錯，使用者還救得回來
+    bak = spk_path.with_name(spk_path.name + ".pre-resegment.bak")
+    assert bak.exists()
+    assert cameras_io.load(bak) == {1: "a", 2: "b", 3: "c", 4: "a"}
+
+
+def test_resegment_without_speakers_creates_none(tmp_episode_dir):
+    """單軌集本來就沒有講者標，重切不該無中生有一份（也不該留備份檔）。"""
+    _write_main_srt(tmp_episode_dir)
+    ep = Episode(tmp_episode_dir)
+    spk_path = ep.output_v2_speakers_json()
+
+    assert resegment.run(tmp_episode_dir, force=True) == 0
+
+    assert not spk_path.exists()
+    assert not spk_path.with_name(spk_path.name + ".pre-resegment.bak").exists()
+
+
+def test_remap_speakers_picks_larger_overlap():
+    """跨兩張舊卡的新卡，講者跟重疊多的那邊走（各佔一半以上的那個才算數）。"""
+    old_cards = [
+        {"idx": 1, "start": 0.0, "end": 10.0, "text": ""},
+        {"idx": 2, "start": 10.0, "end": 20.0, "text": ""},
+    ]
+    old_spk = {1: "a", 2: "b"}
+    new_cards = [
+        [0.0, 12.0, "偏前"],    # a 佔 10 秒、b 佔 2 秒
+        [8.0, 20.0, "偏後"],    # a 佔 2 秒、b 佔 10 秒
+        [25.0, 30.0, "沒交集"],  # 完全沒重疊 → 不給講者，別亂猜
+    ]
+
+    assert resegment.remap_speakers_by_time(old_cards, old_spk, new_cards) == {
+        1: "a",
+        2: "b",
+    }

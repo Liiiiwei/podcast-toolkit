@@ -145,18 +145,30 @@
 - [x] **`merge_short` 預設打開、`merge_target` 放寬到 12** ✅ `defaults.yaml`
   ——四集實測：異味率 10.8%→6.8%（魁哥）、過短卡 -21%～-43%；放寬到 12 再多救 66 張、
   異味率再降 1～2.6pp，風險曲線到 12 為止完全持平。
-- [ ] 🔴 **手冊截圖 `17-drawer-files.png` 已過時**：畫面右側還有兩顆「✂ 斷句」按鈕，
-  但那顆鈕這次已經移除了。手冊拿去對照介面會找不到 —— 要重拍這一張（需要一個有多份
-  `.srt` 的真集，拍攝腳本在 `_scratch/manual_shots.py`），重拍後手冊 PDF 也要重出。
+- [x] **手冊截圖 `17-drawer-files.png` 已過時** ✅ 用 `_scratch/manual_shots_fix4.py`
+  重拍（拍攝前先斷言抽屜裡沒有任何「斷句」按鈕，載到舊版前端就整輪失敗），
+  再照既有慣例 `sips -Z 2400` 縮成 2400x501。新圖字幕列右側是「— —」。
   其餘 24 張經檔名比對與本次改動無關。
 - [ ] **重打包 .app**：`/Applications/Podcast.app` 是烤死的 bundle，這次 app.js 的改動
   （斷句鈕消失）要重跑 `./build_app.sh` 才看得到。
   ⚠ 裝好若 UI 沒變，先 `pgrep -fl Podcast` 砍掉殘留舊行程（同 2026-07-28 段的教訓）。
-- [ ] **手冊內文交叉引用做成可點**：現在「見第 06 章」是純文字，要加 `<a href="#chNN">`。
+- [x] **手冊內文交叉引用做成可點** ✅ 新增 36 處「見第 NN 章／附錄 X」
+  的 `<a href="#chNN">`（連原有目錄共 47 個），PDF 內驗出 49 個內部跳轉標註。
+  列印樣式本來就有 `a { color: inherit }`，外觀零變化；封面「第 01～03 章」
+  這類範圍描述刻意留純文字（拆成兩個連結在列印版更難讀）。
+- [x] **手冊 PDF 重出流程固定成腳本** ✅ `_scratch/print_manual_pdf.py`
+  ——Letter 612x792pt、`printBackground=true`（不開的話 callout 三色會整片消失）、
+  送印前先斷言 24 張圖全部載完。交付檔 `~/Downloads/podcast-toolkit- 教學手冊 20260805.pdf`。
 - [ ] **手冊 PDF 缺頁碼與書籤大綱**：Chrome `printToPDF` 給不了，要換 Prince 或 WeasyPrint 重出。
-- [ ] **Breeze 轉錄失敗會靜默回報成功**：`transcribe_job.py:666-671` 的 `except Exception: pass`
-  吞掉例外後仍走到 done，使用者看到「完成」但字幕沒換。
-- [ ] **`sentence_resegment.py` 整支是死代碼**：沒有任何呼叫點，確認後刪。
-- [ ] **`resegment.py` 缺講者重建**：跑完 resegment 後 speakers sidecar 沒跟著重算（約 20–30 行）。
+- [x] **Breeze 轉錄失敗會靜默回報成功** ✅ `transcribe_job.py:658-677`
+  ——校對與斷句重整的兩個 `except` 改成寫 `note` 欄（`job:82`），前端把 note 顯示成
+  黃底提示（`app.js` 的 `finishTranscribe` + `app.css` 的 `.modal-hint.warn`）。
+  失敗仍不擋流程（字幕已匯入），但使用者看得到「跳過了什麼、為什麼」。
+- [x] ~~**`sentence_resegment.py` 整支是死代碼**~~ ❌ **誤判，不要刪**：
+  `seg_check.py:24` 有 `from podcast_toolkit.sentence_resegment import _is_punct`，
+  兩邊刻意共用同一把字數尺；另有 `tests/test_sentence_resegment.py` 在測。
+- [x] **`resegment.py` 缺講者重建** ✅ 新增 `remap_speakers_by_time()`（`resegment.py:25`）：
+  重切後 idx 全部重編，舊 sidecar 靠「時間重疊最多」重新貼到新卡上，
+  覆寫前先備份 `.pre-resegment.bak`；沒有舊 sidecar 就完全不動（不無中生有）。
 - [ ] **CLI 加 `--src` 選項**（提議過、未拍板）：讓 `podcast resegment` 能指定來源字幕檔，
   不必只吃 `_v2.srt` —— 介面上的入口拿掉後，這條 CLI 路徑就是唯一的手動斷句方式。

@@ -79,6 +79,7 @@ _STATE: dict[str, Any] = {
     "backups": None,       # 重轉前備份的舊 SRT 路徑（相對 ep.dir）
     "mics_progress": None, # per-mic only：{a: "vad", b: "gemini", c: "done"} 等
     "error": None,
+    "note": None,          # 成功但中途有步驟被跳過（校對／斷句重整）的提示
     "started_at": None,
 }
 
@@ -129,6 +130,9 @@ def _reset_locked(**kwargs) -> None:
         "backups": None,
         "mics_progress": None,
         "error": None,
+        # 一定要跟著重置 —— 否則上一次轉錄的「校對／斷句跳過」提示會漏到下一次，
+        # 讓使用者看到根本沒發生過的警告
+        "note": None,
         "started_at": None,
     })
     _STATE.update(kwargs)
@@ -664,11 +668,13 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         setj(note=f"校對跳過（例外：{e}）")
 
     # 4) 依語句重切（要在 proofread 之後，需其加的空格當語句邊界；失敗不擋）
+    #    失敗不擋，但一定要留 note —— 否則使用者只看到「完成」，
+    #    卻拿到一份沒重整過的字幕（句子特別長或碎），無從得知哪裡出錯
     try:
         from podcast_toolkit.subtitle_cleanup import reflow_episode
         reflow_episode(ep.dir)
-    except Exception:
-        pass
+    except Exception as e:
+        setj(note=f"斷句重整跳過（例外：{e}）")
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
     setj(state="done", phase="proofread", percent=100.0, out_srt=out_srt_rel)

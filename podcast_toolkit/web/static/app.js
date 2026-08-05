@@ -5125,7 +5125,7 @@ async function _pollTranscribeOnce() {
 
   if (s.state === "done") {
     stopTranscribePoll();
-    finishTranscribe({ ok: true, out_srt: s.out_srt });
+    finishTranscribe({ ok: true, out_srt: s.out_srt, note: s.note });
     return;
   }
 
@@ -5143,7 +5143,7 @@ async function _pollTranscribeOnce() {
   }
 }
 
-async function finishTranscribe({ ok, out_srt, error }) {
+async function finishTranscribe({ ok, out_srt, error, note }) {
   const cancel = $("#transcribe-cancel");
   const go = $("#transcribe-go");
   if (ok) {
@@ -5151,8 +5151,13 @@ async function finishTranscribe({ ok, out_srt, error }) {
     $("#transcribe-percent").textContent = "100%";
     $("#transcribe-phase-label").textContent = "完成";
     setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
+    // note = 轉錄成功但中途有步驟被跳過（校對／斷句重整失敗）。
+    // 不顯示的話使用者只會看到「完成」，拿到一份沒校對／沒重整的字幕卻不知情。
+    const noteHtml = note
+      ? `<div class="modal-hint warn">⚠ ${escAttr(note)}</div>`
+      : "";
     $("#transcribe-msg").innerHTML =
-      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。`;
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。${noteHtml}`;
 
     await loadEpisodeState();
     renderTopbar();

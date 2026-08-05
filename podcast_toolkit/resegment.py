@@ -3,9 +3,10 @@
 從現有 resegment.py 改造，邏輯不變，只是參數從 config 帶入。
 """
 import re
+import shutil
 import sys
 from pathlib import Path
-from podcast_toolkit import srt_io
+from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
 from podcast_toolkit.whisper_guard.vocab import filter_filler_words
@@ -19,6 +20,38 @@ def ts2s(ts: str) -> float:
     h, m, rest = ts.split(":")
     s, ms = rest.split(",")
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
+
+
+def remap_speakers_by_time(
+    old_cards: list[dict], old_spk: dict[int, str], new_cards: list
+) -> dict[int, str]:
+    """舊卡的講者標依「時間重疊最多」重新貼到新卡上，回傳新的 idx→講者。
+
+    resegment 把字幕整個重切、idx 從 1 重編，舊 sidecar 的 idx 直接留著就會錯位——
+    講者標貼到不相干的句子，燒進成品字幕就是講錯人。兩邊唯一的共同基準是時間軸。
+
+    old_cards: srt_io.parse 的結果；new_cards: run() 的 [start, end, txt, ...]（1-based 依序編號）。
+    """
+    spans = sorted(
+        (float(c["start"]), float(c["end"]), old_spk[int(c["idx"])])
+        for c in old_cards
+        if int(c["idx"]) in old_spk
+    )
+    new_spk: dict[int, str] = {}
+    j = 0  # 兩邊都照時間排序 → 用滑動指標掃過去，不必兩層迴圈（六千卡的集會慢到有感）
+    for n, card in enumerate(new_cards, 1):
+        st, en = float(card[0]), float(card[1])
+        while j < len(spans) and spans[j][1] <= st:
+            j += 1
+        best, best_ov, k = None, 0.0, j
+        while k < len(spans) and spans[k][0] < en:
+            ov = min(en, spans[k][1]) - max(st, spans[k][0])
+            if ov > best_ov:
+                best, best_ov = spans[k][2], ov
+            k += 1
+        if best is not None:
+            new_spk[n] = best
+    return new_spk
 
 
 def run(episode_dir: Path, force: bool = False) -> int:
@@ -135,10 +168,22 @@ def run(episode_dir: Path, force: bool = False) -> int:
     for c in cards:
         c[2] = card_fix(c[2])
 
+    # 講者 sidecar 要在覆寫 _v2 之前先讀舊的（新舊卡靠時間軸對應，見 remap_speakers_by_time）
+    spk_path = ep.output_v2_speakers_json()
+    old_spk = cameras_io.load(spk_path)
+    old_cards = srt_io.parse(out.read_text(encoding="utf-8")) if out.exists() else []
+
     # 寫 SRT
     with out.open("w", encoding="utf-8") as f:
         for n, (st, en, txt, _, _) in enumerate(cards, 1):
             f.write(f"{n}\n{srt_io.seconds_to_srt_ts(st)} --> {srt_io.seconds_to_srt_ts(en)}\n{txt}\n\n")
+
+    # 重建講者 sidecar；兩份缺一就無從對應，寧可原封不動也不要亂貼或刪掉使用者的標記
+    if old_spk and old_cards:
+        new_spk = remap_speakers_by_time(old_cards, old_spk, cards)
+        shutil.copy(spk_path, spk_path.with_name(spk_path.name + ".pre-resegment.bak"))
+        cameras_io.save(spk_path, new_spk)
+        print(f"講者標重建: {len(old_spk)} → {len(new_spk)} 張卡（舊檔備份 .pre-resegment.bak）")
 
     # 寫複查清單
     risky = []

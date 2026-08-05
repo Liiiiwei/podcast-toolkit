@@ -1756,6 +1756,10 @@ dialog.modal::backdrop {
 .modal-hint.error {
   color: var(--danger);
 }
+/* 轉錄完成但中途有步驟被跳過（校對／斷句重整）—— 結果可用，只是要讓使用者知道 */
+.modal-hint.warn {
+  color: var(--warning);
+}
 
 /* === Config status pills（settings modal first-run UX）=== */
 .config-status {
