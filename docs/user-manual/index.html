@@ -616,6 +616,23 @@
           transform: scaleX(1);
         }
       }
+      /* 列印頁碼：Chrome 的 printToPDF 會渲染 @page 的 margin box。
+         陷阱一：這裡絕對不要加 margin —— 一加就會覆蓋 CDP 的頁邊距、整份重排（40 頁變 42 頁）。
+                 頁邊距一律交給 printToPDF 的參數決定。
+         陷阱二：封面（第 1 頁）不印頁碼，用 @page :first 關掉。 */
+      @page {
+        @bottom-center {
+          content: counter(page) " / " counter(pages);
+          font-family: "PingFang TC", sans-serif;
+          font-size: 9pt;
+          color: #6b7280;
+        }
+      }
+      @page :first {
+        @bottom-center {
+          content: none;
+        }
+      }
       @media print {
         .no-print {
           display: none !important;
