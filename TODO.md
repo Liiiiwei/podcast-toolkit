@@ -114,7 +114,12 @@
 ## 啟動 App（雙擊開介面）
 
 - 已生成 `/Applications/Podcast.app`（本機 osacompile + adhoc 簽章，無 quarantine），雙擊 → 跑 `scripts/podcast-ui.sh` 開 dashboard。
-- [ ] **自訂圖示**：預設是 AppleScript applet 灰色圖；之後換成節目 icon（需 `.icns`，套到 `Podcast.app/Contents/Resources/applet.icns` + 重簽 + `touch` app）。
+- [x] **自訂圖示** ✅ 2026-07-17（commit `fdf9b15`，銀麥 3D ＋深藍 squircle 底）：素材是
+  `assets/AppIcon.icns`（1024×1024，802KB），由 `setup_app.py:51` 的 `iconfile` 掛上，py2app
+  打包時自動寫進 `CFBundleIconFile`，不必手動塞檔也不用重簽。本條原本寫的「套到
+  `Contents/Resources/applet.icns` + 重簽 + touch」是 AppleScript applet 時代的做法，
+  改用 py2app 後已不適用。（2026-08-05 複驗：`dist/Podcast.app/Contents/Resources/AppIcon.icns`
+  與 repo 版 SHA256 一致，用的確實是自訂圖示。）
 - [ ] **釘 Dock**：之後把 app 拖進 Dock 固定一鍵開。
 - 注意：app 把 repo 路徑烤死，搬專案資料夾後要重生成（或重跑 `./install.sh`）。
 
