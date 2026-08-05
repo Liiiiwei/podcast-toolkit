@@ -3264,10 +3264,6 @@ dialog.modal::backdrop {
     overflow-y: auto;
     max-height: 60vh;
   }
-  .drawer {
-    height: auto;
-    max-height: 60vh;
-  }
 }
 @media (max-width: 640px) {
   .topbar-left {
@@ -3481,6 +3477,17 @@ dialog.modal::backdrop {
     height var(--duration-base) var(--ease-out),
     padding var(--duration-base) var(--ease-out);
   overflow: hidden;
+}
+/* 窄螢幕：版面改成上下堆疊，抽屜給得比桌面的 32vh 多一些。
+   這裡踩過兩個坑，都別再犯：
+   1. 這段一定要放在上面的 .drawer 基礎規則「之後」。@media 不加 specificity 權重，
+      同樣是 .drawer 單一 class，寫在檔案前段的 media 區塊會被後面的 height:32vh 整條蓋掉。
+   2. 不能寫 height:auto。.drawer-pane 是 position:absolute 脫離常規流，
+      .drawer-panes 的內在高度恆為 0，auto 會讓抽屜塌成只剩 header（實測 45px、清單全看不見）。 */
+@media (max-width: 900px) {
+  .drawer {
+    height: 40vh;
+  }
 }
 .drawer.collapsed {
   height: 42px;
