@@ -53,6 +53,10 @@
 - [x] **A4. `@media (max-width: 900px)` 沒同步新的 `.body` / `.body-top` grid** ✅ 2026-06-06 commit 34ec794
   - `podcast_toolkit/web/static/app.css` @media 補 `.body { grid-template-rows: auto auto; --drawer-h: auto; }` 與 `.body-top { grid-template-columns: 1fr; overflow: visible; }`
   - `.drawer` 改 `height: auto; max-height: 60vh`
+  - ⚠ **2026-08-05 發現上面這條 `height: auto` 從沒生效過，比原記載更嚴重** ✅ commit `0b53e05`：
+    `.drawer` 基礎規則 `height: 32vh` 整條蓋掉前段的 `@media` 區塊（`@media` 不加 specificity 權重，純比誰在後面），
+    窄螢幕從來沒有例外過；修好順序後才發現 `height: auto` 本身也不成立 —— `.drawer-pane` 是 `position: absolute`
+    脫離常規流，`.drawer-panes` 內在高度恆為 0，`auto` 會讓抽屜塌成只剩標題列（實測 45px）。最終改用固定 `height: 40vh`。
 
 ## 程式碼註解
 
@@ -149,8 +153,11 @@
   重拍（拍攝前先斷言抽屜裡沒有任何「斷句」按鈕，載到舊版前端就整輪失敗），
   再照既有慣例 `sips -Z 2400` 縮成 2400x501。新圖字幕列右側是「— —」。
   其餘 24 張經檔名比對與本次改動無關。
-- [ ] **重打包 .app**：`/Applications/Podcast.app` 是烤死的 bundle，這次 app.js 的改動
-  （斷句鈕消失）要重跑 `./build_app.sh` 才看得到。
+- [x] **重打包 .app** ✅ 2026-08-05 15:05（commit `5eea9b9` 之後）：跑 `./build_app.sh`，
+  約 2 分鐘出 app 本體、再約 6 分鐘出 DMG（`dist/Podcast-Toolkit-0.2.0-20260805-5eea9b9.dmg`）。
+  驗收沒有只看「build 成功」——比對 bundle 內 `app.css`／`app.js` 與開發樹的 sha256，
+  三方（bundle 兩份副本 + 開發樹）完全相同；另確認 `app.css` 含 `height: 40vh`、
+  `app.js` 已無 `requestResegment`／`runResegment`；`open` 後抓到 PID、`codesign --verify --deep --strict` 通過。
   ⚠ 裝好若 UI 沒變，先 `pgrep -fl Podcast` 砍掉殘留舊行程（同 2026-07-28 段的教訓）。
 - [x] **手冊內文交叉引用做成可點** ✅ 新增 36 處「見第 NN 章／附錄 X」
   的 `<a href="#chNN">`（連原有目錄共 47 個），PDF 內驗出 49 個內部跳轉標註。
@@ -158,8 +165,13 @@
   這類範圍描述刻意留純文字（拆成兩個連結在列印版更難讀）。
 - [x] **手冊 PDF 重出流程固定成腳本** ✅ `_scratch/print_manual_pdf.py`
   ——Letter 612x792pt、`printBackground=true`（不開的話 callout 三色會整片消失）、
-  送印前先斷言 24 張圖全部載完。交付檔 `~/Downloads/podcast-toolkit- 教學手冊 20260805.pdf`。
-- [ ] **手冊 PDF 缺頁碼與書籤大綱**：Chrome `printToPDF` 給不了，要換 Prince 或 WeasyPrint 重出。
+  送印前先斷言 24 張圖全部載完。交付檔 `~/Downloads/podcast-toolkit- 教學手冊 20260805a.pdf`
+  （帶 a 的才是含頁碼與書籤的版本；不帶 a 的初版已丟垃圾桶）。
+- [x] **手冊 PDF 補頁碼與多層書籤大綱** ✅ commit `5eea9b9`：原記載認定 Chrome `printToPDF` 辦不到頁碼和書籤這兩件事，
+  要換別的排版引擎重出（估 1-2 天，含重校 40 頁）——這個前提是錯的。實測 Chrome 兩件事都做得到：
+  書籤靠 CDP 參數 `generateDocumentOutline: true`，頁碼靠 CSS `@page` 的 `@bottom-center`，Blink 會渲染，
+  成本降到 20-30 分鐘。⚠ `@page` 裡絕對不能加 `margin`，加了整份會從 40 頁重排成 42 頁、所有頁碼和書籤位移；
+  CDP 那邊既有的 margin 0.4 保留不動。
 - [x] **Breeze 轉錄失敗會靜默回報成功** ✅ `transcribe_job.py:658-677`
   ——校對與斷句重整的兩個 `except` 改成寫 `note` 欄（`job:82`），前端把 note 顯示成
   黃底提示（`app.js` 的 `finishTranscribe` + `app.css` 的 `.modal-hint.warn`）。
@@ -170,5 +182,20 @@
 - [x] **`resegment.py` 缺講者重建** ✅ 新增 `remap_speakers_by_time()`（`resegment.py:25`）：
   重切後 idx 全部重編，舊 sidecar 靠「時間重疊最多」重新貼到新卡上，
   覆寫前先備份 `.pre-resegment.bak`；沒有舊 sidecar 就完全不動（不無中生有）。
-- [ ] **CLI 加 `--src` 選項**（提議過、未拍板）：讓 `podcast resegment` 能指定來源字幕檔，
-  不必只吃 `_v2.srt` —— 介面上的入口拿掉後，這條 CLI 路徑就是唯一的手動斷句方式。
+- [x] **CLI 加 `--src` 選項** ✅ commit `6cd43f4`：`podcast_toolkit/cli.py` 加 `--src PATH`，
+  省略時行為零改變；來源檔不存在回 rc=3、不 fallback；輸出一律仍寫回 `_final_v2.srt`；
+  講者 sidecar 重建的時間軸基準仍固定取舊 `_v2`。新增 8 支測試。
+
+## 待裁決／待授權
+
+- [ ] **決定：`_scratch/print_manual_pdf.py` 要不要移進 repo 納管**（例如搬到 `docs/user-manual/print.py`）：
+  目前是唯一能重出手冊 PDF 的腳本，剛補上 `generateDocumentOutline` 這個關鍵參數；
+  `_scratch/` 在 `.gitignore` 裡不進 git，環境一清就沒了。
+- [ ] **決定：P2c-follow（分段平行預烤，詳見上方「效能：合成編碼」段）要不要做 —— 評估後建議不做**：
+  收益只有首次輸出從約 50 分降到約 28 分（省 22 分鐘、且只有第一次），但要動 5 個高風險點：
+  `build_leveled_cmd` 寫死單一 `-i` 且無 `-force_key_frames`；`-c copy` concat 沒有 keyframe 對齊保證；
+  meta 無分段清單無法續跑；`_pump_progress` 綁單一 Popen 與單一 total_dur；`_ACTIVE_PROC` 單一全域，
+  平行後取消會漏行程；前端只認 `"yt"`/`"reels"`。且**沒有任何真跑 ffmpeg 的測試**
+  （`tests/conftest.py:90` 把 `shutil.which` mock 成 True，只驗指令字串），改壞了測試不會紅。
+- [ ] **確認：Phase 2（單軌集手動配對 UI，詳見上方「2026-07-28 後續」段）狀態**：原項仍在，
+  維持「等使用者授權才開工」，未授權前不動。
