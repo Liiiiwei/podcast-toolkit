@@ -131,3 +131,32 @@
   bug 在前端：`loadEpisodeState()` 逐欄轉 camelCase 時漏接這欄，三處讀的
   `state.mic_srt_existing` 恆為 `undefined`。已補接線並改讀 `state.micSrtExisting`。
 - [ ] **Phase 2（單軌集手動配對 UI）**：等使用者授權才開工，未授權前不要動。
+
+## 2026-08-05 後續（使用者手冊 + 移除手動斷句入口後）
+
+- [x] **使用者手冊** ✅ `docs/user-manual/index.html`（40 頁，25 張 UI 截圖）
+  ——從開 app 到匯出的全流程，字幕功能寫得最細（點擊位置／達成效果／功能限制）。
+  PDF 用 Chrome headless `Page.printToPDF` 印出，**不入 git**（見 .gitignore），
+  交付檔另存 `~/Downloads/podcast-toolkit- 教學手冊 20260731b.pdf`。
+- [x] **移除檔案清單的「斷句」按鈕** ✅ `app.js` 拿掉 `.srt` 分支 +
+  `requestResegment`／`runResegment`（-58 行）。**後端刻意保留**：
+  `/api/resegment`（`routes/transcribe.py:164`）與 CLI `podcast resegment`（`cli.py:158`）都還在，
+  只是介面上不再暴露 —— 這個入口會覆蓋 `_v2.srt`，使用者手改的字幕會整批消失，風險 > 效益。
+- [x] **`merge_short` 預設打開、`merge_target` 放寬到 12** ✅ `defaults.yaml`
+  ——四集實測：異味率 10.8%→6.8%（魁哥）、過短卡 -21%～-43%；放寬到 12 再多救 66 張、
+  異味率再降 1～2.6pp，風險曲線到 12 為止完全持平。
+- [ ] 🔴 **手冊截圖 `17-drawer-files.png` 已過時**：畫面右側還有兩顆「✂ 斷句」按鈕，
+  但那顆鈕這次已經移除了。手冊拿去對照介面會找不到 —— 要重拍這一張（需要一個有多份
+  `.srt` 的真集，拍攝腳本在 `_scratch/manual_shots.py`），重拍後手冊 PDF 也要重出。
+  其餘 24 張經檔名比對與本次改動無關。
+- [ ] **重打包 .app**：`/Applications/Podcast.app` 是烤死的 bundle，這次 app.js 的改動
+  （斷句鈕消失）要重跑 `./build_app.sh` 才看得到。
+  ⚠ 裝好若 UI 沒變，先 `pgrep -fl Podcast` 砍掉殘留舊行程（同 2026-07-28 段的教訓）。
+- [ ] **手冊內文交叉引用做成可點**：現在「見第 06 章」是純文字，要加 `<a href="#chNN">`。
+- [ ] **手冊 PDF 缺頁碼與書籤大綱**：Chrome `printToPDF` 給不了，要換 Prince 或 WeasyPrint 重出。
+- [ ] **Breeze 轉錄失敗會靜默回報成功**：`transcribe_job.py:666-671` 的 `except Exception: pass`
+  吞掉例外後仍走到 done，使用者看到「完成」但字幕沒換。
+- [ ] **`sentence_resegment.py` 整支是死代碼**：沒有任何呼叫點，確認後刪。
+- [ ] **`resegment.py` 缺講者重建**：跑完 resegment 後 speakers sidecar 沒跟著重算（約 20–30 行）。
+- [ ] **CLI 加 `--src` 選項**（提議過、未拍板）：讓 `podcast resegment` 能指定來源字幕檔，
+  不必只吃 `_v2.srt` —— 介面上的入口拿掉後，這條 CLI 路徑就是唯一的手動斷句方式。
