@@ -117,8 +117,12 @@ def _scan_overlap(cards: list, speakers: dict | None = None) -> list:
     """⑤ 時間重疊：回傳 [(前卡idx, 後卡idx, 重疊秒數), ...]。
 
     只檢帶時間（4 欄）的相鄰對，依 start 排序；前卡 end > 後卡 start + _OVERLAP_EPS
-    即重疊。speakers 提供時只記「同一講者」的重疊——不同（或未知）講者的時間重疊是分軌
-    雙人同時說話的既定設計（見 srt_merge），不算異味；speakers 空／None（單軌）→ 全記。
+    即重疊。speakers 提供時只記「同一講者」的重疊，跨講者的放行；speakers 空／None（單軌）→ 全記。
+
+    放行跨講者這條，原本是為了已廢棄的 srt_merge 架構（三軌各自 ASR 再合併，那時真的會
+    產出跨講者重疊卡）。現行 mic_diarize 是混音單一 ASR ＋ 逐字 argmax，換人就強制斷卡，
+    產不出跨講者重疊 —— 這條分支現在只會被 dual_line 的 hold 打到（人工延長前一句製造的
+    顯示層重疊，不是真實的同時發聲），放行仍然正確。
     """
     timed = [c for c in cards if len(c) >= 4]
     ordered = sorted(timed, key=lambda c: float(c[2]))
