@@ -1,17 +1,28 @@
 """podcast edit / podcast ui：啟動本機 FastAPI + 開瀏覽器。"""
 from __future__ import annotations
+import json
+import os
 import signal
 import socket
 import sys
 import threading
+import time
+import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import Callable
 
 import uvicorn
 
 from podcast_toolkit import server_lock
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web.api import build_app
+
+try:
+    # build_app.sh 每次打包寫入，代表「這個行程正在跑的版本」；開發樹沒有 → "dev"。
+    from podcast_toolkit._build_info import BUILD_ID as _BUILD_ID
+except ImportError:
+    _BUILD_ID = "dev"
 
 
 LOCK_PATH = Path.home() / ".podcast-toolkit" / ".server.lock"
@@ -23,19 +34,102 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def _probe_build_id(port: int, *, timeout: float = 2.0) -> str | None:
+    """HTTP 探既有 server 的記憶體版本（/api/version）。
+
+    連不上／無此 endpoint（舊後端回 404）／回應非預期一律回 None
+    —— 呼叫端會把 None 當「需要接管的舊行程」。"""
+    try:
+        with urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/version", timeout=timeout
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+    bid = data.get("build_id")
+    return bid if isinstance(bid, str) else None
+
+
+def _should_reuse(running_build_id: str | None, my_build_id: str) -> bool:
+    """既有 server 版本與本次啟動「相同」才沿用；探不到或版本不同都要接管。"""
+    return running_build_id is not None and running_build_id == my_build_id
+
+
+def _terminate_and_wait(pid: int, *, timeout: float = 10.0) -> bool:
+    """SIGTERM 既有行程並等它讓出 server lock。
+
+    舊行程收到 SIGTERM 會 graceful shutdown 並在 finally 釋放 lock。
+    行程消失或 lock 被釋放即算讓出成功。逾時未讓出回 False。"""
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        # 行程早就不在 → lock 是殘檔，清掉即可
+        server_lock.release(LOCK_PATH)
+        return True
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return True                 # 行程已結束
+        if not LOCK_PATH.exists():
+            return True                 # lock 已被舊行程 release
+        time.sleep(0.2)
+    return False
+
+
+def _handle_existing_server(
+    existing_pid: int,
+    existing_port: int,
+    *,
+    probe: Callable[[int], "str | None"] = _probe_build_id,
+    terminate: Callable[[int], bool] = _terminate_and_wait,
+    open_browser: Callable[[str], object] = webbrowser.open,
+) -> int | None:
+    """lock 已被占用時的決策（副作用函式可注入，便於測試）。
+
+    回傳 int＝呼叫端應立即 return 的 exit code（沿用既有 / 接管失敗）；
+    回傳 None＝已終止舊行程並讓出 lock，呼叫端應繼續啟動新 server。"""
+    running = probe(existing_port)
+    if _should_reuse(running, _BUILD_ID):
+        url = f"http://127.0.0.1:{existing_port}"
+        print(f"→ 已有相同版本的 podcast server 在跑，開啟既有 instance：{url}")
+        open_browser(url)
+        return 0
+    # 版本不符或探不到 → 殘留的舊版行程。若直接沿用，新裝的 App 會被導去舊行程，
+    # 前端偵測到記憶體版本落後磁碟 → 誤報「執行的是舊版本」橫幅，舊行程又會在
+    # 90 秒閒置後自動關閉。改為關掉它、搶回 lock，用目前版本重起。
+    print(
+        f"→ 偵測到殘留的舊版 server（build={running or '未知'}），"
+        f"關閉它並改用目前版本（build={_BUILD_ID}）…"
+    )
+    if not terminate(existing_pid):
+        print(
+            "✗ 舊版 server 未能在時限內結束；請按 ⌘Q 完全結束 App 後再重開。",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
 def _start_server(ep: Episode | None) -> int:
     """共用 server 啟動邏輯。回傳 exit code。"""
     port = _find_free_port()
     if not server_lock.acquire(LOCK_PATH, port):
         existing = server_lock.read(LOCK_PATH)
-        if existing:
-            existing_port = existing[1]
-            url = f"http://127.0.0.1:{existing_port}"
-            print(f"→ 已有 podcast server 在跑，開啟既有 instance：{url}")
-            webbrowser.open(url)
-            return 0
-        print(f"✗ lockfile 異常：{LOCK_PATH}", file=sys.stderr)
-        return 1
+        if not existing:
+            print(f"✗ lockfile 異常：{LOCK_PATH}", file=sys.stderr)
+            return 1
+        outcome = _handle_existing_server(existing[0], existing[1])
+        if outcome is not None:
+            return outcome
+        # 已接管：舊行程讓出 lock，用新的 free port 重取
+        port = _find_free_port()
+        if not server_lock.acquire(LOCK_PATH, port):
+            print(f"✗ 接管舊 server 後仍無法取得 lock：{LOCK_PATH}", file=sys.stderr)
+            return 1
 
     server = {"instance": None}
 
