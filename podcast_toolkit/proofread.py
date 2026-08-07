@@ -114,7 +114,8 @@ def _claude_one_chunk(chunk, glossary, *, model, timeout, context) -> dict:
     if model:
         cmd += ["--model", str(model)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                              encoding="utf-8", errors="replace")
     except subprocess.TimeoutExpired as e:
         raise ProofreadError(f"claude -p 逾時({timeout}s)") from e
     if proc.returncode != 0:

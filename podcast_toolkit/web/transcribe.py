@@ -691,7 +691,8 @@ def _ffmpeg_compress(src: Path, dst: Path) -> None:
         "-b:a", COMPRESS_BITRATE,
         str(dst),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         tail = (proc.stderr or "").strip().splitlines()[-5:]
         raise TranscribeError(f"ffmpeg 壓縮失敗：{' / '.join(tail)}")

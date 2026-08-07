@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
+import os
 import sys
+# locale 非 UTF-8 的 Mac（別台）啟動時 Python 3.9 會退回 US-ASCII，讀 ffmpeg/claude 的
+# 中文輸出就會 UnicodeDecodeError（'ascii' codec can't decode byte 0xe8…）。若尚未進入
+# UTF-8 模式，帶 PYTHONUTF8=1 重啟自己，一次免疫整條 CLI（等同 .app 的 LSEnvironment）。
+if not sys.flags.utf8_mode and os.environ.get("PYTHONUTF8") != "1":
+    os.environ["PYTHONUTF8"] = "1"
+    os.execv(sys.executable, [sys.executable, *sys.argv])
 from pathlib import Path
 # 確保 toolkit 套件路徑可被 import
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

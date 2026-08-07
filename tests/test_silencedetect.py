@@ -53,7 +53,7 @@ def test_detect_head_silence_invokes_ffmpeg(monkeypatch, tmp_path):
 
     called = {}
 
-    def fake_run(cmd, capture_output, text, timeout):
+    def fake_run(cmd, capture_output, text, timeout, **kwargs):
         called["cmd"] = cmd
         return subprocess.CompletedProcess(
             args=cmd, returncode=0, stdout="", stderr=fake_stderr

@@ -106,7 +106,8 @@ def _run_silencedetect(
         "-",
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                                encoding="utf-8", errors="replace")
     except FileNotFoundError as e:
         raise RuntimeError(f"找不到 ffmpeg：{e}")
     except subprocess.TimeoutExpired:

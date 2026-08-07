@@ -19,6 +19,11 @@ DEATH_MARKER="[podcast-ui.sh] SERVER_EXITED"
 TIMEOUT_SEC=20
 # homebrew 優先；/usr/local/bin 可能有 python 3.6 老符號連結會吃掉 import
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+# 別台 Mac 若 locale 非 UTF-8（LANG 缺 .UTF-8 等），Python 會退回 US-ASCII，
+# server 讀 ffmpeg/claude 的中文輸出會 UnicodeDecodeError → 強制 UTF-8（等同 .app 的 LSEnvironment）
+export PYTHONUTF8=1
+export LANG="${LANG:-en_US.UTF-8}"
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
 
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 
