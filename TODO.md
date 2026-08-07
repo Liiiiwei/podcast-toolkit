@@ -109,7 +109,8 @@
   - `assemble.py`：`_maybe_leveled`/`build_leveled_cmd`/`_leveled_proxy_valid`/`write_leveled_meta` + prepare 用 `render_cfg`（baked 鏡頭 rotate→0）+ plan 帶 `prebake`；`assemble_job` 主合成前先跑/略過預烤（共用 `_pump_progress`）
   - 驗證：unit + 真跑 ffmpeg SSIM smoke = **0.9962**（proxy 路徑與 inline rotate 畫面等價）
   - ⚠ 預烤是「整支 cam B 全長轉正」（~50 分一次性），**首次輸出反而較慢**；回本在第 2 次起（YT+Reels/重輸出）
-  - [ ] **P2c-follow. 分段平行預烤**：把那一次性 ~50 分用 `-ss` 切塊平行 rotate + `-c copy` concat → ~1.9× 砍到 ~28 分，讓首次也不吃虧（rotate 唯一吃得到平行的地方就是這支獨立 pass）
+  - ~~**P2c-follow. 分段平行預烤**：把那一次性 ~50 分用 `-ss` 切塊平行 rotate + `-c copy` concat → ~1.9× 砍到 ~28 分~~
+    **❌ 2026-08-07 裁決不做**（理由見下方「待決事項」段）
 
 ## 啟動 App（雙擊開介面）
 
@@ -224,14 +225,16 @@
 
 ## 待裁決／待授權
 
-- [ ] **決定：`_scratch/print_manual_pdf.py` 要不要移進 repo 納管**（例如搬到 `docs/user-manual/print.py`）：
-  目前是唯一能重出手冊 PDF 的腳本，剛補上 `generateDocumentOutline` 這個關鍵參數；
-  `_scratch/` 在 `.gitignore` 裡不進 git，環境一清就沒了。
-- [ ] **決定：P2c-follow（分段平行預烤，詳見上方「效能：合成編碼」段）要不要做 —— 評估後建議不做**：
+- [x] **決定：`_scratch/print_manual_pdf.py` 移進 repo 納管** ✅ 2026-08-05（commit `d52e0dd`）：
+  已搬到 `docs/user-manual/print_pdf.py`（不是原本設想的 `print.py`）。搬之前先修路徑解析 ——
+  原本用 `dirname(dirname(__file__))` 往上兩層算 repo root，換位置就會算成 `docs/`；改成同目錄 `HERE`。
+  重跑產出 17,831,752 bytes，與搬移前 **byte-for-byte 一致**，證明路徑改對。
+- [x] **決定：P2c-follow（分段平行預烤）不做** ❌ 2026-08-07 使用者裁決：
   收益只有首次輸出從約 50 分降到約 28 分（省 22 分鐘、且只有第一次），但要動 5 個高風險點：
   `build_leveled_cmd` 寫死單一 `-i` 且無 `-force_key_frames`；`-c copy` concat 沒有 keyframe 對齊保證；
   meta 無分段清單無法續跑；`_pump_progress` 綁單一 Popen 與單一 total_dur；`_ACTIVE_PROC` 單一全域，
   平行後取消會漏行程；前端只認 `"yt"`/`"reels"`。且**沒有任何真跑 ffmpeg 的測試**
   （`tests/conftest.py:90` 把 `shutil.which` mock 成 True，只驗指令字串），改壞了測試不會紅。
+  加上上方 `:102` 的量測：rotate 本身難平行（4 並行聚合僅 1.12×，全核榨頂約 1.9×），收益封頂。
 - [ ] **確認：Phase 2（單軌集手動配對 UI，詳見上方「2026-07-28 後續」段）狀態**：原項仍在，
   維持「等使用者授權才開工」，未授權前不動。
