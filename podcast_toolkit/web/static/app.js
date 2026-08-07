@@ -7757,6 +7757,51 @@ function showUpdateBanner() {
   if (el) el.hidden = false; // 一旦顯示就不再收回（correctness 橫幅，不可關閉）
 }
 
+// 純函式：解析 BUILD_ID → {version, sha, date, ts}，無法解析回 null。
+// BUILD_ID 格式：`${VER}+g${SHA}.${BUILD_TS}`，例 `0.2.0+g3f9a1c2.20260717T1802`。
+//   - version：以第一個 `+g` 切左段（version 可含 `.`，故用 indexOf 不用 split 全切）
+//   - 右段用「最後一個 `.`」(lastIndexOf) 切：右邊是 ts、左邊是 sha（sha 不含 `.`，可能帶 -dirty）
+//   - date：ts 命中 YYYYMMDDThhmm 才轉 YYYY-MM-DD，否則留空字串
+// 供顯示邏輯與單元測試共用；"dev"、空值、格式不符一律回 null（顯示層自行決定文案）。
+function parseBuildId(buildId) {
+  if (typeof buildId !== "string" || !buildId) return null;
+  if (buildId === "dev") return null;
+  const gi = buildId.indexOf("+g");
+  if (gi < 0) return null;
+  const version = buildId.slice(0, gi);
+  const rest = buildId.slice(gi + 2); // 去掉 "+g"
+  const di = rest.lastIndexOf(".");
+  const sha = di < 0 ? rest : rest.slice(0, di);
+  const ts = di < 0 ? "" : rest.slice(di + 1);
+  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})$/);
+  const date = m ? `${m[1]}-${m[2]}-${m[3]}` : "";
+  return { version, sha, date, ts };
+}
+
+// 依「執行中版本」memId 更新版本標籤（四態文案 + title=完整 build_id）。
+// memId 傳 null／未知＝抓不到執行中版本 → 「版本 未知」。dev → 「開發版」。
+function renderVersionLabel(memId) {
+  const el = document.getElementById("version-label");
+  if (!el) return;
+  if (memId === "dev") {
+    el.textContent = "開發版";
+    el.title = "dev";
+    return;
+  }
+  const info = parseBuildId(memId);
+  if (!info) {
+    // error/empty 態：抓失敗、404、5xx、格式不符 → 未知
+    el.textContent = "版本 未知";
+    el.title = "/api/version 無回應";
+    return;
+  }
+  // success 態：有日期顯示「v版本 · 日期」，時間戳解析失敗只顯示「v版本」
+  el.textContent = info.date
+    ? `v${info.version} · ${info.date}`
+    : `v${info.version}`;
+  el.title = memId; // 滑鼠停留看完整 build_id（含 sha），供診斷
+}
+
 async function probeVersion() {
   // 1) 磁碟版本（永遠最新）。cache:no-store 確保拿到磁碟真值。
   let diskId = null;
@@ -7779,20 +7824,27 @@ async function probeVersion() {
   try {
     res = await fetch("/api/version", { cache: "no-store" });
   } catch {
+    renderVersionLabel(null); // 抓失敗 → 版本 未知
     return; // error 態：App 已關 → 不誤報
   }
   if (res.status === 404) {
     // 舊後端還沒有這個 endpoint —— 正是本機制上線後「第一次更新」的真實情境
+    renderVersionLabel(null); // 執行中後端無此 endpoint → 版本 未知
     showUpdateBanner();
     return;
   }
-  if (!res.ok) return; // 其他 5xx 等異常，不誤報
+  if (!res.ok) {
+    renderVersionLabel(null); // 其他 5xx 等異常 → 版本 未知
+    return; // 不誤報橫幅
+  }
   let memId = null;
   try {
     memId = (await res.json()).build_id;
   } catch {
+    renderVersionLabel(null); // 解析失敗 → 版本 未知
     return;
   }
+  renderVersionLabel(memId); // 更新版本標籤（success/dev 態）；不影響下方橫幅邏輯
   // success 態：一致 → 不動作；不一致＝記憶體舊於磁碟＝行程過期 → 橫幅
   if (memId && memId !== diskId) showUpdateBanner();
 }

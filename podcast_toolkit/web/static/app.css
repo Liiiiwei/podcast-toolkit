@@ -115,6 +115,16 @@ h2 {
   margin-top: 2px;
   max-width: 100%;
 }
+/* 版本標籤：常駐、非侵入。印出執行中版本＋建置日期，供日常辨識與「跑的版本≠剛裝的版本」自我診斷。
+   放在標題下方的次要資訊列（status-row），最弱的文字色、最小字級；flex-shrink:0 讓過長的 #status
+   先被壓縮，版本號保持可讀。它在 topbar 中央 grid 欄內，不會擠到右側按鈕。 */
+.version-label {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  white-space: nowrap;
+  cursor: default;
+  flex-shrink: 0;
+}
 .unsaved-badge {
   font-size: var(--text-xs);
   color: var(--warning);
@@ -143,14 +153,15 @@ h2 {
 }
 
 /* —— 版本更新橫幅 —— */
-/* 偵測到「App 已更新但行程還是舊的」時顯示。固定頂條、不可關閉（correctness，非提示）；
-   用 danger 色系搶眼、蓋在最上層。預設 hidden，由 app.js 版本探針拿掉 hidden 顯示。 */
+/* 偵測到「App 已更新但行程還是舊的」時顯示。置頂、不可關閉（correctness，非提示）；
+   用 danger 色系搶眼。用 sticky 而非 fixed：body 是直向 flex 容器，sticky 讓橫幅
+   占據 flow 空間、把 topbar（含儲存鈕）往下推，不會蓋住它；fixed 會脫離 flow 疊在
+   topbar 上遮住儲存鈕。預設 hidden，由 app.js 版本探針拿掉 hidden 顯示。 */
 #update-banner {
-  position: fixed;
+  position: sticky;
   top: 0;
-  left: 0;
-  right: 0;
   z-index: 9999;
+  flex-shrink: 0;
   padding: 12px 20px;
   background: var(--danger, #c62828);
   color: #fff;
