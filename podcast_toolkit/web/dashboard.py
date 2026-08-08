@@ -16,18 +16,23 @@ RECENT_MAX = 20
 
 
 def episode_stage(ep_dir: Path) -> str:
-    """回傳集數階段：broken / empty / needs_transcribe / needs_assemble / done。"""
+    """回傳集數階段：broken / empty / needs_transcribe / needs_assemble / done。
+
+    整段包 try：不只 Episode() 建構會炸（壞 yaml），後面的 .exists() 與
+    延遲讀 cfg（權限錯、缺鍵）也可能拋——任何例外都標 broken，不上拋，
+    否則會逸出到 /api/episodes 變 500（2026-08-08 feedback-signals-ux 第 3 節）。
+    """
     try:
         ep = Episode(ep_dir)
+        if not ep.main_video().exists():
+            return "empty"
+        if not ep.output_v2_srt().exists():
+            return "needs_transcribe"
+        if not (ep.output_yt_video().exists() or ep.output_reels_video().exists()):
+            return "needs_assemble"
+        return "done"
     except Exception:
         return "broken"
-    if not ep.main_video().exists():
-        return "empty"
-    if not ep.output_v2_srt().exists():
-        return "needs_transcribe"
-    if not (ep.output_yt_video().exists() or ep.output_reels_video().exists()):
-        return "needs_assemble"
-    return "done"
 
 
 def _load_config_dict(config_path: Path) -> dict:
@@ -100,6 +105,11 @@ def list_episodes(roots: list[str], recent: list[str]) -> dict:
     warnings: list[str] = []
     seen: dict[str, dict] = {}
 
+    def _warn(msg: str) -> None:
+        # 同一個壞資料夾可能同時出現在 roots 掃描與 recent，避免重複警告
+        if msg not in warnings:
+            warnings.append(msg)
+
     for raw_root in roots:
         root = Path(raw_root).expanduser()
         if not root.is_dir():
@@ -111,21 +121,34 @@ def list_episodes(roots: list[str], recent: list[str]) -> dict:
             warnings.append(f"沒有權限讀取：{raw_root}")
             continue
         for child in children:
-            if not child.is_dir():
+            # 逐 child 容錯：單一壞資料夾（如 chmod 000 導致 is_file() 拋
+            # PermissionError）只跳過該集，不能讓整份 /api/episodes 回 500。
+            # 失敗不靜默：跳過的一律寫進 warnings 給前端顯示。
+            try:
+                if not child.is_dir():
+                    continue
+                if not (child / "episode.yaml").is_file():
+                    continue
+                meta = _episode_meta(child)
+            except Exception as e:
+                _warn(f"讀不到 {child.name}：{e}")
                 continue
-            if not (child / "episode.yaml").is_file():
-                continue
-            meta = _episode_meta(child)
             if meta is not None:
                 seen[meta["path"]] = meta
 
     for raw_path in recent:
         ep_dir = Path(raw_path).expanduser()
-        if not ep_dir.is_dir():
+        # recent 同款容錯：路徑失效（單純不存在）沿用既有行為靜默跳過，
+        # 但權限錯這類「資料夾在、讀不到」要進 warnings，不准無聲消失。
+        try:
+            if not ep_dir.is_dir():
+                continue
+            if not (ep_dir / "episode.yaml").is_file():
+                continue
+            meta = _episode_meta(ep_dir)
+        except Exception as e:
+            _warn(f"讀不到 {ep_dir.name}：{e}")
             continue
-        if not (ep_dir / "episode.yaml").is_file():
-            continue
-        meta = _episode_meta(ep_dir)
         if meta is not None and meta["path"] not in seen:
             seen[meta["path"]] = meta
 
