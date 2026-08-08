@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from podcast_toolkit import cameras_io, ingest_breeze, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.subtitle_cleanup import smooth_speakers
 
 _BREEZE_SRT = """\
 1
@@ -101,3 +102,40 @@ def test_ingest_preserves_overlapping_cards(tmp_path):
     # 交疊時間原樣保留（card1 結束 14.0 > card2 開始 13.5）
     assert cards[0]["end"] == 14.0 and cards[1]["start"] == 13.5
     assert speakers == {1: "a", 2: "b"}                            # 兩講者分開的 key
+
+
+# 三方交錯:a(4s)|b 短段(1s)|c(5s)。預設平滑會把 b 改到較長側 c;strict 下保留。
+_STRICT_SRT = """\
+1
+00:00:00,000 --> 00:00:04,000
+[Mic1] 我們今天來聊聊這個主題
+
+2
+00:00:04,000 --> 00:00:05,000
+[Mic2] 嗨嗨嗨
+
+3
+00:00:05,000 --> 00:00:10,000
+[Mic3] 好的那我們就開始今天的訪談
+"""
+
+
+def test_ingest_passes_smooth_strict(tmp_episode_dir):
+    """run(smooth_strict=True) 要真的透傳成 smooth_speakers(strict_sandwich=True)
+    ——透傳斷線(run 沒把參數接到呼叫點)時此測必紅。"""
+    src = tmp_episode_dir / "透傳_含講者.srt"
+    src.write_text(_STRICT_SRT, encoding="utf-8")
+    ep = Episode(tmp_episode_dir)
+
+    # 對照組:預設(不傳)→ 現行行為,三方交錯改到較長側 c
+    assert ingest_breeze.run(tmp_episode_dir, srt=str(src)) == 0
+    assert cameras_io.load(ep.output_v2_speakers_json()) == {1: "a", 2: "c", 3: "c"}
+
+    # strict 透傳:三方交錯(兩側不同講者)不是真夾心 → 保留 b
+    assert ingest_breeze.run(tmp_episode_dir, srt=str(src), smooth_strict=True) == 0
+    got = cameras_io.load(ep.output_v2_speakers_json())
+    assert got == {1: "a", 2: "b", 3: "c"}
+
+    # 等同直呼 smooth_speakers(strict_sandwich=True)——防 run 內另做一套邏輯
+    cards, speakers = ingest_breeze.ingest(src)
+    assert got == smooth_speakers(cards, speakers, strict_sandwich=True)

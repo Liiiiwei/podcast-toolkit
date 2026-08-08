@@ -57,6 +57,146 @@ def test_smooth_empty_speakers_is_noop():
     assert smooth_speakers(_cards((0, 1, "x")), {}) == {}
 
 
+# -- 豁免（C0 魁哥集實測 2026-08-08：完整話語 span 不准被吞，抖動碎片照常平滑）--
+
+def test_smooth_exempts_reaction_word_span():
+    """完整短回應（白名單「沒錯」，<2s）夾在 a 中間 → 豁免不改標（無豁免版本測必紅）。"""
+    cards = _cards((0, 3, "x"), (3, 4, "沒錯"), (4, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a"}
+
+
+def test_smooth_exempts_particle_ending_span():
+    """≤8 字且語氣詞（嗎）收尾的完整提問（C0 #145 同型）→ 豁免不改標。"""
+    cards = _cards((0, 3, "x"), (3, 4.5, "體育運動嗎"), (4.5, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a"}
+
+
+def test_smooth_exempt_strips_spaces():
+    """span 文字含空格（沒 錯）→ 比對前去空格，仍豁免。"""
+    cards = _cards((0, 3, "x"), (3, 4, "沒 錯"), (4, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a"}
+
+
+def test_smooth_nine_chars_particle_not_exempt():
+    """9 字嗎收尾（超出 ≤8 實測邊界）→ 不豁免、照常改標（防手滑放寬門檻）。"""
+    cards = _cards((0, 3, "x"), (3, 4.5, "喜歡體育運動項目嗎"), (4.5, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "a", 3: "a"}
+
+
+def test_smooth_still_merges_jitter_fragment():
+    """抖動碎片（耳機：非白名單、非語氣詞尾）→ 仍照常平滑（價值行為不回退）。"""
+    cards = _cards((0, 3, "x"), (3, 3.5, "耳機"), (3.5, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "a", 3: "a"}
+
+
+# -- strict_sandwich（方案二參數，預設關＝現行行為）--
+
+def test_smooth_strict_sandwich_default_off():
+    """三方交錯（a｜b 短段｜c）預設不傳參數 → 照舊改到較長側＝現行行為不變。"""
+    cards = _cards((0, 4, "x"), (4, 5, "嗨嗨嗨"), (5, 10, "x"))
+    spk = {1: "a", 2: "b", 3: "c"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "c", 3: "c"}
+
+
+def test_smooth_strict_sandwich_blocks_三方():
+    """strict_sandwich=True：三方交錯（兩側不同講者）→ 不是真夾心，不改標。"""
+    cards = _cards((0, 4, "x"), (4, 5, "嗨嗨嗨"), (5, 10, "x"))
+    spk = {1: "a", 2: "b", 3: "c"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0, strict_sandwich=True)
+    assert out == {1: "a", 2: "b", 3: "c"}
+
+
+def test_smooth_strict_sandwich_merges_true_blip():
+    """strict_sandwich=True：真夾心（a｜b 短段｜a）→ 照常併回 a。"""
+    cards = _cards((0, 3, "x"), (3, 3.8, "x"), (3.8, 8, "x"))
+    spk = {1: "a", 2: "b", 3: "a"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0, strict_sandwich=True)
+    assert out == {1: "a", 2: "a", 3: "a"}
+
+
+# -- 豁免段透明化（C3 驗收魁哥集實測 4 例級聯傷害的回歸；結構照驗收報告逐案取證）--
+
+def test_smooth_transparent_wall_left_case6():
+    """魁哥 #5/#6 型：豁免牆在左。牆不得把右鄰完整句與更左側同講者段切開孤立成 blip。"""
+    cards = _cards((0, 3, "x"), (3, 4, "是的"),
+                   (4, 5.5, "那我會先跑你們繼續講"), (5.5, 10, "x"))
+    spk = {1: "a", 2: "b", 3: "a", 4: "b"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a", 4: "b"}   # 完整句(1.5s)不得被吞給 b
+
+
+def test_smooth_transparent_wall_right_case1025():
+    """魁哥 #1025/#1026 型：豁免牆在右。左鄰完整句越過牆與同講者段連續，不是 blip。"""
+    cards = _cards((0, 4, "x"), (4, 5.2, "對沒人也要戴口罩"),
+                   (5.2, 6, "沒錯"), (6, 10, "x"))
+    spk = {1: "a", 2: "b", 3: "a", 4: "b"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a", 4: "b"}   # 完整句(1.2s)不得被吞給 a
+
+
+def test_smooth_transparent_wall_multicard_victim_case1341():
+    """魁哥 #1340-1342 型：受害段跨兩卡（很棒吧＋也還行啊也可以啊，合併 11 字不豁免），
+    仍靠透明化保住——豁免以段為單位、透明化保護的是段的連續性。"""
+    cards = _cards((0, 2.5, "x"), (2.5, 3.2, "對啊"),
+                   (3.2, 4.0, "很棒吧"), (4.0, 5.0, "也還行啊也可以啊"), (5.0, 9, "x"))
+    spk = {1: "a", 2: "b", 3: "a", 4: "a", 5: "b"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "a", 2: "b", 3: "a", 4: "a", 5: "b"}
+
+
+def test_smooth_transparent_wall_between_same_speaker():
+    """指定結構：豁免段夾在同講者兩短句中間（b｜a｜牆 b｜a｜b）→ 兩側 a 皆不得被吞。
+    無透明化時兩側 a(各 1.5s)會被牆孤立成 blip 級聯全吞成 b。
+    （C3 第 2 輪起候選須 ≥4 字才算話語，故兩短句用真實字數文字，不用 1 字佔位）"""
+    cards = _cards((0, 4, "x"), (4, 5.5, "剛剛那段可以"), (5.5, 6, "對啊"),
+                   (6, 7.5, "那我們繼續錄"), (7.5, 11, "x"))
+    spk = {1: "b", 2: "a", 3: "b", 4: "a", 5: "b"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "b", 2: "a", 3: "b", 4: "a", 5: "b"}
+
+
+# -- C3 第 2 輪回歸（雙層牆／碎片誤殺／不透明牆；結構照第 1 輪重驗報告逐案取證）--
+
+def test_smooth_double_transparent_wall_same_speaker_case6():
+    """魁哥 #3-#7 型：雙層透明牆（真的嗎 c＋是的 b）。候選 #6(c) 越牆途中先撞到
+    同講者的透明段（真的嗎 c）→ 連續話語訊號，須停牆保留，不得穿越到 #3(b) 成 b|b 夾心。"""
+    cards = _cards((0, 3, "x"), (3, 3.6, "真的嗎"), (3.6, 4, "是的"),
+                   (4, 5.5, "那我會先跑你們繼續講"), (5.5, 10, "x"))
+    spk = {1: "b", 2: "c", 3: "b", 4: "c", 5: "b"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "b", 2: "c", 3: "b", 4: "c", 5: "b"}   # #6 不得被吞給 b
+
+
+def test_smooth_wall_side_fragment_still_absorbed():
+    """魁哥 #142 型：牆旁 1 字抖動碎片（是）。越牆後雖見同講者長段，但候選 <4 字
+    ＝碎片不是話語，同講者跳過不適用 → 照舊被吸收給 b（第 1 輪誤殺 8 例的回歸）。"""
+    cards = _cards((0, 4, "x"), (4, 4.4, "是"), (4.4, 5, "沒錯"), (5, 9, "x"))
+    spk = {1: "b", 2: "c", 3: "b", 4: "c"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "b", 2: "b", 3: "b", 4: "c"}   # 碎片併回 b；牆自身豁免仍為 b
+
+
+def test_smooth_long_exempt_wall_is_opaque():
+    """魁哥 #457 型：牆是 5-8 字 FIN 豁免段（事就不要多說啦＝完整子句非反應詞）→
+    豁免改標但不透明。候選（10 字）不得穿越它連到更遠的同講者段，照 b|c|b 夾心吸收。"""
+    cards = _cards((0, 3, "怎麼盡量就已經就是"), (3, 4.9, "不要說一些你不知道的"),
+                   (4.9, 7, "事就不要多說啦"), (7, 20, "x"))
+    spk = {1: "b", 2: "c", 3: "b", 4: "c"}
+    out = smooth_speakers(cards, spk, blip_sec=2.0)
+    assert out == {1: "b", 2: "b", 3: "b", 4: "c"}   # 候選併回 b；牆自身豁免仍為 b
+
+
 # ---- destrand_cards ----
 
 def test_destrand_moves_short_lead_to_prev_same_speaker():

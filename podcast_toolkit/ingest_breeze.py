@@ -82,12 +82,15 @@ def ingest(srt_path, *, mic_map=None) -> tuple[list[dict], dict[int, str]]:
     return cards, speakers
 
 
-def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True) -> int:
+def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True,
+        smooth_strict=False) -> int:
     """CLI 進入點:Breeze SRT → 寫 _final_v2.srt + speakers.json(先備份既有)。回 exit code。
 
     cleanup=True(預設):匯入後跑講者平滑(smooth_speakers)——修逐卡麥能量翻錯標
     (同一人切成不同講者)。依語句重切(reflow)需 proofread 加的空格,故由呼叫端在
     proofread 之後跑 subtitle_cleanup.reflow_episode,不在這裡。對沒問題的集是 no-op。
+    smooth_strict=True:透傳 smooth_speakers(strict_sandwich=True)——只改「兩側同一
+    講者」的真夾心 blip。預設 False＝現行行為(呼叫端都不傳,吃預設)。
     """
     ep = Episode(Path(episode_dir))
     src = Path(srt) if srt else find_breeze_srt(ep.dir)
@@ -101,7 +104,8 @@ def run(episode_dir, *, srt=None, mic_map=None, force=False, cleanup=True) -> in
         return 1
 
     if cleanup:
-        speakers = smooth_speakers(cards, speakers)   # 修麥能量翻錯標的短 blip
+        # 修麥能量翻錯標的短 blip;strict_sandwich 由 smooth_strict 透傳(預設關)
+        speakers = smooth_speakers(cards, speakers, strict_sandwich=smooth_strict)
 
     v2 = ep.output_v2_srt()
     spk_path = ep.output_v2_speakers_json()

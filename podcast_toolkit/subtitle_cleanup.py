@@ -40,16 +40,46 @@ def _is_cjk(ch: str) -> bool:
     return "㐀" <= ch <= "鿿" or "豈" <= ch <= "﫿"
 
 
+# C0 偵察實測定案的豁免集（/private/tmp/c0-recon/tally.py D3）——改內容要重跑魁哥集回放
+_SMOOTH_EXEMPT_WORDS = frozenset({
+    "對", "對啊", "對呀", "對對", "對對對", "對吧", "是的", "是喔", "是嗎",
+    "真的", "真的嗎", "真的假的", "沒有", "沒有啦", "沒錯", "有啊", "好啊",
+    "哇", "蛤", "嗯", "哈哈", "天啊", "厲害厲害", "哪有", "為什麼", "這樣子",
+})
+_SMOOTH_EXEMPT_FINALS = tuple("嗎吧耶欸啦喔哦呀囉呢")   # 刻意不含「啊」——未實測
+
+
+def _smooth_exempt(text: str) -> bool:
+    """span 文字像完整話語（反應詞/語氣詞收尾）→ 不准 smooth_speakers 改標。"""
+    t = text.replace(" ", "")
+    return t in _SMOOTH_EXEMPT_WORDS or (len(t) <= 8 and t.endswith(_SMOOTH_EXEMPT_FINALS))
+
+
 def smooth_speakers(
     cards: list[dict],
     speakers: dict[int, str],
     *,
     blip_sec: float = 2.0,
+    strict_sandwich: bool = False,
 ) -> dict[int, str]:
     """把短於 blip_sec 的講者 blip 併回較長鄰段的講者。回傳新的 {idx: speaker}；cards 不變。
 
     反覆挑「時長最短、且兩側鄰段講者不同的」blip 段，整段改貼成時長較長那側的講者，
     直到沒有可併的短段。speakers 為空（無講者集）→ 原樣回傳。
+
+    豁免（C0 魁哥集實測 2026-08-08）：span 文字像完整話語（反應詞白名單／≤8 字語氣詞
+    收尾，_smooth_exempt）→ 永不被改標——「沒錯」「體育運動嗎」是真插話不是麥能量抖動
+    （傷害 45 span 擋 16、價值 148 僅誤殺 4 個 1 字碎片）。
+    豁免段同時「透明」（C3 驗收級聯分析定案；C3 第 2 輪收窄為 ≤4 字）：候選段找
+    鄰居時越過「短反應詞」豁免段（≤4 字，白名單全在此範圍）看下一個非豁免段；
+    5-8 字語氣詞收尾的豁免段是完整子句（「事就不要多說啦」），仍豁免改標但**不透明**
+    ——牆本身是句子時穿牆連話會把能量抖動誤判成連續話語（C3 實測 #457 型 4 例）。
+    越牆後的同講者訊號（真鄰居同標，或越牆途中撞到同標透明段）→ 連續話語只是被
+    插話隔開，不當 blip——但僅限候選自身 ≥4 字（utterance）：受害完整句 8-12 字 vs
+    誤殺抖動碎片 1-3 字，4 落在乾淨間隙（C3 第 2 輪兩組分佈定案）。少了透明化，
+    豁免段會變成隔離牆，把相鄰完整句孤立成新的 <2s blip 反被吞（C3 實測 4 例）。
+    strict_sandwich=True：只有「左右鄰段同一講者」的真夾心才改，三方交錯處保留
+    （預設 False＝現行行為位元組不變；預設值待 C3 兩組實測數字定案）。
     """
     if not speakers:
         return dict(speakers)
@@ -72,18 +102,56 @@ def smooth_speakers(
 
     while True:
         segs = _segments()
+        # exempt＝豁免改標（全豁免集）；transparent＝豁免且 ≤4 字（短反應詞才可穿越；
+        # C3 第 2 輪收窄——5-8 字 FIN 豁免段是完整子句，仍豁免但當牆不當窗）。
+        # 無豁免段時兩者全 False、鄰居就是緊鄰段、同講者跳過永不觸發（緊鄰段標必不同）
+        # → 行為與舊碼位元組相同
+        span_texts = ["".join(c["text"] for c in s["cards"]).replace(" ", "")
+                      for s in segs]
+        exempt = [
+            s["lab"] is not None and _smooth_exempt(span_texts[k])
+            for k, s in enumerate(segs)
+        ]
+        transparent = [
+            exempt[k] and len(span_texts[k]) <= 4 for k in range(len(segs))
+        ]
         target = None
         tdur = None
         for k, s in enumerate(segs):
             if s["lab"] is None:
                 continue
+            if exempt[k]:
+                continue   # 完整話語 span：保留原講者標，不參與改標
             dur = s["end"] - s["start"]
             if dur >= blip_sec:
                 continue
-            left = segs[k - 1] if k > 0 else None
-            right = segs[k + 1] if k < len(segs) - 1 else None
+            # 候選 ≥4 字＝話語級，同講者訊號才算連續話語；1-3 字＝抖動碎片照舊被吸收
+            # （C3 第 2 輪：受害完整句 8-12 字 vs 誤殺碎片 1-3 字，門檻 4 落乾淨間隙）
+            utterance = len(span_texts[k]) >= 4
+            li = k - 1
+            cont = False
+            while li >= 0 and transparent[li]:
+                if utterance and segs[li]["lab"] == s["lab"]:
+                    cont = True    # 越牆途中撞到同講者透明段＝連續話語訊號（#6 雙層牆）
+                    break
+                li -= 1                       # 越過左側豁免牆找真鄰居
+            ri = k + 1
+            while (not cont) and ri < len(segs) and transparent[ri]:
+                if utterance and segs[ri]["lab"] == s["lab"]:
+                    cont = True
+                    break
+                ri += 1                       # 越過右側豁免牆找真鄰居
+            if cont:
+                continue  # 同講者被自己的反應詞隔開 → 連續話語，不是 blip
+            left = segs[li] if li >= 0 else None
+            right = segs[ri] if ri < len(segs) else None
             if left is None or right is None:
                 continue  # 第一/最後段只有單邊鄰居 → 不是夾在中間的 blip，保留
+            if utterance and s["lab"] in (left["lab"], right["lab"]):
+                continue  # 越過豁免牆後同講者 → 連續話語只是被插話隔開，不是 blip
+            if strict_sandwich and (left["lab"] is None
+                                    or left["lab"] != right["lab"]):
+                continue  # strict：僅「左右同一講者」的真夾心才改，三方交錯保留
             cands = [x for x in (left, right)
                      if x["lab"] is not None and x["lab"] != s["lab"]]
             if not cands:
