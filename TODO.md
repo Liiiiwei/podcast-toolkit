@@ -260,8 +260,9 @@
   `docs/plans/2026-08-08-speaker-smooth-exemption.md` 附錄，下一梯從那裡挑。
 - [x] **重打包＋安裝** ✅ 2026-08-08 21:00：`dist/Podcast-Toolkit-0.2.0-20260808-56ab015.dmg`
   掛載後 `ditto` 裝進 `/Applications`（舊版 `54c57d4` 進垃圾桶），`codesign --verify` 通過。
-- [ ] **7 個 commit 未 push、分支未併回 main**：`205a5bf`～`56ab015` 都在
-  `whisper-vs-breeze-accuracy-test`，push 與併回都要先問過使用者。
+- [x] **push＋併回 main** ✅ 2026-08-08 晚間（使用者核准）：`205a5bf`～`2b923be` 共 8 個
+  commit 已推上 `origin/whisper-vs-breeze-accuracy-test`，`origin/main` fast-forward
+  至 `2b923be`。⚠ Desktop 主樹的本機 main 還停在舊點，下次在那邊工作先 `git pull`。
 
 ## 待裁決／待授權
 
