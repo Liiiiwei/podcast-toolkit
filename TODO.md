@@ -131,3 +131,16 @@
   bug 在前端：`loadEpisodeState()` 逐欄轉 camelCase 時漏接這欄，三處讀的
   `state.mic_srt_existing` 恆為 `undefined`。已補接線並改讀 `state.micSrtExisting`。
 - [ ] **Phase 2（單軌集手動配對 UI）**：等使用者授權才開工，未授權前不要動。
+
+## 2026-08-08 後續（字幕編輯 UX 第一梯落地後）
+
+- [ ] **分支併回 main**：`whisper-vs-breeze-accuracy-test` 目前落後 `origin/main` 16 個 commit，
+  自己有 3 個 commit（`afadeb0` locale 編碼、`3ddfd77` 字幕編輯 UX 第一梯、`90b8337` 計畫附錄）。
+  合併前要注意 `TODO.md` 兩邊都動過。
+- [ ] **清掉舊 DMG**（使用者 2026-08-08 說「之後再說」）：`dist/` 有兩包各 2.5G ——
+  `Podcast-Toolkit-0.2.0-20260807-284a51d.dmg` 與 `...-afadeb0.dmg`。
+  舊的那包（`284a51d`）可清，用 `trash` 不要用遞迴強制刪除。
+- [ ] **重打包 .app / DMG**：本梯的字幕編輯 UX 改動只在原始碼，已安裝的 app 還是舊 UI。
+  合回 main 後跑 `./build_app.sh`；裝完若 UI 沒變先 `pgrep -fl Podcast` 砍殘留行程。
+- 本梯盤點到但不做的 11 個問題（字幕 4、全 app 4、驗收另量 3）都在
+  `docs/plans/2026-08-08-subtitle-editing-ux.md` 附錄，下一梯要挑就從那裡挑。
