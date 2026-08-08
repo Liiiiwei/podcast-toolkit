@@ -262,7 +262,7 @@
   掛載後 `ditto` 裝進 `/Applications`（舊版 `54c57d4` 進垃圾桶），`codesign --verify` 通過。
 - [x] **push＋併回 main** ✅ 2026-08-08 晚間（使用者核准）：`205a5bf`～`2b923be` 共 8 個
   commit 已推上 `origin/whisper-vs-breeze-accuracy-test`，`origin/main` fast-forward
-  至 `2b923be`。⚠ Desktop 主樹的本機 main 還停在舊點，下次在那邊工作先 `git pull`。
+  至 `2b923be`。Desktop 主樹本機 main 也已同晚 fast-forward 同步，不需再 pull。
 
 ## 待裁決／待授權
 
