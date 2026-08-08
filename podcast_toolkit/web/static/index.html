@@ -445,56 +445,80 @@
         <section class="cards-pane">
           <div class="cards-flagbar" id="cards-flagbar">
             <div class="sus-toolbar hidden" id="sus-toolbar">
-              <span class="sus-count" id="sus-count">0</span>
-              <span class="sus-label">張可疑空拍卡</span>
-              <button id="sus-select-all" type="button" class="btn btn-ghost">
-                <span data-icon="square"></span>
-                <span>全選紅卡</span>
-              </button>
-              <button
-                id="sus-delete-checked"
-                type="button"
-                class="btn btn-ghost"
-                disabled
-              >
-                <span data-icon="trash-2"></span>
-                <span>刪除已勾</span>
-              </button>
-              <button
-                id="sus-delete-reactions"
-                type="button"
-                class="btn btn-ghost"
-                title="一鍵刪掉所有「只有反應詞（嗯／對／哈）」的紅卡"
-                disabled
-              >
-                <span data-icon="trash-2"></span>
-                <span>刪純反應詞</span>
-              </button>
+              <span class="flag-summary">
+                <span class="sus-count" id="sus-count">0</span>
+                <span class="sus-label">張可疑空拍卡</span>
+              </span>
+              <span id="sus-checked-count" class="flag-status">已勾 0</span>
               <span class="spacer"></span>
-              <span id="sus-checked-count" class="sus-label">已勾 0</span>
+              <div class="flag-actions">
+                <button id="sus-select-all" type="button" class="btn btn-ghost">
+                  <span data-icon="square"></span>
+                  <span>全選紅卡</span>
+                </button>
+                <button
+                  id="sus-delete-checked"
+                  type="button"
+                  class="btn btn-ghost"
+                  disabled
+                >
+                  <span data-icon="trash-2"></span>
+                  <span>刪除已勾</span>
+                </button>
+                <button
+                  id="sus-delete-reactions"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="一鍵刪掉所有「只有反應詞（嗯／對／哈）」的紅卡"
+                  disabled
+                >
+                  <span data-icon="trash-2"></span>
+                  <span>刪純反應詞</span>
+                </button>
+              </div>
             </div>
             <div class="review-toolbar hidden" id="review-toolbar">
-              <span class="review-flag-icon" data-icon="alert-triangle"></span>
-              <span class="review-count" id="review-count">0</span>
-              <span class="review-label"
-                >張待複查卡（半句 / 可疑字 / 空拍）</span
-              >
-              <button
-                id="review-filter"
-                type="button"
-                class="btn btn-ghost"
-                aria-pressed="false"
-              >
-                <span>只看待複查</span>
-              </button>
-              <button id="review-prev" type="button" class="btn btn-ghost">
-                <span data-icon="chevron-up"></span>
-                <span>跳上一張</span>
-              </button>
-              <button id="review-next" type="button" class="btn btn-ghost">
-                <span data-icon="chevron-down"></span>
-                <span>跳下一張</span>
-              </button>
+              <span class="flag-summary">
+                <span
+                  class="review-flag-icon"
+                  data-icon="alert-triangle"
+                ></span>
+                <span class="review-count" id="review-count">0</span>
+                <span
+                  class="review-label"
+                  title="待複查 = 半句結尾 / 可疑字 / 可疑空拍"
+                  >張待複查卡</span
+                >
+              </span>
+              <span class="spacer"></span>
+              <div class="flag-actions">
+                <button
+                  id="review-filter"
+                  type="button"
+                  class="btn btn-ghost"
+                  aria-pressed="false"
+                >
+                  <span>只看待複查</span>
+                </button>
+                <button
+                  id="review-prev"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="跳上一張待複查卡（鍵盤 K）"
+                >
+                  <span data-icon="chevron-up"></span>
+                  <span>上一張</span>
+                </button>
+                <button
+                  id="review-next"
+                  type="button"
+                  class="btn btn-ghost"
+                  title="跳下一張待複查卡（鍵盤 J）"
+                >
+                  <span data-icon="chevron-down"></span>
+                  <span>下一張</span>
+                </button>
+              </div>
             </div>
           </div>
           <div class="cards-toolbar" id="cards-toolbar">
@@ -507,57 +531,71 @@
             >
               <span data-icon="play"></span>
             </button>
-            <span class="cards-time" id="cards-time">0:00 / 0:00</span>
+            <span class="cards-time" id="cards-time" title="目前播放時間"
+              >00:00</span
+            >
             <span class="spacer"></span>
-            <div class="srt-shift-wrap">
-              <button
-                id="srt-shift-toggle"
-                type="button"
-                class="btn btn-ghost"
-                aria-haspopup="true"
-                aria-expanded="false"
-                hidden
-                title="字幕偏移（秒，不改原檔）"
-              >
-                <span data-icon="clock"></span>
-                <span>偏移</span>
-              </button>
-              <div class="srt-shift-menu" id="srt-shift-menu" hidden>
-                <div class="srt-shift-row" id="srt-shift-row">
-                  <label
-                    class="srt-shift-label"
-                    title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。"
-                  >
-                    <span data-icon="clock"></span>
-                    <span>字幕偏移（秒，不改原檔）</span>
-                  </label>
-                  <input
-                    type="number"
-                    id="srt-shift-input"
-                    class="srt-shift-input"
-                    step="0.1"
-                    placeholder="0.0"
-                  />
-                  <button
-                    type="button"
-                    id="srt-shift-btn"
-                    class="btn btn-ghost"
-                  >
-                    <span data-icon="move"></span>
-                    <span>套用偏移</span>
-                  </button>
+            <div class="cards-actions">
+              <div class="srt-shift-wrap">
+                <button
+                  id="srt-shift-toggle"
+                  type="button"
+                  class="btn btn-ghost"
+                  aria-haspopup="true"
+                  aria-expanded="false"
+                  hidden
+                  title="字幕偏移（秒，不改原檔）"
+                >
+                  <span data-icon="clock"></span>
+                  <span>偏移</span>
+                </button>
+                <div class="srt-shift-menu" id="srt-shift-menu" hidden>
+                  <div class="srt-shift-row" id="srt-shift-row">
+                    <label
+                      class="srt-shift-label"
+                      title="非破壞性偏移：只調整預覽與最終合成的字幕時機，不會改到 .srt 原檔。輸入的是「目前偏移總量」（絕對值，非每次累加）。正值 = 字幕往後延（目前太早）；負值 = 往前提（目前太晚）；0 或留空 = 清除偏移。"
+                    >
+                      <span data-icon="clock"></span>
+                      <span>字幕偏移（秒，不改原檔）</span>
+                    </label>
+                    <input
+                      type="number"
+                      id="srt-shift-input"
+                      class="srt-shift-input"
+                      step="0.1"
+                      placeholder="0.0"
+                    />
+                    <button
+                      type="button"
+                      id="srt-shift-btn"
+                      class="btn btn-ghost"
+                    >
+                      <span data-icon="move"></span>
+                      <span>套用偏移</span>
+                    </button>
+                  </div>
                 </div>
               </div>
+              <button
+                type="button"
+                id="card-wrap-btn"
+                class="btn btn-ghost"
+                disabled
+                title="把游標所在位置折成兩行（兩人同時說話時各佔一行）；再按一次合回一行"
+              >
+                <span data-icon="type"></span>
+                <span id="card-wrap-label">折兩行</span>
+              </button>
+              <button
+                type="button"
+                id="card-insert-btn"
+                class="btn btn-ghost"
+                title="在目前播放位置插入一張新字卡"
+              >
+                <span data-icon="plus"></span>
+                <span>插入字卡</span>
+              </button>
             </div>
-            <button
-              type="button"
-              id="card-insert-btn"
-              class="btn btn-ghost"
-              title="在目前播放位置插入一張新字卡"
-            >
-              <span data-icon="plus"></span>
-              <span>插入字卡</span>
-            </button>
           </div>
           <div id="cards-list"></div>
         </section>
@@ -1327,6 +1365,11 @@
           <dd>在游標處把字幕卡切成兩句</dd>
           <dt><kbd>Backspace</kbd></dt>
           <dd>子卡開頭按 → 合併回上一段</dd>
+          <dt><kbd>←</kbd> / <kbd>→</kbd></dt>
+          <dd>
+            ⏱ 時間微調工具列開著時：起點 ±0.1s（<kbd>⇧</kbd> 0.5s、<kbd>⌘</kbd>
+            1.0s；加 <kbd>⌥</kbd> 改調終點）
+          </dd>
           <dt><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></dt>
           <dd>復原 / 重做</dd>
           <dt>點字幕時間</dt>

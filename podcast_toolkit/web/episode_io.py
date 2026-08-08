@@ -622,9 +622,11 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         except (TypeError, ValueError):
             continue
 
-    # 單卡時間微調：兩個來源都收進 composite-key（idx, part）dict：
-    #  (a) time_overrides payload（int idx，舊版拖拉）— 非法值靜默跳過
-    #  (b) card_timings payload（composite "5" / "5:1"）— 後端權威驗證，非法 raise（轉 400）
+    # 字幕時間覆寫：兩個來源都收進 composite-key（idx, part）dict：
+    #  (a) time_overrides payload（int idx）— 舊版格式。前端自 2026-08 起已統一送 card_timings
+    #      不再送這個 key；此分支僅為向後相容保留（非法值靜默跳過）。
+    #  (b) card_timings payload（composite "5" / "5:1"）— 現行唯一來源，
+    #      後端權威驗證，非法 raise（轉 400）。後處理故意排在 (a) 之後，兩者相衝時以它為準。
     time_overrides: dict[tuple[int, int], tuple[float, float]] = {}
     for k, v in (payload.get("time_overrides") or {}).items():
         if not isinstance(v, dict):

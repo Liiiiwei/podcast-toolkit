@@ -26,7 +26,9 @@ SAVE_PAYLOAD_UNIQUE_KEYS = [
     "splits:",
     "card_timings:",
     "merges:",
-    "time_overrides:",
+    # time_overrides 已於 2026-08 退役：⏱ 工具列與時間軸拖拉合併到 card_timings
+    # 這一套 state，前端不再送這個欄位（後端仍接受舊 payload，見 episode_io）。
+    # 它原本在這裡是為了防「第二套 builder 漏欄位」，該職責由 card_timings 接手。
     "new_cards:",
     "reels_clips:",
     "silence_trim:",

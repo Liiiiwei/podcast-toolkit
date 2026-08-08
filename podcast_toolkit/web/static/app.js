@@ -27,14 +27,14 @@ const state = {
   // 不寫進 SRT，只把結束時間接到上一張整卡；合併後文字落在上一張的 textOverrides。
   // 只支援「整卡併整卡」（切過的卡在卡內已有 sub-card 合併，不走這條）。
   cardMerges: new Set(),
-  // 單卡時間微調：idx -> {start, end}（覆寫該卡時間）；只用於未切的整卡
-  timeOverrides: new Map(),
   timeEditKey: null, // 目前展開時間微調工具列的卡 domKey（字串；null = 沒開）
   // 新增的字卡：[{tempId, start, end, text}]；存檔時 append 進 SRT、重編號
   newCards: [],
   newCardSeq: 0, // tempId 流水號
   dragCardIdx: null, // 拖拉換位置中的整卡 idx（null = 沒在拖）
-  // 時間軸拖拉改的字幕時間：composite key（int 或 "idx:part"）→ {start, end} 秒。
+  // 字幕時間覆寫（時間軸拖拉 + ⏱ 工具列共用的單一真相）：
+  //   int key（= c.idx）→ 整卡時間封套。切過句的卡用它當 t0/t1 按比例重算各子卡。
+  //   "idx:part" string key → 釘死某一段子卡的時間。
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
   tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
@@ -163,9 +163,6 @@ function snapshotEditState() {
     reelsClips: state.reelsClips.map((c) => ({ ...c })),
     cardSplits: new Map([...state.cardSplits].map(([k, v]) => [k, v.slice()])),
     cardMerges: new Set(state.cardMerges),
-    timeOverrides: new Map(
-      [...state.timeOverrides].map(([k, v]) => [k, { ...v }]),
-    ),
     newCards: state.newCards.map((c) => ({ ...c })),
     cardTimings: new Map([...state.cardTimings].map(([k, v]) => [k, { ...v }])),
   };
@@ -190,16 +187,18 @@ function applyEditSnapshot(snap) {
     [...(snap.cardSplits || [])].map(([k, v]) => [k, v.slice()]),
   );
   state.cardMerges = new Set(snap.cardMerges || []);
-  state.timeOverrides = new Map(
-    [...(snap.timeOverrides || [])].map(([k, v]) => [k, { ...v }]),
-  );
   state.newCards = (snap.newCards || []).map((c) => ({ ...c }));
   state.cardTimings = new Map(
     [...(snap.cardTimings || [])].map(([k, v]) => [k, { ...v }]),
   );
 }
 
+// 連發抑制：長按 ←/→ 微調時間時，只有第一下留還原點，後面的連發不再各記一筆。
+// 不抑制的話按住 3 秒（約 30 次連發）就把 UNDO_MAX=100 的堆疊洗掉三成，
+// 而且一次 ⌘Z 只退 0.1s —— 使用者得按幾十次才回得去。
+let _undoCoalesce = false;
 function pushUndo() {
+  if (_undoCoalesce) return;
   state.undoStack.push(snapshotEditState());
   if (state.undoStack.length > UNDO_MAX) state.undoStack.shift();
   state.redoStack = [];
@@ -351,21 +350,54 @@ function fmtTimeD(sec) {
   return `${m}:${s < 10 ? "0" : ""}${s.toFixed(1)}`;
 }
 
-function fmtTime(sec) {
+// 秒 → "m:ss.dd"（字幕卡時間用）。資料本身存到 0.01s（setCardTime 四捨五入），
+// 顯示層過去只給 mm:ss，使用者按 ±0.1s 時畫面數字常常不動 → 誤以為沒生效。
+function fmtTimeCard(sec) {
+  if (!isFinite(sec)) return "0:00.00";
+  const neg = sec < 0;
+  const a = Math.abs(sec);
+  const m = Math.floor(a / 60);
+  const s = a - m * 60;
+  return `${neg ? "-" : ""}${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
+}
+
+// "12.34" / "1:23.45" / "01:23" → 秒；解析不出來回 null（呼叫端負責維持原值）
+function parseTimeCard(str) {
+  const raw = String(str == null ? "" : str).trim();
+  if (!raw) return null;
+  const m = raw.match(/^(-)?(?:(\d+):)?(\d+(?:\.\d+)?)$/);
+  if (!m) return null;
+  const sec = (m[2] ? parseInt(m[2], 10) * 60 : 0) + parseFloat(m[3]);
+  if (!isFinite(sec)) return null;
+  return m[1] ? -sec : sec;
+}
+
+// 秒 → "mm:ss"；ref（通常是總長）≥ 1 小時時改用 "h:mm:ss"。
+// 舊版固定取 (sec/60)%60，超過一小時的集數會把小時整個吃掉（1:47:02 顯示成 47:02）。
+// 兩邊都帶同一個 ref 格式化，「目前 / 總長」寬度才會一致，播放時數字不會左右抖動。
+function fmtTime(sec, ref = sec) {
   if (!isFinite(sec)) return "00:00";
-  const s = Math.floor(sec % 60)
+  const neg = sec < 0;
+  const a = Math.abs(sec);
+  const s = Math.floor(a % 60)
     .toString()
     .padStart(2, "0");
-  const m = Math.floor((sec / 60) % 60)
+  if (!(isFinite(ref) && Math.abs(ref) >= 3600)) {
+    const m = Math.floor(a / 60)
+      .toString()
+      .padStart(2, "0");
+    return `${neg ? "-" : ""}${m}:${s}`;
+  }
+  const m = Math.floor((a / 60) % 60)
     .toString()
     .padStart(2, "0");
-  return `${m}:${s}`;
+  return `${neg ? "-" : ""}${Math.floor(a / 3600)}:${m}:${s}`;
 }
 
 // 集中判斷「有沒有未儲存變動」，topbar chip / beforeunload / cancel / 換集 / 合成都用這個
 // 包含：刪除 / 改字 / 切句 / 裁切框。trim / cam mapping 走別的儲存通道不算進來
 function hasUnsavedChanges() {
-  // 單一真相來源：與 unsavedCount() 對齊。先前漏算 timeOverrides/newCards/outputDirty，
+  // 單一真相來源：與 unsavedCount() 對齊。先前漏算 cardTimings/newCards/outputDirty，
   // 導致「只做單卡時間微調或新增字卡」後，換集/關頁前的未存保護不觸發 → 默默丟失那些編輯。
   return unsavedCount() > 0;
 }
@@ -376,7 +408,6 @@ function unsavedCount() {
     state.textOverrides.size +
     state.cardSplits.size +
     state.cardMerges.size +
-    state.timeOverrides.size +
     state.newCards.length +
     state.cardTimings.size +
     (state.cropYt != null ? 1 : 0) +
@@ -810,6 +841,110 @@ function getCursorOffset(el) {
   return pre.toString().length;
 }
 
+// renderCards() 是全量重建（list.innerHTML = ""），全檔 25 個呼叫點：
+// 刪一張卡／切一次鏡頭／改一個字／undo 都會整列砍掉重來 →
+// 捲動位置回頂端、正在編輯的卡失去 focus 與游標位置。
+// 以前是逐案打補丁（切句有 focusSplitTarget、時間工具列有自己的還原），
+// 這裡收成通用解：重建前記住、重建後放回。
+// #cards-list 自己不捲（overflow:visible，高度就是全部卡片），真正捲的是外層 .cards-pane。
+// 用 overflow 往上找而不是寫死 class：存錯元素的話 scrollTop 恆為 0，還原會靜默失效。
+function cardsScroller(list) {
+  for (let el = list; el; el = el.parentElement) {
+    const oy = getComputedStyle(el).overflowY;
+    if (oy === "auto" || oy === "scroll") return el;
+  }
+  return list;
+}
+
+function captureCardsView(list) {
+  const sc = list ? cardsScroller(list) : null;
+  const st = {
+    scroller: sc,
+    scrollTop: sc ? sc.scrollTop : 0,
+    key: null,
+    offset: 0,
+  };
+  const el = document.activeElement;
+  if (
+    list &&
+    el &&
+    el.classList &&
+    el.classList.contains("card-text") &&
+    list.contains(el)
+  ) {
+    const card = el.closest(".card");
+    if (card) {
+      st.key = card.dataset.idx;
+      st.offset = getCursorOffset(el);
+    }
+  }
+  return st;
+}
+
+function restoreCardsView(list, st) {
+  if (!list || !st) return;
+  // 那張卡不見了（被刪 / 被切成子卡）→ 不強行搶 focus，但捲動照還原
+  const el =
+    st.key == null
+      ? null
+      : list.querySelector(`.card[data-idx="${st.key}"] .card-text`);
+  if (el) {
+    el.focus({ preventScroll: true });
+    const node = el.firstChild;
+    if (node && node.nodeType === 3) {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.setStart(node, Math.min(Math.max(st.offset, 0), node.data.length));
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+  // 捲動放最後。focus 的 preventScroll 只擋得住 focus 自己，擋不住瀏覽器在版面
+  // 結算後把游標捲進畫面（CDP 實測：同步與第一幀都還是 2674，第二幀才跳成 2788）。
+  // 所以同步寫一次定調，再用兩層 rAF 在結算後補寫一次，那次才是最終值。
+  if (st.scroller) {
+    const sc = st.scroller;
+    const top = st.scrollTop;
+    sc.scrollTop = top;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        sc.scrollTop = top;
+      }),
+    );
+  }
+}
+
+// 讀 contentEditable 的文字，把換行還原成 "\n"。
+// 為什麼不用 textContent：它會把 <br> 當成不存在，兩人同時說話時折的那一行會被靜默吃掉。
+// 為什麼不用 innerText：它受 CSS 影響（元素被隱藏時回空字串），renderCards 重建期間不可靠。
+// 折兩行按鈕塞的是純 "\n"（配 .card-text 的 white-space: pre-wrap），
+// 這裡多走 <br>／區塊元素是為了接住貼上的 HTML 與瀏覽器原生 Shift+Enter。
+function editableText(el) {
+  const parts = [];
+  const walk = (node) => {
+    for (const n of node.childNodes) {
+      if (n.nodeType === 3) parts.push(n.data);
+      else if (n.nodeName === "BR") parts.push("\n");
+      else if (n.nodeType === 1) {
+        const block = getComputedStyle(n).display !== "inline";
+        if (block && parts.length && !parts[parts.length - 1].endsWith("\n"))
+          parts.push("\n");
+        walk(n);
+        if (block) parts.push("\n");
+      }
+    }
+  };
+  walk(el);
+  return parts
+    .join("")
+    .replace(/\u00a0/g, " ") // 貼上帶進來的不斷行空白，統一成一般空白
+    .split("\n")
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .join("\n");
+}
+
 // 把 state.cards 展開成 render 用的扁平清單；切過的卡會展開成多張 sub-card。
 // 每筆：{c: 原 card, partIdx: 0..N-1 or null, key: deletions/camerasMapping 用的 id,
 //        text: 顯示文字, start: 顯示開始秒, end: 顯示結束秒}
@@ -827,13 +962,13 @@ function expandedCards() {
     // 跨卡合併掉的整卡：不輸出，只把結束時間延伸到本卡結束（時間 = 上一張.start → 本卡.end）
     if (state.cardMerges.has(c.idx)) {
       if (lastWhole) {
-        const mov = state.timeOverrides.get(c.idx);
+        const mov = state.cardTimings.get(c.idx);
         lastWhole.end = mov ? mov.end : c.end;
       }
       continue;
     }
-    // 時間微調 override：未切卡直接套；切過的卡用 override 當 t0/t1 重算 sub-card
-    const ov = state.timeOverrides.get(c.idx);
+    // 整卡時間封套（cardTimings 的 int key）：未切卡直接套；切過的卡拿它當 t0/t1 重算 sub-card
+    const ov = state.cardTimings.get(c.idx);
     const cStart = ov ? ov.start : c.start;
     const cEnd = ov ? ov.end : c.end;
     const parts = state.cardSplits.get(c.idx);
@@ -863,14 +998,14 @@ function expandedCards() {
       }
       lastWhole = null; // 切過的卡不當合併目標（後端無法把合併文字掛到切卡上）
     } else {
-      const ov = state.cardTimings.get(c.idx);
+      // 未切卡：封套本身就是最終時間（cStart/cEnd 已含 cardTimings 覆寫）
       out.push({
         c,
         partIdx: null,
         key: c.idx,
         text: state.textOverrides.get(c.idx) ?? c.text,
-        start: ov ? ov.start : cStart,
-        end: ov ? ov.end : cEnd,
+        start: cStart,
+        end: cEnd,
       });
       lastWhole = out[out.length - 1];
     }
@@ -904,23 +1039,24 @@ function toDiskTime(t) {
   };
 }
 
-// 取一張卡實際生效的時間（含時間微調 override）
+// 取一張卡實際生效的時間（含時間覆寫）。必須跟 expandedCards 的整卡封套讀同一個來源，
+// 否則時間軸拖過的卡在 ⏱ 工具列會讀到舊值、按了也像沒反應。
 function getEffectiveCardTime(c) {
-  const ov = state.timeOverrides.get(c.idx);
+  const ov = state.cardTimings.get(c.idx);
   return ov ? { start: ov.start, end: ov.end } : { start: c.start, end: c.end };
 }
 
-// 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除 override
+// 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除覆寫
 function setCardTime(c, start, end) {
   start = Math.max(0, Math.round(start * 100) / 100);
   end = Math.max(start + 0.1, Math.round(end * 100) / 100);
   const sameAsOrig =
     Math.abs(start - c.start) < 0.005 && Math.abs(end - c.end) < 0.005;
-  const cur = state.timeOverrides.get(c.idx);
+  const cur = state.cardTimings.get(c.idx);
   if (sameAsOrig) {
     if (!cur) return;
     pushUndo();
-    state.timeOverrides.delete(c.idx);
+    state.cardTimings.delete(c.idx);
   } else {
     if (
       cur &&
@@ -930,9 +1066,15 @@ function setCardTime(c, start, end) {
       return;
     }
     pushUndo();
-    state.timeOverrides.set(c.idx, { start, end });
+    state.cardTimings.set(c.idx, { start, end });
   }
 }
+
+// ⏱ 工具列刻意不做鄰卡夾制。曾經加過一版（比照時間軸拖拉的 lo/hi），實測砍掉：
+// 字幕卡本來就大多首尾相接（實測一集 1437 張裡 50.6% 跟前卡貼齊），夾制一上，
+// 那些卡的「起點−／終點＋」按了畫面完全不動、也沒有任何提示 —— 半數的卡按鈕是死的。
+// 而且「兩個人同時講話」要的重疊本來就得靠手動把時間拉過去做出來，夾制等於把這條路封死。
+// 最短時長由 setCardTime 顧（end 至少 start+0.1，只推 end 不動 start）。
 
 // 拖拉換位置：把 D 卡移到目標 T 卡的前 / 後 → 算落點時間（夾住不跟鄰居重疊）→ 設 override；
 // expandedCards 依 start 重排，卡片就自動移到新位置（重用時間微調機制，不另搞排序狀態）。
@@ -971,7 +1113,7 @@ function reorderCardTo(dragIdx, targetIdx, before) {
   renderTopbar();
 }
 
-// 時間微調的「目標」抽象：既有卡走 timeOverrides，新卡直接改自身 start/end。
+// 時間微調的「目標」抽象：既有卡走 cardTimings（與時間軸拖拉同一份），新卡直接改自身 start/end。
 // target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
 function cardTimeTarget(c) {
   return {
@@ -979,11 +1121,12 @@ function cardTimeTarget(c) {
     get: () => getEffectiveCardTime(c),
     set: (s, e) => setCardTime(c, s, e),
     reset: () => {
-      if (!state.timeOverrides.has(c.idx)) return;
+      if (!state.cardTimings.has(c.idx)) return;
       pushUndo();
-      state.timeOverrides.delete(c.idx);
+      // 整卡「還原」連子卡的釘死時間一起清（否則封套回原位、子卡還停在舊處）
+      clearCardTimings(c.idx);
     },
-    isDirty: () => state.timeOverrides.has(c.idx),
+    isDirty: () => state.cardTimings.has(c.idx),
   };
 }
 function newCardTimeTarget(nc) {
@@ -1004,6 +1147,10 @@ function newCardTimeTarget(nc) {
   };
 }
 
+// 目前展開的 ⏱ 工具列控制器 { target, repaint }。給鍵盤微調（onTimeNudgeKey）用；
+// 工具列關掉 / 整列重繪換卡時會被覆寫或清成 null。
+let _timeEditCtl = null;
+
 // 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
 // undo / 整列重繪時靠 renderCards 的注入點還原。
 function buildTimeToolbar(target) {
@@ -1012,17 +1159,30 @@ function buildTimeToolbar(target) {
   bar.addEventListener("click", (e) => e.stopPropagation());
   const val = document.createElement("span");
   val.className = "te-val";
+  const inS = mkTimeInput("起點時間（可打 12.34 或 1:23.45）");
+  const inE = mkTimeInput("終點時間（可打 12.34 或 1:23.45）");
   const repaint = () => {
     const t = target.get();
-    val.textContent = `${t.start.toFixed(2)} → ${t.end.toFixed(2)}s`;
+    inS.value = fmtTimeCard(t.start);
+    inE.value = fmtTimeCard(t.end);
+    val.textContent = `${(t.end - t.start).toFixed(2)}s`;
     const card = document.querySelector(
       `#cards-list .card[data-idx="${target.domKey}"]`,
     );
     if (card) {
       card.classList.toggle("time-dirty", target.isDirty());
       const cv = card.querySelector(".card-time-val");
-      if (cv) cv.textContent = `${fmtTime(t.start)}\n${fmtTime(t.end)}`;
+      // 卡號那行是整列渲染時貼的，這裡只換時間兩行 —— 整段覆寫會把 #34 洗掉，
+      // 一開工具列卡號就消失、關掉才回來（既有缺陷，順手在同一行修掉）。
+      if (cv) {
+        const head = cv.textContent.split("\n")[0];
+        const keep = head.startsWith("#") ? `${head}\n` : "";
+        cv.textContent = `${keep}${fmtTimeCard(t.start)}\n${fmtTimeCard(t.end)}`;
+      }
     }
+    // 時間軸也要跟上：卡面數字、時間軸區塊、播放器 seek 是同一份狀態的三個讀者，
+    // 少同步一個就會出現「卡片說 3:10.6、點時間軸卻跳到 3:10.1」這種對不起來的畫面。
+    syncTimelineBlock(target.domKey, t.start, t.end, target.isDirty());
     renderCaption();
     renderTopbar();
   };
@@ -1034,6 +1194,35 @@ function buildTimeToolbar(target) {
     const t = target.get();
     target.set(t.start + ds, t.end + de);
   };
+  // 打字送出：解析失敗（或空白）就退回目前值，不動資料
+  const commit = (inp, which) => () => {
+    const v = parseTimeCard(inp.value);
+    const t = target.get();
+    if (v === null) {
+      repaint();
+      return;
+    }
+    if (which === "start") target.set(v, t.end);
+    else target.set(t.start, v);
+    repaint();
+  };
+  for (const [inp, which] of [
+    [inS, "start"],
+    [inE, "end"],
+  ]) {
+    const done = commit(inp, which);
+    inp.addEventListener("blur", done);
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        done();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        repaint();
+        inp.blur();
+      }
+    });
+  }
   const mk = (label, title, fn) => {
     const b = document.createElement("button");
     b.type = "button";
@@ -1051,27 +1240,91 @@ function buildTimeToolbar(target) {
   };
   bar.append(
     lab("起"),
+    inS,
     mk("⇤游標", "把起點設到目前播放位置", () => {
       const t = target.get();
       target.set($("#video").currentTime, t.end);
     }),
-    mk("−", "起點 −0.1s", () => nudge(-0.1, 0)),
-    mk("＋", "起點 +0.1s", () => nudge(0.1, 0)),
+    mk("−", "起點 −0.1s（←）", () => nudge(-0.1, 0)),
+    mk("＋", "起點 +0.1s（→）", () => nudge(0.1, 0)),
     lab("訖"),
+    inE,
     mk("游標⇥", "把終點設到目前播放位置", () => {
       const t = target.get();
       target.set(t.start, $("#video").currentTime);
     }),
-    mk("−", "終點 −0.1s", () => nudge(0, -0.1)),
-    mk("＋", "終點 +0.1s", () => nudge(0, 0.1)),
+    mk("−", "終點 −0.1s（⌥←）", () => nudge(0, -0.1)),
+    mk("＋", "終點 +0.1s（⌥→）", () => nudge(0, 0.1)),
     val,
   );
   if (target.reset) {
     bar.append(mk("還原", "清除這張卡的時間微調", () => target.reset()));
   }
-  const t0 = target.get();
-  val.textContent = `${t0.start.toFixed(2)} → ${t0.end.toFixed(2)}s`;
+  repaint();
+  _timeEditCtl = { target, repaint };
   return bar;
+}
+
+function mkTimeInput(title) {
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.className = "te-input";
+  inp.title = title;
+  inp.inputMode = "decimal";
+  inp.spellcheck = false;
+  inp.autocomplete = "off";
+  return inp;
+}
+
+// 鍵盤微調：←/→ 0.1s、Shift 0.5s、⌘ 1.0s（沿用 trim 拖把既有慣例）；加 ⌥ 改調終點。
+// 獨立於「編輯工作流快捷鍵」那個 listener —— 那個開頭就 return 掉所有修飾鍵，
+// 而這裡的 ⌘/⌥ 組合正是主力用法。
+const TIME_NUDGE_STEPS = { plain: 0.1, shift: 0.5, meta: 1.0 };
+document.addEventListener("keydown", onTimeNudgeKey);
+function onTimeNudgeKey(e) {
+  if (!_timeEditCtl || state.timeEditKey === null) return;
+  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  if (e.ctrlKey) return;
+  const t = e.target;
+  // 焦點在輸入框／字幕本文時讓出原生游標移動
+  if (
+    t &&
+    (t.tagName === "INPUT" ||
+      t.tagName === "TEXTAREA" ||
+      t.isContentEditable === true)
+  ) {
+    return;
+  }
+  // 焦點在自己就吃 ←/→ 的控制項（片頭/片尾裁切拖把 role=slider）時整個讓開。
+  // 這是 document 層的監聽，不讓開的話一次按鍵會同時改裁切點和字卡時間 —— 使用者
+  // 以為在微調片頭，字幕卡的時間也被偷偷改掉了。
+  if (t && t.closest && t.closest('[role="slider"]')) return;
+  if (document.querySelector("dialog[open]")) return;
+  // 工具列已不在畫面上（卡被刪 / 整列重繪沒重建）→ 別對看不見的東西改時間
+  if (
+    !document.querySelector(
+      `#cards-list .card[data-idx="${state.timeEditKey}"] .card-time-edit`,
+    )
+  ) {
+    return;
+  }
+  e.preventDefault();
+  const step = e.metaKey
+    ? TIME_NUDGE_STEPS.meta
+    : e.shiftKey
+      ? TIME_NUDGE_STEPS.shift
+      : TIME_NUDGE_STEPS.plain;
+  const d = e.key === "ArrowLeft" ? -step : step;
+  const cur = _timeEditCtl.target.get();
+  // 長按連發整串算一次編輯：⌘Z 一下就回到按下去之前
+  _undoCoalesce = e.repeat === true;
+  try {
+    if (e.altKey) _timeEditCtl.target.set(cur.start, cur.end + d);
+    else _timeEditCtl.target.set(cur.start + d, cur.end);
+  } finally {
+    _undoCoalesce = false;
+  }
+  _timeEditCtl.repaint();
 }
 
 // 開 / 關某卡的時間微調工具列（一次只開一張）
@@ -1091,6 +1344,7 @@ function toggleTimeEdit(target, cardEl) {
     existing.remove();
     cardEl.classList.remove("editing-time");
     state.timeEditKey = null;
+    _timeEditCtl = null;
   } else {
     cardEl.appendChild(buildTimeToolbar(target));
     cardEl.classList.add("editing-time");
@@ -1112,7 +1366,7 @@ function renderNewCardRow(r, list) {
   const timeVal = document.createElement("span");
   timeVal.className = "card-time-val";
   timeVal.style.whiteSpace = "pre";
-  timeVal.textContent = `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+  timeVal.textContent = `${fmtTimeCard(r.start)}\n${fmtTimeCard(r.end)}`;
   time.appendChild(timeVal);
   const badge = document.createElement("span");
   badge.className = "card-new-badge";
@@ -1138,7 +1392,7 @@ function renderNewCardRow(r, list) {
   text.textContent = nc.text;
   text.dataset.placeholder = "輸入字幕…";
   text.addEventListener("blur", () => {
-    const v = text.textContent.trim();
+    const v = editableText(text);
     if (v === nc.text) return;
     pushUndo();
     nc.text = v;
@@ -1153,7 +1407,10 @@ function renderNewCardRow(r, list) {
   del.addEventListener("click", () => {
     pushUndo();
     state.newCards = state.newCards.filter((x) => x.tempId !== nc.tempId);
-    if (state.timeEditKey === `new:${nc.tempId}`) state.timeEditKey = null;
+    if (state.timeEditKey === `new:${nc.tempId}`) {
+      state.timeEditKey = null;
+      _timeEditCtl = null;
+    }
     renderCards();
     renderTopbar();
     renderCaption();
@@ -1281,6 +1538,32 @@ function _tlSetBlockGeom(el, start, end, t0, total) {
   // 寬度嚴格 ∝ 時長；極短卡的可見/可點下限改用 CSS min-width（像素級）。
   // 舊版用百分比下限（0.3% of total）會隨 zoom 一起放大，把幾乎所有卡夾成等寬。
   el.style.width = `${((end - start) / total) * 100}%`;
+  // 起訖也寫在 DOM 上：block 的 click（跳到這一句）跟 title 都要讀「當下」的時間。
+  // 只留 render 當時的 closure 值會過期 —— 用 ⏱ 工具列改完時間後（不重建時間軸），
+  // 點下去會跳到改之前的位置。
+  el.dataset.start = String(start);
+  el.dataset.end = String(end);
+}
+
+// 只更新單一 block 的幾何與已改標記。⏱ 工具列每按一次微調鍵就要同步一次，
+// 走 renderCardTimeline() 會整條重建（本集 1400+ 塊）太重，這裡只動受影響那一塊。
+function syncTimelineBlock(key, start, end, edited) {
+  const tl = $("#card-timeline");
+  if (!tl || !tl.dataset.total) return;
+  const t0 = Number(tl.dataset.t0);
+  const total = Number(tl.dataset.total);
+  const block = tl.querySelector(`.tl-block[data-key="${String(key)}"]`);
+  if (block) {
+    _tlSetBlockGeom(block, start, end, t0, total);
+    block.classList.toggle("edited", !!edited);
+    const txt = block.title.split("\n").slice(1).join("\n");
+    block.title = `${fmtTime(start)} – ${fmtTime(end)}（${(end - start).toFixed(1)}s）\n${txt}`;
+    return;
+  }
+  // 切過的卡在時間軸上是好幾個子塊，子塊時間由封套重算 → 只能整條重建。
+  // 沒切的新增卡兩邊都找不到，什麼都不做（它本來就沒有 block）。
+  if (tl.querySelector(`.tl-block[data-key^="${String(key)}:"]`))
+    renderCardTimeline();
 }
 
 function renderCardTimeline() {
@@ -1311,7 +1594,8 @@ function renderCardTimeline() {
     block.title = `${fmtTime(r.start)} – ${fmtTime(r.end)}（${(r.end - r.start).toFixed(1)}s）\n${r.text}`;
     block.addEventListener("click", (e) => {
       if (e.target.classList.contains("tl-handle")) return;
-      $("#video").currentTime = r.start;
+      // 讀 dataset 不讀 r.start：時間改過之後這個 closure 就過期了
+      $("#video").currentTime = Number(block.dataset.start);
     });
     const hL = document.createElement("div");
     hL.className = "tl-handle tl-handle-l";
@@ -1462,6 +1746,42 @@ function drawTlWaveform() {
   ctx.globalAlpha = 0.4;
   ctx.fill();
   ctx.globalAlpha = 1;
+
+  drawSilenceGuides(ctx, wf, t0, total, backW, backH);
+}
+
+// 靜音區間的視覺參考線：只給眼睛對齊，不做任何吸附（吸附已於 2026-08 移除，見 onTimelineDragMove）。
+// 畫成一條淡帶＋兩側細邊，帶子本身就是靜音範圍、邊界就是可以下刀的位置。
+const TL_GUIDE_MIN_ZOOM = 2; // 1×（總覽）時邊界密到變雜訊，放大後才顯示
+const TL_GUIDE_MIN_GAP_PX = 5; // 兩條邊界靠太近就只畫前一條，避免糊成一片
+function drawSilenceGuides(ctx, wf, t0, total, backW, backH) {
+  const sil = wf && wf.silences;
+  if (!Array.isArray(sil) || !sil.length) return;
+  if (state.tlZoom < TL_GUIDE_MIN_ZOOM) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const minGap = TL_GUIDE_MIN_GAP_PX * dpr;
+  const x = (t) => ((t - t0) / total) * backW;
+  const edgeW = Math.max(1, Math.round(dpr));
+
+  ctx.save();
+  let lastEdge = -Infinity;
+  for (const s of sil) {
+    if (!Array.isArray(s) || s.length < 2) continue;
+    const x0 = x(s[0]);
+    const x1 = x(s[1]);
+    if (x1 < 0 || x0 > backW) continue; // 不在可視範圍
+    if (x0 - lastEdge < minGap && x1 - lastEdge < minGap) continue;
+
+    ctx.fillStyle = "#9b9ba8"; // --text-dim，刻意不用 accent（那是波形的顏色）
+    ctx.globalAlpha = 0.08;
+    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), backH);
+    ctx.globalAlpha = 0.35;
+    ctx.fillRect(x0, 0, edgeW, backH);
+    ctx.fillRect(x1 - edgeW, 0, edgeW, backH);
+    lastEdge = x1;
+  }
+  ctx.restore();
 }
 
 // === 時間軸縮放（zoom + 橫向捲動）===
@@ -1556,43 +1876,38 @@ function onTimelineDragMove(e) {
   const cur = rendered[i];
   const prev = rendered[i - 1];
   const next = rendered[i + 1];
+  // 游標位置直接就是時間，不做任何吸附。
+  // 曾有「吸附靜音邊界」邏輯，2026-08 移除：半徑寫成 Math.min(0.3, (8/rect.width)*total)，
+  // 但 TL_ZOOM_MAX=60 讓像素換算項恆大於 0.3 → 實際半徑永遠是 0.3s 的固定死區，
+  // 越放大想精修越被吸走。靜音邊界改畫成參考線（drawTlWaveform），只給眼睛看、不搶手。
   let t = t0 + ((e.clientX - rect.left) / rect.width) * total;
-  // 加分項：拖曳吸附靜音邊界（後端偵測的 silences）。按住 Alt 暫時關閉吸附。
-  // 吸附半徑用像素換算（約 8px），縮放時手感一致；縮到很小則幾乎不吸附（本來也難精準對位）。
-  let snapped = false;
-  const sil = state.waveform && state.waveform.silences;
-  if (!e.altKey && sil && sil.length) {
-    const snapSec = Math.min(0.3, (8 / rect.width) * total);
-    let bestD = snapSec;
-    let best = null;
-    for (const iv of sil) {
-      // 拖 start 優先吸「靜音結束＝說話起點」；拖 end 優先吸「說話止＝靜音起點」
-      const cands = edge === "start" ? [iv[1], iv[0]] : [iv[0], iv[1]];
-      for (const b of cands) {
-        const d = Math.abs(b - t);
-        if (d < bestD) {
-          bestD = d;
-          best = b;
-        }
-      }
-    }
-    if (best != null) {
-      t = best;
-      snapped = true;
-    }
-  }
   let syncKey = null;
   let syncStart = 0;
   let syncEnd = 0;
+  // 新增字卡沒有來源卡（c 為 null），時間存在 state.newCards 上，不能寫進 cardTimings ——
+  // "new:0" 這種 key 送到後端 _parse_composite_id 會 int("new") 炸掉整次存檔。
+  // 同理它與任何卡都不算「同源觸接」（沒有 idx 可比），touch 一律 false。
+  const writeTime = (s, en) => {
+    if (cur.newCard) {
+      cur.newCard.start = Math.round(s * 100) / 100;
+      cur.newCard.end = Math.round(en * 100) / 100;
+    } else {
+      state.cardTimings.set(cur.key, { start: s, end: en });
+      block.classList.add("edited");
+    }
+  };
   if (edge === "start") {
     // 同源觸接子卡：拖 start 同步把前一段 end 拉到同位，維持連續不留空窗
     const touch =
-      prev && prev.c.idx === cur.c.idx && Math.abs(prev.end - cur.start) < 0.06;
+      prev &&
+      prev.c &&
+      cur.c &&
+      prev.c.idx === cur.c.idx &&
+      Math.abs(prev.end - cur.start) < 0.06;
     const lo = prev ? (touch ? prev.start + TL_MIN_DUR : prev.end) : t0;
     t = Math.max(lo, Math.min(cur.end - TL_MIN_DUR, t));
-    state.cardTimings.set(cur.key, { start: t, end: cur.end });
+    writeTime(t, cur.end);
     _tlSetBlockGeom(block, t, cur.end, t0, total);
-    block.classList.add("edited");
     if (touch) {
       syncKey = prev.key;
       syncStart = prev.start;
@@ -1600,12 +1915,15 @@ function onTimelineDragMove(e) {
     }
   } else {
     const touch =
-      next && next.c.idx === cur.c.idx && Math.abs(next.start - cur.end) < 0.06;
+      next &&
+      next.c &&
+      cur.c &&
+      next.c.idx === cur.c.idx &&
+      Math.abs(next.start - cur.end) < 0.06;
     const hi = next ? (touch ? next.end - TL_MIN_DUR : next.start) : t0 + total;
     t = Math.max(cur.start + TL_MIN_DUR, Math.min(hi, t));
-    state.cardTimings.set(cur.key, { start: cur.start, end: t });
+    writeTime(cur.start, t);
     _tlSetBlockGeom(block, cur.start, t, t0, total);
-    block.classList.add("edited");
     if (touch) {
       syncKey = next.key;
       syncStart = t;
@@ -1620,10 +1938,9 @@ function onTimelineDragMove(e) {
       el.classList.add("edited");
     }
   }
-  // 拖曳讀值：跟游標顯示這一刻的精確時間（0.1s），吸附靜音時標注——直接回應「難判斷開始/結束點」
+  // 拖曳讀值：跟游標顯示這一刻的精確時間（0.01s，與存檔精度一致）
   if (_tlDrag.readout) {
-    _tlDrag.readout.textContent = fmtTimeD(t) + (snapped ? "  ·吸附" : "");
-    _tlDrag.readout.classList.toggle("snapped", snapped);
+    _tlDrag.readout.textContent = fmtTimeCard(t);
     _tlDrag.readout.style.left = `${e.clientX}px`;
     _tlDrag.readout.style.top = `${e.clientY}px`;
   }
@@ -1774,6 +2091,7 @@ function renderCards() {
   // 若 cardCount > 500 且 dur > 50ms 就警告，當作導入 windowing 的訊號。
   const _t0 = performance.now();
   const list = $("#cards-list");
+  const _view = captureCardsView(list);
   list.innerHTML = "";
   list.classList.toggle("filter-review", state.reviewFilter);
   if (state.needsTranscribe) {
@@ -1891,13 +2209,13 @@ function renderCards() {
     // 切過的卡只在第一段顯示母卡號，其餘 part 留空，避免同一號重複印在每段。
     const showIdx = !isSub || partIdx === 0;
     timeVal.textContent =
-      (showIdx ? `#${c.idx}\n` : "") + `${fmtTime(r.start)}\n${fmtTime(r.end)}`;
+      (showIdx ? `#${c.idx}\n` : "") +
+      `${fmtTimeCard(r.start)}\n${fmtTimeCard(r.end)}`;
     time.appendChild(timeVal);
     time.addEventListener("click", () => {
       $("#video").currentTime = r.start;
     });
-    if (!isSub && state.timeOverrides.has(c.idx))
-      div.classList.add("time-dirty");
+    if (!isSub && state.cardTimings.has(c.idx)) div.classList.add("time-dirty");
     // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
     if (!isSub) {
       // 拖曳換位置把手：拖一張卡 → 設時間 override 移到新位置。後端 always-sort 修正後，
@@ -2009,7 +2327,7 @@ function renderCards() {
     if (!isSub && state.textOverrides.has(c.idx)) text.classList.add("dirty");
     if (isSub) text.classList.add("dirty"); // sub-card 本來就是改過的內容
     text.addEventListener("blur", () => {
-      const v = text.textContent.trim();
+      const v = editableText(text);
       if (isSub) {
         // 改 sub-card 文字 → 更新 cardSplits 對應 partIdx；空字串就還原原始 part 值（避免存空白卡）
         // Backspace 合併把 cardSplits[c.idx] 刪掉後，舊 sub-card DOM 被 re-render 摘掉會觸發 blur；
@@ -2160,7 +2478,6 @@ function renderCards() {
           state.deletions.delete(c.idx);
           state.camerasMapping.delete(c.idx);
           state.speakersMapping.delete(c.idx);
-          state.timeOverrides.delete(c.idx);
           clearCardTimings(c.idx);
           focusCardAt(prev.idx, prevText.length); // 游標停在兩卡接縫
         });
@@ -2330,6 +2647,7 @@ function renderCards() {
     frag.appendChild(div);
   }
   list.appendChild(frag);
+  restoreCardsView(list, _view);
   renderSusToolbar();
   renderReviewToolbar();
   renderCamRuler();
@@ -2521,8 +2839,8 @@ async function loadEpisodeState() {
   // 換集 / 重轉字幕：清掉舊集的切分記錄，避免 idx 對到新集不存在的卡或文字不符
   state.cardSplits = new Map();
   state.cardMerges = new Set();
-  state.timeOverrides = new Map();
   state.timeEditKey = null;
+  _timeEditCtl = null;
   state.newCards = [];
   state.newCardSeq = 0;
   state.cardTimings = new Map();
@@ -3157,10 +3475,16 @@ $("#video").addEventListener("timeupdate", () => {
   autoSkipDeletedSegments();
   const t = $("#video").currentTime;
   const dur = $("#video").duration;
-  const timeStr = `${fmtTime(t)} / ${fmtTime(dur)}`;
-  $("#time").textContent = timeStr;
+  const nowStr = fmtTime(t, dur);
+  const durStr = fmtTime(dur, dur);
+  $("#time").textContent = `${nowStr} / ${durStr}`;
+  // 字幕區 sticky 列只放「目前時間」：卡面固定 420px，塞不下完整的「目前 / 總長」
+  // （超過一小時的集數會把三顆操作鈕擠到第二排）。總長在上方影片控制列恆常可見。
   const ctEl = $("#cards-time");
-  if (ctEl) ctEl.textContent = timeStr; // 字幕區 sticky 列同步時間
+  if (ctEl) {
+    ctEl.textContent = nowStr;
+    ctEl.title = `目前 ${nowStr} ／ 總長 ${durStr}`;
+  }
   const seekEl = $("#seek");
   const pct = dur ? (t / dur) * 100 : 0;
   seekEl.value = pct;
@@ -3995,25 +4319,20 @@ function buildSavePayload({ withSpeed = false } = {}) {
     // 跨卡合併：[old_idx, ...]；後端把這些卡從 SRT 拿掉、結束時間接到上一張整卡。
     // 合併後文字由上面的 cards（textOverrides）落在上一張卡，避免重複串接。
     merges: [...state.cardMerges],
-    // 單卡時間微調：{ "<idx>": {start, end} }；後端 serialize 前覆寫該卡 start/end
     // ── 時間軸還原 ──
     // 載入時（loadEpisodeState）字卡被整批 -audioSyncOffset 移到 cam A 軸（讓播放預覽的字幕
     // highlight 對得上 video.currentTime）。但磁碟 _v2.srt 是「外接音檔時間軸」，存檔端
     // 必須把使用者在 cam A 軸上微調出來的 start/end 加回 +audioSyncOffset 還原成外接音檔軸，
     // 才能跟磁碟一致、避免每次「存→重載」都再被減一次 offset（症狀：時間越存越早、修不回）。
-    time_overrides: Object.fromEntries(
-      [...state.timeOverrides.entries()].map(([idx, t]) => [
-        idx,
-        toDiskTime(t),
-      ]),
-    ),
     // 新增字卡：[{start, end, text}]；後端 append 進 SRT、依時間排序重編號
     // 新卡 start/end 來自 video.currentTime（cam A 軸），同樣要 +audioSyncOffset 還原成磁碟軸
     new_cards: state.newCards.map((c) => ({
       ...toDiskTime(c),
       text: c.text,
     })),
-    // 時間軸拖拉改的字幕時間：composite key → {start, end}；同 +audioSyncOffset 還原磁碟軸
+    // 字幕時間覆寫：composite key（int 整卡 / "idx:part" 子卡）→ {start, end}；
+    // 時間軸拖拉與 ⏱ 工具列共用這一份。同 +audioSyncOffset 還原磁碟軸。
+    // （舊版另有 time_overrides payload，後端仍相容接受，但前端已不再送。）
     card_timings: Object.fromEntries(
       [...state.cardTimings.entries()].map(([k, t]) => [k, toDiskTime(t)]),
     ),
@@ -7483,6 +7802,7 @@ $("#card-insert-btn").addEventListener("click", () => {
   const tempId = state.newCardSeq++;
   state.newCards.push({ tempId, start, end, text: "" });
   state.timeEditKey = null;
+  _timeEditCtl = null;
   renderCards();
   renderTopbar();
   renderCaption();
@@ -7497,6 +7817,85 @@ $("#card-insert-btn").addEventListener("click", () => {
     }
   });
 });
+
+// 折兩行：兩個人同時說話時，在游標處把這張卡折成上下兩行。存的是 "\n"，
+// SRT 原樣寫回、燒字時 assemble.py 轉成 ASS 的 \N（WrapStyle: 0 不會再自動折）。
+// 刻意不設字數門檻、不自動折行 —— 何時該折是語意判斷（誰在講話），只有人知道。
+// 已經是兩行的卡，按鈕變「合一行」。
+(() => {
+  const btn = $("#card-wrap-btn");
+  const label = $("#card-wrap-label");
+  if (!btn) return;
+  let target = null; // 目前 focus 的 .card-text；null = 按鈕停用
+
+  const sync = () => {
+    btn.disabled = !target;
+    const multi = !!target && editableText(target).includes("\n");
+    if (label) label.textContent = multi ? "合一行" : "折兩行";
+    btn.title = !target
+      ? "先把游標點進一張字幕卡的文字裡"
+      : multi
+        ? "把這張卡的兩行合回一行"
+        : "在游標位置把這張卡折成兩行（兩人同時說話時各佔一行）";
+  };
+
+  // 換好文字後把游標放回 caret 位置。textContent 會重建 text node，不還原游標會跳到卡首。
+  const setText = (el, value, caret) => {
+    el.textContent = value;
+    const node = el.firstChild;
+    if (!node) return;
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.setStart(node, Math.min(Math.max(caret, 0), node.textContent.length));
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+
+  document.addEventListener("focusin", (e) => {
+    const t = e.target;
+    target =
+      t &&
+      t.classList &&
+      t.classList.contains("card-text") &&
+      t.isContentEditable
+        ? t
+        : null;
+    sync();
+  });
+  document.addEventListener("focusout", (e) => {
+    if (e.target === target) {
+      target = null;
+      sync();
+    }
+  });
+
+  // mousedown 擋掉預設行為 → 按鈕不搶 focus，卡片的游標位置才留得住
+  btn.addEventListener("mousedown", (e) => e.preventDefault());
+  btn.addEventListener("click", () => {
+    const el = target;
+    if (!el) return;
+    const cur = editableText(el);
+    if (!cur) return;
+    if (cur.includes("\n")) {
+      // 合一行：中文字幕不補空白，跟 Backspace 合併子卡的行為一致
+      const merged = cur.split("\n").join("");
+      setText(el, merged, merged.length);
+    } else {
+      const off = getCursorOffset(el);
+      // 游標在頭或尾折下去會產生空行（editableText 會把它丟掉＝沒折）→ 改折在正中間
+      const at =
+        off <= 0 || off >= cur.length ? Math.round(cur.length / 2) : off;
+      setText(el, cur.slice(0, at) + "\n" + cur.slice(at), at + 1);
+    }
+    // 走既有 blur handler 寫回 state（含 pushUndo / dirty 標記）。
+    // 這兩個 handler 都不會 renderCards，游標不會被重建掉。
+    el.dispatchEvent(new Event("blur"));
+    sync();
+  });
+
+  sync();
+})();
 
 // 拖拉換位置：grip 啟動拖曳，#cards-list 委派 dragover/drop（只在整卡之間，排除 sub-card / 新卡）
 (() => {

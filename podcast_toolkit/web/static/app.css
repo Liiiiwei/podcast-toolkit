@@ -2397,7 +2397,9 @@ dialog.modal::backdrop {
 .sus-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  row-gap: 5px;
   padding: 7px 10px;
   margin-bottom: var(--space-sm);
   background: var(--danger-soft);
@@ -2427,8 +2429,39 @@ dialog.modal::backdrop {
   border-color: var(--danger);
   color: var(--danger);
 }
-.sus-toolbar .spacer {
+.sus-toolbar .spacer,
+.review-toolbar .spacer {
   flex: 1;
+}
+
+/* 兩條旗標列共用：計數摘要與按鈕群各自是「不可拆的一塊」，
+   面板窄到放不下時整組換到下一列，而不是把按鈕壓扁到字中間斷行 */
+.flag-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.flag-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  row-gap: 5px;
+  flex: 0 0 auto;
+}
+.flag-status {
+  color: var(--text-dim);
+  flex: 0 0 auto;
+}
+.sus-toolbar .btn,
+.review-toolbar .btn,
+.cards-toolbar .btn,
+.flag-summary,
+.flag-status {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .srt-shift-row {
@@ -2469,7 +2502,9 @@ dialog.modal::backdrop {
 .review-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  row-gap: 5px;
   padding: 7px 10px;
   margin-bottom: var(--space-sm);
   background: var(--warning-soft);
@@ -2491,7 +2526,6 @@ dialog.modal::backdrop {
 }
 .review-toolbar .review-label {
   color: var(--text-dim);
-  flex: 1;
 }
 .review-toolbar .btn {
   padding: 4px 10px;
@@ -2513,7 +2547,8 @@ dialog.modal::backdrop {
    舊值跟背景同色等於沒有邊框，整串卡糊成一片。 */
 .card {
   display: grid;
-  grid-template-columns: 18px 60px 1fr 24px;
+  /* 時間欄 66px：容得下 "119:59.99"（fmtTimeCard 的 0.01s 精度，11px mono 約 59px）*/
+  grid-template-columns: 18px 66px 1fr 24px;
   gap: 10px;
   align-items: start;
   background: var(--surface-raised);
@@ -2650,6 +2685,23 @@ dialog.modal::backdrop {
   font-family: var(--font-mono);
   color: var(--text-dim);
 }
+/* 可直接打字的起／訖時間（"12.34" 或 "1:23.45"）。寬度容得下 "119:59.99" */
+.te-input {
+  width: 74px;
+  padding: 3px 6px;
+  border: 0.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.te-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 /* 字幕區頂端 sticky 工具列：播放/暫停 + 時間 + 插入字卡（捲動時一直在手邊）*/
 .cards-toolbar {
   position: sticky;
@@ -2657,7 +2709,9 @@ dialog.modal::backdrop {
   z-index: 5;
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
+  row-gap: 5px;
   margin: 0 -12px 8px;
   padding: 8px 12px;
   background: var(--surface-sunken);
@@ -2666,11 +2720,30 @@ dialog.modal::backdrop {
 .cards-toolbar .spacer {
   flex: 1;
 }
+/* 三顆操作鈕當一個整體：放不下時整組退到第二排，不會只有一顆被擠下去 */
+.cards-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.cards-toolbar .srt-shift-wrap {
+  flex: 0 0 auto;
+}
+/* 卡面固定 420px，時間走到 1:23:45 / 1:47:02 時這排會被擠成兩列，
+   sticky 高度就會隨播放時間跳動。縮到與上方旗標列同一個緊湊尺寸，讓它恆為單列 */
+.cards-toolbar .btn:not(.btn-icon) {
+  padding: 5px 9px;
+  font-size: var(--text-sm);
+}
 .cards-time {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 /* 拖拉換位置：把手 + 拖曳中 / 落點指示 */
 .card-grip {
@@ -3032,7 +3105,7 @@ dialog.modal::backdrop {
   pointer-events: none;
   z-index: 3;
 }
-/* 拖曳字幕邊緣時跟著游標的精確時間讀值（0.1s）；fixed 定位不受時間軸 overflow:hidden 裁切 */
+/* 拖曳字幕邊緣時跟著游標的精確時間讀值（0.01s）；fixed 定位不受時間軸 overflow:hidden 裁切 */
 .tl-drag-readout {
   position: fixed;
   z-index: 60;
@@ -3049,11 +3122,6 @@ dialog.modal::backdrop {
   white-space: nowrap;
   transform: translate(-50%, -150%);
 }
-.tl-drag-readout.snapped {
-  box-shadow:
-    0 0 0 2px var(--accent-soft),
-    0 2px 8px rgba(0, 0, 0, 0.35);
-}
 /* 字幕本文＝這張卡的主角。字級刻意比卡片基準（13px）大兩階到 15px，
    跟左欄時間（11px mono）拉開層級，長時間校稿也比較不吃力。 */
 .card-text {
@@ -3064,6 +3132,8 @@ dialog.modal::backdrop {
   border-radius: 3px;
   padding: 1px 3px;
   margin: -1px -3px; /* 補回 padding，讓文字左緣仍對齊格線 */
+  /* 手動折行（兩人同時說話各佔一行）存的是 "\n"；沒有 pre-wrap 就顯示成一整行 */
+  white-space: pre-wrap;
   transition:
     background 0.1s,
     box-shadow 0.1s;
@@ -3147,7 +3217,7 @@ dialog.modal::backdrop {
 /* === 雙鏡頭 A/B toggle（僅雙機集顯示）=== */
 /* 雙機集才會帶 card-has-cam，多開一欄放 A/B 膠囊；單機集格線維持原本 4 欄 */
 .card.card-has-cam {
-  grid-template-columns: 18px 60px 1fr auto 24px;
+  grid-template-columns: 18px 66px 1fr auto 24px;
 }
 /* A 鏡頭：用低調的深藍左邊框，讓整集還是維持暗色基調 */
 .card.cam-a {
