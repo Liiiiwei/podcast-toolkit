@@ -5,7 +5,7 @@
  *   --space-*        間距 scale（4/8/12/16/24/32）
  *   --radius-*       圓角 scale（4/6/8/12）
  *   --bg / --surface / --raised   背景三層
- *   --border / --border-strong    邊框兩層
+ *   --border / --border-strong / --border-bright   邊框三層
  *   --text / --text-dim / --text-faint  文字三層
  *   --accent / --accent-hover / --accent-soft / --accent-ring  橘色 accent
  *   --danger / --success / --warning   語意色
@@ -43,9 +43,12 @@
   --surface-raised: #1f1f24;
   --surface-sunken: #0a0a0c; /* code blocks / input */
 
-  /* 邊框：default 接近 surface 的細線，strong 用於 hover / focus 對比 */
+  /* 邊框：default 接近 surface 的細線，strong 用於 hover / focus 對比，
+     bright 用於 raised 底（#1f1f24）上仍要一眼看出格線的邊框（時間軸卡片），
+     對比約 3.2:1（WCAG 非文字元件 3:1 底線） */
   --border: #26262d;
   --border-strong: #3a3a44;
+  --border-bright: #6c6c78;
 
   /* 文字：text 主、dim 次、faint 第三層；對比都 ≥ 7:1（AAA） */
   --text: #ebebee;
@@ -108,6 +111,7 @@ body.theme-dark {
   --surface-raised: #1f1f24;
   --border: #26262d;
   --border-strong: #3a3a44;
+  --border-bright: #6c6c78;
   --text: #ebebee;
   --text-dim: #9b9ba8;
   --text-faint: #6c6c78;

@@ -3035,7 +3035,8 @@ dialog.modal::backdrop {
   top: 3px;
   bottom: 3px;
   background: var(--surface-raised);
-  border: 1px solid var(--border-strong);
+  /* border-bright：--border-strong 在 raised 底上看不出格子，每張卡都要有可見邊框 */
+  border: 1px solid var(--border-bright);
   border-radius: 3px;
   box-sizing: border-box;
   cursor: pointer;
@@ -3061,10 +3062,11 @@ dialog.modal::backdrop {
     transparent 8px
   );
 }
-/* 正在播放的 block：accent 邊框 + 外圈，跟 edited(accent-soft) 區隔 */
+/* 正在播放的 block：accent 邊框 + 2px 外圈加粗（外圈走 box-shadow 不佔 layout，
+   border 維持 1px 避免相鄰卡位移），跟 edited(accent-soft) 區隔 */
 .tl-block.playing {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
   z-index: 2;
 }
 /* 播放頭：跟著影片時間移動的豎線（left% 由 updateTimelinePlayhead 設定）*/
