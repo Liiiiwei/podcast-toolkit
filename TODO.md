@@ -231,8 +231,14 @@
 - [ ] **清掉舊 DMG**（使用者 2026-08-08 說「之後再說」）：`dist/` 有兩包各 2.5G ——
   `Podcast-Toolkit-0.2.0-20260807-284a51d.dmg` 與 `...-afadeb0.dmg`。
   舊的那包（`284a51d`）可清，用 `trash` 不要用遞迴強制刪除。
-- [ ] **重打包 .app / DMG**：本梯的字幕編輯 UX 改動只在原始碼，已安裝的 app 還是舊 UI。
-  合回 main 後跑 `./build_app.sh`；裝完若 UI 沒變先 `pgrep -fl Podcast` 砍殘留行程。
+- [x] **重打包 .app / DMG** ✅ 2026-08-08 11:43（合併後的 `54c57d4`）：
+  `dist/Podcast-Toolkit-0.2.0-20260808-54c57d4.dmg`（2.5G）。舊的 `/Applications/Podcast.app`
+  （`0.2.0+g5eea9b9.20260805T1504`）用 `trash` 移走後 `ditto` 裝新版。
+  驗收不只看「build 成功」：bundle 兩份副本與開發樹的 `app.js`／`app.css` sha256 三方相同
+  （`c1a7e824…`／`93efae48…`）、`codesign --verify --deep --strict` 通過、實際 `open` 後
+  `/api/version` = `0.2.0+g54c57d4.20260808T1143`，且從執行中的 server 抓下來的
+  `/static/app.js`／`app.css` sha256 與開發樹一致（證明跑的就是新前端，不是快取的舊 UI）。
+  本次啟動前 `pgrep -fl Podcast` 為空，沒撞到殘留舊行程。
 - 本梯盤點到但不做的 11 個問題（字幕 4、全 app 4、驗收另量 3）都在
   `docs/plans/2026-08-08-subtitle-editing-ux.md` 附錄，下一梯要挑就從那裡挑。
 
