@@ -118,7 +118,7 @@ async function openEpisode(path, cardEl) {
     });
     if (!r.ok) {
       const detail = await r.json().catch(() => ({ detail: r.statusText }));
-      alert("開啟失敗：" + detail.detail);
+      showToast("開啟失敗：" + detail.detail, "error");
       loadEpisodes();
       return;
     }
@@ -173,7 +173,7 @@ async function pickFolder() {
     });
     if (!initR.ok) {
       const d = await initR.json().catch(() => ({}));
-      alert("init 失敗：" + (d.detail || initR.statusText));
+      showToast("init 失敗：" + (d.detail || initR.statusText), "error");
       return;
     }
     await openEpisode(data.path);
@@ -249,7 +249,7 @@ async function saveSettings() {
       body: JSON.stringify({ episode_roots: roots }),
     });
     if (!r.ok) {
-      alert("儲存失敗");
+      showToast("儲存失敗", "error");
       return;
     }
     document.getElementById("settings-modal").close();

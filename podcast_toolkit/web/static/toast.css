@@ -1,0 +1,75 @@
+/* 共用 toast 樣式（配 toast.js；index.html / dashboard.html 都掛）。
+ * 色票沿用 tokens.css 語意色（--danger/--warning 與 *-soft）；
+ * 動畫節奏沿用 --duration-base/--ease-out；樣式參考 .modal-hint 與 #update-banner。 */
+
+#toast-container {
+  /* 容器可能以 popover 開啟（進 top-layer 疊在 <dialog> 上）——
+     先把 UA 的 popover 預設（inset:0 置中、border、canvas 底色）整組蓋掉 */
+  position: fixed;
+  inset: auto 16px auto auto;
+  top: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: visible;
+  width: auto;
+  height: auto;
+  max-width: min(400px, calc(100vw - 32px));
+  z-index: 10000; /* 非 popover fallback 時仍壓過頁面內容 */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-sm, 8px);
+  pointer-events: none; /* 容器不擋點擊，個別 toast 自己開 */
+}
+
+#toast-container .toast {
+  pointer-events: auto;
+  cursor: pointer;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg, 8px);
+  border: 1px solid;
+  background: var(--surface-raised, #1f1f24);
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.5));
+  font-family: var(--font-sans, sans-serif);
+  font-size: var(--text-md, 14px);
+  line-height: 1.6;
+  white-space: pre-line; /* 部分訊息帶 \n（如「部分對齊失敗」逐條列出） */
+  overflow-wrap: anywhere;
+  transition:
+    opacity var(--duration-base, 180ms) var(--ease-out, ease),
+    transform var(--duration-base, 180ms) var(--ease-out, ease);
+}
+.toast-error {
+  color: var(--danger, #ff6b6b);
+  border-color: var(--danger, #ff6b6b);
+  background:
+    linear-gradient(
+      var(--danger-soft, rgba(255, 107, 107, 0.12)),
+      var(--danger-soft, rgba(255, 107, 107, 0.12))
+    ),
+    var(--surface-raised, #1f1f24);
+}
+.toast-warn {
+  color: var(--warning, #f0b95a);
+  border-color: var(--warning, #f0b95a);
+  background:
+    linear-gradient(
+      var(--warning-soft, rgba(240, 185, 90, 0.12)),
+      var(--warning-soft, rgba(240, 185, 90, 0.12))
+    ),
+    var(--surface-raised, #1f1f24);
+}
+
+/* 進場：右滑淡入；離場：淡出上飄（.toast-leave 由 toast.js 加，transitionend 後移除節點） */
+#toast-container .toast-enter {
+  opacity: 0;
+  transform: translateX(24px);
+}
+#toast-container .toast-leave {
+  opacity: 0;
+  transform: translateY(-8px);
+}

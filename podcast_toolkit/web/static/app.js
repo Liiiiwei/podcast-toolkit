@@ -10,6 +10,12 @@ const state = {
   cropReelsB: null,
   cropRatioYt: null, // "4:5" | "9:16" | "16:9" | null
   cropRatioReels: null,
+  // 未存檔徽章用的 crop 載入基準（cropStateKey 序列化字串；function declaration 有 hoist，
+  // 這裡可以直接呼叫）。修「開集即恆亮 2」：存過裁切框 ≠ 未存檔，dirty ＝ 與基準不同。
+  // loadEpisodeState 尾端更新；存檔成功後所有 postSave 呼叫端都會重跑 loadEpisodeState
+  // → 基準自動更新為已存值、徽章歸零（與 trim 的 _savedHeadTrimSec 同一套思路）。
+  _savedCropYt: cropStateKey(null, null),
+  _savedCropReels: cropStateKey(null, null),
   // 旋轉拉正：per cam 度數（綁源攝影機，YT/Reels 共用）；正值順時針，搭配 crop 把黑角裁掉
   rotate: { a: 0, b: 0 },
   deletions: new Set(),
@@ -139,6 +145,15 @@ function setActiveCropRatio(ratio) {
 function serializeCropForSave(base, b) {
   if (!base) return null;
   return b ? { ...base, b: { ...b } } : { ...base };
+}
+
+// 未存檔徽章用：把 crop（base ＋可選 cam B override）正規化成固定欄位序的比較 key。
+// 欄位序固定（x,y,width,height）→ 不會因物件建構順序不同而誤判 dirty；null 安全。
+// 含 b override：只動 cam B 裁切框時徽章也要亮（舊的「非 null 就記 1」至少蓋得到這情況）。
+function cropStateKey(base, b) {
+  const norm = (c) =>
+    c ? [Number(c.x), Number(c.y), Number(c.width), Number(c.height)] : null;
+  return JSON.stringify([norm(base), norm(b)]);
 }
 
 // === Undo / Redo（in-memory 編輯） ===
@@ -410,8 +425,12 @@ function unsavedCount() {
     state.cardMerges.size +
     state.newCards.length +
     state.cardTimings.size +
-    (state.cropYt != null ? 1 : 0) +
-    (state.cropReels != null ? 1 : 0) +
+    // crop 用「與載入基準不同」判 dirty，不是「非 null」——否則存過裁切框的集
+    // 一開就恆亮 2（載入流程會把 yaml 存的框填回 state）
+    (cropStateKey(state.cropYt, state.cropYtB) !== state._savedCropYt ? 1 : 0) +
+    (cropStateKey(state.cropReels, state.cropReelsB) !== state._savedCropReels
+      ? 1
+      : 0) +
     (state.outputDirty ? 1 : 0) +
     (state.headTrimSec !== (state._savedHeadTrimSec || 0) ? 1 : 0) +
     (state.tailTrimSec !== (state._savedTailTrimSec || 0) ? 1 : 0)
@@ -2813,6 +2832,10 @@ async function loadEpisodeState() {
       }
     : null;
   state.cropReelsB = reelsIn && reelsIn.b ? { ...reelsIn.b } : null;
+  // 未存檔徽章的 crop 基準：載入值即基準（同下方 trim 的 _savedHeadTrimSec）。
+  // 存檔成功後各 postSave 呼叫端都會重跑本函式 → 基準跟著更新、徽章歸零。
+  state._savedCropYt = cropStateKey(state.cropYt, state.cropYtB);
+  state._savedCropReels = cropStateKey(state.cropReels, state.cropReelsB);
   // 旋轉拉正（per cam）/ 節目封面開關 / 正片倍速
   const rot = data.rotate || {};
   state.rotate = { a: Number(rot.a) || 0, b: Number(rot.b) || 0 };
@@ -2974,6 +2997,10 @@ async function loadEpisodeState() {
   // 換集 / 重抓 episode → 既有的 undo 紀錄不再有意義（idx 範圍可能不同）
   clearUndoStacks();
   applyMainVideoMissingUI();
+  // 重載完成（含 _savedCrop* 基準更新）後統一重繪 topbar，讓未存檔徽章即時歸零。
+  // 放這裡一次蓋掉所有呼叫端（存檔成功路徑 4431/6366 先前漏繪）；renderTopbar 冪等，
+  // 既有呼叫端多繪一次無副作用。失敗路徑上方一律 throw，不會走到這行。
+  renderTopbar();
 }
 
 // 空集（01_母帶/ 沒檔，main_video 解析後不存在）→ 把 video 換成 empty banner，
@@ -3079,7 +3106,7 @@ function setupSrtShift() {
     const raw = input.value.trim();
     const offset = raw === "" ? 0 : Number(raw);
     if (!Number.isFinite(offset)) {
-      alert("偏移秒數必須是數字（可正可負，0 = 清除）");
+      showToast("偏移秒數必須是數字（可正可負，0 = 清除）", "warn");
       return;
     }
     if (offset === (state.subtitleOffsetSec || 0)) {
@@ -3104,7 +3131,7 @@ function setupSrtShift() {
       renderTopbar();
       renderCaption();
     } catch (e) {
-      alert(`套用失敗：${e.message}`);
+      showToast(`套用失敗：${e.message}`, "error");
     } finally {
       btn.disabled = false;
     }
@@ -3225,7 +3252,7 @@ async function saveDict() {
     body: JSON.stringify({ entries: state.typoDict }),
   });
   if (!r.ok) {
-    alert(`寫入字典失敗：HTTP ${r.status}`);
+    showToast(`寫入字典失敗：HTTP ${r.status}`, "error");
     return false;
   }
   state.typoDict = await r.json();
@@ -4413,7 +4440,7 @@ $("#save-btn").addEventListener("click", async () => {
       $("#save-btn").disabled = false;
     }, 2000);
   } catch (e) {
-    alert(`儲存失敗：${e.message}`);
+    showToast(`儲存失敗：${e.message}`, "error");
     $("#save-btn").disabled = false;
     setSaveBtnLabel("check", "完成並儲存");
   }
@@ -5662,7 +5689,7 @@ function openMicSetup() {
 async function saveMicSetup() {
   const mics = collectMicSetupAssignment();
   if (!Object.keys(mics).length) {
-    alert("至少要設定一軌");
+    showToast("至少要設定一軌", "warn");
     return;
   }
   const roles = collectMicSetupRoles();
@@ -5850,7 +5877,7 @@ async function runPerMicTranscribe() {
     document.querySelectorAll("#per-mic-list .per-mic-check:checked"),
   ).map((cb) => cb.dataset.speaker);
   if (!speakers.length) {
-    alert("至少要選一軌");
+    showToast("至少要選一軌", "warn");
     return;
   }
 
@@ -6073,7 +6100,7 @@ function renderAssembleOutputs(outs) {
       try {
         await revealPath(p);
       } catch (e) {
-        alert(`開啟失敗：${e.message}`);
+        showToast(`開啟失敗：${e.message}`, "error");
       }
     };
     row.appendChild(name);
@@ -6276,7 +6303,7 @@ async function _pollAssembleOnce() {
             body: JSON.stringify({ path: outs[0] }),
           });
         } catch (e) {
-          alert(`開啟失敗：${e.message}`);
+          showToast(`開啟失敗：${e.message}`, "error");
         }
       };
       // 自動 reveal 第一個輸出；失敗就靜默退回手動按鈕
@@ -6343,7 +6370,7 @@ function setupAssembleButtons() {
       await loadEpisodeState();
       renderCards();
     } catch (e) {
-      alert(`儲存失敗，未開始合成：${e.message}`);
+      showToast(`儲存失敗，未開始合成：${e.message}`, "error");
       startBtn.disabled = false;
       setBtnLabel(startBtn, null, "開始合成");
       return;
@@ -6477,7 +6504,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
     hideModal("settings-modal");
     renderFiles();
   } catch (e) {
-    alert(`儲存失敗：${e.message}`);
+    showToast(`儲存失敗：${e.message}`, "error");
   } finally {
     btn.disabled = false;
     btn.textContent = "儲存";
@@ -6502,7 +6529,7 @@ async function openGlossary() {
     glossaryWork.common = (data.common || []).map(cloneGlossaryEntry);
     glossaryWork.yaml = (data.yaml || []).map(cloneGlossaryEntry);
   } catch (e) {
-    alert(`載入詞庫失敗：${e.message}`);
+    showToast(`載入詞庫失敗：${e.message}`, "error");
     return;
   }
   glossaryWork.activeTab = "episode";
@@ -6758,14 +6785,15 @@ async function saveGlossary() {
     ]);
     const failed = [s1, s2].filter((r) => r.status === "rejected");
     if (failed.length) {
-      alert(
+      showToast(
         `儲存詞庫部分失敗：${failed.map((r) => r.reason.message).join("；")}`,
+        "error",
       );
     } else {
       hideModal("glossary-modal");
     }
   } catch (e) {
-    alert(`儲存詞庫失敗：${e.message}`);
+    showToast(`儲存詞庫失敗：${e.message}`, "error");
   } finally {
     btn.disabled = false;
     btn.innerHTML = orig;
@@ -6917,7 +6945,7 @@ $("#cam-suggest-btn")?.addEventListener("click", async () => {
       hint.textContent = `已推出 ${d.count} 個 A/B 切換點（可手動微調例外）`;
   } catch (e) {
     if (hint) hint.textContent = "";
-    alert(`推鏡頭失敗：${e.message}`);
+    showToast(`推鏡頭失敗：${e.message}`, "error");
   } finally {
     btn.disabled = false;
   }
@@ -6929,7 +6957,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
   const camAPath = $("#cam-a-select").value || "";
   const camBPath = $("#cam-b-select").value || "";
   if (!camBPath) {
-    alert("請先選 cam B 來源");
+    showToast("請先選 cam B 來源", "warn");
     return;
   }
   const btn = $("#cam-auto-align");
@@ -6948,7 +6976,7 @@ $("#cam-auto-align").addEventListener("click", async () => {
     const data = await r.json();
     $("#cam-sync-offset-b").value = data.offset_sec.toFixed(3);
   } catch (e) {
-    alert(`自動對齊失敗：${e.message}`);
+    showToast(`自動對齊失敗：${e.message}`, "error");
   } finally {
     stopSpin();
     btn.disabled = false;
@@ -6989,7 +7017,7 @@ $("#align-all").addEventListener("click", async () => {
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
   if (!camBPath && !audioPath) {
-    alert("請先選 cam B 或音檔（兩邊都沒選等於沒事可做）");
+    showToast("請先選 cam B 或音檔（兩邊都沒選等於沒事可做）", "warn");
     return;
   }
   const btn = $("#align-all");
@@ -7043,7 +7071,7 @@ $("#align-all").addEventListener("click", async () => {
       // 有錯就不要自動 save，避免把錯誤值寫進 yaml
       stopSpin();
       setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
-      alert(`部分對齊失敗：\n${errors.join("\n")}`);
+      showToast(`部分對齊失敗：\n${errors.join("\n")}`, "error");
       return;
     }
 
@@ -7066,7 +7094,7 @@ $("#align-all").addEventListener("click", async () => {
       setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
     }, 2000);
   } catch (e) {
-    alert(`對齊或儲存失敗：${e.message}`);
+    showToast(`對齊或儲存失敗：${e.message}`, "error");
     stopSpin();
     setBtnLabel(btn, "target", "一鍵全部對齊（cam B + 音檔）並儲存");
   } finally {
@@ -7079,7 +7107,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
   const camAPath = $("#cam-a-select").value || "";
   const audioPath = $("#audio-select").value || "";
   if (!audioPath) {
-    alert("請先選音檔來源");
+    showToast("請先選音檔來源", "warn");
     return;
   }
   const btn = $("#audio-auto-align");
@@ -7098,7 +7126,7 @@ $("#audio-auto-align").addEventListener("click", async () => {
     const data = await r.json();
     $("#audio-sync-offset").value = data.offset_sec.toFixed(3);
   } catch (e) {
-    alert(`自動對齊失敗：${e.message}`);
+    showToast(`自動對齊失敗：${e.message}`, "error");
   } finally {
     stopSpin();
     btn.disabled = false;
@@ -7207,13 +7235,13 @@ $("#cam-save").addEventListener("click", async () => {
   const offsetRaw = $("#cam-sync-offset-b").value;
   const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
   if (!Number.isFinite(offset)) {
-    alert("同步偏移要是數字");
+    showToast("同步偏移要是數字", "warn");
     return;
   }
   const audioOffsetRaw = $("#audio-sync-offset").value;
   const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
   if (!Number.isFinite(audioOffset)) {
-    alert("音檔同步偏移要是數字");
+    showToast("音檔同步偏移要是數字", "warn");
     return;
   }
   const btn = $("#cam-save");
@@ -7236,7 +7264,7 @@ $("#cam-save").addEventListener("click", async () => {
     video.load();
     hideModal("cam-modal");
   } catch (e) {
-    alert(`儲存失敗：${e.message}`);
+    showToast(`儲存失敗：${e.message}`, "error");
   } finally {
     btn.disabled = false;
     btn.textContent = "儲存";
@@ -7259,7 +7287,7 @@ $("#cancel-btn").addEventListener("click", async () => {
     const r = await fetch("/api/episodes/close", { method: "POST" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
   } catch (_) {
-    alert("回 dashboard 失敗");
+    showToast("回 dashboard 失敗", "error");
     return;
   }
   _leavingToDashboard = true;
@@ -7613,7 +7641,7 @@ document
   ?.addEventListener("click", async () => {
     const r = await fetch("/api/episodes/close", { method: "POST" });
     if (!r.ok) {
-      alert("回 dashboard 失敗");
+      showToast("回 dashboard 失敗", "error");
       return;
     }
     window.location.href = "/";

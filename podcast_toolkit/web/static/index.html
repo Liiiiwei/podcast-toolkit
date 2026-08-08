@@ -8,6 +8,7 @@
     <!-- 靜態資源由後端統一回 Cache-Control: no-cache（api.py NoCacheStaticFiles），
          瀏覽器每次 revalidate、檔案沒變就 304，不需要手動撞版本號。 -->
     <link rel="stylesheet" href="/static/app.css" />
+    <link rel="stylesheet" href="/static/toast.css" />
   </head>
   <body class="theme-dark">
     <!-- 版本更新橫幅：由 app.js 版本探針控制顯示；預設隱藏、不可關閉（correctness，非提示）。
@@ -1430,6 +1431,7 @@
     </dialog>
 
     <script src="/static/icons.js"></script>
+    <script src="/static/toast.js"></script>
     <script src="/static/app.js" type="module"></script>
   </body>
 </html>
