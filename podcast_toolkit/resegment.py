@@ -3,9 +3,11 @@
 從現有 resegment.py 改造，邏輯不變，只是參數從 config 帶入。
 """
 import re
+import shutil
 import sys
 from pathlib import Path
-from podcast_toolkit import srt_io
+from typing import Optional
+from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
 from podcast_toolkit.whisper_guard.vocab import filter_filler_words
@@ -21,20 +23,66 @@ def ts2s(ts: str) -> float:
     return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
 
 
-def run(episode_dir: Path, force: bool = False) -> int:
+def remap_speakers_by_time(
+    old_cards: list[dict], old_spk: dict[int, str], new_cards: list
+) -> dict[int, str]:
+    """舊卡的講者標依「時間重疊最多」重新貼到新卡上，回傳新的 idx→講者。
+
+    resegment 把字幕整個重切、idx 從 1 重編，舊 sidecar 的 idx 直接留著就會錯位——
+    講者標貼到不相干的句子，燒進成品字幕就是講錯人。兩邊唯一的共同基準是時間軸。
+
+    old_cards: srt_io.parse 的結果；new_cards: run() 的 [start, end, txt, ...]（1-based 依序編號）。
+    """
+    spans = sorted(
+        (float(c["start"]), float(c["end"]), old_spk[int(c["idx"])])
+        for c in old_cards
+        if int(c["idx"]) in old_spk
+    )
+    new_spk: dict[int, str] = {}
+    j = 0  # 兩邊都照時間排序 → 用滑動指標掃過去，不必兩層迴圈（六千卡的集會慢到有感）
+    for n, card in enumerate(new_cards, 1):
+        st, en = float(card[0]), float(card[1])
+        while j < len(spans) and spans[j][1] <= st:
+            j += 1
+        best, best_ov, k = None, 0.0, j
+        while k < len(spans) and spans[k][0] < en:
+            ov = min(en, spans[k][1]) - max(st, spans[k][0])
+            if ov > best_ov:
+                best, best_ov = spans[k][2], ov
+            k += 1
+        if best is not None:
+            new_spk[n] = best
+    return new_spk
+
+
+def run(episode_dir: Path, force: bool = False, src: Optional[Path] = None) -> int:
+    """重新斷句。
+
+    src 給定 → 拿那份字幕當來源；省略 → 沿用 episode.yaml 的主字幕檔（main_srt）。
+    不論來源是哪份，輸出一律寫回 _v2.srt：編輯器只認這份，寫到別的位置等於產出一個
+    介面上看不到的孤兒檔。
+    """
     ep = Episode(episode_dir)
     cfg = ep.cfg
     rcfg = cfg["resegment"]
 
-    src = ep.main_srt()
-    if not src.exists():
-        print(f"✗ 找不到字幕：{src}", file=sys.stderr)
-        srt_list = list(ep.subdir("output").glob("*.srt"))
-        if srt_list:
-            print("  03_成品/ 內現有 srt：", file=sys.stderr)
-            for p in srt_list:
-                print(f"    {p.name}", file=sys.stderr)
-        return 3
+    if src is not None:
+        # 指定的來源不存在就直接停。靜默退回主字幕的話，使用者會以為重切的是自己挑的
+        # 那份，實際切的是另一份 —— 而且 _v2 當場被覆寫，錯得無聲無息又救不回來。
+        src = Path(src)
+        if not src.is_file():
+            print(f"✗ 找不到指定的來源字幕：{src}", file=sys.stderr)
+            return 3
+    else:
+        src = ep.main_srt()
+        if not src.exists():
+            print(f"✗ 找不到字幕：{src}", file=sys.stderr)
+            srt_list = list(ep.subdir("output").glob("*.srt"))
+            if srt_list:
+                print("  03_成品/ 內現有 srt：", file=sys.stderr)
+                for p in srt_list:
+                    print(f"    {p.name}", file=sys.stderr)
+            return 3
 
     out = ep.output_v2_srt()
     review = ep.review_file()
@@ -135,10 +183,24 @@ def run(episode_dir: Path, force: bool = False) -> int:
     for c in cards:
         c[2] = card_fix(c[2])
 
+    # 講者 sidecar 要在覆寫 _v2 之前先讀舊的（新舊卡靠時間軸對應，見 remap_speakers_by_time）。
+    # 舊卡片固定取自 _v2（即使有 src override 也一樣）：講者標的 idx 是對著 _v2 編的，
+    # 拿 src 當基準會對錯人。
+    spk_path = ep.output_v2_speakers_json()
+    old_spk = cameras_io.load(spk_path)
+    old_cards = srt_io.parse(out.read_text(encoding="utf-8")) if out.exists() else []
+
     # 寫 SRT
     with out.open("w", encoding="utf-8") as f:
         for n, (st, en, txt, _, _) in enumerate(cards, 1):
             f.write(f"{n}\n{srt_io.seconds_to_srt_ts(st)} --> {srt_io.seconds_to_srt_ts(en)}\n{txt}\n\n")
+
+    # 重建講者 sidecar；兩份缺一就無從對應，寧可原封不動也不要亂貼或刪掉使用者的標記
+    if old_spk and old_cards:
+        new_spk = remap_speakers_by_time(old_cards, old_spk, cards)
+        shutil.copy(spk_path, spk_path.with_name(spk_path.name + ".pre-resegment.bak"))
+        cameras_io.save(spk_path, new_spk)
+        print(f"講者標重建: {len(old_spk)} → {len(new_spk)} 張卡（舊檔備份 .pre-resegment.bak）")
 
     # 寫複查清單
     risky = []
@@ -168,6 +230,7 @@ def run(episode_dir: Path, force: bool = False) -> int:
     fw = f"，疊字填充詞清理 {guard_stats['fillers']} 段" if use_filler else ""
     print(f"whisper-guard：移除字元迴圈 {guard_stats['loops']} 處{fw}")
     print(f"待複查的卡: {len(risky)} 張 → {sorted(risky)}")
+    print(f"來源: {src}")  # 有 --src 時要能一眼確認切的是哪份，別事後靠猜
     print(f"輸出: {out}")
     print(f"複查: {review}")
     return 0

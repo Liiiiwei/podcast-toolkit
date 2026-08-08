@@ -526,3 +526,56 @@ def test_breeze_python_bundled_requires_both_runtime_and_sitepackages(tmp_path):
     py_str, env = transcribe_job._breeze_python(bdir)
     assert py_str == "python3"
     assert env is None
+
+
+# --- Breeze 收尾階段：跳過的步驟不能靜默（reflow 舊行為是 except: pass）---
+
+def _run_breeze_with_stub_asr(monkeypatch, tmp_path, ep_dir, *, reflow):
+    """跑一次 _run_breeze，但把 ASR/ingest/proofread 都換成立即成功的假件。
+
+    只留 reflow 這一段是真的被呼叫，方便單獨驗它失敗時的行為。
+    """
+    from podcast_toolkit import ingest_breeze, proofread, subtitle_cleanup
+
+    # 假 Breeze 專案：make_subtitle.py 什麼都不做直接 exit 0
+    bdir = tmp_path / "fake_breeze"
+    bdir.mkdir()
+    (bdir / "make_subtitle.py").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(ingest_breeze, "run", lambda d, force=False: 0)
+    monkeypatch.setattr(proofread, "resolve_provider", lambda cfg: "claude")
+    monkeypatch.setattr(proofread, "run", lambda d: 0)
+    monkeypatch.setattr(subtitle_cleanup, "reflow_episode", reflow)
+
+    ep = Episode(ep_dir)
+    job = transcribe_job._grab_slot(state="running", mode="breeze", phase="breeze-asr")
+    transcribe_job._run_breeze(ep, bdir, "", "", job)
+    return transcribe_job.get_status()
+
+
+def test_reflow_failure_leaves_note_instead_of_silent_done(
+    monkeypatch, tmp_path, tmp_episode_dir
+):
+    """舊 bug：reflow 拋例外被 `except: pass` 吞掉，使用者只看到「完成」，
+    卻拿到一份沒重整過的字幕（句子特別長或碎），無從得知哪裡出錯。"""
+    def _boom(_dir):
+        raise RuntimeError("斷句引擎爆了")
+
+    status = _run_breeze_with_stub_asr(
+        monkeypatch, tmp_path, tmp_episode_dir, reflow=_boom
+    )
+
+    # 失敗不擋：字幕已匯入，終態仍是 done
+    assert status["state"] == "done"
+    # 但要留下可見的 note，且帶原始例外訊息（不然無從判斷是哪一步壞了）
+    assert "斷句重整跳過" in (status.get("note") or ""), status
+    assert "斷句引擎爆了" in status["note"]
+
+
+def test_reflow_success_leaves_no_note(monkeypatch, tmp_path, tmp_episode_dir):
+    """一切正常時不該冒出 note —— 否則每次轉完都跳警告，使用者會直接忽略。"""
+    status = _run_breeze_with_stub_asr(
+        monkeypatch, tmp_path, tmp_episode_dir, reflow=lambda _dir: None
+    )
+    assert status["state"] == "done"
+    assert not status.get("note")

@@ -4510,14 +4510,6 @@ function renderFileItem(f) {
       ? `用 ${providerLabel} 轉字幕並覆蓋 _v2.srt`
       : `目前的轉錄引擎（${providerLabel}）尚未就緒，點開有改用本地 Breeze 的入口`;
     action.addEventListener("click", () => requestTranscribe(f));
-  } else if (f.path.toLowerCase().endsWith(".srt") && !f.is_main_srt_backup) {
-    // 自帶字幕：直接拿這份 .srt 跑斷句 + 改錯字 + 反幻覺（不跑雲端 STT）
-    action = document.createElement("button");
-    action.className = "file-stt";
-    action.innerHTML = `${iconHtml("scissors", 12)}<span>斷句</span>`;
-    action.title =
-      "用這份字幕重新斷句 + 改錯字 + 反幻覺（不跑雲端 STT），覆蓋 _v2.srt";
-    action.addEventListener("click", () => requestResegment(f.path));
   } else {
     action = document.createElement("span");
     action.className = "file-stt-placeholder";
@@ -5088,56 +5080,6 @@ function requestTranscribe(file) {
   showModal("transcribe-modal");
 }
 
-// 自帶字幕：只跑 resegment 後處理（斷句 + 改錯字 + 反幻覺），不跑雲端 STT。
-// 複用 transcribe-modal 的版面；resegment 是同步秒級，不需要進度 poll。
-function requestResegment(srcPath) {
-  $("#transcribe-progress").hidden = true;
-  const go = $("#transcribe-go");
-  const cancel = $("#transcribe-cancel");
-  go.hidden = false;
-  go.disabled = false;
-  cancel.hidden = false;
-  cancel.disabled = false;
-  cancel.textContent = "取消";
-  setModalStatusTitle(
-    "transcribe-title",
-    "scissors",
-    "重新斷句（不轉 STT）",
-    "accent",
-  );
-  $("#transcribe-msg").innerHTML =
-    `來源字幕：<code>${srcPath}</code><br><br>` +
-    `直接用這份字幕重新斷句 + 改錯字 + 反幻覺，覆寫 <code>_v2.srt</code>，<strong>不會呼叫雲端 STT</strong>。<br>` +
-    `原稿會先自動備份成 <code>.bak.srt</code>。`;
-  go.textContent = "開始斷句";
-  go.onclick = () => runResegment(srcPath);
-  cancel.onclick = () => hideModal("transcribe-modal");
-  showModal("transcribe-modal");
-}
-
-async function runResegment(srcPath) {
-  setModalStatusTitle("transcribe-title", "scissors", "重新斷句中…", "accent");
-  $("#transcribe-msg").innerHTML =
-    `<div class="modal-loading"><span class="spinner"></span> 正在重新斷句 + 改錯字…</div>`;
-  $("#transcribe-progress").hidden = true;
-  const go = $("#transcribe-go");
-  const cancel = $("#transcribe-cancel");
-  go.disabled = true;
-  cancel.disabled = true;
-  try {
-    const r = await fetch("/api/resegment", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(srcPath ? { src_srt: srcPath } : {}),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
-    await finishTranscribe({ ok: true, out_srt: body.out_srt });
-  } catch (e) {
-    finishTranscribe({ ok: false, error: e.message });
-  }
-}
-
 // 三段進度條：每段佔總長 1/3
 // 後端依 provider 送不同細粒度 phase：
 //   雲端 gemini/openai：compress → upload → resegment
@@ -5502,7 +5444,7 @@ async function _pollTranscribeOnce() {
 
   if (s.state === "done") {
     stopTranscribePoll();
-    finishTranscribe({ ok: true, out_srt: s.out_srt });
+    finishTranscribe({ ok: true, out_srt: s.out_srt, note: s.note });
     return;
   }
 
@@ -5520,7 +5462,7 @@ async function _pollTranscribeOnce() {
   }
 }
 
-async function finishTranscribe({ ok, out_srt, error }) {
+async function finishTranscribe({ ok, out_srt, error, note }) {
   const cancel = $("#transcribe-cancel");
   const go = $("#transcribe-go");
   if (ok) {
@@ -5528,8 +5470,13 @@ async function finishTranscribe({ ok, out_srt, error }) {
     $("#transcribe-percent").textContent = "100%";
     $("#transcribe-phase-label").textContent = "完成";
     setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
+    // note = 轉錄成功但中途有步驟被跳過（校對／斷句重整失敗）。
+    // 不顯示的話使用者只會看到「完成」，拿到一份沒校對／沒重整的字幕卻不知情。
+    const noteHtml = note
+      ? `<div class="modal-hint warn">⚠ ${escAttr(note)}</div>`
+      : "";
     $("#transcribe-msg").innerHTML =
-      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。`;
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。${noteHtml}`;
 
     await loadEpisodeState();
     renderTopbar();

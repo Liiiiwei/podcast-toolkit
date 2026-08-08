@@ -134,43 +134,17 @@ if [ -f "$BREEZE_DIR/make_subtitle.py" ]; then
     fi
 set -e
 
-echo "→ 生成雙擊啟動 app（本機 osacompile 生成 → 無 quarantine、不會被 Gatekeeper 擋）"
-LAUNCH_SH="$ROOT/scripts/podcast-ui.sh"
-# app 安裝位置：優先 /Applications，不可寫則退回 ~/Applications
-APP_DIR="/Applications"
-if [ ! -w "$APP_DIR" ]; then
-    APP_DIR="$HOME/Applications"
-    mkdir -p "$APP_DIR"
-fi
-APP_PATH="$APP_DIR/Podcast.app"
-# 舊版存在 → 移到垃圾桶（不用 rm -rf）；同名衝突用 PID 區隔
-if [ -e "$APP_PATH" ]; then
-    mv "$APP_PATH" "$HOME/.Trash/Podcast.app.old.$$" 2>/dev/null || mv "$APP_PATH" "${APP_PATH}.old.$$"
-fi
-# 把本機絕對路徑烤進 AppleScript（per-machine 生成、不進 git，故寫死無妨）
-# do shell script 雙擊啟動時 CWD=/，podcast-ui.sh 內會自己 cd 進 repo 根
-TMP_SCPT="$(mktemp -t podcast-launcher).applescript"
-cat >"$TMP_SCPT" <<APPLESCRIPT
--- 由 install.sh 本機生成：啟動 podcast dashboard 並開瀏覽器
-do shell script quoted form of "$LAUNCH_SH"
-APPLESCRIPT
-if osacompile -o "$APP_PATH" "$TMP_SCPT" >/dev/null 2>&1; then
-    codesign --force -s - "$APP_PATH" >/dev/null 2>&1 || true
-    echo "  ✓ 啟動 app：$APP_PATH"
-    APP_OK=1
-else
-    echo "  ⚠ 啟動 app 生成失敗（不影響 CLI）；改用 podcast ui 也可開介面"
-    APP_OK=0
-fi
-mv "$TMP_SCPT" "$HOME/.Trash/" 2>/dev/null || true
+# 註：這裡原本有一段「用 osacompile 生 AppleScript 版 Podcast.app」的流程，已移除。
+# 現在的 .app 走 py2app（setup_app.py + build_app.sh），是自包含的 4G bundle；
+# 舊流程會先把 /Applications/Podcast.app 移進垃圾桶再換成指回 repo 的捷徑 —— 等於倒退。
+# 要雙擊啟動的 app 請跑 ./build_app.sh。
 
 cat <<'EOF'
 
 ✅ 安裝完成。
 EOF
-if [ "${APP_OK:-0}" = "1" ]; then
-    echo "  雙擊開介面：$APP_PATH（或 Spotlight 搜 Podcast）"
-fi
+echo "  開介面：終端機打 podcast ui"
+echo "  想要雙擊啟動的 app：跑 ./build_app.sh 產 DMG → 開啟後拖進 Applications（首次右鍵開啟）"
 if [ "${BREEZE_OK:-0}" = "1" ]; then
     echo "  轉字幕後端：Breeze 已就緒（編輯器裡按『一鍵 Breeze』即可，首次會下載 2.9G 模型）"
 else

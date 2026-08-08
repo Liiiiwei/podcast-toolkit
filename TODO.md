@@ -53,6 +53,10 @@
 - [x] **A4. `@media (max-width: 900px)` 沒同步新的 `.body` / `.body-top` grid** ✅ 2026-06-06 commit 34ec794
   - `podcast_toolkit/web/static/app.css` @media 補 `.body { grid-template-rows: auto auto; --drawer-h: auto; }` 與 `.body-top { grid-template-columns: 1fr; overflow: visible; }`
   - `.drawer` 改 `height: auto; max-height: 60vh`
+  - ⚠ **2026-08-05 發現上面這條 `height: auto` 從沒生效過，比原記載更嚴重** ✅ commit `0b53e05`：
+    `.drawer` 基礎規則 `height: 32vh` 整條蓋掉前段的 `@media` 區塊（`@media` 不加 specificity 權重，純比誰在後面），
+    窄螢幕從來沒有例外過；修好順序後才發現 `height: auto` 本身也不成立 —— `.drawer-pane` 是 `position: absolute`
+    脫離常規流，`.drawer-panes` 內在高度恆為 0，`auto` 會讓抽屜塌成只剩標題列（實測 45px）。最終改用固定 `height: 40vh`。
 
 ## 程式碼註解
 
@@ -105,14 +109,34 @@
   - `assemble.py`：`_maybe_leveled`/`build_leveled_cmd`/`_leveled_proxy_valid`/`write_leveled_meta` + prepare 用 `render_cfg`（baked 鏡頭 rotate→0）+ plan 帶 `prebake`；`assemble_job` 主合成前先跑/略過預烤（共用 `_pump_progress`）
   - 驗證：unit + 真跑 ffmpeg SSIM smoke = **0.9962**（proxy 路徑與 inline rotate 畫面等價）
   - ⚠ 預烤是「整支 cam B 全長轉正」（~50 分一次性），**首次輸出反而較慢**；回本在第 2 次起（YT+Reels/重輸出）
-  - [ ] **P2c-follow. 分段平行預烤**：把那一次性 ~50 分用 `-ss` 切塊平行 rotate + `-c copy` concat → ~1.9× 砍到 ~28 分，讓首次也不吃虧（rotate 唯一吃得到平行的地方就是這支獨立 pass）
+  - ~~**P2c-follow. 分段平行預烤**：把那一次性 ~50 分用 `-ss` 切塊平行 rotate + `-c copy` concat → ~1.9× 砍到 ~28 分~~
+    **❌ 2026-08-07 裁決不做**（理由見下方「待決事項」段）
 
 ## 啟動 App（雙擊開介面）
 
-- 已生成 `/Applications/Podcast.app`（本機 osacompile + adhoc 簽章，無 quarantine），雙擊 → 跑 `scripts/podcast-ui.sh` 開 dashboard。
-- [ ] **自訂圖示**：預設是 AppleScript applet 灰色圖；之後換成節目 icon（需 `.icns`，套到 `Podcast.app/Contents/Resources/applet.icns` + 重簽 + `touch` app）。
+- 打包＝py2app（`setup_app.py`）＋ ad-hoc 簽章（`build_app.sh:100,108`）；雙擊執行的是
+  `podcast_toolkit/launcher.py` → `edit.run_dashboard()`，不再經過任何 shell script。
+- 安裝＝`./build_app.sh` 產 DMG → 開啟 → 手動拖進 Applications（`build_app.sh` 本身**不會**自動安裝）
+  → 首次右鍵開啟。`/Applications/Podcast.app` 目前已裝 v0.2.0（2026-08-05 複驗：4.0G、adhoc、無 quarantine）。
+- [x] **自訂圖示** ✅ 2026-07-17（commit `fdf9b15`，銀麥 3D ＋深藍 squircle 底）：素材是
+  `assets/AppIcon.icns`（1024×1024，802KB），由 `setup_app.py:51` 的 `iconfile` 掛上，py2app
+  打包時自動寫進 `CFBundleIconFile`，不必手動塞檔也不用重簽。本條原本寫的「套到
+  `Contents/Resources/applet.icns` + 重簽 + touch」是 AppleScript applet 時代的做法，
+  改用 py2app 後已不適用。（2026-08-05 複驗：`dist/Podcast.app/Contents/Resources/AppIcon.icns`
+  與 repo 版 SHA256 一致，用的確實是自訂圖示。）
 - [ ] **釘 Dock**：之後把 app 拖進 Dock 固定一鍵開。
-- 注意：app 把 repo 路徑烤死，搬專案資料夾後要重生成（或重跑 `./install.sh`）。
+- app 是**自包含**的（Python runtime、程式碼、ffmpeg、Breeze 全複製進 bundle，共 4.0G），
+  **搬 repo 資料夾不會壞**。本條原本寫「app 把 repo 路徑烤死」是 AppleScript launcher 時代的事，
+  已不適用（2026-08-05 實測：bundle 內 grep 專案絕對路徑零命中；`config.py:21-26` 凍結態改走
+  `RESOURCEPATH` 解析根目錄）。
+- [x] **拿掉 `install.sh` 的 osacompile app 生成段** ✅ 2026-08-05：原本那段走的是舊的
+  AppleScript 路線，而且會**先把 py2app 版的 `/Applications/Podcast.app` 移進垃圾桶**、
+  換成一個指回 repo 的 launcher —— 等於把自包含的 4G app 換成搬家就壞的捷徑。已刪掉整段
+  （原 `:137-165`），結尾提示改成「開介面打 `podcast ui`；想雙擊啟動請跑 `./build_app.sh`
+  產 DMG 拖進 Applications」。**前 136 行原封不動保留** —— macOS／Python 3.9+／Homebrew 檢查、
+  `ffmpeg`、Python 套件（pyyaml ＋ fastapi 等 9 個）、`podcast` CLI symlink，以及整套 Breeze
+  後端（clone repo ＋建 venv ＋裝打過補丁的 whisper ＋抓 jieba 繁中詞典），那是轉字幕的地基。
+  所以 **`./install.sh` 現在可以安心跑**：它只做環境安裝，不再碰 `/Applications`。
 
 ## 2026-07-28 後續（雙行字幕 + 六項 UX 落地後）
 
@@ -130,13 +154,80 @@
   是錯的 —— 寫檔端還活著（`gemini_subtitle.py:384`，走 `/api/transcribe/per-mic`）。真正的
   bug 在前端：`loadEpisodeState()` 逐欄轉 camelCase 時漏接這欄，三處讀的
   `state.mic_srt_existing` 恆為 `undefined`。已補接線並改讀 `state.micSrtExisting`。
-- [ ] **Phase 2（單軌集手動配對 UI）**：等使用者授權才開工，未授權前不要動。
+- [x] **Phase 2（單軌集手動配對 UI）** ✅ 2026-08-05 調查後決定**不做**。題目本身就問錯了 ——
+  卡點不是「單軌集缺講者標」，是「第二個人的話從來沒進到文字裡」。現行 pipeline 是混音 ASR
+  產出唯一一份逐字稿 ＋ 三軌能量逐字 argmax 貼講者（`mic_diarize.py:297`），重疊資訊在
+  argmax 那一步就被收斂成單一講者，之後任何卡片路徑都還原不了。實測（20260522 魁哥集，
+  四種獨立方法交叉印證）：
+  - 字幕卡時間重疊 **0 筆**（1377 張卡），但三軌能量顯示的真重疊講話有 **365 段／161 秒**
+    —— 同時講話其實很常見，是資訊被壓掉，不是本來就沒有
+  - 那 365 段裡 **96.8% 撐不到 1 秒**（2 秒以上 0 段）
+  - **80.5%（294 段）整段判給同一人** → 第二份文字根本不存在
+  - 文字判為「實質內容」的 190 段裡，仍有 146 段（76.8%）argmax 從未切換
+  - 切 15 段音檔用 Breeze 對**非贏家軌**獨立實聽：5 段「實質內容」樣本聽出獨立第二人發言
+    **0 段**；聽得清的都是串音回音（#112 非贏家軌「還要幫 pana 順口講」＝贏家軌本人
+    「幫 partner 順口條」）
+  值得做的樂觀上限只有 58 段 switch／約 15 秒，而那些內容早已完整躺在單一逐字稿裡，只差
+  沒依講者換行。根因是麥克風隔離度僅 10.9–19.3dB（錄音現場的物理限制，軟體補不了），
+  這也是當初否決「三軌各自 ASR」的同一個原因 —— 同一套偵測，排除串音 365 段、不排除 2126 段。
+  若哪天要處理那 58 段，成本最低的做法是「同一張卡內標示講者變更」，不要碰渲染層。
+  （腳本與原始數據當時放 `/private/tmp/multitrack-probe/`，暫存區會被清，**數字以本條為準**。）
+
+## 2026-08-05 後續（使用者手冊 + 移除手動斷句入口後）
+
+- [x] **使用者手冊** ✅ `docs/user-manual/index.html`（40 頁，25 張 UI 截圖）
+  ——從開 app 到匯出的全流程，字幕功能寫得最細（點擊位置／達成效果／功能限制）。
+  PDF 用 Chrome headless `Page.printToPDF` 印出，**不入 git**（見 .gitignore），
+  交付檔另存 `~/Downloads/podcast-toolkit- 教學手冊 20260731b.pdf`。
+- [x] **移除檔案清單的「斷句」按鈕** ✅ `app.js` 拿掉 `.srt` 分支 +
+  `requestResegment`／`runResegment`（-58 行）。**後端刻意保留**：
+  `/api/resegment`（`routes/transcribe.py:164`）與 CLI `podcast resegment`（`cli.py:158`）都還在，
+  只是介面上不再暴露 —— 這個入口會覆蓋 `_v2.srt`，使用者手改的字幕會整批消失，風險 > 效益。
+- [x] **`merge_short` 預設打開、`merge_target` 放寬到 12** ✅ `defaults.yaml`
+  ——四集實測：異味率 10.8%→6.8%（魁哥）、過短卡 -21%～-43%；放寬到 12 再多救 66 張、
+  異味率再降 1～2.6pp，風險曲線到 12 為止完全持平。
+- [x] **手冊截圖 `17-drawer-files.png` 已過時** ✅ 用 `_scratch/manual_shots_fix4.py`
+  重拍（拍攝前先斷言抽屜裡沒有任何「斷句」按鈕，載到舊版前端就整輪失敗），
+  再照既有慣例 `sips -Z 2400` 縮成 2400x501。新圖字幕列右側是「— —」。
+  其餘 24 張經檔名比對與本次改動無關。
+- [x] **重打包 .app** ✅ 2026-08-05 15:05（commit `5eea9b9` 之後）：跑 `./build_app.sh`，
+  約 2 分鐘出 app 本體、再約 6 分鐘出 DMG（`dist/Podcast-Toolkit-0.2.0-20260805-5eea9b9.dmg`）。
+  驗收沒有只看「build 成功」——比對 bundle 內 `app.css`／`app.js` 與開發樹的 sha256，
+  三方（bundle 兩份副本 + 開發樹）完全相同；另確認 `app.css` 含 `height: 40vh`、
+  `app.js` 已無 `requestResegment`／`runResegment`；`open` 後抓到 PID、`codesign --verify --deep --strict` 通過。
+  ⚠ 裝好若 UI 沒變，先 `pgrep -fl Podcast` 砍掉殘留舊行程（同 2026-07-28 段的教訓）。
+- [x] **手冊內文交叉引用做成可點** ✅ 新增 36 處「見第 NN 章／附錄 X」
+  的 `<a href="#chNN">`（連原有目錄共 47 個），PDF 內驗出 49 個內部跳轉標註。
+  列印樣式本來就有 `a { color: inherit }`，外觀零變化；封面「第 01～03 章」
+  這類範圍描述刻意留純文字（拆成兩個連結在列印版更難讀）。
+- [x] **手冊 PDF 重出流程固定成腳本** ✅ `_scratch/print_manual_pdf.py`
+  ——Letter 612x792pt、`printBackground=true`（不開的話 callout 三色會整片消失）、
+  送印前先斷言 24 張圖全部載完。交付檔 `~/Downloads/podcast-toolkit- 教學手冊 20260805a.pdf`
+  （帶 a 的才是含頁碼與書籤的版本；不帶 a 的初版已丟垃圾桶）。
+- [x] **手冊 PDF 補頁碼與多層書籤大綱** ✅ commit `5eea9b9`：原記載認定 Chrome `printToPDF` 辦不到頁碼和書籤這兩件事，
+  要換別的排版引擎重出（估 1-2 天，含重校 40 頁）——這個前提是錯的。實測 Chrome 兩件事都做得到：
+  書籤靠 CDP 參數 `generateDocumentOutline: true`，頁碼靠 CSS `@page` 的 `@bottom-center`，Blink 會渲染，
+  成本降到 20-30 分鐘。⚠ `@page` 裡絕對不能加 `margin`，加了整份會從 40 頁重排成 42 頁、所有頁碼和書籤位移；
+  CDP 那邊既有的 margin 0.4 保留不動。
+- [x] **Breeze 轉錄失敗會靜默回報成功** ✅ `transcribe_job.py:658-677`
+  ——校對與斷句重整的兩個 `except` 改成寫 `note` 欄（`job:82`），前端把 note 顯示成
+  黃底提示（`app.js` 的 `finishTranscribe` + `app.css` 的 `.modal-hint.warn`）。
+  失敗仍不擋流程（字幕已匯入），但使用者看得到「跳過了什麼、為什麼」。
+- [x] ~~**`sentence_resegment.py` 整支是死代碼**~~ ❌ **誤判，不要刪**：
+  `seg_check.py:24` 有 `from podcast_toolkit.sentence_resegment import _is_punct`，
+  兩邊刻意共用同一把字數尺；另有 `tests/test_sentence_resegment.py` 在測。
+- [x] **`resegment.py` 缺講者重建** ✅ 新增 `remap_speakers_by_time()`（`resegment.py:25`）：
+  重切後 idx 全部重編，舊 sidecar 靠「時間重疊最多」重新貼到新卡上，
+  覆寫前先備份 `.pre-resegment.bak`；沒有舊 sidecar 就完全不動（不無中生有）。
+- [x] **CLI 加 `--src` 選項** ✅ commit `6cd43f4`：`podcast_toolkit/cli.py` 加 `--src PATH`，
+  省略時行為零改變；來源檔不存在回 rc=3、不 fallback；輸出一律仍寫回 `_final_v2.srt`；
+  講者 sidecar 重建的時間軸基準仍固定取舊 `_v2`。新增 8 支測試。
 
 ## 2026-08-08 後續（字幕編輯 UX 第一梯落地後）
 
-- [ ] **分支併回 main**：`whisper-vs-breeze-accuracy-test` 目前落後 `origin/main` 16 個 commit，
-  自己有 3 個 commit（`afadeb0` locale 編碼、`3ddfd77` 字幕編輯 UX 第一梯、`90b8337` 計畫附錄）。
-  合併前要注意 `TODO.md` 兩邊都動過。
+- [x] **分支併回 main** ✅ 2026-08-08：`whisper-vs-breeze-accuracy-test`（4 個 commit：
+  `afadeb0` locale 編碼、`3ddfd77` 字幕編輯 UX 第一梯、`90b8337` 計畫附錄、`a79e861` 本段）
+  併回 `origin/main`。只有 `TODO.md` 衝突（兩邊都動過），`app.js`／`app.css` 自動合併。
 - [ ] **清掉舊 DMG**（使用者 2026-08-08 說「之後再說」）：`dist/` 有兩包各 2.5G ——
   `Podcast-Toolkit-0.2.0-20260807-284a51d.dmg` 與 `...-afadeb0.dmg`。
   舊的那包（`284a51d`）可清，用 `trash` 不要用遞迴強制刪除。
@@ -144,3 +235,19 @@
   合回 main 後跑 `./build_app.sh`；裝完若 UI 沒變先 `pgrep -fl Podcast` 砍殘留行程。
 - 本梯盤點到但不做的 11 個問題（字幕 4、全 app 4、驗收另量 3）都在
   `docs/plans/2026-08-08-subtitle-editing-ux.md` 附錄，下一梯要挑就從那裡挑。
+
+## 待裁決／待授權
+
+- [x] **決定：`_scratch/print_manual_pdf.py` 移進 repo 納管** ✅ 2026-08-05（commit `d52e0dd`）：
+  已搬到 `docs/user-manual/print_pdf.py`（不是原本設想的 `print.py`）。搬之前先修路徑解析 ——
+  原本用 `dirname(dirname(__file__))` 往上兩層算 repo root，換位置就會算成 `docs/`；改成同目錄 `HERE`。
+  重跑產出 17,831,752 bytes，與搬移前 **byte-for-byte 一致**，證明路徑改對。
+- [x] **決定：P2c-follow（分段平行預烤）不做** ❌ 2026-08-07 使用者裁決：
+  收益只有首次輸出從約 50 分降到約 28 分（省 22 分鐘、且只有第一次），但要動 5 個高風險點：
+  `build_leveled_cmd` 寫死單一 `-i` 且無 `-force_key_frames`；`-c copy` concat 沒有 keyframe 對齊保證；
+  meta 無分段清單無法續跑；`_pump_progress` 綁單一 Popen 與單一 total_dur；`_ACTIVE_PROC` 單一全域，
+  平行後取消會漏行程；前端只認 `"yt"`/`"reels"`。且**沒有任何真跑 ffmpeg 的測試**
+  （`tests/conftest.py:90` 把 `shutil.which` mock 成 True，只驗指令字串），改壞了測試不會紅。
+  加上上方 `:102` 的量測：rotate 本身難平行（4 並行聚合僅 1.12×，全核榨頂約 1.9×），收益封頂。
+- [ ] **確認：Phase 2（單軌集手動配對 UI，詳見上方「2026-07-28 後續」段）狀態**：原項仍在，
+  維持「等使用者授權才開工」，未授權前不動。

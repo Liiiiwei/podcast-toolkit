@@ -18,8 +18,16 @@ htmlcov/
 *.png
 # 例外：品牌素材（封面/字卡）是專案資產，不可被上面的 *.png 默默忽略
 !assets/*.png
+# 例外：使用者手冊的 UI 截圖是交付物的一部分，跟著手冊一起進版控
+!docs/user-manual/images/*.png
 .playwright-mcp/
 design-review/
+
+# 手冊 PDF 是 index.html 印出來的產物（17M），要重出隨時能出，不佔版控空間
+docs/user-manual/*.pdf
+
+# 一次性驗證腳本 / 截圖原始檔的暫存區，不入 git
+_scratch/
 
 # 本機絕對路徑烤死的 IDE/啟動設定，per-machine 不進 git
 .claude/launch.json

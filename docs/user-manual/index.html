@@ -1,0 +1,3070 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Podcast Toolkit 使用手冊</title>
+    <style>
+      :root {
+        /* 介面底色與墨色（冷調、科技感） */
+        --bg: #eef1f6;
+        --paper: #ffffff;
+        --ink: #0f1419;
+        --ink-2: #1f2933;
+        --sub: #5a6573;
+        --faint: #98a2b3;
+        --line: #e7eaf0;
+        --line-2: #d8dde7;
+        /* 招牌強調色：電光藍（單色、不用漸層） */
+        --accent: #2f6bff;
+        --accent-2: #1b4fd8;
+        --accent-soft: #e9f0ff;
+        /* 語意色（低彩度、扁平） */
+        --blue: #2f6bff;
+        --blue-bg: #eaf1ff;
+        --amber: #b45309;
+        --amber-bg: #fdf1df;
+        --green: #0f9d6b;
+        --green-bg: #e6f6ee;
+        --indigo: #6366f1;
+        /* 相容舊變數（內聯樣式仍引用） */
+        --card: var(--paper);
+        --canvas: var(--bg);
+        /* 字體：本機無襯線＋等寬，無外部相依、無襯線 */
+        --sans:
+          "PingFang TC", "Helvetica Neue", "Segoe UI", "Noto Sans TC",
+          "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+        --mono-font:
+          "SFMono-Regular", ui-monospace, "JetBrains Mono", Menlo, Consolas,
+          "Roboto Mono", monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.75;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        font-size: 15.5px;
+      }
+      .wrap {
+        max-width: 920px;
+        margin: 40px auto;
+        background: var(--paper);
+        border: 1px solid var(--line-2);
+        box-shadow: 0 1px 2px rgba(15, 20, 25, 0.04);
+        padding: 0 72px 80px;
+        position: relative;
+        counter-reset: sec;
+      }
+      /* 頂部電光藍細線（載入時由左掃入） */
+      .wrap::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 3px;
+        background: var(--accent);
+        transform-origin: left;
+      }
+      header.top {
+        padding: 54px 0 28px;
+        margin: 0;
+        border-bottom: 1px solid var(--line-2);
+      }
+      header.top .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 16px;
+        font-family: var(--mono-font);
+        font-size: 12px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--accent);
+        font-weight: 600;
+      }
+      header.top .eyebrow::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        background: var(--accent);
+        display: inline-block;
+      }
+      header.top h1 {
+        margin: 0 0 18px;
+        font-family: var(--sans);
+        font-weight: 800;
+        font-size: 37px;
+        line-height: 1.18;
+        letter-spacing: -0.015em;
+        color: var(--ink);
+      }
+      header.top .meta {
+        font-family: var(--mono-font);
+        font-size: 12.5px;
+        color: var(--sub);
+        line-height: 1.95;
+      }
+      header.top .meta code {
+        font-family: var(--mono-font);
+        color: var(--accent-2);
+        background: var(--accent-soft);
+        padding: 1px 6px;
+        border-radius: 4px;
+      }
+      .pdf-btn {
+        position: fixed;
+        top: 22px;
+        right: 22px;
+        z-index: 50;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--sans);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        color: #fff;
+        background: var(--ink);
+        border: 1px solid var(--ink);
+        border-radius: 7px;
+        padding: 9px 16px;
+        cursor: pointer;
+        box-shadow: 0 4px 14px -6px rgba(15, 20, 25, 0.5);
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          transform 0.15s;
+      }
+      .pdf-btn:hover {
+        background: var(--accent);
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+      .pdf-btn:active {
+        transform: translateY(0);
+      }
+      .pdf-btn svg {
+        display: block;
+      }
+      .src-note {
+        background: #f3f6fb;
+        border-left: 3px solid var(--accent);
+        border-radius: 0 4px 4px 0;
+        padding: 15px 20px;
+        margin: 24px 0 8px;
+        font-size: 13.5px;
+        line-height: 1.85;
+        color: var(--sub);
+      }
+      .src-note b {
+        color: var(--accent-2);
+        font-weight: 700;
+      }
+      nav.toc {
+        background: transparent;
+        border-top: 1px solid var(--line-2);
+        border-bottom: 1px solid var(--line-2);
+        padding: 22px 0;
+        margin: 30px 0 4px;
+      }
+      nav.toc strong {
+        display: block;
+        margin-bottom: 16px;
+        color: var(--accent);
+        font-family: var(--mono-font);
+        font-size: 11.5px;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+      nav.toc .toc-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 2px 18px;
+      }
+      nav.toc a {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        color: var(--ink-2);
+        text-decoration: none;
+        font-size: 14px;
+        padding: 7px 0;
+        border-bottom: 1px solid transparent;
+        transition:
+          color 0.15s,
+          border-color 0.15s;
+      }
+      nav.toc a:hover {
+        color: var(--accent);
+        border-bottom-color: var(--accent);
+      }
+      nav.toc a .n {
+        flex: none;
+        font-family: var(--mono-font);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      section {
+        counter-increment: sec;
+        background: transparent;
+        border: none;
+        border-top: 1px solid var(--line);
+        border-radius: 0;
+        padding: 44px 0 0;
+        margin: 0;
+      }
+      section:first-of-type {
+        border-top: none;
+        padding-top: 34px;
+      }
+      h2 {
+        display: flex;
+        align-items: center;
+        gap: 13px;
+        font-family: var(--sans);
+        font-weight: 800;
+        font-size: 23px;
+        line-height: 1.25;
+        letter-spacing: -0.015em;
+        margin: 0 0 20px;
+        padding-bottom: 0;
+        border-bottom: none;
+        color: var(--ink);
+      }
+      h2::before {
+        content: counter(sec, decimal-leading-zero);
+        font-family: var(--mono-font);
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--accent-2);
+        background: var(--accent-soft);
+        padding: 3px 8px;
+        border-radius: 5px;
+        letter-spacing: 0.02em;
+        font-variant-numeric: tabular-nums;
+      }
+      h2 .tag {
+        margin-left: auto;
+        align-self: center;
+        font-family: var(--mono-font);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--sub);
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      h2 .tag::before {
+        content: "";
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        margin-right: 7px;
+        background: var(--accent);
+        vertical-align: middle;
+      }
+      h3 {
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 16.5px;
+        margin: 28px 0 10px;
+        padding-left: 12px;
+        border-left: 3px solid var(--accent);
+        color: var(--ink);
+      }
+      h3:first-of-type {
+        margin-top: 8px;
+      }
+      p {
+        margin: 10px 0;
+      }
+      .lead {
+        font-size: 16.5px;
+        color: var(--ink-2);
+      }
+      #conclusion .lead {
+        background: var(--accent-soft);
+        border-left: 3px solid var(--accent);
+        border-radius: 0 5px 5px 0;
+        padding: 16px 20px;
+        color: var(--ink-2);
+      }
+      .callout {
+        background: #f5f7fa;
+        border-left: 3px solid var(--faint);
+        border-radius: 0 4px 4px 0;
+        padding: 15px 20px;
+        margin: 18px 0;
+        font-size: 14.5px;
+      }
+      .callout.blue {
+        background: var(--blue-bg);
+        border-left-color: var(--blue);
+      }
+      .callout.amber {
+        background: var(--amber-bg);
+        border-left-color: var(--amber);
+        color: #6b4410;
+      }
+      .callout.green {
+        background: var(--green-bg);
+        border-left-color: var(--green);
+      }
+      .callout b {
+        color: inherit;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 18px 0;
+        font-size: 14px;
+      }
+      th,
+      td {
+        padding: 11px 16px 11px 0;
+        border: none;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+      thead th {
+        font-family: var(--mono-font);
+        color: var(--ink);
+        font-weight: 700;
+        font-size: 11.5px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        white-space: nowrap;
+        border-bottom: 2px solid var(--ink);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      tbody tr:hover {
+        background: #f5f8ff;
+      }
+      td.num {
+        width: 30px;
+        text-align: left;
+        font-family: var(--mono-font);
+        font-weight: 700;
+        color: var(--accent);
+        font-variant-numeric: tabular-nums;
+      }
+      td.cjk {
+        width: 54px;
+        text-align: left;
+        font-family: var(--mono-font);
+        color: #0e7490;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+      .formula {
+        display: inline-block;
+        font-family: var(--mono-font);
+        font-size: 11.5px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: #eef1f6;
+        color: var(--accent-2);
+        white-space: nowrap;
+      }
+      .pin {
+        display: inline-block;
+        font-family: var(--mono-font);
+        font-size: 11.5px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background: var(--accent-soft);
+        color: var(--accent-2);
+        border: 1px solid #cddcff;
+        font-weight: 600;
+      }
+      .dash {
+        color: var(--faint);
+      }
+      .quote {
+        font-family: var(--sans);
+        font-size: 14.5px;
+        background: #f5f7fa;
+        border-left: 2px solid var(--accent);
+        padding: 10px 0 10px 16px;
+        margin: 10px 0;
+        color: var(--ink-2);
+      }
+      .grp-badge {
+        font-family: var(--mono-font);
+        font-size: 11px;
+        letter-spacing: 0.03em;
+        color: #fff;
+        border-radius: 4px;
+        padding: 3px 9px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+      .gA {
+        background: var(--blue);
+      }
+      .gB {
+        background: var(--indigo);
+      }
+      .gC {
+        background: var(--green);
+      }
+      .gE {
+        background: var(--amber);
+      }
+      ul.check {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0;
+      }
+      ul.check li {
+        padding: 9px 0 9px 28px;
+        position: relative;
+        border-bottom: 1px solid var(--line);
+        font-size: 14.5px;
+      }
+      ul.check li:last-child {
+        border-bottom: none;
+      }
+      ul.check li::before {
+        content: "✓";
+        position: absolute;
+        left: 0;
+        top: 9px;
+        color: var(--accent);
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.5;
+      }
+      .setting-list {
+        margin: 10px 0;
+        padding-left: 0;
+        list-style: none;
+      }
+      .setting-list li {
+        padding: 9px 0;
+        border-bottom: 1px solid var(--line);
+        font-size: 14.5px;
+      }
+      .setting-list li:last-child {
+        border-bottom: none;
+      }
+      .setting-list b {
+        color: var(--ink);
+      }
+      footer {
+        text-align: left;
+        font-family: var(--mono-font);
+        color: var(--sub);
+        font-size: 11.5px;
+        letter-spacing: 0.02em;
+        margin-top: 48px;
+        padding-top: 22px;
+        border-top: 2px solid var(--ink);
+        line-height: 1.9;
+      }
+      footer code {
+        color: var(--accent-2);
+      }
+      /* 心智圖：架構樹（左→右分支，純 CSS、可列印） */
+      .mm {
+        margin: 14px 0 8px;
+        overflow-x: auto;
+      }
+      .mm ul {
+        list-style: none;
+        margin: 0;
+        padding-left: 30px;
+        position: relative;
+      }
+      .mm > ul.mm-root {
+        padding-left: 0;
+      }
+      .mm li {
+        position: relative;
+        padding: 5px 0;
+      }
+      /* 垂直主幹：連到下一個兄弟節點 */
+      .mm ul li::before {
+        content: "";
+        position: absolute;
+        left: -16px;
+        top: 0;
+        width: 2px;
+        height: 100%;
+        background: #d3d9e4;
+      }
+      .mm ul li:last-child::before {
+        height: 22px;
+      }
+      /* 水平分枝：連到節點 */
+      .mm ul li::after {
+        content: "";
+        position: absolute;
+        left: -16px;
+        top: 22px;
+        width: 16px;
+        height: 2px;
+        background: #d3d9e4;
+      }
+      /* 根層不畫連接線 */
+      .mm > ul.mm-root > li::before,
+      .mm > ul.mm-root > li::after {
+        display: none;
+      }
+      .mm .node {
+        display: inline-block;
+        background: var(--paper);
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+        padding: 7px 12px;
+        font-size: 13.5px;
+        line-height: 1.5;
+        vertical-align: top;
+      }
+      .mm .node b {
+        font-family: var(--sans);
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .mm .node .kw {
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .mm .node .meta {
+        font-family: var(--mono-font);
+        color: var(--sub);
+        font-size: 11.5px;
+      }
+      .mm .node.root {
+        background: var(--ink);
+        border-color: var(--ink);
+        color: #fff;
+        font-family: var(--sans);
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .mm .node.cA {
+        border-left: 4px solid var(--blue);
+      }
+      .mm .node.cB {
+        border-left: 4px solid var(--indigo);
+      }
+      .mm .node.cE {
+        border-left: 4px dashed var(--amber);
+        background: var(--amber-bg);
+      }
+      .mm .node.leaf {
+        background: #f5f7fa;
+      }
+      /* 載入動效：僅螢幕、尊重 reduce-motion；列印不套用 */
+      @media screen and (prefers-reduced-motion: no-preference) {
+        .wrap::before {
+          animation: barIn 0.6s ease-out both;
+        }
+        header.top {
+          animation: riseIn 0.5s ease-out both;
+        }
+        section {
+          animation: riseIn 0.55s ease-out both;
+        }
+        section:nth-of-type(2) {
+          animation-delay: 0.05s;
+        }
+        section:nth-of-type(3) {
+          animation-delay: 0.1s;
+        }
+        section:nth-of-type(4) {
+          animation-delay: 0.15s;
+        }
+        section:nth-of-type(5) {
+          animation-delay: 0.2s;
+        }
+        section:nth-of-type(6) {
+          animation-delay: 0.25s;
+        }
+      }
+      @keyframes riseIn {
+        from {
+          opacity: 0;
+          transform: translateY(12px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes barIn {
+        from {
+          transform: scaleX(0);
+        }
+        to {
+          transform: scaleX(1);
+        }
+      }
+      /* 列印頁碼：Chrome 的 printToPDF 會渲染 @page 的 margin box。
+         陷阱一：這裡絕對不要加 margin —— 一加就會覆蓋 CDP 的頁邊距、整份重排（40 頁變 42 頁）。
+                 頁邊距一律交給 printToPDF 的參數決定。
+         陷阱二：封面（第 1 頁）不印頁碼，用 @page :first 關掉。 */
+      @page {
+        @bottom-center {
+          content: counter(page) " / " counter(pages);
+          font-family: "PingFang TC", sans-serif;
+          font-size: 9pt;
+          color: #6b7280;
+        }
+      }
+      @page :first {
+        @bottom-center {
+          content: none;
+        }
+      }
+      @media print {
+        .no-print {
+          display: none !important;
+        }
+        body {
+          background: #fff;
+          background-image: none;
+          font-size: 11.5pt;
+        }
+        .wrap {
+          max-width: 100%;
+          margin: 0;
+          padding: 0;
+          border: none;
+          box-shadow: none;
+        }
+        .wrap::before {
+          display: none;
+        }
+        /* 目錄要印出來：固定兩欄、不要被分頁切開 */
+        nav.toc {
+          break-inside: avoid;
+          border-color: #999;
+          margin: 22px 0 0;
+        }
+        nav.toc .toc-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        nav.toc a {
+          padding: 4px 0;
+        }
+        section {
+          border-top: 1px solid #ccc;
+          padding-top: 22px;
+        }
+        section:first-of-type {
+          border-top: none;
+        }
+        h2,
+        h3 {
+          break-after: avoid;
+        }
+        table,
+        .callout,
+        .mm {
+          break-inside: avoid;
+        }
+        header.top {
+          border-bottom: 2px solid #000;
+          padding-top: 0;
+        }
+        a {
+          color: inherit;
+        }
+        .mm {
+          overflow: visible;
+        }
+      }
+      @media (max-width: 680px) {
+        .wrap {
+          max-width: 100%;
+          margin: 0;
+          padding: 0 22px 60px;
+          border: none;
+        }
+        header.top h1 {
+          font-size: 27px;
+        }
+        h2 {
+          font-size: 21px;
+        }
+        nav.toc .toc-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        th,
+        td {
+          padding: 9px 8px 9px 0;
+          font-size: 13px;
+        }
+        .pdf-btn {
+          top: auto;
+          bottom: 16px;
+          right: 16px;
+        }
+      }
+    </style>
+    <style>
+      /* ===== 手冊專用補充樣式（不改動上方報告模板的既有規則） ===== */
+
+      /* 高風險警語用的紅框（模板只有藍／琥珀／綠） */
+      .callout.red {
+        background: #fdeeed;
+        border-left-color: #c0392b;
+        color: #7d221a;
+      }
+      .callout.red b {
+        color: #8f2016;
+      }
+
+      /* 截圖：retina 圖一律縮到欄寬，加細框與圖說 */
+      figure.shot {
+        margin: 22px 0 26px;
+      }
+      figure.shot img {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        border: 1px solid var(--line-2);
+        border-radius: 6px;
+      }
+      figure.shot figcaption {
+        margin-top: 9px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--sub);
+      }
+      figure.shot figcaption b {
+        font-family: var(--mono-font);
+        font-size: 11.5px;
+        letter-spacing: 0.04em;
+        color: var(--accent-2);
+        background: var(--accent-soft);
+        padding: 2px 7px;
+        border-radius: 4px;
+        margin-right: 8px;
+      }
+
+      /* 操作步驟：標題 + 四要素清單 */
+      .step {
+        margin: 24px 0 26px;
+        padding-left: 16px;
+        border-left: 2px solid var(--line-2);
+      }
+      .step > h4 {
+        font-family: var(--sans);
+        font-size: 15.5px;
+        font-weight: 700;
+        margin: 0 0 6px;
+        color: var(--ink);
+      }
+      .step > h4 .no {
+        display: inline-block;
+        font-family: var(--mono-font);
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--accent-2);
+        background: var(--accent-soft);
+        padding: 2px 7px;
+        border-radius: 4px;
+        margin-right: 9px;
+        letter-spacing: 0.04em;
+      }
+      ul.four {
+        list-style: none;
+        padding-left: 0;
+        margin: 8px 0 0;
+      }
+      ul.four > li {
+        position: relative;
+        padding: 6px 0 6px 88px;
+        font-size: 14.5px;
+        line-height: 1.75;
+        border-bottom: 1px dashed var(--line);
+      }
+      ul.four > li:last-child {
+        border-bottom: none;
+      }
+      ul.four > li > b.k {
+        position: absolute;
+        left: 0;
+        top: 6px;
+        width: 76px;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--sub);
+      }
+      ul.four > li.lim > b.k {
+        color: var(--amber);
+      }
+
+      /* 介面文字：照抄自程式介面的按鈕／欄位名稱 */
+      .ui {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: #eef1f6;
+        border: 1px solid var(--line-2);
+        color: var(--accent-2);
+        font-size: 0.93em;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+      kbd {
+        font-family: var(--mono-font);
+        font-size: 12px;
+        background: #f5f7fa;
+        border: 1px solid var(--line-2);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 1px 6px;
+        color: var(--ink);
+      }
+
+      /* 附錄：不吃 section 的自動編號，改用 data-apx 的 A／B */
+      section.apx {
+        counter-increment: none;
+      }
+      section.apx h2::before {
+        content: attr(data-apx);
+      }
+
+      @media print {
+        figure.shot img {
+          border-color: #ccc;
+        }
+        figure.shot,
+        .step {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ===== 匯出 PDF 按鈕（固定右上；列印時自動隱藏） ===== -->
+    <button
+      class="pdf-btn no-print"
+      onclick="window.print()"
+      title="匯出 PDF（列印 → 另存為 PDF）"
+      aria-label="匯出 PDF"
+    >
+      <svg
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 3v12" />
+        <path d="M7 11l5 5 5-5" />
+        <path d="M5 21h14" />
+      </svg>
+      匯出 PDF
+    </button>
+
+    <div class="wrap">
+      <header class="top">
+        <p class="eyebrow">本機端 Podcast 剪輯工具 · 使用手冊</p>
+        <h1>Podcast Toolkit 使用手冊</h1>
+        <div class="meta">
+          從開啟 App 到匯出成品的完整流程<br />
+          字幕功能為本手冊重點，單獨成章（<a href="#ch06">第 06 章</a>）<br />
+          全程在自己的電腦上運算　·　不需要雲端金鑰
+        </div>
+      </header>
+
+      <div class="src-note">
+        <b>這本手冊怎麼讀：</b>第 01～03
+        章是第一次使用時的準備工作，做過一次就不必再看；第 04～09
+        章是每一集都會走一遍的正式流程，照順序做即可；字幕相關的細節全部集中在<a
+          href="#ch06"
+          >第 06 章</a
+        >。<a href="#apx-a">附錄 A</a> 放檔案位置、<a href="#apx-b">附錄 B</a>
+        放故障排除，遇到狀況再回頭查。
+      </div>
+
+      <nav class="toc">
+        <strong>目錄</strong>
+        <div class="toc-grid">
+          <a href="#ch01"><span class="n">01</span>開始之前</a>
+          <a href="#ch02"><span class="n">02</span>開啟 App 與儀表板</a>
+          <a href="#ch03"><span class="n">03</span>建立一集、放進素材</a>
+          <a href="#ch04"><span class="n">04</span>編輯器介面地圖</a>
+          <a href="#ch05"><span class="n">05</span>轉字幕</a>
+          <a href="#ch06"><span class="n">06</span>字幕編輯</a>
+          <a href="#ch07"><span class="n">07</span>鏡頭與對齊</a>
+          <a href="#ch08"><span class="n">08</span>輸出設定</a>
+          <a href="#ch09"><span class="n">09</span>合成與匯出</a>
+          <a href="#apx-a"><span class="n">A</span>資料夾與檔案</a>
+          <a href="#apx-b"><span class="n">B</span>疑難排解</a>
+        </div>
+      </nav>
+      <!-- ================= 01 開始之前 ================= -->
+      <section id="ch01">
+        <h2>開始之前</h2>
+
+        <p class="lead">
+          這是一套跑在你自己 Mac 上的 podcast
+          剪輯工具。它把「轉字幕、改字幕、決定什麼時候切鏡頭、輸出成片」這四件事收在同一個畫面裡，全部在本機運算，不需要任何雲端金鑰，素材也不會被上傳出去。
+        </p>
+
+        <h3>它幫你做什麼</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>工作</th>
+              <th>工具做的事</th>
+              <th>你要做的事</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>轉字幕</td>
+              <td>用本機的語音辨識引擎把整集聽成逐字稿，切成一張張字幕卡</td>
+              <td>按一次按鈕，然後等</td>
+            </tr>
+            <tr>
+              <td>字幕編輯</td>
+              <td>提供逐卡編輯、切句、合併、刪除、錯字替換、時間微調</td>
+              <td>逐卡看過去、修錯字、修斷句</td>
+            </tr>
+            <tr>
+              <td>鏡頭</td>
+              <td>依講者自動推薦全景／特寫的切換點，並畫成一條分布尺</td>
+              <td>抽查幾個切點、必要時手動改</td>
+            </tr>
+            <tr>
+              <td>輸出</td>
+              <td>把影片、字幕、片頭片尾、加速與去空拍一次合成出來</td>
+              <td>選好選項，按開始，等它跑完</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>開工前要準備的素材</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>素材</th>
+              <th>必要性</th>
+              <th>說明</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>錄影或錄音母帶</td>
+              <td>必要</td>
+              <td>整集的主檔。沒有它就無法轉字幕，也沒有畫面可以合成</td>
+            </tr>
+            <tr>
+              <td>第二機位影片</td>
+              <td>選用</td>
+              <td>有兩機位才需要，用來做全景／特寫切換</td>
+            </tr>
+            <tr>
+              <td>分軌錄音（每支麥克風各一軌）</td>
+              <td>選用</td>
+              <td>有分軌才能自動標出「這句是誰講的」</td>
+            </tr>
+            <tr>
+              <td>片頭、片尾音樂、片尾卡</td>
+              <td>合成時必要</td>
+              <td>全站共用，在儀表板的設定裡指定一次就好</td>
+            </tr>
+            <tr>
+              <td>浮水印圖檔</td>
+              <td>選用</td>
+              <td>沒有也能出片</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>三個先懂會少走很多冤枉路的觀念</h3>
+        <div class="callout blue">
+          <b>一、一集就是一個資料夾。</b
+          >所有東西——母帶、字幕、成品——都放在同一個資料夾底下。工具不會把檔案搬到別的地方，你隨時可以用
+          Finder 打開來看。
+        </div>
+        <div class="callout blue">
+          <b>二、你在畫面上編輯的字幕永遠只有同一份。</b
+          >無論是哪一種方式產生的字幕，最後都會寫成同一個檔案
+          <code>_final_v2.srt</code
+          >；編輯器上的字幕卡讀的也是它。這代表「重新轉一次字幕」會把你手改過的內容整個蓋掉。
+        </div>
+        <div class="callout blue">
+          <b>三、講者是誰，是用麥克風音量比出來的，不是聽出來的。</b
+          >所以只有分軌錄音的集數才有講者標；而且重新轉一次字幕並不會讓講者標變準——它根本不是語音辨識產生的。
+        </div>
+
+        <h3>名詞對照</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>名詞</th>
+              <th>意思</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>集</td>
+              <td>一期節目，對應硬碟上的一個資料夾</td>
+            </tr>
+            <tr>
+              <td>母帶</td>
+              <td>還沒剪過的原始錄影／錄音</td>
+            </tr>
+            <tr>
+              <td>字幕卡</td>
+              <td>畫面上一張一張的字幕，每張有進出時間與一句話</td>
+            </tr>
+            <tr>
+              <td>講者標</td>
+              <td>字幕卡上的「講者 1／2／3」，標示這句是誰說的</td>
+            </tr>
+            <tr>
+              <td>詞庫</td>
+              <td>
+                <b>轉字幕之前</b>先告訴引擎的專有名詞（人名、藝名、品牌名）
+              </td>
+            </tr>
+            <tr>
+              <td>字典</td>
+              <td><b>轉字幕之後</b>用來把錯字整批換成正字的對照表</td>
+            </tr>
+            <tr>
+              <td>分軌</td>
+              <td>每支麥克風各錄一個音檔，用來判斷講者</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ================= 02 開啟 App 與儀表板 ================= -->
+      <section id="ch02">
+        <h2>開啟 App 與儀表板</h2>
+
+        <p class="lead">
+          這個 App
+          沒有自己的視窗，它啟動後會在你的電腦背景跑一個小網站，再用預設瀏覽器把畫面打開。所以你看到的操作介面是一個瀏覽器分頁，而不是傳統的
+          Mac 視窗。
+        </p>
+
+        <div class="step">
+          <h4><span class="no">步驟 1</span>啟動 App</h4>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>從「應用程式」資料夾或 Launchpad 點兩下
+              App 圖示。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >幾秒後預設瀏覽器會自動打開一個分頁，顯示<b>集數列表</b>（也就是儀表板）。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b
+              >關掉瀏覽器分頁<b>不等於</b>關掉程式；反過來說，程式在完全閒置 90
+              秒後會自己結束。要立刻完全關閉，用 <kbd>⌘Q</kbd>。
+            </li>
+          </ul>
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 2</span>看懂集數列表</h4>
+          <figure class="shot">
+            <img
+              src="images/01-dashboard.png"
+              alt="集數列表：每一集一張卡片，顯示日期、集名與狀態標記"
+            />
+            <figcaption>
+              <b>圖 01</b>
+              儀表板。每一集一張卡片，右上角三顆按鈕由左到右是
+              <span class="ui">開資料夾</span>、<span class="ui">新建集</span
+              >、齒輪的<span class="ui">設定</span>。
+            </figcaption>
+          </figure>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>點任一張集卡片，就會進入該集的編輯器。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >卡片上的狀態標記告訴你這集走到哪一步：<span class="ui">空集</span
+              >、<span class="ui">未轉字幕</span>、<span class="ui">未合成</span
+              >、<span class="ui">完成</span>、<span class="ui">損毀</span>。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b>顯示<span class="ui">損毀</span
+              >通常不是檔案真的壞掉，而是程式讀不到那個資料夾（例如它放在「桌面」「文件」「下載」這類受
+              macOS 保護的位置而尚未授權）。處理方式見<a href="#apx-b">附錄 B</a
+              >。
+            </li>
+          </ul>
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 3</span>第一次使用先把設定填好</h4>
+          <figure class="shot">
+            <img
+              src="images/02-dashboard-settings.png"
+              alt="儀表板設定視窗：轉字幕引擎狀態、共用資產狀態、集數存放資料夾"
+            />
+            <figcaption>
+              <b>圖 02</b> 設定視窗。上半是唯讀的狀態檢查（<span class="ui"
+                >轉字幕引擎（本地 Breeze）</span
+              >、<span class="ui">共用資產（合成 YT 時需要）</span
+              >），下半是唯一要你填的欄位。
+            </figcaption>
+          </figure>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>右上角齒輪 → 在<span class="ui"
+                >集數存放資料夾（所有集數都會建在這裡，預設 ~/Downloads）</span
+              >欄位直接輸入路徑，或按<span class="ui">選資料夾…</span> → 按<span
+                class="ui"
+                >儲存</span
+              >。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >之後所有新建的集都會建在這個資料夾底下，不會隨著你當下開哪一集而散落各處。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b
+              >上半部兩個狀態<b>只是檢查結果，不能點</b>；缺共用資產時要自己把檔案補到指定位置，這裡沒有「選檔案」按鈕。集數存放資料夾只能設一個。
+            </li>
+          </ul>
+        </div>
+
+        <div class="callout amber">
+          <b>看到「App 已更新，目前執行的是舊版本」的橫幅時：</b
+          >照著它說的做——按 <kbd>⌘Q</kbd> 完全結束 App
+          再重新打開。畫面沒重開之前，你操作的仍是舊版程式。
+        </div>
+      </section>
+
+      <!-- ================= 03 建立一集、放進素材 ================= -->
+      <section id="ch03">
+        <h2>建立一集、放進素材</h2>
+
+        <p class="lead">
+          一集的生命週期從「建立一個空資料夾」開始。建立完之後，你要自己用
+          Finder 把母帶放進去——工具不會幫你找檔案，也不會複製檔案。
+        </p>
+
+        <div class="step">
+          <h4><span class="no">步驟 1</span>建立新的一集</h4>
+          <figure class="shot">
+            <img
+              src="images/03-dashboard-new-episode.png"
+              alt="新建集視窗：日期欄位已自動填入今天，下方是集名欄位"
+            />
+            <figcaption>
+              <b>圖 03</b> <span class="ui">新建集</span>視窗。<span class="ui"
+                >日期（YYYYMMDD）</span
+              >會自動帶入今天，集名可留空。
+            </figcaption>
+          </figure>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>儀表板右上角<span class="ui"
+                >新建集</span
+              >
+              → 確認日期、填入集名（例如「第 12 集 訪談」）→ 按<span class="ui"
+                >建立</span
+              >。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >在你設定的集數存放資料夾底下建立一個以「日期＋集名」命名的資料夾，並自動把畫面切到<b>這一集的編輯器</b>。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b
+              >建立的位置固定是設定裡的集數存放資料夾，這個視窗不能改路徑。已經存在的同名資料夾會建立失敗，錯誤訊息會顯示在視窗下方。
+            </li>
+          </ul>
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 2</span>把素材放進母帶資料夾</h4>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>不在程式裡操作。用 Finder
+              打開剛剛建立的集資料夾，把檔案拖進 <code>01_母帶/</code>。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >回到編輯器重新整理後，這些檔案就會出現在畫面下方抽屜的<span
+                class="ui"
+                >專案檔案</span
+              >分頁，可以拿來預覽或轉字幕。
+            </li>
+          </ul>
+          <table>
+            <thead>
+              <tr>
+                <th>資料夾</th>
+                <th>放什麼</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>01_母帶/</code></td>
+                <td>原始錄影、錄音、第二機位、分軌音檔——你只需要動這一個</td>
+              </tr>
+              <tr>
+                <td><code>03_成品/</code></td>
+                <td>字幕檔與最後合成出來的影片、音檔，由工具自己寫入</td>
+              </tr>
+              <tr>
+                <td><code>episode.yaml</code></td>
+                <td>
+                  這一集的所有設定（裁切、字級、刪除的段落、鏡頭…）。編輯器按儲存時寫的就是它
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout blue">
+          <b>已經有現成的集資料夾？</b>不用新建。回儀表板按<span class="ui"
+            >開資料夾</span
+          >選那個資料夾即可；如果它還沒有被工具初始化過，會先跳出確認視窗問你要不要建立必要的子資料夾，按確認就好。
+        </div>
+      </section>
+
+      <!-- ================= 04 編輯器介面地圖 ================= -->
+      <section id="ch04">
+        <h2>編輯器介面地圖</h2>
+
+        <p class="lead">
+          編輯器是你之後 90%
+          時間會待著的畫面。它是一個固定的三段式版面：上面一排工具列，中間左邊影片、右邊字幕卡，下面一個可以收合的抽屜。先認得這五塊，後面的章節就都看得懂。
+        </p>
+
+        <figure class="shot">
+          <img
+            src="images/10-editor-full.png"
+            alt="編輯器完整畫面：上排工具列、左側影片與時間軸、右側字幕卡列表、右上鏡頭與輸出面板"
+          />
+          <figcaption>
+            <b>圖 10</b>
+            編輯器全貌。左上是影片與字幕時間軸，右邊整條是字幕卡，最右側收著鏡頭與輸出設定面板。
+          </figcaption>
+        </figure>
+
+        <table>
+          <thead>
+            <tr>
+              <th>區域</th>
+              <th>位置</th>
+              <th>負責什麼</th>
+              <th>詳見</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>上排工具列</td>
+              <td>最上方一整條</td>
+              <td>回集數列表、詞庫、設定、快捷鍵、儲存</td>
+              <td>本章</td>
+            </tr>
+            <tr>
+              <td>影片區</td>
+              <td>左上</td>
+              <td>預覽、定位、頭尾修剪、裁切比例、字級</td>
+              <td>第 <a href="#ch07">07</a>、<a href="#ch08">08</a> 章</td>
+            </tr>
+            <tr>
+              <td>字幕時間軸</td>
+              <td>影片正下方</td>
+              <td>用長條看整集字幕分布、拖曳改進出時間</td>
+              <td><a href="#ch06">第 06 章</a></td>
+            </tr>
+            <tr>
+              <td>字幕卡區</td>
+              <td>右側整條</td>
+              <td>逐卡改字、切句、合併、刪除、改時間</td>
+              <td><a href="#ch06">第 06 章</a></td>
+            </tr>
+            <tr>
+              <td>底部抽屜</td>
+              <td>畫面最下方</td>
+              <td>專案檔案（轉字幕的入口）與字典</td>
+              <td>第 <a href="#ch05">05</a>、<a href="#ch06">06</a> 章</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>上排工具列</h3>
+        <figure class="shot">
+          <img
+            src="images/11-editor-topbar.png"
+            alt="編輯器上排工具列：左側列表按鈕與集名，右側詞庫、設定、快捷鍵、取消、完成並儲存"
+          />
+          <figcaption>
+            <b>圖 11</b> 上排工具列。<b>左邊</b>由左到右是<span class="ui"
+              >列表</span
+            >、詞庫、設定、快捷鍵四顆；<b>中間</b>是集名與這一集的統計；<b>右邊</b>是<span
+              class="ui"
+              >鏡頭</span
+            >、<span class="ui">輸出</span>、<span class="ui">取消</span>、<span
+              class="ui"
+              >完成並儲存</span
+            >。
+          </figcaption>
+        </figure>
+        <ul>
+          <li>
+            <span class="ui">列表</span
+            >：回到儀表板。<b>它不會幫你存檔</b>，有未儲存的修改請先按<span
+              class="ui"
+              >完成並儲存</span
+            >。
+          </li>
+          <li>
+            詞庫按鈕（提示文字為「詞庫（教轉錄引擎正確寫出人名、品牌名）」）：<b>轉字幕之前</b>用的專有名詞表，見<a
+              href="#ch05"
+              >第 05 章</a
+            >。
+          </li>
+          <li>設定按鈕：選轉字幕引擎，見<a href="#ch05">第 05 章</a>。</li>
+          <li>
+            快捷鍵按鈕（提示文字為「鍵盤快捷鍵（按 ?
+            開啟）」）：叫出快捷鍵清單。
+          </li>
+          <li>
+            <b>中間的集名與統計</b>：集名下面那行寫著<span class="ui"
+              >字幕卡 N 段 · 已刪 N · 已修 N · 頭 N 秒 / 尾 N 秒</span
+            >，是這一集目前的狀態摘要。左邊的<span class="ui">● 未儲存 N</span
+            >是還沒存檔的修改筆數，沒有未存的修改時不會出現。
+          </li>
+          <li>
+            <span class="ui">鏡頭</span
+            >：開啟鏡頭設定視窗，用來登記第二支攝影機並對齊兩支影片，見<a
+              href="#ch07"
+              >第 07 章</a
+            >。
+          </li>
+          <li>
+            <span class="ui">輸出</span
+            >：開啟輸出設定與合成，也就是「把成品做出來」的入口，見第
+            <a href="#ch08">08</a>、<a href="#ch09">09</a> 章。
+          </li>
+          <li>
+            <span class="ui">取消</span
+            >：不儲存直接回儀表板。有未存的修改時會先跳出<span class="ui"
+              >未儲存的修改會丟失，確定取消？</span
+            >讓你確認，按下去<b>這一輪的修改就全部丟掉</b>。
+          </li>
+          <li>
+            <span class="ui">完成並儲存</span
+            >：把所有修改寫進這一集的設定與字幕檔。
+          </li>
+        </ul>
+
+        <h3>影片區</h3>
+        <figure class="shot">
+          <img
+            src="images/12-video-pane.png"
+            alt="影片預覽區：上方兩條分布尺、中間畫面、下方播放列與頭尾把手"
+          />
+          <figcaption>
+            <b>圖 12</b>
+            影片區。畫面上方兩條細長的尺分別是整集的鏡頭分布與講者分布（<b>這兩條都要符合條件才會出現</b>，見下方說明）；下方是播放列，兩端的把手用來設定成片的頭尾，再往下是字幕時間軸。
+          </figcaption>
+        </figure>
+        <ul>
+          <li>
+            <b>鏡頭尺</b>（提示文字為「整集 A/B 鏡頭分布；hover
+            看段落時間」）：一眼看出整集切了幾次鏡頭、有沒有一路都沒切。<b>只有登記過第二支攝影機、而且已經有字幕卡的集才會出現</b>；單機集看不到這條。
+          </li>
+          <li>
+            <b>講者尺</b
+            >（提示文字為「整集講者分布（分軌集）」）：<b>只有分軌集才會有內容</b>。
+          </li>
+          <li>
+            <b>播放列</b>：拖曳定位；滑鼠移上去會顯示目標時間，用鍵盤
+            <kbd>←</kbd> <kbd>→</kbd> 可微調。
+          </li>
+          <li>
+            <b>頭尾把手</b>：拖曳或用鍵盤 <kbd>←</kbd> <kbd>→</kbd> 微調（按住
+            <kbd>Shift</kbd> 一次 0.5 秒、<kbd>Cmd</kbd> 一次 1 秒）。
+          </li>
+          <li>
+            影片區下方收著一個<span class="ui">出片設定</span
+            >摺疊區（提示文字為「裁切比例 · 頭尾 ·
+            字級」），裡面才是設頭設尾、裁切比例、字級這些控制項，見<a
+              href="#ch08"
+              >第 08 章</a
+            >。
+          </li>
+        </ul>
+        <div class="callout amber">
+          <b>顯示「這集還沒有主影片」：</b
+          >代表母帶資料夾裡找不到可以當主畫面的檔案。把錄音或影片放進
+          <code>01_母帶/</code> 再回來。純錄音的集數也會走同一條路。
+        </div>
+
+        <h3>字幕卡區</h3>
+        <figure class="shot">
+          <img
+            src="images/13-cards-pane.png"
+            alt="右側字幕卡列表：每張卡有卡號、時間、講者標、文字與鏡頭標記"
+          />
+          <figcaption>
+            <b>圖 13</b>
+            字幕卡列表。上方是播放控制與<span class="ui">偏移</span>、<span
+              class="ui"
+              >插入字卡</span
+            >，下面是一張張可以直接打字的卡片。
+          </figcaption>
+        </figure>
+        <p>
+          單張卡片的每一個元素代表什麼、可以怎麼操作，是<a href="#ch06"
+            >第 06 章</a
+          >的主題，這裡先記得一件事：<b>字幕卡是唯一可以直接改字的地方</b>，時間軸與影片區都只能改時間，不能改文字。
+        </p>
+
+        <h3>字幕時間軸</h3>
+        <figure class="shot">
+          <img
+            src="images/15-timeline.png"
+            alt="字幕時間軸：上方是影片播放列，下方是整條橘色音訊波形與一條播放位置直線，右上有縮放按鈕"
+          />
+          <figcaption>
+            <b>圖 15</b> 上排是影片的播放列（<span class="ui"
+              >05:05 / 48:39</span
+            >）；下方整條橘色的是<span class="ui">字幕時間軸</span
+            >，標題旁就寫著操作方式<span class="ui"
+              >拖卡片左右邊緣改進 / 出時間 · Ctrl/⌘+滾輪縮放</span
+            >，右邊的<span class="ui">−</span>、<span class="ui">適合</span
+            >、<span class="ui">＋</span>控制縮放。
+          </figcaption>
+        </figure>
+        <div class="callout blue">
+          圖上這一集有 48
+          分鐘，整段縮在一個畫面時單張卡窄到看不出來，所以你看到的是一整條音訊波形加一條直立的播放位置線。<b
+            >要拖某一張卡的邊緣，得先用 <span class="ui">＋</span> 或
+            <kbd>⌘</kbd> 加滾輪放大到看得見那張卡為止</b
+          >；<span class="ui">適合</span>是縮回整集全覽。
+        </div>
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b
+            >放大之後，拖曳卡片方塊的<b>左右邊緣</b>改這張卡的進／出時間；按住
+            <kbd>Ctrl</kbd> 或 <kbd>⌘</kbd>
+            加滾輪縮放。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >適合用來抓「字幕還沒消失下一句就進來了」「這段空白太久」這類節奏問題。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b
+            >時間軸只能改時間，不能改文字、不能切句也不能刪卡。
+          </li>
+        </ul>
+
+        <h3>底部抽屜</h3>
+        <figure class="shot">
+          <img
+            src="images/16-drawer-collapsed.png"
+            alt="收合狀態的底部抽屜，只看得到分頁標籤與展開按鈕"
+          />
+          <figcaption>
+            <b>圖 16</b>
+            抽屜收合時只剩一條標籤列，右邊的按鈕在<span class="ui">收合</span
+            >與<span class="ui">展開</span>之間切換。
+          </figcaption>
+        </figure>
+        <figure class="shot">
+          <img
+            src="images/17-drawer-files.png"
+            alt="展開的專案檔案分頁：依主影片、字幕、合成輸出、母帶等分區列出檔案"
+          />
+          <figcaption>
+            <b>圖 17</b>
+            <span class="ui">專案檔案</span
+            >分頁。檔案依用途分成主影片／字幕／合成輸出／母帶／工作檔／其他幾區，每個檔案右邊有<span
+              class="ui"
+              >預覽</span
+            >與動作按鈕。
+          </figcaption>
+        </figure>
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>點抽屜右側的<span class="ui">展開</span
+            >，再切到<span class="ui">專案檔案</span>或<span class="ui"
+              >字典</span
+            >分頁。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            ><span class="ui">專案檔案</span>是<b>轉字幕的入口</b>（<a
+              href="#ch05"
+              >第 05 章</a
+            >）；<span class="ui">字典</span>是<b>錯字整批替換</b>的地方（<a
+              href="#ch06"
+              >第 06 章</a
+            >）。頂端那行摘要會告訴你這集有幾個檔案、其中幾個可以轉字幕、目前預覽的是哪一個。
+          </li>
+        </ul>
+
+        <h3>哪些東西是「有條件才會出現」的</h3>
+        <p>
+          第一次用的時候很容易以為某個功能不存在，其實只是條件還沒滿足。下表整理常見的幾個。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>介面元素</th>
+              <th>什麼時候才看得到</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>字幕卡區的<span class="ui">偏移</span>按鈕</td>
+              <td>這一集已經有字幕卡</td>
+            </tr>
+            <tr>
+              <td>講者分布尺、字幕卡上的講者標</td>
+              <td>這一集是分軌集，而且已經轉過字幕</td>
+            </tr>
+            <tr>
+              <td>鏡頭分布尺</td>
+              <td>已經登記過第二支攝影機，而且這一集已經有字幕卡</td>
+            </tr>
+            <tr>
+              <td>影片下方的字幕時間軸</td>
+              <td>這一集已經轉過字幕、而且有字幕卡</td>
+            </tr>
+            <tr>
+              <td>「N 張可疑空拍卡」工具列</td>
+              <td>系統標出了可疑的空拍卡（紅卡）</td>
+            </tr>
+            <tr>
+              <td>「N 張待複查卡」工具列</td>
+              <td>系統標出了半句／可疑字／空拍等待複查卡</td>
+            </tr>
+            <tr>
+              <td>「這集還沒有主影片」</td>
+              <td>母帶資料夾裡沒有可當主畫面的檔案</td>
+            </tr>
+            <tr>
+              <td>畫面最上方的更新橫幅</td>
+              <td>App 已更新，但你現在跑的還是舊版</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ================= 05 轉字幕 ================= -->
+      <section id="ch05">
+        <h2>轉字幕</h2>
+
+        <p class="lead">
+          這一章從「一集只有影片」走到「右邊出現一整排字幕卡」。整段運算都跑在你自己的電腦上，不需要任何雲端帳號、不需要金鑰、不用連網。代價是慢——一集通常要跑上幾十分鐘，而且電腦愈慢跑愈久。畫面上會顯示進度百分比，以那個為準；中間請不要關掉視窗。
+        </p>
+
+        <div class="callout amber">
+          <b>順序很重要：先填詞庫，再轉字幕。</b
+          >來賓藝名、品牌名、節目術語如果沒有事先填進詞庫，轉錄引擎幾乎一定會寫錯字，而且<b>事後補填不會回頭修正已經轉好的字幕</b>。所以步驟
+          1 不是可選的。
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 1</span>開集就先填詞庫</h4>
+          <figure class="shot">
+            <img
+              src="images/24-glossary-modal.png"
+              alt="詞庫視窗：上方有本集與全域兩個分頁，下方是一塊改不動的唯讀詞庫區"
+            />
+            <figcaption>
+              <b>圖 24</b> <span class="ui">詞庫</span>視窗。預設停在<span
+                class="ui"
+                >本集</span
+              >分頁；建檔時就寫好的、還有全部集共用的預設詞，收在下面那塊<span
+                class="ui"
+                >來自 episode.yaml / defaults.yaml 的詞庫（唯讀）</span
+              >區塊裡。那一塊<b>預設是收起來的</b>，點標題那一列才展開（圖上是展開後的樣子，這一集有
+              9 條），只能看、不能改。
+            </figcaption>
+          </figure>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>編輯器上排工具列左段的<span class="ui"
+                >詞庫</span
+              >按鈕（滑過會顯示「詞庫（教轉錄引擎正確寫出人名、品牌名）」）→
+              在<span class="ui">本集</span>分頁按<span class="ui"
+                >新增一條</span
+              >
+              → 左欄填<span class="ui">正確寫法</span>、右欄填<span class="ui"
+                >轉錄引擎可能誤聽成（Enter / 逗號分隔）</span
+              >
+              → 按<span class="ui">儲存</span>。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >這些詞會在下一次轉字幕時當成提示詞交給轉錄引擎，讓它優先寫出你指定的寫法。<span
+                class="ui"
+                >本集</span
+              >分頁的內容存在集資料夾裡，只影響這一集。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b>三個，每一個都會讓你白填：
+              <ol>
+                <li>
+                  <b>只填左欄等於沒填。</b>真正產生替換效果的是「可能誤聽成 →
+                  正確寫法」這組對應。右欄空著，這一條就是零條替換規則。
+                </li>
+                <li>
+                  <b>詞庫沒有回溯能力。</b
+                  >字幕轉完之後才加詞，對已經產生的字幕卡完全沒有作用，工具裡也沒有「把詞庫套到現有字幕」這種功能。要嘛重轉一次（會蓋掉你的手改），要嘛用<a
+                    href="#ch06"
+                    >第 06 章</a
+                  >的<span class="ui">字典</span>逐字取代。
+                </li>
+                <li>
+                  <b>「全域」分頁的詞，本地轉錄引擎吃不到。</b
+                  ><span class="ui">全域</span
+                  >分頁存的是所有集共用的詞，但它只有在走雲端轉錄時才會被帶上。你在本機用內建引擎轉字幕（也就是這本手冊講的路線）時，只有<span
+                    class="ui"
+                    >本集</span
+                  >分頁與唯讀區的詞會生效。<b>要確定生效就填在「本集」。</b>
+                </li>
+              </ol>
+            </li>
+          </ul>
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 2</span>打開轉字幕視窗</h4>
+          <figure class="shot">
+            <img
+              src="images/20-transcribe-modal.png"
+              alt="轉字幕視窗：上方是音檔偵測結果，中間是一鍵 Breeze 轉字幕按鈕，下方是可展開的進階分軌轉錄區"
+            />
+            <figcaption>
+              <b>圖 20</b>
+              <span class="ui">轉字幕</span
+              >視窗。最上面那塊會先告訴你系統認出了哪幾個音檔，中間是主要按鈕<span
+                class="ui"
+                >一鍵 Breeze 轉字幕（推薦）</span
+              >。
+            </figcaption>
+          </figure>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b>畫面下方抽屜的<span class="ui"
+                >專案檔案</span
+              >分頁 → 找到你要轉的影片或音檔那一列 → 按該列右側的<span
+                class="ui"
+                >轉字幕</span
+              >。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >視窗上緣的<b>音檔偵測結果</b>會告訴你系統認出了什麼，共有四種顯示：<span
+                class="ui"
+                >已辨識到音檔：分軌 N 軌、混音 N 個</span
+              >、<span class="ui">已設定分軌：N 軌</span>、<span class="ui"
+                >沒有偵測到外接音檔</span
+              >、還在<span class="ui">讀取音檔清單中…</span>。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b>軌別是<b>看檔名猜的</b>——檔名要含有
+              Track1、Mic 2
+              這類字樣才會被認成分軌，否則一律當混音。認錯的話不會有錯誤訊息，只會默默用混音檔去轉。
+            </li>
+          </ul>
+        </div>
+
+        <div class="step">
+          <h4><span class="no">步驟 3</span>按下一鍵轉字幕，然後等</h4>
+          <ul class="four">
+            <li>
+              <b class="k">點擊位置</b
+              ><span class="ui">一鍵 Breeze 轉字幕（推薦）</span> →
+              會先跳一個確認：「轉錄前確認：來賓姓名、品牌名、節目術語已加入詞庫了嗎？」→
+              確定之後才真的開始。
+            </li>
+            <li>
+              <b class="k">達成效果</b
+              >畫面會切成進度顯示，依序跑完四段：<b>轉錄</b>（最久）→
+              <b>匯入字幕</b>（把講者標籤抽出來另存）→
+              <b>本地校對</b>（同音字、術語）→ <b>重新斷句</b>。跑完會顯示<span
+                class="ui"
+                >完成</span
+              >與寫出的檔名，編輯區自動重新載入，右邊就出現字幕卡了。
+            </li>
+            <li class="lim">
+              <b class="k">功能限制</b>四點：
+              <ol>
+                <li>
+                  <b>轉字幕會覆寫主字幕檔。</b
+                  >這一集之前所有的字幕內容——包括你已經按過儲存的手動修改——都會被新的一份蓋掉。
+                </li>
+                <li>
+                  <b>過程中不要關視窗。</b
+                  >介面自己也會提醒「請保留分頁、不要關閉」。
+                </li>
+                <li>
+                  <b>後面兩段（本地校對、重新斷句）失敗不會中斷轉錄。</b
+                  >字幕照樣寫出、畫面照樣顯示完成，只是那一段沒跑到。這種時候<b>完成畫面下方會多一行黃色提示</b>，寫明是哪一段被跳過、原因是什麼——看到提示就代表字幕可能沒校對過，或是句子偏長偏碎。
+                </li>
+                <li>
+                  <b>本地校對需要另外裝一個命令列工具才會生效。</b
+                  >沒裝的話這一段會直接跳過（不算失敗），完成畫面會用上面那行黃字註明「校對跳過」。
+                </li>
+              </ol>
+            </li>
+          </ul>
+        </div>
+
+        <h3>分軌轉錄：讓字幕標出講者</h3>
+
+        <p>
+          如果錄音時每位講者各有一支麥克風、各自存成一個檔，工具可以判斷每一個字是誰講的，字幕卡左邊就會出現講者標籤。這一段是選用的——單一支混音檔一樣可以轉出字幕，只是沒有講者。
+        </p>
+
+        <figure class="shot">
+          <img
+            src="images/21-transcribe-advanced.png"
+            alt="轉字幕視窗展開進階區：說明分軌轉錄的串音風險，下方有改用分軌轉錄與設定並啟用分軌轉錄兩顆按鈕"
+          />
+          <figcaption>
+            <b>圖 21</b> 轉字幕視窗裡的<span class="ui">進階：分軌轉錄</span
+            >摺疊區。展開後會看到串音警告，以及<span class="ui"
+              >設定並啟用分軌轉錄</span
+            >按鈕。
+          </figcaption>
+        </figure>
+
+        <figure class="shot">
+          <img
+            src="images/23-mic-setup-modal.png"
+            alt="設定分軌視窗：列出偵測到的音檔，逐軌指派對應檔案與角色，下方有來賓講滿幾秒才切特寫的欄位"
+          />
+          <figcaption>
+            <b>圖 23</b>
+            <span class="ui">設定分軌</span
+            >視窗。逐軌指派「這一軌是哪個檔、這個人是主持還是來賓」。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>轉字幕視窗下方展開<span class="ui"
+              >進階：分軌轉錄</span
+            >
+            → <span class="ui">設定並啟用分軌轉錄</span> → 在<span class="ui"
+              >設定分軌</span
+            >視窗逐軌指派檔案與角色 → <span class="ui">儲存並開始</span>。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >對應關係寫進這一集的設定，之後轉出來的字幕卡會帶講者標籤，合成時講者還會有各自的顏色。角色（主持／來賓）另外決定<a
+              href="#ch07"
+              >第 07 章</a
+            >的自動鏡頭切換：主持待在全景、來賓連續講滿設定秒數才切特寫。
+          </li>
+        </ul>
+
+        <div class="callout blue">
+          <b>已經轉過一次，只想補其中一軌？</b>展開進階區按<span class="ui"
+            >改用分軌轉錄</span
+          >會開<span class="ui">分軌轉錄</span>視窗（圖
+          22），裡面每一軌都標了<span class="ui">已轉過</span>或<span class="ui"
+            >未轉</span
+          >，已轉過的預設不勾以免誤覆寫，也可以按<span class="ui">只選未轉</span
+          >一次選好。
+        </div>
+
+        <figure class="shot">
+          <img
+            src="images/22-per-mic-modal.png"
+            alt="分軌轉錄視窗：逐軌列出音檔並標示已轉過或未轉，上方有全選與只選未轉按鈕"
+          />
+          <figcaption>
+            <b>圖 22</b>
+            <span class="ui">分軌轉錄</span>視窗。注意下方那行警告：<span
+              class="ui"
+              >⚠ 已轉過的 SRT 將會被覆寫（舊版會自動備份成時間戳檔）</span
+            >。
+          </figcaption>
+        </figure>
+
+        <div class="callout red">
+          <b>講者標是「比音量」比出來的，不是聽出來的。</b
+          >工具的判斷方式是：同一個瞬間哪一支麥克風的音量最大，就算誰在講。這件事有兩個直接後果——<b>第一</b>，重新轉一次字幕<b>不會</b>修正標錯的講者，因為用同一份音檔算同一套音量，結果一模一樣，純粹白等；<b>第二</b>，編輯器裡<b>沒有任何地方可以手動改講者</b>（卡片上那個講者標籤是唯讀的）。這是目前的設計限制，<a
+            href="#ch06"
+            >第 06 章</a
+          >會再提一次。
+        </div>
+
+        <h3>轉錄引擎與共用素材的設定在哪</h3>
+
+        <figure class="shot">
+          <img
+            src="images/26-editor-settings.png"
+            alt="設定視窗：上半是共用資產路徑檢查，下半是轉字幕引擎選擇，列出本地 Breeze 與本地 Whisper 兩個選項"
+          />
+          <figcaption>
+            <b>圖 26</b> 上排工具列的<span class="ui">設定</span>視窗。上半<span
+              class="ui"
+              >共用資產（合成 YT 時需要）</span
+            >列出片頭片尾等素材有沒有到位；下半<span class="ui"
+              >轉字幕（STT）</span
+            >選轉錄引擎。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>上排工具列的齒輪<span class="ui">設定</span
+            >按鈕。
+          </li>
+          <li>
+            <b class="k">達成效果</b>可以在<span class="ui"
+              >本地 Breeze（推薦）</span
+            >與<span class="ui">本地 Whisper（mlx）</span
+            >之間切換。兩者都在本機跑、都免金鑰、都不連網；差別是 Breeze
+            會順便標講者並自動校對，Whisper 只出字幕。
+          </li>
+        </ul>
+      </section>
+
+      <!-- ================= 06 字幕編輯 ================= -->
+      <section id="ch06">
+        <h2>字幕編輯</h2>
+
+        <p class="lead">
+          這是整套工具最花時間的一章，也是最容易誤觸的一章。轉出來的字幕大約有八九成可用，剩下的要靠你逐卡看過去：改錯字、把太長的句子切開、把被切碎的句子接回來、刪掉沒有內容的段落。以下先講「怎麼做」，再講「哪幾個動作會讓你失去已經做完的工作」。
+        </p>
+
+        <div class="callout red">
+          <b>先記住這一條：切句與合併沒有按鈕，只有鍵盤。</b
+          >在字幕卡的文字區裡，游標放在要切的位置<b>按 Enter</b
+          >就會把這張卡切成兩句；游標移到卡片文字的<b>最前面按 Backspace</b
+          >（刪除鍵）就會把這張卡併回上一張。介面上找不到任何「切句」或「合併」的按鈕——不是壞掉，是本來就只做成鍵盤操作。
+        </div>
+
+        <h3>一張字幕卡上有什麼</h3>
+
+        <figure class="shot">
+          <img
+            src="images/14-card-single.png"
+            alt="單張字幕卡：左欄由上到下是拖曳握把、卡號、進出時間、碼錶鈕、藍色講者圓標，中間是文字，右邊是 A｜B 鏡頭鈕與叉叉刪除鈕"
+          />
+          <figcaption>
+            <b>圖 14</b>
+            單張字幕卡（分軌＋雙機的集）。文字區直接點下去就能打字；左欄與右側都是輔助控制項。
+          </figcaption>
+        </figure>
+
+        <p>圖上這張卡由左到右是這些東西：</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>卡片上的元素</th>
+              <th>它做什麼</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>左上角六個點</td>
+              <td>拖曳握把。拖著它可以把整張卡移到新的時間位置</td>
+            </tr>
+            <tr>
+              <td><span class="ui">#1</span></td>
+              <td>這張卡在整份字幕裡的編號</td>
+            </tr>
+            <tr>
+              <td>
+                <span class="ui">00:11</span> 與 <span class="ui">00:12</span>
+              </td>
+              <td>
+                上面是進場時間、下面是出場時間。<b>點時間</b>影片會跳到這句的開頭
+              </td>
+            </tr>
+            <tr>
+              <td>碼錶圖示</td>
+              <td>點它展開「時間微調列」，內容見下一段</td>
+            </tr>
+            <tr>
+              <td>藍色圓圈裡的數字</td>
+              <td>
+                講者。<b>只有分軌集才會出現</b>，而且是<b>唯讀</b>的，點不動也改不了（見下方紅框）
+              </td>
+            </tr>
+            <tr>
+              <td>中間的文字</td>
+              <td>直接點進去改字。這是整個介面唯一能改字幕內容的地方</td>
+            </tr>
+            <tr>
+              <td><span class="ui">A</span>｜<span class="ui">B</span></td>
+              <td>
+                鏡頭。<b>雙機集才會出現</b>，亮起來的那一邊是這句用的鏡頭，詳見<a
+                  href="#ch07"
+                  >第 07 章</a
+                >
+              </td>
+            </tr>
+            <tr>
+              <td>右上角的叉叉</td>
+              <td>把整張卡標成刪除；再點一次取消。可以反覆切換</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4>另外三組控制項，要符合條件才會出現</h4>
+        <p>它們不在圖 14 上，不是介面壞了，是這張卡剛好不符合出現條件：</p>
+        <table>
+          <thead>
+            <tr>
+              <th>控制項</th>
+              <th>什麼時候才看得到</th>
+              <th>它做什麼</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>時間微調列</td>
+              <td><b>點了碼錶圖示</b>才展開</td>
+              <td>
+                <span class="ui">⇤游標</span>／<span class="ui">游標⇥</span
+                >是「把起點／終點設成影片目前播放到的位置」；旁邊的<span
+                  class="ui"
+                  >−</span
+                >
+                <span class="ui">＋</span> 一次微調 0.1 秒；<span class="ui"
+                  >還原</span
+                >清掉這張卡的時間微調
+              </td>
+            </tr>
+            <tr>
+              <td>待複查標記與<span class="ui">看過</span>鈕</td>
+              <td>
+                只有被判定為<span class="ui">半句結尾</span>、<span class="ui"
+                  >疑似重複幻覺</span
+                >或空拍的卡才有
+              </td>
+              <td>
+                <span class="ui">看過</span
+                >是給你自己用的閱讀進度標記，標過就淡化、退出待辦計數，不影響任何輸出
+              </td>
+            </tr>
+            <tr>
+              <td><span class="ui">N/M 字</span> 與百分比</td>
+              <td>只有<b>切過句的卡</b>才有，顯示在左欄時間下方</td>
+              <td>
+                這一小段的秒數最多放得下幾個字、你實際放了幾個字。超過 120%
+                會轉紅，代表這段唸起來會喘
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>七種操作，各自怎麼做</h3>
+
+        <p class="lead">
+          下面七件事全部在字幕卡本身、或卡片區最上面那條工具列上完成，沒有另外的視窗。卡片各部位見<b
+            >圖 14</b
+          >，工具列見<b>圖 13</b> 頂端。
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>要做的事</th>
+              <th>怎麼做</th>
+              <th>會不會動到字幕原檔</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>改文字</td>
+              <td>點文字區直接打字</td>
+              <td>存檔時會寫回</td>
+            </tr>
+            <tr>
+              <td><b>切句</b></td>
+              <td><b>游標放在切點，按 Enter</b>（沒有按鈕）</td>
+              <td>存檔時會寫回</td>
+            </tr>
+            <tr>
+              <td><b>合併</b></td>
+              <td><b>游標移到卡片文字最前面，按 Backspace</b>（沒有按鈕）</td>
+              <td>存檔時會寫回</td>
+            </tr>
+            <tr>
+              <td>插入一張新卡</td>
+              <td>
+                把播放位置停在要插入的地方，按字幕區上方的<span class="ui"
+                  >插入字卡</span
+                >
+              </td>
+              <td>存檔時會寫回</td>
+            </tr>
+            <tr>
+              <td>刪除一張卡</td>
+              <td>卡片上的<span class="ui">刪除</span></td>
+              <td><b>不動原檔</b>，只記在這一集的設定裡</td>
+            </tr>
+            <tr>
+              <td>調某張卡的時間</td>
+              <td>
+                先點卡片左欄的碼錶圖示，卡片下方才會展開一排時間微調工具：<span
+                  class="ui"
+                  >起</span
+                >
+                後面是<span class="ui">⇤游標</span
+                >（把起點設到目前播放位置）與<span class="ui">−</span
+                ><span class="ui">＋</span>（一次 0.1 秒）；<span class="ui"
+                  >訖</span
+                >
+                後面同理，最後是<span class="ui">還原</span
+                >。一次只能開一張卡，開下一張時上一張自動收起
+              </td>
+              <td>存檔時會寫回</td>
+            </tr>
+            <tr>
+              <td><b>改講者</b></td>
+              <td><b>做不到——介面上沒有這個功能</b></td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout red">
+          <b
+            >一鍵轉字幕的集：改變卡片「張數」或「順序」會讓講者標整批錯位，而且沒有任何警告。</b
+          ><br />
+          講者標籤跟字幕文字其實是<b>兩份分開的檔案，靠卡片編號對在一起</b>的。存檔時字幕卡會依開始時間重新排序並從
+          1
+          重新編號——如果這一集是用一鍵轉字幕產生的（也就是設定裡沒有登記各軌麥克風），編號變了但講者那一份沒有跟著換，於是切點之後的講者標會整批偏掉一格。
+          <br /><br />
+          <b>會踩到的操作：</b
+          >切句、合併、插入新卡、把時間改到造成前後順序對調。<br />
+          <b>安全的操作：</b
+          >純改文字、刪除卡片、用字典批次取代（未切句的卡）。<br />
+          <b>怎麼避開：</b>先在<span class="ui">設定分軌</span
+          >裡把各軌麥克風登記好再開始編輯，講者那一份就會跟著字幕一起更新。已經編輯到一半才發現標歪了，只能重跑分軌設定與轉錄，或接受講者色不準。
+          <br /><br />
+          <b>登記好分軌之後還有一個小殘留：</b
+          >切句切出來的<b>新那一半</b>不會拿到講者標，成品裡那一句就沒有講者顏色。不會整批歪掉，但會缺一句。
+        </div>
+
+        <div class="callout green">
+          <b>刪錯不用怕。</b>卡片的<span class="ui">刪除</span
+          >是非破壞性的——它只是把「這一段不要」記在這一集的設定裡，字幕原檔一個字都不會少。按<span
+            class="ui"
+            >復原</span
+          >就回來了，就算存過檔也一樣。真正會讓內容消失的是下面兩個紅框裡的動作。
+        </div>
+
+        <h3>「字典」和「詞庫」不是同一個東西</h3>
+
+        <p>
+          兩個功能都跟「用字對不對」有關，是介面上最容易搞混的一組。差別只有一句話：<b
+            >詞庫是轉字幕「之前」用的，字典是轉字幕「之後」用的。</b
+          >
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th><span class="ui">詞庫</span></th>
+              <th><span class="ui">字典</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>在哪裡</td>
+              <td>上排工具列的按鈕</td>
+              <td>畫面下方抽屜的分頁</td>
+            </tr>
+            <tr>
+              <td>什麼時候用</td>
+              <td>轉字幕<b>之前</b></td>
+              <td>字幕已經在畫面上之後</td>
+            </tr>
+            <tr>
+              <td>作用對象</td>
+              <td>轉錄引擎——教它把某個音寫成某個詞</td>
+              <td>現有的字幕卡——把某段文字換成另一段</td>
+            </tr>
+            <tr>
+              <td>對已產生的字幕</td>
+              <td><b>完全沒有作用</b></td>
+              <td>就是拿來改它的</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <figure class="shot">
+          <img
+            src="images/18-drawer-typo.png"
+            alt="下方抽屜的字典分頁，尚未加過任何條目的空狀態：上半全域字典 0 條，下半本集修改 0 處"
+          />
+          <figcaption>
+            <b>圖 18</b> 抽屜的<span class="ui">字典</span
+            >分頁，這是<b>還沒加過任何東西的樣子</b>。上半<span class="ui"
+              >全域字典</span
+            >是所有集共用的對照表，這裡是<span class="ui"
+              >0 條 · 本集命中 0 卡</span
+            >，所以只顯示一行提示<span class="ui"
+              >字典是空的，先從「本集修改」加幾條進來</span
+            >；下半<span class="ui">本集修改</span
+            >是你在這一集實際改過的每一處，還沒改過所以是<span class="ui"
+              >尚無本集修改</span
+            >。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>抽屜的<span class="ui">字典</span
+            >分頁。<b>兩排的按鈕都要等到有內容才會出現</b>：全域字典有條目之後，上半才會出現<span
+              class="ui"
+              >全部套用</span
+            >，可以把全域字典一次套到整集；你在這一集改過字之後，下半每一條修改旁邊才會出現<span
+              class="ui"
+              >＋字典</span
+            >，可以把這次的修正加進全域字典，之後每一集都能用。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >一次改掉散落在整集裡的同一個錯字，不用自己一張張找。上半會顯示這本字典在本集命中幾張卡。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b
+            ><b>已經切過句的卡會被整張跳過</b
+            >，而且介面不會告訴你跳過了哪幾張。所以<b>順序要對：先用字典批次取代，再開始切句</b>。反過來做一定會漏。（已刪除的卡同樣會被跳過，這個是刻意的。）
+          </li>
+        </ul>
+
+        <h3>兩排批次工具列</h3>
+
+        <p>
+          這兩排不是一直都在——它們只在工具真的找到對應的卡時才會出現在字幕卡區的上方。
+        </p>
+
+        <figure class="shot">
+          <img
+            src="images/41-selection-toolbar.png"
+            alt="可疑空拍卡工具列：顯示可疑張數、全選紅卡、刪除已勾、刪純反應詞等按鈕"
+          />
+          <figcaption>
+            <b>圖 41</b> 可疑空拍卡工具列。標紅的卡通常是沒講什麼內容的空檔。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b
+            ><span class="ui">全選紅卡</span>勾起全部可疑卡 → 逐張取消掉你想留的
+            →
+            <span class="ui">刪除已勾</span
+            >。只想清「嗯」「對啊」這類純反應詞的話，按<span class="ui"
+              >刪純反應詞</span
+            >，按鈕上會直接寫可刪幾張。
+          </li>
+          <li>
+            <b class="k">達成效果</b>勾選時工具列會即時顯示<span class="ui"
+              >已勾 N·約 X 秒</span
+            >，讓你知道這一輪會砍掉多少長度。刪除一樣是非破壞性的，可以復原。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b
+            ><b>標紅只是提示，工具不會自己動手</b
+            >，要不要刪由你決定；判斷門檻寫在共用設定裡，介面上不能調。實際輸出會比預估秒數長一點——每個刪點兩側各留了
+            0.15 秒緩衝。
+          </li>
+        </ul>
+
+        <figure class="shot">
+          <img
+            src="images/42-review-toolbar.png"
+            alt="複查工具列：顯示待複查張數、只看待複查、跳上一張與跳下一張"
+          />
+          <figcaption>
+            <b>圖 42</b>
+            複查工具列。把「工具覺得怪怪的」卡集中起來讓你快速掃過。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>這一列最左邊會顯示還有幾張待複查（例如<span
+              class="ui"
+              >35 張待複查卡（半句 / 可疑字 / 空拍）</span
+            >），右邊是三顆按鈕。按<span class="ui">只看待複查</span
+            >會把字幕卡區過濾成只剩待複查的卡，再按一次回到全部；<span
+              class="ui"
+              >跳上一張</span
+            >／<span class="ui">跳下一張</span>在它們之間跳。
+          </li>
+          <li>
+            <b class="k">達成效果</b>待複查的理由會標在卡片上，常見的有<span
+              class="ui"
+              >半句結尾</span
+            >（句子被切在一半）與<span class="ui">疑似重複幻覺</span
+            >（同一句重複出現，通常是轉錄引擎卡住了）。看完按<span class="ui"
+              >看過</span
+            >就會從清單消失。
+          </li>
+        </ul>
+
+        <h3>整份字幕早了或晚了：字幕偏移</h3>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>字幕卡區上方工具列的<span class="ui"
+              >偏移</span
+            >按鈕（<b>圖 13</b>
+            上方，<b>時鐘</b>圖示那顆；別跟卡片上的碼錶搞混，那顆是開時間微調列的）→
+            按下去才會展開一列輸入框，在<span class="ui"
+              >字幕偏移（秒，不改原檔）</span
+            >填秒數 → <span class="ui">套用偏移</span>。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >整份字幕一起平移。<b>正值＝字幕往後延</b>（現在太早）、<b>負值＝往前提</b>（現在太晚）、0
+            或留空＝清除偏移。填的是「目前的偏移總量」，不是每按一次就累加。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>兩個都容易誤會：
+            <ol>
+              <li>
+                它<b>只能整份一起平移</b>，修不了個別卡片對不上的問題——那要一張張調時間。
+              </li>
+              <li>
+                <b>這顆按鈕只會存下偏移這一個值。</b
+                >你其他還沒存的字幕修改<b>不會</b>順便被存起來。按完它<span
+                  class="ui"
+                  >● 未儲存</span
+                >的數字沒有歸零就是這個原因，別以為已經全部存好了。
+              </li>
+            </ol>
+          </li>
+        </ul>
+
+        <h3>存檔：按了什麼、留下什麼</h3>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>上排工具列最右邊那顆橘色的<span class="ui"
+              >完成並儲存</span
+            >（<b>圖 11</b> 右端）。中間的<span class="ui">● 未儲存 N</span
+            >告訴你有幾處改動還沒落地——<b>沒有未存的修改時它不會出現</b>，看不到它就代表都存好了。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >所有字幕修改一次寫進字幕檔，其他設定（裁切、字級、刪除的段落、鏡頭）寫進這一集的
+            <code>episode.yaml</code>。寫入前會先把原本的字幕檔備份一份。
+          </li>
+        </ul>
+
+        <div class="callout red">
+          <b>備份只有一份，每次存檔都會覆蓋掉上一份。</b><br />
+          按<span class="ui">完成並儲存</span
+          >時，工具會把存檔<b>之前</b>的字幕複製成一個 <code>.bak</code> 檔放在
+          <code>03_成品/</code
+          >。但它<b>只留最新的一份</b>——存第二次的時候，第一次的備份就被覆蓋了。也就是說你隨時可以退回「上一次存檔前」，但退不回更早。
+          <br /><br />
+          真的想保住某個版本，自己到 <code>03_成品/</code> 把
+          <code>{集名}_final_v2.srt</code> 複製一份、改個名字。
+        </div>
+
+        <h3>關於雙行字幕</h3>
+
+        <p>
+          兩個人接話時，讓上一句多留在畫面上一會兒、和下一句上下並排，是可以做到的，但<b>介面上沒有開關</b>，要改這一集的
+          <code>episode.yaml</code> 才能開。另外三件事先講清楚，免得你以為壞了：
+        </p>
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b
+            >沒有可以點的地方。要開這個功能只能到集資料夾裡打開
+            <code>episode.yaml</code> 手動改，改完存檔重新開這一集。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >兩個人接話的地方，上一句會多留在畫面上一會兒，和下一句上下並排，看起來像對話。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>三件事先講清楚，免得你以為壞了：<br />
+            ① <b>它不會把整片都變成兩行。</b>實測五集的覆蓋率大約在 6.4% 到
+            21.3% 之間，也就是偶爾出現，不是常態。<br />
+            ②
+            <b>編輯器裡的預覽看不到雙行效果</b
+            >，只有實際合成出片才看得到，所以沒辦法邊調邊看。<br />
+            ③
+            原因是字幕來自單一條混音的轉錄，卡片是一張接一張產生的，「兩個人同時說話」在資料上根本不存在——實測五集
+            6636 張卡，時間真正重疊的只有 1
+            筆。所以雙行是靠「刻意讓上一句多留一下」人工製造出來的，不是偵測到兩人同時開口。
+          </li>
+        </ul>
+      </section>
+
+      <!-- ================= 07 鏡頭與對齊 ================= -->
+      <section id="ch07">
+        <h2>鏡頭與對齊</h2>
+
+        <p class="lead">
+          這一章只有兩種情況會用到：你錄了<b>兩台攝影機</b>，或者你的聲音是用<b>另外一台錄音設備</b>錄的（不是相機內建的麥克風）。只有單機、聲音就用相機收的話，整章可以跳過——相關按鈕在單機集上根本不會出現。
+        </p>
+
+        <div class="callout blue">
+          <b>對齊在做什麼？</b
+          >兩台相機不會同時按下錄影鍵，外接錄音筆也不會跟相機同時開始。所以同一個瞬間，在
+          A 機是第 12 秒、在 B 機可能是第 9.4
+          秒。「對齊」就是把這個差值算出來，之後切鏡頭、換聲音才不會嘴形對不上。
+        </div>
+
+        <h3>鏡頭與音檔對齊視窗</h3>
+
+        <figure class="shot">
+          <img
+            src="images/30-cam-modal.png"
+            alt="鏡頭與音檔對齊視窗：上半是四個最終合成檔案的下拉選單，下半是同步偏移與對齊按鈕"
+          />
+          <figcaption>
+            <b>圖 30</b> 上排工具列的<span class="ui">鏡頭</span
+            >按鈕打開這個視窗。上半決定「合成時要用哪幾個檔」，下半決定「它們怎麼對齊」。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>上排工具列的<span class="ui">鏡頭</span>。
+          </li>
+          <li>
+            <b class="k">達成效果</b>視窗上半的<span class="ui"
+              >最終合成檔案</span
+            >有四個下拉選單，決定合成時實際會用到哪些素材：
+            <ul>
+              <li>
+                <span class="ui">Cam A 影片（主鏡頭，必填）</span
+                >——沒選這個不能合成
+              </li>
+              <li>
+                <span class="ui">Cam B 影片（從 01_母帶/ 挑）</span
+                >——留空就是單機集，整片都用 A
+              </li>
+              <li>
+                <span class="ui">外接音檔（取代鏡頭原音用）</span
+                >——選了之後成品的聲音會換成這一軌
+              </li>
+              <li><span class="ui">字幕檔</span>——決定合成時要燒哪一份字幕</li>
+            </ul>
+          </li>
+        </ul>
+
+        <h3>自動對齊：先試這個</h3>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>都在<b>圖 30</b> 那個視窗裡。中段的<span
+              class="ui"
+              >Cam B 同步偏移（秒）</span
+            >與<span class="ui">音檔同步偏移（秒）</span>各自旁邊都有一顆<span
+              class="ui"
+              >自動對齊</span
+            >。兩個都要對的話直接按最下面的<span class="ui"
+              >一鍵全部對齊（cam B + 音檔）並儲存</span
+            >。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >工具會自己比對兩段聲音的波形，算出差幾秒並填進欄位。<span
+              class="ui"
+              >一鍵全部對齊</span
+            >這顆會<b>順便存檔</b>，個別的<span class="ui">自動對齊</span>不會。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>自動對齊靠的是兩軌聲音本身夠像。如果 B
+            機離得很遠、收到的幾乎只有回音，或兩段錄影的時間根本沒重疊，就會算不準或算不出來。這時候改用手動標記。
+          </li>
+        </ul>
+
+        <h3>手動標記：自動對不出來時</h3>
+
+        <figure class="shot">
+          <img
+            src="images/25-manual-align-modal.png"
+            alt="手動標記三檔聲音視窗：三組時間輸入欄、算 offset 與套用按鈕"
+          />
+          <figcaption>
+            <b>圖 25</b>
+            <span class="ui">手動標記</span
+            >視窗。要填三組「同一個聲音在各檔案裡的時間」。
+          </figcaption>
+        </figure>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>偏移欄位旁的<span class="ui"
+              >手動標記</span
+            >
+            → 依視窗裡的指示，用 QuickTime（或任何看得到時碼的播放器）把 cam
+            A、cam B
+            各播一次，找<b>三個</b>同一瞬間都聽得到的「啪」「碰」聲，把各自的時間填進去
+            →
+            <span class="ui">算 offset</span> → <span class="ui">套用</span>。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >算出來的偏移會填回主視窗的欄位。三筆結果的離散程度也會顯示出來：<span
+              class="ui"
+              >（三筆很一致）</span
+            >是最好的，<span class="ui">（離差略大，可接受）</span
+            >勉強可用，出現<span class="ui"
+              >（離差 &gt; 0.2s，建議重標一次）</span
+            >就代表有一組標錯了，重找一次比較快。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>兩個容易漏：
+            <ol>
+              <li>
+                <b>要三組，少一組就算不出來</b
+                >。資料明顯不合理時按鈕會擋著不讓你算。
+              </li>
+              <li>
+                <b>按<span class="ui">套用</span>不等於存檔。</b
+                >它只把數字填回欄位，你還要回主視窗按<span class="ui">儲存</span
+                >才會落地。直接關掉視窗就白算了。
+              </li>
+            </ol>
+          </li>
+        </ul>
+
+        <h3>決定哪一段用哪一台</h3>
+
+        <p>
+          對齊只是讓兩台的時間軸對上，還要告訴工具「這一段要看誰」。做法有兩種，可以混用。
+        </p>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>
+            <b>手動</b>：每張字幕卡上都有一顆鏡頭鈕，點一下就在<span class="ui"
+              >目前鏡頭</span
+            >與<span class="ui">切到 B 鏡頭</span>之間切換。<br />
+            <b>自動</b>：鏡頭視窗裡的<span class="ui">依講者推 A/B</span
+            >，讓工具依照「這句話是誰講的」自動安排。
+          </li>
+          <li>
+            <b class="k">達成效果</b
+            >沒有特別指定的卡會沿用前一張的鏡頭，所以你只要在「要換鏡頭的那一句」上點一下就好，不必每張都設。自動推算完會告訴你<span
+              class="ui"
+              >已推出 N 個 A/B 切換點（可手動微調例外）</span
+            >。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b
+            ><span class="ui">依講者推 A/B</span>有兩個前提與一個副作用：
+            <ol>
+              <li>
+                這一集必須<b>已經有逐卡講者資料</b>（也就是跑過分軌轉錄）。沒有的話按鈕會直接告訴你<span
+                  class="ui"
+                  >需先產生逐卡講者（分軌轉錄或 Breeze 轉錄）才能推鏡頭</span
+                >。
+              </li>
+              <li>
+                它<b>會覆蓋掉你現有的所有 A/B 切換</b
+                >。按鈕上就寫著這件事，執行前會先自動備份一份。
+              </li>
+              <li>
+                講者標本身不準的話（見<a href="#ch06">第 06 章</a
+                >紅框），推出來的鏡頭就跟著不準。
+              </li>
+            </ol>
+          </li>
+        </ul>
+      </section>
+
+      <!-- ================= 08 輸出設定 ================= -->
+      <section id="ch08">
+        <h2>輸出設定</h2>
+
+        <p class="lead">
+          字幕修完、鏡頭排好，接下來決定成品長什麼樣：畫面裁多寬、字多大、要不要加速、片頭片尾從哪裡開始。這些設定散在兩個地方——編輯器主畫面下方那一排，以及按下合成前跳出來的設定視窗。
+        </p>
+
+        <h3>主畫面下方：裁切比例 · 頭尾 · 字級</h3>
+
+        <p>
+          這一排<b>預設是收起來的</b>，在影片區最下面那一條：<span class="ui"
+            >出片設定</span
+          >，後面跟著灰字<span class="ui">裁切比例 · 頭尾 · 字級</span>（<b
+            >圖 12</b
+          >
+          最底下那一列）。點那一列才會展開。展開後改任何一項，馬上反映在上方的影片預覽裡，不用等合成就看得到。
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>控制項</th>
+              <th>做什麼</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>裁切比例</td>
+              <td>
+                決定成品的畫面比例。選好之後在預覽畫面上拖出裁切框，沒設過時會顯示<span
+                  class="ui"
+                  >裁切框：未設定</span
+                >。按<span class="ui">智慧建議</span>可以讓工具先幫你抓一個。
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <span class="ui">設頭</span>／<span class="ui">設尾</span>
+              </td>
+              <td>
+                把影片播到你想要的位置，按下去就把該處設為正片的開始／結束。按<span
+                  class="ui"
+                  >重設</span
+                >清掉，按<span class="ui">從頭播</span>回到最前面確認。
+              </td>
+            </tr>
+            <tr>
+              <td>字級</td>
+              <td>
+                字幕的大小。用旁邊的加減鈕調，<b>每按一次動 2</b>，範圍夾在
+                <b>12 到 200</b> 之間。
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <ul class="four">
+          <li>
+            <b class="k">達成效果</b
+            >字級改了以後，影片預覽上的字幕會等比例跟著變，所見即所得。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>YT
+            版與直式短影音版的字級<b>分開記</b>，兩邊要各調一次；改完要按<span
+              class="ui"
+              >完成並儲存</span
+            >才會落地。字幕的左右位置（靠左／置中／靠右）沒有地方可以調。
+          </li>
+        </ul>
+
+        <h3>字幕模式：燒進去，還是另外給一份</h3>
+
+        <p>
+          按上排工具列的<span class="ui">輸出</span>按鈕（<b>圖 11</b>
+          右側，滑過會顯示「字幕模式與合成輸出」）會往下展開一個選單，最上面那一段就是<span
+            class="ui"
+            >字幕模式</span
+          >，往下才是<span class="ui">合成輸出</span>的三顆出片按鈕。
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>模式</th>
+              <th>結果</th>
+              <th>什麼時候選它</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="ui">燒進畫面</span></td>
+              <td>字幕直接印在影片上，關不掉</td>
+              <td>預設值，多數情況用這個</td>
+            </tr>
+            <tr>
+              <td><span class="ui">另存字幕檔（僅 YT，較快）</span></td>
+              <td>影片上<b>沒有字幕</b>，另外產一份對好時間的字幕檔給你上傳</td>
+              <td>要讓觀眾自己開關字幕。因為跳過燒字幕，輸出快很多</td>
+            </tr>
+            <tr>
+              <td><span class="ui">抽換字幕（燒指定字幕檔）</span></td>
+              <td>燒的是你另外指定的那份字幕，不是編輯器裡這份</td>
+              <td>
+                字幕在別的地方修過（例如從 YouTube
+                下載修正後的版本），要換上去重燒
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b><span class="ui">輸出</span> →
+            <span class="ui">字幕</span>下拉選單。選<span class="ui"
+              >抽換字幕</span
+            >時，旁邊的檔案選單要一併選好要燒哪一份。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>
+            <ol>
+              <li>
+                後兩種模式<b>只對 YT 版有效</b
+                >。直式短影音平台不吃外掛字幕，一律硬燒，不受這個選項影響。
+              </li>
+              <li>
+                選<span class="ui">抽換字幕</span
+                >卻沒挑檔案就按合成，會被擋下來並提示<span class="ui"
+                  >抽換字幕：請先在「字幕」旁選一份字幕檔</span
+                >。
+              </li>
+              <li>
+                <span class="ui">另存字幕檔</span
+                >模式下，成品影片畫面上真的一個字都沒有——這是正常的，不是合成失敗。
+              </li>
+              <li>
+                輸出純音訊（<span class="ui">原速 MP3</span
+                >）時燒錄一律關閉，因為沒有畫面可以燒。
+              </li>
+            </ol>
+          </li>
+        </ul>
+
+        <h3>合成設定視窗</h3>
+
+        <figure class="shot">
+          <img
+            src="images/31-assemble-setup.png"
+            alt="合成設定視窗：倍速、去空拍、節目封面三個輸出選項與開始合成按鈕"
+          />
+          <figcaption>
+            <b>圖 31</b> 按<span class="ui">輸出</span> →
+            <span class="ui">合成 YT</span>後跳出的<span class="ui"
+              >合成設定</span
+            >視窗，這是出片前最後一關。
+          </figcaption>
+        </figure>
+
+        <table>
+          <thead>
+            <tr>
+              <th>選項</th>
+              <th>預設</th>
+              <th>做什麼</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="ui">倍速</span></td>
+              <td class="num"><b>開啟，1.1x</b></td>
+              <td>整片略微加速。語速聽起來自然、片長縮短約一成，音高不會變</td>
+            </tr>
+            <tr>
+              <td><span class="ui">去空拍</span></td>
+              <td class="num"><b>開啟，0.8 秒</b></td>
+              <td>
+                自動剪掉沒人講話的空檔。<span class="ui">停頓≥ N 秒才剪</span
+                >可以自己調，數字越小剪得越兇
+              </td>
+            </tr>
+            <tr>
+              <td><span class="ui">節目封面</span></td>
+              <td class="num"><b>關閉</b></td>
+              <td>在成品上加節目的封面／浮水印</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <ul class="four">
+          <li>
+            <b class="k">達成效果</b
+            >這三個選項會記住上一次的設定，不用每集重設。視窗底下寫著<span
+              class="ui"
+              >按「開始合成」會先儲存目前的修改，再開始輸出。</span
+            >——所以你不必先跑去按<span class="ui">完成並儲存</span>。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b
+            ><span class="ui">去空拍</span
+            >剪的是「工具判斷沒有人在講話」的段落，判斷靠的是聲音大小，不是語意。背景有持續的冷氣聲或音樂時會剪不乾淨；反過來說，講者刻意停頓製造效果的地方也可能被剪掉。門檻調大一點（例如
+            1.2 秒）會保守一些。
+          </li>
+        </ul>
+      </section>
+
+      <!-- ================= 09 合成與匯出 ================= -->
+      <section id="ch09">
+        <h2>合成與匯出</h2>
+
+        <p class="lead">
+          按下<span class="ui">開始合成</span
+          >之後就沒有你的事了，剩下的是等。這一章講進度視窗上的每一行在說什麼、出來的檔案在哪、以及失敗時怎麼看原因。
+        </p>
+
+        <h3>三種輸出</h3>
+
+        <table>
+          <thead>
+            <tr>
+              <th>按鈕</th>
+              <th>產出</th>
+              <th>用途</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="ui">合成 YT</span></td>
+              <td><code>{集名}_YT完整版.mp4</code></td>
+              <td>正式成品，含片頭片尾</td>
+            </tr>
+            <tr>
+              <td><span class="ui">原速 MP3</span></td>
+              <td><code>{集名}_原速.mp3</code></td>
+              <td>
+                純聲音版本，給 Podcast 平台用。<b>不加速</b>，但套用你的所有編輯
+              </td>
+            </tr>
+            <tr>
+              <td><span class="ui">5 分鐘預覽</span></td>
+              <td>檔名帶 <code>.preview</code> 的短檔</td>
+              <td>
+                只做前五分鐘。<b>出正片前先跑這個</b>，確認字級、裁切、片頭都對，比整片跑完才發現字太小划算得多
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h3>進度視窗</h3>
+
+        <figure class="shot">
+          <img
+            src="images/32-assemble-progress.png"
+            alt="合成進度視窗：進度條、階段文字與可展開的 ffmpeg 訊息區"
+          />
+          <figcaption>
+            <b>圖 32</b>
+            合成進度。中間那行文字會依序換成不同階段，下方可以展開看實際的處理訊息。
+          </figcaption>
+        </figure>
+
+        <p>階段依序是：</p>
+        <ol>
+          <li>
+            <span class="ui">準備合成</span>／<span class="ui">準備素材中…</span
+            >——檢查檔案、產生要用的中間檔
+          </li>
+          <li>
+            <span class="ui">ffmpeg 啟動中（片頭 + 正片 + 片尾）</span
+            >——開始實際編碼，這一段最久
+          </li>
+          <li>
+            <span class="ui">合成完成</span>／<span class="ui">輸出已寫入</span
+            >——成功
+          </li>
+        </ol>
+
+        <ul class="four">
+          <li>
+            <b class="k">點擊位置</b>成功後按<span class="ui"
+              >在 Finder 開啟</span
+            >會直接把你帶到成品檔案。失敗時視窗會顯示<span class="ui"
+              >合成失敗</span
+            >並出現<span class="ui">重試</span>。中途想停就按<span class="ui"
+              >取消</span
+            >，狀態會變成<span class="ui">已停止</span>。
+          </li>
+          <li>
+            <b class="k">達成效果</b>成品固定寫進這一集的
+            <code>03_成品/</code> 資料夾。展開<span class="ui">ffmpeg 訊息</span
+            >可以看到實際在跑什麼——出錯時真正的原因就在裡面，回報問題時把這一段附上最有用。
+          </li>
+          <li class="lim">
+            <b class="k">功能限制</b>
+            <ol>
+              <li>
+                合成期間<b>不要關掉視窗或關掉 App</b
+                >。中途取消的話，已經寫到一半的檔案不會保留。
+              </li>
+              <li>
+                一小時的節目在一般 Mac
+                上大約要跑十幾分鐘到半小時，跟機器與設定有關。<span class="ui"
+                  >另存字幕檔</span
+                >模式因為跳過燒字幕，會明顯快一截。
+              </li>
+              <li>
+                合成 YT
+                版需要用到片尾音樂、片尾卡片這些<b>共用素材</b>，缺檔會直接失敗。在<span
+                  class="ui"
+                  >設定</span
+                >視窗上半可以先確認這些檔在不在（見<a href="#ch05">第 05 章</a
+                >）。
+              </li>
+            </ol>
+          </li>
+        </ul>
+
+        <div class="callout green">
+          <b>做完了。</b>到這裡你已經走完一整輪：開 App → 建一集 → 放素材 →
+          轉字幕 → 修字幕 → 排鏡頭 → 設定 →
+          出片。後面兩份附錄是查閱用的，不用從頭讀。
+        </div>
+      </section>
+
+      <!-- ================= 附錄 A 資料夾與檔案 ================= -->
+      <section id="apx-a" class="apx">
+        <h2 data-apx="A">資料夾與檔案</h2>
+
+        <p class="lead">
+          每一集就是一個資料夾。知道哪個檔在哪，出問題時可以自己去看、自己備份。
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>位置</th>
+              <th>放什麼</th>
+              <th>你會需要動它嗎</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>01_母帶/</code></td>
+              <td>你自己丟進去的原始素材：相機影片、錄音筆音檔</td>
+              <td><b>會</b>。建完一集就是把檔案放進這裡</td>
+            </tr>
+            <tr>
+              <td><code>03_成品/</code></td>
+              <td>字幕檔、備份、以及合成出來的影片與音訊</td>
+              <td><b>會</b>。成品在這裡拿；想留字幕版本也在這裡複製</td>
+            </tr>
+            <tr>
+              <td><code>04_工作檔/</code></td>
+              <td>處理過程中的中間檔</td>
+              <td>不用。工具自己管理，不要手動刪改</td>
+            </tr>
+            <tr>
+              <td><code>episode.yaml</code></td>
+              <td>
+                這一集的所有設定：裁切、字級、頭尾、刪掉的段落、鏡頭切換、詞庫
+              </td>
+              <td>
+                平常不用——編輯器按<span class="ui">完成並儲存</span
+                >就是在寫它。只有極少數功能（例如雙行字幕）才需要手動開檔
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p><code>03_成品/</code> 裡值得認得的幾個檔：</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>檔名</th>
+              <th>是什麼</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>{集名}_final_v2.srt</code></td>
+              <td>
+                <b>主字幕檔</b>。編輯器裡看到、改到的就是它，存檔也是寫回它
+              </td>
+            </tr>
+            <tr>
+              <td><code>{集名}_final_v2.srt.bak</code></td>
+              <td>
+                <b>上一次存檔前</b>的字幕。只有一份，每次存檔覆蓋（見<a
+                  href="#ch06"
+                  >第 06 章</a
+                >）
+              </td>
+            </tr>
+            <tr>
+              <td><code>{集名}_final_v2.speakers.json</code></td>
+              <td>逐卡的講者對照。分軌轉錄才會有</td>
+            </tr>
+            <tr>
+              <td><code>{集名}_YT完整版.mp4</code></td>
+              <td>合成出來的正式成品</td>
+            </tr>
+            <tr>
+              <td><code>{集名}_原速.mp3</code></td>
+              <td>純音訊版本</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout amber">
+          <b>資料夾裡還會看到別的備份檔</b>（檔名帶日期或其他後綴的
+          <code>.srt</code
+          >）。那是進階工具留下的，跟編輯器的存檔沒有關係，不用管也不要靠它救檔。要保住某個版本，自己複製一份改名字最可靠。
+        </div>
+      </section>
+
+      <!-- ================= 附錄 B 疑難排解 ================= -->
+      <section id="apx-b" class="apx">
+        <h2 data-apx="B">疑難排解</h2>
+
+        <p class="lead">按「症狀」找，不用管它屬於哪一章。</p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>症狀</th>
+              <th>原因</th>
+              <th>怎麼辦</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>字幕裡人名、品牌名幾乎全錯</td>
+              <td>轉字幕之前沒有把這些詞填進<span class="ui">詞庫</span></td>
+              <td>
+                <b>不必重轉。</b>用抽屜的<span class="ui">字典</span
+                >批次取代改掉，同時把這些詞補進<span class="ui">詞庫</span
+                >，下一集就不會再錯（第 <a href="#ch05">05</a>、<a href="#ch06"
+                  >06</a
+                >
+                章）
+              </td>
+            </tr>
+            <tr>
+              <td>按了<span class="ui">全部套用</span>，還是有些卡沒被改到</td>
+              <td>字典會整張跳過<b>已經切過句</b>的卡，介面不會提示</td>
+              <td>
+                順序改一下：<b>先跑字典，再開始切句</b>。已經切過的只能手動改（<a
+                  href="#ch06"
+                  >第 06 章</a
+                >）
+              </td>
+            </tr>
+            <tr>
+              <td>講者標從某一句開始整批對不上</td>
+              <td>這集沒登記分軌，而你做了切句／合併／插入／改時間造成重排</td>
+              <td>
+                先在<span class="ui">設定分軌</span
+                >登記好各軌麥克風再編輯。已經歪掉只能重跑分軌設定與轉錄（<a
+                  href="#ch06"
+                  >第 06 章</a
+                >）
+              </td>
+            </tr>
+            <tr>
+              <td>辛苦修的字幕全部變回原樣</td>
+              <td>
+                對同一集重跑了<span class="ui">轉字幕</span
+                >，這一集之前的字幕內容會整份被新的蓋掉
+              </td>
+              <td>
+                <b>立刻不要再存檔</b>。到 <code>03_成品/</code> 找檔名帶時間戳的
+                <code>.bak.srt</code
+                >，挑轉字幕之前那個時間點、改回主字幕檔名。這種備份不會互相覆蓋，舊版本都還在（<a
+                  href="#ch06"
+                  >第 06 章</a
+                >、<a href="#apx-a">附錄 A</a>）
+              </td>
+            </tr>
+            <tr>
+              <td>按了<span class="ui">套用偏移</span>，未儲存數字沒歸零</td>
+              <td>這顆按鈕只存偏移這一個值，不會順便存別的</td>
+              <td>
+                正常現象。其他修改還是要按<span class="ui">完成並儲存</span>
+              </td>
+            </tr>
+            <tr>
+              <td>成品影片上一個字幕都沒有</td>
+              <td>
+                字幕模式選成了<span class="ui">另存字幕檔（僅 YT，較快）</span>
+              </td>
+              <td>
+                這是該模式的正常結果，字幕另外出成一份檔案。要燒進畫面就改回<span
+                  class="ui"
+                  >燒進畫面</span
+                >（<a href="#ch08">第 08 章</a>）
+              </td>
+            </tr>
+            <tr>
+              <td>按合成沒反應，跳出提示要選字幕檔</td>
+              <td>字幕模式選了<span class="ui">抽換字幕</span>但沒挑檔案</td>
+              <td>
+                在<span class="ui">字幕</span>旁的選單選一份，或改回其他模式
+              </td>
+            </tr>
+            <tr>
+              <td>合成失敗</td>
+              <td>多半是缺共用素材，或素材檔本身有問題</td>
+              <td>
+                展開<span class="ui">ffmpeg 訊息</span>看實際錯誤；到<span
+                  class="ui"
+                  >設定</span
+                >視窗上半確認共用素材都在（第 <a href="#ch05">05</a>、<a
+                  href="#ch09"
+                  >09</a
+                >
+                章）
+              </td>
+            </tr>
+            <tr>
+              <td>影片畫面跟聲音對不上</td>
+              <td>對齊沒做，或算完了沒存</td>
+              <td>
+                回<span class="ui">鏡頭</span>視窗確認偏移數字有填。用過<span
+                  class="ui"
+                  >手動標記</span
+                >的話，<span class="ui">套用</span>之後還要按<span class="ui"
+                  >儲存</span
+                >（<a href="#ch07">第 07 章</a>）
+              </td>
+            </tr>
+            <tr>
+              <td><span class="ui">依講者推 A/B</span>按不動</td>
+              <td>這集沒有逐卡講者資料</td>
+              <td>
+                先跑分軌轉錄，才有講者可以拿來推鏡頭（<a href="#ch07"
+                  >第 07 章</a
+                >）
+              </td>
+            </tr>
+            <tr>
+              <td>字幕整體早了或晚了一點</td>
+              <td>字幕與影片的起點差了一個固定值</td>
+              <td>
+                用<span class="ui">偏移</span>整份平移，不要一張張調（<a
+                  href="#ch06"
+                  >第 06 章</a
+                >）
+              </td>
+            </tr>
+            <tr>
+              <td>關掉視窗，App 還在</td>
+              <td>關視窗不等於結束程式</td>
+              <td>按 <kbd>⌘Q</kbd> 完全結束（<a href="#ch02">第 02 章</a>）</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+  </body>
+</html>
