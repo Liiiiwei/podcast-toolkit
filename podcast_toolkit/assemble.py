@@ -255,7 +255,6 @@ def _write_ass_from_srt(
     *,
     speaker_spans: list[tuple[float, float, str]] | None = None,
     style: dict | None = None,
-    hold_sec: float = 0.0,
 ) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
@@ -270,8 +269,8 @@ def _write_ass_from_srt(
     style，MarginV 會把第二個 style 一起蓋掉；每事件 MarginV 是 force_style
     碰不到的地方。沒有 speaker_spans → 產出與單行時代完全相同（MarginV 全 0）。
 
-    hold_sec > 0 時，先讓換人接話前的那一句多留在畫面上這麼久（dual_line.hold_tail）。
-    真實素材的卡一張接一張、時間不重疊，不先製造重疊就永遠排不出雙行。
+    只有時間真的重疊的卡才分排，不做「延長前一句製造重疊」的前處理——
+    Breeze 相鄰卡 gap 幾乎恆為 0，人為延長會讓每次換講者都疊（分開講≠同時講，使用者裁決）。
     """
     from podcast_toolkit import dual_line, srt_io
 
@@ -307,9 +306,7 @@ def _write_ass_from_srt(
         # 往上疊（MarginV 變大 = 離底部更遠），中央/頂部對齊時往下疊。
         bottom = align is None or (int(align) & 12) == 0
         tagged = dual_line.assign_speakers(cards, speaker_spans)
-        events = dual_line.layout(
-            dual_line.hold_tail(tagged, hold_sec), bottom_anchored=bottom
-        )
+        events = dual_line.layout(tagged, bottom_anchored=bottom)
         base = int(style.get("margin_v") or 0)
         size = float(style.get("font_size") or 0)
         offsets = [dual_line.stack_offset_px(e, size) for e in events]
@@ -1277,10 +1274,9 @@ def prepare_assembly(
         if v2_canon_path.exists() else all_cards
     )
 
-    # 雙行字幕：分軌集兩人同時說話時，出片端跟編輯器預覽一樣排成上下兩排。
+    # 雙行字幕：分軌集兩人「時間真的重疊」地同時說話時，出片端跟編輯器預覽一樣
+    # 排成上下兩排；相接（gap==0）不算同時講，不做人為延長（使用者裁決）。
     # 單軌集沒有 speakers sidecar → None → 產出的 ASS 與單行時代逐字相同。
-    # 但真實素材的卡是一張接一張、幾乎不重疊（實測五集共 6636 張只有 1 筆重疊），
-    # 所以還要 hold：換人接話時讓上一句多留幾秒，重疊才存在。
     # sidecar 存的是 flat 的「_v2 卡 idx → 講者」，只有配上真的 _v2 卡才對得起來。
     # _v2.srt 缺席時上面會 fallback 成 all_cards（來自 srt_path 指的那份），idx 編號體系
     # 不同 → 講者會貼到錯的卡上。寧可整個關掉雙行（退回單行），也不要貼錯人。
@@ -1288,7 +1284,6 @@ def prepare_assembly(
         _speaker_spans(ep, v2_canon_cards, srt_total_shift)
         if cfg.get("subtitle_dual_line") and v2_canon_path.exists() else None
     )
-    dual_hold = float(cfg.get("subtitle_dual_line_hold") or 0) if dual_spans else 0.0
 
     # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
     # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
@@ -1303,7 +1298,7 @@ def prepare_assembly(
         ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
         _write_ass_from_srt(
             srt, ass_path, ass_res_w, ass_res_h,
-            speaker_spans=dual_spans, style=sub_style, hold_sec=dual_hold,
+            speaker_spans=dual_spans, style=sub_style,
         )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
@@ -1378,7 +1373,7 @@ def prepare_assembly(
             clean_ass = ep.subdir("work") / f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
             _write_ass_from_srt(
                 clean_srt, clean_ass, ass_res_w, ass_res_h,
-                speaker_spans=dual_spans, style=sub_style, hold_sec=dual_hold,
+                speaker_spans=dual_spans, style=sub_style,
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 

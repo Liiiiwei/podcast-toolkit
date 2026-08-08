@@ -310,11 +310,6 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # 前端 caption preview 用：對齊 ffmpeg ASS 實際輸出字幕大小（font_size / output_height）
         "subtitle_style": dict(ep.cfg.get("subtitle_style") or {}),
         "subtitle_style_reels": dict(ep.cfg.get("subtitle_style_reels") or {}),
-        # 雙行字幕（分軌集重疊時排上下兩排）+ hold 秒數：前端 caption preview 要跟出片端
-        # 同一套規則（見 dual_line.hold_tail / assemble.py 的 dual_spans），否則真實素材的卡
-        # 幾乎不重疊 → 預覽永遠單行、成品卻是雙行，使用者看預覽做的判斷會失準。
-        "subtitle_dual_line": bool(ep.cfg.get("subtitle_dual_line")),
-        "subtitle_dual_line_hold": float(ep.cfg.get("subtitle_dual_line_hold") or 0),
         "output_resolution_yt": (ep.cfg.get("encode") or {}).get("resolution") or "1920x1080",
         "output_resolution_reels": "1080x1920",
     }

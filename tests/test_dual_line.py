@@ -63,8 +63,8 @@ def test_partial_overlap_splits_only_the_overlapping_part():
 def test_stack_order_follows_start_time_not_card_order():
     """先開始的排上面，跟卡在 list 裡的位置無關（這裡故意把後開始的放前面）。
 
-    新來的字從下排進場、舊的往上讓 —— 這條規則也是 hold_tail 不會讓字幕
-    抬起來又落回原位的原因（stack 只可能隨時間上升）。
+    新來的字從下排進場、舊的往上讓——stack 只可能隨時間上升，
+    字幕不會抬起來又落回原位。
     """
     evs = _events([_card(11, 14, "甲", "a"), _card(10, 12, "乙", "b")])
     a_ev = next(e for e in evs if e["speaker"] == "a")
@@ -123,113 +123,6 @@ def test_event_order_is_visually_top_to_bottom():
 def test_missing_speaker_does_not_crash():
     evs = _events([_card(0, 3, "甲", None), _card(0, 3, "乙", "a")])
     assert sorted(e["stack_lines"] for e in evs) == [0, 1]
-
-
-# ── hold：換人接話時延長上一句，製造重疊 ──────────────────────────
-
-def test_hold_extends_previous_card_on_speaker_change():
-    """字幕來自單軌混音轉錄，卡是一張接一張產生的（實測五集共只有 1 筆真重疊）。
-    換人接話時讓上一句多留一段時間，重疊才存在、雙行才有機會出現。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 5, "乙", "b")], 1.0)
-    assert held[0]["end"] == 3.0
-    assert held[1]["end"] == 5      # 接話那句不動
-
-
-def test_hold_ignores_same_speaker():
-    """同一人連著講的兩張卡不是「接話」，延長只會讓他自己占兩排。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲一", "a"), _card(2.1, 5, "甲二", "a")], 1.0)
-    assert held[0]["end"] == 2
-
-
-def test_hold_ignores_long_gap():
-    """間隔超過門檻＝換話題不是接話，不 hold。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.5, 5, "乙", "b")], 1.0, 0.3)
-    assert held[0]["end"] == 2
-
-
-def test_hold_never_outlives_the_card_it_overlaps():
-    """接話那句很短時，上一句不能比它還晚消失（畫面上會剩一排孤字）。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 2.7, "乙", "b")], 1.0)
-    assert held[0]["end"] == 2.7
-
-
-def test_hold_stops_before_speaker_speaks_again():
-    """a 說 → b 插一句 → a 又接話：a 的前一句不能撐到自己下一句，否則同一人占兩排。"""
-    held = dual_line.hold_tail(
-        [_card(0, 2, "甲一", "a"), _card(2.1, 4, "乙", "b"), _card(2.8, 6, "甲二", "a")], 1.0
-    )
-    assert held[0]["end"] == 2.8
-
-
-def test_hold_skips_when_overlap_would_be_too_short():
-    """只延得出 0.1 秒重疊 → 抬起來只閃一下（layout 也會併掉），不如不抬。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.2, 2.3, "乙", "b")], 1.0)
-    assert held[0]["end"] == 2
-
-
-def test_hold_leaves_already_overlapping_cards_alone():
-    held = dual_line.hold_tail([_card(0, 3, "甲", "a"), _card(2, 5, "乙", "b")], 1.0)
-    assert held[0]["end"] == 3
-
-
-def test_hold_disabled_returns_cards_untouched():
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 5, "乙", "b")], 0)
-    assert held[0]["end"] == 2
-
-
-def test_hold_negative_value_never_shortens_cards():
-    """設定填成負數（手滑）只能當作關掉，不能反過來把字幕提早收掉。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 5, "乙", "b")], -1.0)
-    assert held[0]["end"] == 2
-
-
-def test_hold_needs_both_speakers_tagged():
-    """有卡沒貼到講者標 → 分不出是不是換人，不 hold。"""
-    held = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 5, "乙", None)], 1.0)
-    assert held[0]["end"] == 2
-
-
-def test_hold_extends_in_both_directions_and_lifts_the_one_it_extends():
-    """a→b、b→a 都算換人接話，兩個方向都要延長，覆蓋率才不會只剩一半。
-
-    方向不必挑：被延長的永遠是先開始的那張，而 layout 讓先開始的排上面，
-    所以延長的效果一律是「上一句往上讓位、讓完就消失」。
-    """
-    for first, second in (("a", "b"), ("b", "a")):
-        held = dual_line.hold_tail(
-            [_card(0, 2, "先", first), _card(2.1, 5, "後", second)], 1.0
-        )
-        assert held[0]["end"] == 3.0, f"{first}→{second} 沒延長"
-        lifted = [e for e in _events(held) if e["stack_lines"]]
-        assert [e["text"] for e in lifted] == ["先"], f"{first}→{second} 抬錯人"
-
-
-def test_hold_then_layout_produces_two_rows():
-    """hold → layout 串起來：接話的那段 a 在上排、b 在下排。"""
-    cards = dual_line.hold_tail([_card(0, 2, "甲", "a"), _card(2.1, 5, "乙", "b")], 1.0)
-    stacked = [e for e in _events(cards) if e["stack_lines"] == 1]
-    assert len(stacked) == 1
-    assert stacked[0]["speaker"] == "a"
-    assert (stacked[0]["start"], stacked[0]["end"]) == (2.1, 3.0)
-
-
-def test_hold_never_makes_a_card_bounce_between_rows():
-    """一張卡兩端都有人接話時，不能抬起 → 落下 → 再抬起。
-
-    魁哥集實測到「又要解鎖一個新的職業」這句在 2.5 秒內上下彈了兩次
-    （MarginV 178 → 0 → 178）：開頭被前一句的 hold 咬住而抬起，中段沒人重疊落回，
-    尾巴自己被 hold 又抬起。字幕上下彈跳比沒有雙行還糟。
-    """
-    cards = dual_line.hold_tail(
-        [_card(0, 2, "甲一", "b"), _card(2.1, 4, "乙", "a"), _card(4.1, 6, "甲二", "b")], 1.0
-    )
-    rows = [
-        e["stack_lines"]
-        for e in sorted((e for e in _events(cards) if e["text"] == "乙"),
-                        key=lambda e: e["start"])
-    ]
-    # 允許「尾巴往上讓位給新來的字」，不允許抬起後又落回原位
-    assert rows in ([0], [0, 1]), f"排位序列 {rows} 代表這句在畫面上彈了回來"
 
 
 # ── 排數 → 像素位移 ────────────────────────────────────────────────
@@ -343,39 +236,19 @@ def _sequential_srt(tmp_path):
     return src, [(10.0, 12.0, "a"), (12.1, 15.0, "b")]
 
 
-def test_ass_sequential_cards_stay_single_row_without_hold(tmp_path):
-    """沒開 hold → 這種一前一後的卡永遠不會分排（雙行等於沒作用）。"""
+def test_ass_sequential_cards_stay_single_row(tmp_path):
+    """一前一後（gap 0.1 秒）的不同講者卡永遠單行：分開講≠同時講（使用者裁決）。
+
+    回歸守的是「不准再有任何『延長上一句製造重疊』的前處理」——Breeze 相鄰卡
+    gap 幾乎恆為 0，一旦延長，每次換講者都會疊成雙行。
+    """
     src, spans = _sequential_srt(tmp_path)
     dst = tmp_path / "a.ass"
     assemble._write_ass_from_srt(src, dst, 1920, 1080, speaker_spans=spans, style=YT_STYLE)
     ds = _dialogues(dst.read_text(encoding="utf-8"))
     assert len(ds) == 2
     assert all(d["margin_v"] == 0 for d in ds)
-
-
-def test_ass_hold_lifts_previous_card(tmp_path):
-    """開了 hold → 甲被切成「原位」＋「抬起來跟乙並排」兩個事件。"""
-    src, spans = _sequential_srt(tmp_path)
-    dst = tmp_path / "a.ass"
-    assemble._write_ass_from_srt(
-        src, dst, 1920, 1080, speaker_spans=spans, style=YT_STYLE, hold_sec=1.0
-    )
-    ds = _dialogues(dst.read_text(encoding="utf-8"))
-    assert len(ds) == 3
-    lifted = [d for d in ds if d["margin_v"] > 0]
-    assert len(lifted) == 1
-    assert lifted[0]["text"] == "甲"
-    # 甲原本 10~12，hold 1 秒 → 12~13；跟乙（12.1 起）重疊的 12.1~13 這段被抬起
-    assert (lifted[0]["start"], lifted[0]["end"]) == ("0:00:12.10", "0:00:13.00")
-    assert lifted[0]["margin_v"] == 100 + round(48 * dual_line.LINE_HEIGHT_RATIO)
-
-
-def test_ass_hold_needs_speakers(tmp_path):
-    """單軌集（沒 speakers sidecar）就算 cfg 開著 hold 也不能動時間。"""
-    src, _ = _sequential_srt(tmp_path)
-    dst = tmp_path / "a.ass"
-    assemble._write_ass_from_srt(src, dst, 1920, 1080, hold_sec=1.0)
-    ds = _dialogues(dst.read_text(encoding="utf-8"))
+    # 時間也不准被動過：延長機制的副作用就是改前一張卡的 end
     assert [(d["start"], d["end"]) for d in ds] == [
         ("0:00:10.00", "0:00:12.00"), ("0:00:12.10", "0:00:15.00"),
     ]
@@ -401,8 +274,9 @@ def test_ass_speaker_matched_by_time_not_index(tmp_path):
 #
 # 上面測的是零件；這一段測「出片時這些零件真的有被接上」——sidecar 讀不讀得到、
 # cfg 開關管不管用、時間軸有沒有跟著 SRT 一起位移。
-# 素材是 conftest 的 SAMPLE_SRT：四張卡首尾相接（0~4.2、4.2~12、12~14、14~22），
-# 標成 a/b/a/b 後三處都算「換人接話」，hold 1 秒必定製造出重疊。
+# 素材兩種：conftest 的 SAMPLE_SRT（四張卡首尾相接 0~4.2、4.2~12、12~14、14~22，
+# ＝Breeze 真實素材的樣子，恆為單行）、_write_overlap_v2 的兩張真重疊卡
+# （兩人真的同時講，雙行唯一的觸發條件）。
 
 SAMPLE_STACKED_MARGIN = 100 + round(60 * dual_line.LINE_HEIGHT_RATIO)  # defaults.yaml 的字級與底邊距
 
@@ -412,6 +286,15 @@ def _write_speakers(ep_dir, mapping):
     (ep_dir / "03_成品" / "測試集_final_v2.speakers.json").write_text(
         json.dumps(mapping), encoding="utf-8"
     )
+
+
+def _write_overlap_v2(ep_dir):
+    """把 canonical _v2 換成兩張真重疊的卡（13~15 秒兩人同時講）＋對應 sidecar。"""
+    _write_srt(ep_dir / "03_成品" / "測試集_final_v2.srt", [
+        {"idx": 1, "start": 10, "end": 15, "text": "甲的長句"},
+        {"idx": 2, "start": 13, "end": 20, "text": "乙插進來"},
+    ])
+    _write_speakers(ep_dir, {"1": "a", "2": "b"})
 
 
 def _set_cfg(ep_dir, **kv):
@@ -474,17 +357,29 @@ def test_speaker_spans_all_untagged_is_none(tmp_episode_dir):
     assert assemble._speaker_spans(ep, cards, 0.0) is None
 
 
-def test_prepare_assembly_dual_line_stacks_with_sidecar(tmp_episode_full):
-    """分軌集（有 sidecar）+ defaults 的 hold → 燒的 ASS 真的出現第二排。"""
+def test_prepare_assembly_sequential_cards_keep_single_row(tmp_episode_full):
+    """相接（gap==0）的不同講者卡不產生雙行：分開講≠同時講（使用者裁決）。
+
+    SAMPLE_SRT 四張卡首尾相接、標成 a/b/a/b——正是 Breeze 真實素材的樣子
+    （時間戳連續無氣口）。這裡若出現任何抬高的 MarginV，代表又有機制在
+    人為製造重疊（每次換講者都會疊，氾濫成災）。
+    """
     _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
-    margins = _yt_ass_margins(tmp_episode_full)
-    # 三處換人接話各被抬起一段 → 三筆事件落在上排，其餘留在原位
-    assert sorted(m for m in margins if m) == [SAMPLE_STACKED_MARGIN] * 3
+    assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))
+
+
+def test_prepare_assembly_real_overlap_still_stacks(tmp_episode_full):
+    """真重疊（負 gap，兩人真的同時講）→ 燒的 ASS 仍有第二排。
+
+    甲 10~15、乙 13~20：重疊的 13~15 那段甲被抬到上排，其餘留在原位。
+    """
+    _write_overlap_v2(tmp_episode_full)
+    assert sorted(m for m in _yt_ass_margins(tmp_episode_full) if m) == [SAMPLE_STACKED_MARGIN]
 
 
 def test_prepare_assembly_dual_line_off_keeps_single_row(tmp_episode_full):
-    """subtitle_dual_line: false → 就算有 sidecar 也整集關掉（MarginV 全 0）。"""
-    _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
+    """subtitle_dual_line: false → 真重疊也整集關掉（MarginV 全 0）。"""
+    _write_overlap_v2(tmp_episode_full)
     _set_cfg(tmp_episode_full, subtitle_dual_line=False)
     assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))
 
@@ -494,30 +389,22 @@ def test_prepare_assembly_single_track_keeps_single_row(tmp_episode_full):
     assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))
 
 
-def test_prepare_assembly_hold_zero_keeps_single_row(tmp_episode_full):
-    """subtitle_dual_line_hold: 0 → 不製造重疊，真實素材就幾乎不會有雙行。"""
-    _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
-    _set_cfg(tmp_episode_full, subtitle_dual_line_hold=0)
-    assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))
-
-
 def test_prepare_assembly_dual_line_survives_cuts(tmp_episode_full):
     """有刪段時燒的是另一份 ASS（濾掉刪段卡後重編號），那條路徑也要接上雙行。
 
     重編號正是講者只能靠時間對照、不能靠 idx 的原因；這裡的刪段落在所有卡之後，
     卡一張都沒少，所以雙行結果應與沒刪段時一模一樣。
     """
-    _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
+    _write_overlap_v2(tmp_episode_full)
     _set_cfg(tmp_episode_full, cuts=[[22.5, 25.0]])
-    assert sorted(m for m in _yt_ass_margins(tmp_episode_full) if m) == [SAMPLE_STACKED_MARGIN] * 3
+    assert sorted(m for m in _yt_ass_margins(tmp_episode_full) if m) == [SAMPLE_STACKED_MARGIN]
 
 
 def test_prepare_assembly_dual_line_survives_subtitle_offset(tmp_episode_full):
     """字幕位移後講者標要跟著位移：兩邊同軸才對得上，否則講者全貼到同一個人身上。"""
-    _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
+    _write_overlap_v2(tmp_episode_full)
     _set_cfg(tmp_episode_full, subtitle_offset_sec=5.0)
-    margins = _yt_ass_margins(tmp_episode_full)
-    assert sorted(m for m in margins if m) == [SAMPLE_STACKED_MARGIN] * 3
+    assert sorted(m for m in _yt_ass_margins(tmp_episode_full) if m) == [SAMPLE_STACKED_MARGIN]
 
 
 def test_prepare_assembly_without_v2_srt_falls_back_to_single_row(tmp_episode_full):
@@ -528,14 +415,13 @@ def test_prepare_assembly_without_v2_srt_falls_back_to_single_row(tmp_episode_fu
     完全不同的時間，講者會貼到錯的人身上。寧可退回單行，也不要貼錯。
     """
     _write_speakers(tmp_episode_full, {"1": "a", "2": "b", "3": "a", "4": "b"})
-    # 原 srt：四張首尾相接的卡，但時間與 _v2 完全不同（idx 1 在這裡是 0~3 秒不是 0~4.2 秒）
-    (tmp_episode_full / "01_母帶" / "測試集.srt").write_text(
-        "1\n00:00:00,000 --> 00:00:03,000\n甲\n\n"
-        "2\n00:00:03,000 --> 00:00:06,000\n乙\n\n"
-        "3\n00:00:06,000 --> 00:00:09,000\n丙\n\n"
-        "4\n00:00:09,000 --> 00:00:12,000\n丁\n",
-        encoding="utf-8",
-    )
+    # 原 srt：四張「彼此真重疊」的卡——守衛失效的話 sidecar 會貼到這些卡上，
+    # 燒出抬高的 MarginV（守衛在就整集退回單行，全 0）
+    _write_srt(tmp_episode_full / "01_母帶" / "測試集.srt", [
+        {"idx": 1, "start": 0, "end": 4, "text": "甲"},
+        {"idx": 2, "start": 3, "end": 7, "text": "乙"},
+        {"idx": 3, "start": 6, "end": 10, "text": "丙"},
+        {"idx": 4, "start": 9, "end": 13, "text": "丁"},
+    ])
     (tmp_episode_full / "03_成品" / "測試集_final_v2.srt").unlink()
-    # 沒有守衛的話這四張相接的卡會被 hold 撐出三處重疊 → 三筆抬高的 MarginV
     assert all(m == 0 for m in _yt_ass_margins(tmp_episode_full))

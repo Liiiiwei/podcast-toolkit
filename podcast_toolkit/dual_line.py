@@ -12,8 +12,8 @@
 MarginV 的是 stack_offset_px()。讓開的方向由呼叫端的對齊方式決定（YT 底部對齊
 往上疊、Reels 畫面中央往下疊），所以 layout() 要知道 bottom_anchored。
 
-另有一道前處理 hold_tail()：真實素材的卡是一張接一張、時間幾乎不重疊，光靠
-「重疊才分排」這條規則等於永遠不會觸發（前端預覽也一樣，所以預覽同樣看不到）。
+不做任何「延長前一句製造重疊」的前處理：Breeze 時間戳連續無氣口、相鄰卡 gap
+幾乎恆為 0，人為製造重疊會讓每次換講者都疊——分開講≠同時講（使用者裁決）。
 """
 from __future__ import annotations
 import bisect
@@ -26,53 +26,6 @@ LINE_HEIGHT_RATIO = 1.3
 # (1) 重疊短於這個秒數不算「同時說話」（分軌合併常見的擦邊重疊，抬起來只會閃一下）
 # (2) 分排後不足這個長度的片段，併進相鄰片段（避免字幕上下彈一下）
 MIN_STACK_SEC = 0.25
-
-# hold（見 hold_tail）：相鄰兩卡間隔小於這個秒數才算「接話」，超過就當換話題不延長。
-HOLD_GAP_SEC = 0.3
-
-
-def hold_tail(
-    cards: list[dict], hold_sec: float, gap_sec: float = HOLD_GAP_SEC
-) -> list[dict]:
-    """換人接話時把上一句多留在畫面上 hold_sec 秒（回傳新 list，依 start 排序）。
-
-    為什麼需要：字幕來自單軌混音轉錄，卡是一張接一張產生的（間隔 0~0.15 秒），
-    講者標是事後貼上去的能量標籤——「兩人同時說話」在資料層面根本不存在。實測
-    五集分軌集共 6636 張卡，時間真正重疊的只有 1 筆。不製造重疊，雙行永遠不會觸發。
-
-    被延長的那張永遠是先開始的那張，而 layout 讓先開始的排上面（見它的排序鍵），
-    所以延長的效果一律是「上一句往上讓位、讓完就消失」，不會有字幕抬起來又落回原位。
-
-    延長有三道上限，都是為了避免製造出比原本更怪的畫面：
-    - 不超過接話那句的結束（否則它消失了上一句還掛著，剩一排孤字）
-    - 不撞到同一位講者的下一句（否則同一個人自己占滿上下兩排）
-    - 延不出 MIN_STACK_SEC 以上的重疊就整個放棄（抬起來只閃一下，layout 也會併掉）
-    """
-    ordered = sorted(cards, key=lambda c: (float(c["start"]), float(c["end"])))
-    if hold_sec <= 0:
-        return [dict(c) for c in ordered]
-    out = [dict(c) for c in ordered]
-    for i, cur in enumerate(out[:-1]):
-        nxt = out[i + 1]
-        spk, nxt_spk = cur.get("speaker"), nxt.get("speaker")
-        if not spk or not nxt_spk or spk == nxt_spk:
-            # 沒講者標 → 分不出是不是換人；同一人接自己 → 不算接話
-            continue
-        gap = float(nxt["start"]) - float(cur["end"])
-        if gap < 0 or gap >= gap_sec:  # 已經重疊 → 不必動；隔太久 → 不是接話
-            continue
-        cap = float(cur["end"]) + hold_sec
-        limit = float(nxt["end"])
-        for later in out[i + 2:]:
-            if float(later["start"]) >= cap:
-                break  # 再後面的卡都碰不到，不影響上限
-            if later.get("speaker") == spk:
-                limit = min(limit, float(later["start"]))
-                break
-        new_end = min(cap, limit)
-        if new_end - float(nxt["start"]) >= MIN_STACK_SEC:
-            cur["end"] = new_end
-    return out
 
 
 def layout(cards: list[dict], bottom_anchored: bool = True) -> list[dict]:
@@ -96,7 +49,7 @@ def layout(cards: list[dict], bottom_anchored: bool = True) -> list[dict]:
     ]
     # 排序鍵：開始時間 → 講者字典序 → 原卡序（同時開始也要有穩定的上下關係）。
     # 先講的排上面，新來的從下排進場，舊的被往上推。這個順序不只是閱讀習慣：
-    # 它讓 stack 只可能隨時間上升，所以一張卡不會抬起來又落回原位（見 hold_tail）。
+    # 它讓 stack 只可能隨時間上升，所以一張卡不會抬起來又落回原位。
     keys = [(starts[i], str(cards[i].get("speaker") or ""), i) for i in range(n)]
 
     # 掃描線：把時間軸切成「同時出現的卡不變」的片段

@@ -85,11 +85,6 @@ const state = {
   subtitleMode: "burn", // "burn"=燒進畫面 | "sidecar"=另存字幕檔（影片不燒）
   // 非破壞性字幕偏移（秒）：存 episode.yaml，預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
   subtitleOffsetSec: 0,
-  // 雙行字幕（分軌集）：預覽要跟出片端同一套規則，不然預覽單行、成品雙行。
-  // subtitleDualLineHold = 換人接話時上一句多留在畫面上的秒數（0/負 = 關）。
-  // 兩個值都來自 episode cfg（defaults.yaml: subtitle_dual_line / subtitle_dual_line_hold）。
-  subtitleDualLine: true,
-  subtitleDualLineHold: 1.0,
   // 旋轉 / 封面 / 倍速這類「輸出設定」有沒有動過（unsavedCount 用；存檔/載入後歸零）
   outputDirty: false,
   // Undo / Redo：只追蹤會進 episode.yaml 的編輯狀態
@@ -694,120 +689,20 @@ function activeCardAt(t) {
   return null;
 }
 
-// === 雙行字幕的 hold（與出片端同一套規則）===
-// 這兩個常數必須跟後端 podcast_toolkit/dual_line.py 的同名常數一致，
-// 改一邊就要改另一邊，否則預覽與成品的雙行時機會對不上。
-const HOLD_GAP_SEC = 0.3; // 相鄰兩卡間隔小於這個秒數才算「接話」，超過當換話題不延長
-const MIN_STACK_SEC = 0.25; // 延不出這個長度的重疊就整個放棄（抬起來只閃一下）
-
-// 逐條對應 dual_line.py 的 hold_tail()：換人接話時，把上一句的結束時間往後延最多
-// holdSec 秒，人為製造重疊，雙行才有機會觸發（真實素材的卡一張接一張、幾乎不重疊，
-// 光靠「重疊才分排」這條規則等於永遠不觸發）。
-// rows 每筆需要 {key, start, end, speaker}；回傳 Map(key → 延長後的 end)，
-// 沒被延長的卡不進 Map（呼叫端用 ?? r.end 退回原值）。
-function computeHoldEnds(rows, holdSec) {
-  const out = new Map();
-  // holdSec <= 0 完全不動（含負數：負數只能當關掉，絕不可縮短任何卡）
-  if (!(holdSec > 0)) return out;
-  // 與 dual_line.py 一樣先按 (start, end) 升冪；expandedCards 只按 start 排，同 start 未定序
-  const ordered = rows
-    .slice()
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-  for (let i = 0; i + 1 < ordered.length; i++) {
-    const cur = ordered[i];
-    const nxt = ordered[i + 1];
-    const spk = cur.speaker;
-    const nxtSpk = nxt.speaker;
-    // 沒講者標 → 分不出是不是換人；同一人接自己 → 不算接話
-    if (!spk || !nxtSpk || spk === nxtSpk) continue;
-    const gap = nxt.start - cur.end;
-    if (gap < 0 || gap >= HOLD_GAP_SEC) continue; // 已重疊 → 不必動；隔太久 → 不是接話
-    const cap = cur.end + holdSec;
-    let limit = nxt.end; // 不超過接話那句的結束（否則它消失了上一句還掛著）
-    for (let j = i + 2; j < ordered.length; j++) {
-      if (ordered[j].start >= cap) break; // 再後面的卡都碰不到，不影響上限
-      if (ordered[j].speaker === spk) {
-        limit = Math.min(limit, ordered[j].start); // 不撞到同一位講者的下一句
-        break;
-      }
-    }
-    const newEnd = Math.min(cap, limit);
-    if (newEnd - nxt.start >= MIN_STACK_SEC) out.set(cur.key, newEnd);
-  }
-  return out;
-}
-
-// 有講者標（分軌 mics 或 Breeze speakers.json）→ 預覽走雙行那條路（renderCaption 與 hold 共用）
+// 有講者標（分軌 mics 或 Breeze speakers.json）→ 預覽走雙行那條路（renderCaption 用）
 function showsTwoLineCaption() {
   return (
     (state.mics && Object.keys(state.mics).length > 0) || !!state.hasSpeakerTags
   );
 }
 
-// hold 結果快取：1400+ 張卡不能每幀重算（排序 + 逐卡查講者 + 掃描）。
-// 失效判斷 = cards 陣列 / speakersMapping 換了新物件（換集、undo、重新載入），
-// 或 signature 變了（卡片張數、時間、講者標數、刪除狀態、hold 設定）。
-let _holdCache = { cards: null, speakers: null, sig: null, map: new Map() };
-
-// 只 fold 會影響 hold 的欄位，純算術不配置記憶體 → 比重跑一次 hold 便宜一個量級。
-// 刪除狀態逐卡 fold（不是只 fold 張數）：這樣「復原 A 同時刪掉 B」張數沒變也抓得到。
-function _holdSignature(exp, holdSec) {
-  let sig = exp.length * 31 + state.speakersMapping.size;
-  sig = sig * 31 + holdSec * 1000;
-  for (let i = 0; i < exp.length; i++) {
-    sig =
-      (sig * 31 +
-        exp[i].start * 1000 +
-        exp[i].end * 997 +
-        (state.deletions.has(exp[i].key) ? 13 : 0)) %
-      4294967296;
-  }
-  return sig;
-}
-
-// 這一集會不會雙行 → 決定要不要套 hold（沿用 renderCaption 的 showsTwoLineCaption 條件）
-function holdEndMap(exp) {
-  const holdSec =
-    state.subtitleDualLine && showsTwoLineCaption()
-      ? Number(state.subtitleDualLineHold) || 0
-      : 0;
-  const sig = _holdSignature(exp, holdSec);
-  if (
-    _holdCache.cards === state.cards &&
-    _holdCache.speakers === state.speakersMapping &&
-    _holdCache.sig === sig
-  ) {
-    return _holdCache.map;
-  }
-  // 刪掉的卡不進 hold 計算：出片端是先濾掉刪段卡才排雙行的（assemble.py 的
-  // filter_srt_by_intervals → _write_ass_from_srt）。預覽若把刪卡也算進去，
-  // 「換人接話」會判斷成不同結果 —— 刪掉中間那張就會多算或少算一次雙行。
-  const rows = exp
-    .filter((r) => !state.deletions.has(r.key))
-    .map((r) => ({
-      key: r.key,
-      start: r.start,
-      end: r.end,
-      speaker: computeEffectiveSpeaker(r.key),
-    }));
-  _holdCache = {
-    cards: state.cards,
-    speakers: state.speakersMapping,
-    sig,
-    map: computeHoldEnds(rows, holdSec),
-  };
-  return _holdCache.map;
-}
-
 // 分軌版：拿出 t 當下所有 active 卡（可能不只一張：兩人同時講話 → 兩張不同 speaker 的卡同時在跑）。
 // 單軌集 / 沒重疊 → 回 [activeCardAt] 退化結果，給 renderCaption 統一邏輯用。
-// 結束時間吃 hold 延長後的值（沒被延長的卡就是原本的 end），預覽才跟成品一致。
+// 只認「時間真的重疊」，不做延長上一句人為製造重疊的前處理——Breeze 相鄰卡 gap
+// 幾乎恆為 0，人為延長會讓每次換講者都疊（分開講≠同時講，使用者裁決）。
 function activeCardsAt(t) {
   const exp = expandedCards();
-  const holds = holdEndMap(exp);
-  const hits = exp.filter(
-    (r) => t >= r.start && t < (holds.get(r.key) ?? r.end),
-  );
+  const hits = exp.filter((r) => t >= r.start && t < r.end);
   if (hits.length) return hits;
   // fallback 同 activeCardAt：尾段空窗找最後一張 sub-card
   for (let i = exp.length - 1; i >= 0; i--) {
@@ -2904,9 +2799,6 @@ async function loadEpisodeState() {
     : [];
   state.hasSpeakerTags = !!data.has_speaker_tags;
   state.cameraRule = data.camera_rule || {};
-  // 雙行字幕設定：跟出片端同一份 cfg（沒回傳時當開啟，與 defaults.yaml 一致）
-  state.subtitleDualLine = data.subtitle_dual_line !== false;
-  state.subtitleDualLineHold = Number(data.subtitle_dual_line_hold) || 0;
   const validSpeakers = new Set([
     ...Object.keys(state.mics),
     ...Object.values(data.speakers_mapping || {}),
