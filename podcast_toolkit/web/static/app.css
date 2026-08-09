@@ -2551,8 +2551,9 @@ dialog.modal::backdrop {
    舊值跟背景同色等於沒有邊框，整串卡糊成一片。 */
 .card {
   display: grid;
-  /* 時間欄 66px：容得下 "119:59.99"（fmtTimeCard 的 0.01s 精度，11px mono 約 59px）*/
-  grid-template-columns: 18px 66px 1fr 24px;
+  /* 時間欄 66px：容得下 "119:59.99"（fmtTimeCard 的 0.01s 精度，11px mono 約 59px）
+     末欄 auto：操作區（×／調時間／看過）直排，寬度隨最寬的鈕 */
+  grid-template-columns: 18px 66px 1fr auto;
   gap: 10px;
   align-items: start;
   background: var(--surface-raised);
@@ -2630,20 +2631,27 @@ dialog.modal::backdrop {
   line-height: 1.4;
   cursor: pointer;
 }
-/* 微調時間：⏱ 入口 / dirty 指示 / 展開的工具列 */
+/* 微調時間：「調時間」鈕（末欄操作區，有邊框＋hover 底色的按鈕外觀，
+   不再是孤懸時間欄下方的淡灰圖示）/ dirty 指示 / 展開的工具列 */
 .card-time-edit-btn {
-  display: block;
-  margin-top: 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
   padding: 0;
-  border: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-faint);
+  color: var(--text-dim);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
 }
 .card-time-edit-btn:hover {
   color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .card.time-dirty .card-time-val {
   color: var(--accent);
@@ -2826,13 +2834,14 @@ dialog.modal::backdrop {
 .card-review-flag svg {
   flex: none;
 }
-/* 「看過」標記 toggle：時間欄小鈕；標過就把整張卡的複查視覺淡化 */
+/* 「看過」標記 toggle：末欄操作區小鈕（間距交給 .card-actions 的 gap）；
+   標過就把整張卡的複查視覺淡化 */
 .card-review-seen {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  margin-top: 3px;
   padding: 1px 5px;
+  white-space: nowrap;
   font-size: 10px;
   font-weight: 600;
   line-height: 1.4;
@@ -3151,6 +3160,22 @@ dialog.modal::backdrop {
 .card-text.dirty {
   border-bottom: 1px solid var(--accent);
 }
+/* 末欄操作區：×（刪除）／調時間／看過 直排。識別資訊恆顯、操作鈕預設退場，
+   卡片 hover／鍵盤 focus／時間編輯中浮現；只動 opacity 過渡（零版面位移），
+   不用 display / visibility 切換 */
+.card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.25;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+.card:hover .card-actions,
+.card:focus-within .card-actions,
+.card.editing-time .card-actions {
+  opacity: 1;
+}
 .card-del {
   background: transparent;
   color: var(--text-dim);
@@ -3223,7 +3248,7 @@ dialog.modal::backdrop {
 /* === 雙鏡頭 A/B toggle（僅雙機集顯示）=== */
 /* 雙機集才會帶 card-has-cam，多開一欄放 A/B 膠囊；單機集格線維持原本 4 欄 */
 .card.card-has-cam {
-  grid-template-columns: 18px 66px 1fr auto 24px;
+  grid-template-columns: 18px 66px 1fr auto auto;
 }
 /* A 鏡頭：用低調的深藍左邊框，讓整集還是維持暗色基調 */
 .card.cam-a {
@@ -3274,14 +3299,13 @@ dialog.modal::backdrop {
 .card.deleted.card-has-speaker {
   border-left-color: var(--text-faint);
 }
+/* 鏡頭膠囊走「描邊」語言（transparent 底＋色框＋文字同色），
+   跟講者的「實心」膠囊做視覺區隔：實心＝屬性標示、描邊＝可點的切換鈕 */
 .card-cam {
   display: inline-flex;
-  gap: 0;
+  gap: 4px;
   align-self: center;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  background: var(--surface);
+  background: transparent;
 }
 .card-cam.muted {
   opacity: 0.4;
@@ -3289,7 +3313,8 @@ dialog.modal::backdrop {
 .cam-btn {
   background: transparent;
   color: var(--text-dim);
-  border: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
   font-size: 10px;
   font-weight: 600;
   font-family: inherit;
@@ -3303,12 +3328,12 @@ dialog.modal::backdrop {
   background: var(--accent-soft);
 }
 .cam-a-btn.active {
-  background: var(--cam-a);
-  color: #fff;
+  color: var(--cam-a-bright);
+  border-color: var(--cam-a-bright);
 }
 .cam-b-btn.active {
-  background: var(--accent);
-  color: #1a0e07;
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* === 響應式：≤900 改單欄；≤640 topbar 改成兩列 ===

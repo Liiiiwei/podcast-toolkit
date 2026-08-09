@@ -1286,6 +1286,7 @@ function renderNewCardRow(r, list) {
   badge.className = "card-new-badge";
   badge.textContent = "新";
   time.appendChild(badge);
+  // 「調時間」鈕掛末欄操作區（與 renderCards 主路徑同款三區分離）
   const teBtn = document.createElement("button");
   teBtn.type = "button";
   teBtn.className = "card-time-edit-btn";
@@ -1295,7 +1296,6 @@ function renderNewCardRow(r, list) {
     e.stopPropagation();
     toggleTimeEdit(newCardTimeTarget(nc), div);
   });
-  time.appendChild(teBtn);
   time.addEventListener("click", () => {
     $("#video").currentTime = nc.start;
   });
@@ -1330,7 +1330,11 @@ function renderNewCardRow(r, list) {
     renderCaption();
   });
 
-  div.append(spacer, time, text, del);
+  // 末欄操作區：× 在上、「調時間」在下（新卡無「看過」鈕）
+  const actions = document.createElement("div");
+  actions.className = "card-actions";
+  actions.append(del, teBtn);
+  div.append(spacer, time, text, actions);
   if (state.timeEditKey === `new:${nc.tempId}`) {
     div.appendChild(buildTimeToolbar(newCardTimeTarget(nc)));
     div.classList.add("editing-time");
@@ -2130,7 +2134,8 @@ function renderCards() {
       $("#video").currentTime = r.start;
     });
     if (!isSub && state.cardTimings.has(c.idx)) div.classList.add("time-dirty");
-    // 未切的整卡才給「微調時間」入口 + 拖曳把手（切過的卡時間由斷句配速決定）
+    // 未切的整卡才給「微調時間」鈕（掛末欄操作區）+ 拖曳把手（切過的卡時間由斷句配速決定）
+    let teBtn = null;
     if (!isSub) {
       // 拖曳換位置把手：拖一張卡 → 設時間 override 移到新位置。後端 always-sort 修正後，
       // 拖完存檔會「乾淨地」重排（不再像舊版那樣寫出非單調 SRT 整份亂掃）。
@@ -2141,7 +2146,7 @@ function renderCards() {
       grip.draggable = true;
       time.insertBefore(grip, time.firstChild);
 
-      const teBtn = document.createElement("button");
+      teBtn = document.createElement("button");
       teBtn.type = "button";
       teBtn.className = "card-time-edit-btn";
       teBtn.textContent = "⏱";
@@ -2150,7 +2155,6 @@ function renderCards() {
         e.stopPropagation();
         toggleTimeEdit(cardTimeTarget(c), div);
       });
-      time.appendChild(teBtn);
     }
     // 分軌集才掛 speaker tag：值來自 srt_merge sidecar（read-only）
     // 要改 speaker → 走 _final_v2.speakers.json 手改或重跑 srt_merge，不在 UI 上 toggle
@@ -2159,7 +2163,8 @@ function renderCards() {
       div.classList.add("card-has-speaker", `speaker-${sp}`);
       const tag = document.createElement("div");
       tag.className = `card-speaker-tag speaker-${sp}`;
-      tag.textContent = speakerLabel(sp);
+      // 文字帶「講」字樣（例「講3」）：跟右側鏡頭 A/B 膠囊做語意區隔，不再是謎樣數字
+      tag.textContent = `講${speakerLabel(sp)}`;
       tag.title = `講者 ${speakerLabel(sp)}（來自分軌 SRT，要改去 sidecar）`;
       time.appendChild(tag);
     }
@@ -2215,9 +2220,11 @@ function renderCards() {
     }
     // 「看過」標記（session 內）：所有待複查卡（半句/幻覺 + 空拍）都可標，
     // 標過就淡化、退出待辦計數與 J/K 導覽。不寫檔、不進 undo、換集即清。
+    // 鈕本體掛末欄操作區（⚠ 旗標留在時間欄恆顯）。
+    let seenBtn = null;
     if (cardNeedsReview(c) && !isSub) {
       const seen = state.reviewSeen.has(c.idx);
-      const seenBtn = document.createElement("button");
+      seenBtn = document.createElement("button");
       seenBtn.type = "button";
       seenBtn.className = "card-review-seen" + (seen ? " is-seen" : "");
       seenBtn.title = seen ? "已看過（點擊取消標記）" : "標記為已看過";
@@ -2231,7 +2238,6 @@ function renderCards() {
         renderReviewToolbar();
         renderCards();
       });
-      time.appendChild(seenBtn);
     }
 
     const text = document.createElement("div");
@@ -2509,8 +2515,8 @@ function renderCards() {
       aBtn.className = "cam-btn cam-a-btn" + (eff === "a" ? " active" : "");
       aBtn.textContent = "A";
       aBtn.title = state.camerasMapping.get(key)
-        ? "目前鏡頭（已 explicit 標記）"
-        : "目前鏡頭（沿用前一張）";
+        ? "鏡頭 A：目前鏡頭（已 explicit 標記）"
+        : "鏡頭 A：目前鏡頭（沿用前一張）";
       aBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         // 已經 explicit 標 a → 不入 stack 也不重畫
@@ -2530,8 +2536,8 @@ function renderCards() {
       bBtn.className = "cam-btn cam-b-btn" + (eff === "b" ? " active" : "");
       bBtn.textContent = "B";
       bBtn.title = state.camerasMapping.get(key)
-        ? "切到 B 鏡頭（已 explicit 標記）"
-        : "切到 B 鏡頭";
+        ? "鏡頭 B：切到 B 鏡頭（已 explicit 標記）"
+        : "鏡頭 B：切到 B 鏡頭";
       bBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (state.camerasMapping.get(key) === "b") return;
@@ -2548,10 +2554,18 @@ function renderCards() {
       camPill.append(aBtn, bBtn);
     }
 
+    // 末欄操作區：×（刪除）在上、「調時間」在下、「看過」僅待複查卡第三顆。
+    // 識別資訊（#、時間、講者、⚠）留在左欄恆顯；操作鈕靠 .card-actions 的
+    // opacity 規則 hover 才浮現。事件邏輯不動，只搬 DOM 組裝位置。
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    actions.appendChild(del);
+    if (teBtn) actions.appendChild(teBtn);
+    if (seenBtn) actions.appendChild(seenBtn);
     if (camPill) {
-      div.append(susBox, time, text, camPill, del);
+      div.append(susBox, time, text, camPill, actions);
     } else {
-      div.append(susBox, time, text, del);
+      div.append(susBox, time, text, actions);
     }
     // 整列重繪（undo / 切句 / 刪除等）後，若這張卡的時間微調工具列原本開著就還原
     if (!isSub && state.timeEditKey === String(c.idx)) {
