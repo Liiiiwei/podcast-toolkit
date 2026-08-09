@@ -3,8 +3,8 @@
 # 用法：./build_app.sh
 #
 # 產物：
-#   dist/Podcast.app                  ── 自帶 Python runtime、ffmpeg、Breeze 語音辨識（含 2.9G 權重）
-#   dist/Podcast-Toolkit-<ver>.dmg    ── 拖曳安裝用的磁碟映像（內含 app + Applications 捷徑 + 中文安裝說明）
+#   dist/JOIN Podcast Toolkit.app          ── 自帶 Python runtime、ffmpeg、Breeze 語音辨識（含 2.9G 權重）
+#   dist/JOIN-Podcast-Toolkit-<ver>.dmg    ── 拖曳安裝用的磁碟映像（內含 app + Applications 捷徑 + 中文安裝說明）
 #
 # 設計：主 app 走精簡路線（不含 torch），轉字幕交給內附的 Breeze sidecar 子進程。
 #       sidecar = 相對化的 CLT Python3.9 framework + arm64 cp39 site-packages + Breeze 程式 + 權重。
@@ -42,7 +42,7 @@ if [[ -z "$STAGE" ]]; then
         STAGE="_pkgbuild/breeze-stage"
     fi
 fi
-APP="dist/Podcast.app"
+APP="dist/JOIN Podcast Toolkit.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
 VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s*\"([^\"]+)\"',open('setup_app.py').read()).group(1))" 2>/dev/null || echo "0.1.0")
 # build 標記＝日期＋git short SHA（例 20260717-ddfd83d），讓每顆 DMG 檔名/掛載名/
@@ -52,7 +52,7 @@ BUILD_DATE=$(date +%Y%m%d)
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
 git diff --quiet 2>/dev/null || GIT_SHA="${GIT_SHA}-dirty"
 BUILD_TAG="${BUILD_DATE}-${GIT_SHA}"
-DMG="dist/Podcast-Toolkit-${VER}-${BUILD_TAG}.dmg"
+DMG="dist/JOIN-Podcast-Toolkit-${VER}-${BUILD_TAG}.dmg"
 
 # ── build 識別碼（單一真實來源）────────────────────────────────────────────────
 # 每次 build 都不同：marketing 版號 + git 短碼(+dirty) + build 時間戳，
@@ -111,8 +111,8 @@ codesign --verify --deep --strict "$APP" && echo "  ✓ 簽章驗證通過"
 echo "→ [4/5] 組 DMG staging（app + Applications 捷徑 + 中文安裝說明）"
 rm -rf "$DMG_STAGE"; mkdir -p "$DMG_STAGE"
 cat > "$DMG_STAGE/安裝說明.txt" <<'TXT'
-Podcast Toolkit 安裝說明
-========================
+JOIN Podcast Toolkit 安裝說明
+=============================
 
 【系統需求】
 • Apple Silicon Mac（M1／M2／M3／M4）
@@ -120,23 +120,23 @@ Podcast Toolkit 安裝說明
 • 免裝 Python、ffmpeg、Homebrew —— 全部已內附，開箱即用
 
 【安裝步驟】
-1. 把左邊的「Podcast.app」拖到右邊的「Applications」資料夾。
+1. 把左邊的「JOIN Podcast Toolkit.app」拖到右邊的「Applications」資料夾。
 2. 到「應用程式」資料夾，第一次啟動請照下方【第一次開啟】做。
 
 【第一次開啟】（重要，只需做一次）
 本 App 採 ad-hoc 簽章（未經 Apple 公證），第一次開啟系統會擋下。二選一：
 
 方法 A（滑鼠，推薦）：
-  在 Podcast.app 上「按住 Control 點一下」（或按右鍵）→ 選「開啟」→
+  在「JOIN Podcast Toolkit.app」上「按住 Control 點一下」（或按右鍵）→ 選「開啟」→
   跳出警告後再按一次「開啟」。之後就能直接雙擊。
 
 方法 B（終端機）：
   打開「終端機」，貼上這行按 Enter：
-    xattr -dr com.apple.quarantine /Applications/Podcast.app
+    xattr -dr com.apple.quarantine "/Applications/JOIN Podcast Toolkit.app"
   之後直接雙擊即可。
 
 【使用方式】
-• 雙擊 Podcast.app → 自動開啟瀏覽器進入剪輯介面。
+• 雙擊「JOIN Podcast Toolkit.app」→ 自動開啟瀏覽器進入剪輯介面。
 • 若瀏覽器沒自動開，手動輸入畫面上的網址（http://127.0.0.1:…）。
 
 【關於轉字幕】
@@ -144,18 +144,18 @@ Podcast Toolkit 安裝說明
 • 這也是 App 較大（約 4GB）的原因。
 
 【疑難排解】
-• 若出現「Podcast 已損毀，無法打開」：那是隔離屬性造成，執行上方【方法 B】即可解決。
+• 若出現「JOIN Podcast Toolkit 已損毀，無法打開」：那是隔離屬性造成，執行上方【方法 B】即可解決。
 • 啟動失敗時，錯誤會記在 ~/.podcast-toolkit/launcher.log。
 TXT
 # build 標記寫進說明檔（版本＋日期＋git SHA），回報問題時報這行就知道是哪顆
 printf '\n【版本標記】%s  build %s\n' "$VER" "$BUILD_TAG" >> "$DMG_STAGE/安裝說明.txt"
-ditto "$APP" "$DMG_STAGE/Podcast.app"
+ditto "$APP" "$DMG_STAGE/JOIN Podcast Toolkit.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 echo "  ✓ staging 就緒"
 
 echo "→ [5/5] 產生壓縮 DMG（4G，UDZO，需數分鐘）"
 rm -f "$DMG"
-hdiutil create -volname "Podcast $BUILD_TAG" -srcfolder "$DMG_STAGE" \
+hdiutil create -volname "JOIN Podcast Toolkit $BUILD_TAG" -srcfolder "$DMG_STAGE" \
     -fs HFS+ -format UDZO -imagekey zlib-level=6 -ov "$DMG" >/dev/null
 echo "  ✓ $DMG（$(du -sh "$DMG" | cut -f1)）"
 
@@ -168,4 +168,4 @@ echo "   App ：$APP"
 echo "   DMG ：$DMG"
 echo ""
 echo "   ⚠ ad-hoc 簽章未公證：別台 Mac 第一次開啟要「右鍵→開啟」或"
-echo "      xattr -dr com.apple.quarantine /Applications/Podcast.app（DMG 內安裝說明已寫）"
+echo '      xattr -dr com.apple.quarantine "/Applications/JOIN Podcast Toolkit.app"（DMG 內安裝說明已寫）'

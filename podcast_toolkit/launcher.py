@@ -59,7 +59,7 @@ def main() -> int:
     except BaseException as exc:
         _log_exception(exc)
         _alert(
-            "Podcast Toolkit 啟動失敗",
+            "JOIN Podcast Toolkit 啟動失敗",
             f"錯誤：{exc}\\n\\n詳細 log：{LOG_PATH}",
         )
         return 1

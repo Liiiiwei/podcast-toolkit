@@ -4,7 +4,7 @@
     python3 setup_app.py py2app -A      # alias mode（開發用，快）
     python3 setup_app.py py2app          # 正式打包（會把 Python runtime 也包進去）
 
-產物：dist/Podcast.app
+產物：dist/JOIN Podcast Toolkit.app
 """
 import os
 import sys
@@ -80,8 +80,9 @@ OPTIONS = {
         "uvicorn.loops.auto", "uvicorn.loops.asyncio",
     ],
     "plist": {
-        "CFBundleName": "Podcast",
-        "CFBundleDisplayName": "Podcast Toolkit",
+        # CFBundleName 同時決定 py2app 輸出的 .app 檔名（dist/<CFBundleName>.app）
+        "CFBundleName": "JOIN Podcast Toolkit",
+        "CFBundleDisplayName": "JOIN Podcast Toolkit",
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
         # CFBundleVersion 帶成每次都變的 build 識別碼（給 Finder / crash log 認版），
         # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回版號。
@@ -103,7 +104,7 @@ OPTIONS = {
 }
 
 setup(
-    name="Podcast",
+    name="JOIN Podcast Toolkit",
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
