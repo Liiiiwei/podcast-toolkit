@@ -2714,6 +2714,36 @@ dialog.modal::backdrop {
   outline: none;
   border-color: var(--accent);
 }
+/* E1：循環試聽 toggle 鈕的啟用態（aria-pressed 同步 _teLoopOn） */
+.te-btn.te-loop[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+/* E3：與相鄰卡重疊的紅色警示（時長顯示旁，repaint 即時增減） */
+.te-overlap {
+  margin-left: 6px;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+/* E2：工具列底部的快捷鍵提示列（flex-basis 100% 換到自己一行） */
+.te-hints {
+  flex-basis: 100%;
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.te-hints kbd {
+  padding: 0 4px;
+  border: 0.5px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface-sunken, rgba(255, 255, 255, 0.04));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
 /* 字幕區頂端 sticky 工具列：播放/暫停 + 時間 + 插入字卡（捲動時一直在手邊）*/
 .cards-toolbar {
   position: sticky;

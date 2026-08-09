@@ -332,10 +332,15 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     stepCard(-1);
   } else if (key === "p" || key === "P") {
-    // 試聽當前播放位置所在的字幕卡（從卡頭播到卡尾自動停）
     e.preventDefault();
-    const r = activeCardAt($("#video").currentTime);
-    if (r) auditionCard(r);
+    if (state.timeEditKey !== null && _timeEditCtl) {
+      // E1：時間工具列開啟期間，P 改為切換循環試聽
+      toggleTimeLoop();
+    } else {
+      // 試聽當前播放位置所在的字幕卡（從卡頭播到卡尾自動停）
+      const r = activeCardAt($("#video").currentTime);
+      if (r) auditionCard(r);
+    }
   } else if (key === "j" || key === "J") {
     // 跳下一張待複查卡（沒有待複查卡時自動 no-op）
     e.preventDefault();
@@ -1065,6 +1070,100 @@ function newCardTimeTarget(nc) {
 // 工具列關掉 / 整列重繪換卡時會被覆寫或清成 null。
 let _timeEditCtl = null;
 
+// === E1 循環試聽 ===
+// 工具列開啟期間把播放圈在「起點 −0.3s ～ 訖點 ＋0.3s」。邊界每圈從 _timeEditCtl.target
+// 重讀生效值（既有卡走 getEffectiveCardTime、新卡讀 nc 自身），所以打字／±鈕／方向鍵／
+// ⇤⇥／[ ]／時間軸拖同卡邊緣改值後，下一圈自然生效 —— 不另存循環邊界 state。
+// listener 只在工具列開啟期間掛在 #video 上；關工具列（Esc／再點 ⏱／換集）即拆，全域無殘留。
+const TIME_LOOP_PAD = 0.3;
+let _teLoopOn = false; // 循環開關（toggle 鈕／P 鍵可停續；工具列關閉時恆為 false）
+let _teLoopAttached = false; // timeupdate listener 是否掛著（開工具列期間恆掛）
+function onTimeLoopTick() {
+  // 工具列已關卻還在跑（某個關閉路徑漏拆時的自癒）→ 拆 listener 收尾
+  if (!_timeEditCtl || state.timeEditKey === null) {
+    stopTimeLoop(false);
+    return;
+  }
+  const v = $("#video");
+  // 暫停中不拉回：讓「暫停 → 拖到目標點 → ⇤⇥／[ ] 打點」的工作流可以自由移動游標
+  if (!_teLoopOn || v.paused) return;
+  const t = _timeEditCtl.target.get();
+  if (v.currentTime > t.end + TIME_LOOP_PAD) {
+    v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
+  }
+}
+function startTimeLoop() {
+  if (!_timeEditCtl) return;
+  if (!_teLoopAttached) {
+    $("#video").addEventListener("timeupdate", onTimeLoopTick);
+    _teLoopAttached = true;
+  }
+  _teLoopOn = true;
+  _auditionEnd = null; // 循環接管播放守門，取消單次試聽（P 鍵此時也不會再進 auditionCard）
+  const v = $("#video");
+  const t = _timeEditCtl.target.get();
+  v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
+  v.play().catch(() => {});
+  syncTimeLoopBtn();
+}
+function stopTimeLoop(pauseVideo = true) {
+  if (_teLoopAttached) {
+    $("#video").removeEventListener("timeupdate", onTimeLoopTick);
+    _teLoopAttached = false;
+  }
+  // 循環驅動中的播放才順手暫停（「影片停在當下即可」）；使用者自己在放的不動
+  if (_teLoopOn && pauseVideo) $("#video").pause();
+  _teLoopOn = false;
+  syncTimeLoopBtn();
+}
+// toggle 鈕／P 鍵：停 = 只關循環判定並暫停（listener 留著，工具列還開）；續 = 從頭起圈
+function toggleTimeLoop() {
+  if (_teLoopOn) {
+    _teLoopOn = false;
+    $("#video").pause();
+    syncTimeLoopBtn();
+  } else {
+    startTimeLoop();
+  }
+}
+// 把工具列裡的「循環」鈕同步到 _teLoopOn（鈕可能不在 DOM，例如整列重繪的瞬間）
+function syncTimeLoopBtn() {
+  const b = document.querySelector(".card-time-edit .te-loop");
+  if (!b) return;
+  b.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
+  b.classList.toggle("active", _teLoopOn);
+}
+
+// E3：本卡（生效起訖 t）與前後相鄰既有卡的重疊警示文字。維持「刻意不夾制」——
+// 重疊照樣放行，只在工具列給可見訊號。相鄰以生效 start 排序（expandedCards 已排序），
+// 只看緊鄰前一張與後一張；已刪卡不進最終輸出、新卡沒有 #N 可指，都不比。
+// 顯示格式一位小數（X.Xs）：低於 0.05s 的重疊顯示會變 0.0s，視為貼齊不警示
+// （字幕卡半數首尾貼齊，0 距離是常態不是問題）。
+function timeOverlapWarnings(domKey, t) {
+  const rows = expandedCards().filter(
+    (r) => r.c && String(r.key) !== domKey && !state.deletions.has(r.key),
+  );
+  let prev = null;
+  let next = null;
+  for (const r of rows) {
+    if (r.start <= t.start) prev = r;
+    else {
+      next = r;
+      break;
+    }
+  }
+  const out = [];
+  if (prev) {
+    const ov = Math.min(prev.end, t.end) - Math.max(prev.start, t.start);
+    if (ov >= 0.05) out.push(`⚠ 與 #${prev.c.idx} 重疊 ${ov.toFixed(1)}s`);
+  }
+  if (next) {
+    const ov = Math.min(t.end, next.end) - Math.max(t.start, next.start);
+    if (ov >= 0.05) out.push(`⚠ 與 #${next.c.idx} 重疊 ${ov.toFixed(1)}s`);
+  }
+  return out;
+}
+
 // 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
 // undo / 整列重繪時靠 renderCards 的注入點還原。
 function buildTimeToolbar(target) {
@@ -1073,6 +1172,10 @@ function buildTimeToolbar(target) {
   bar.addEventListener("click", (e) => e.stopPropagation());
   const val = document.createElement("span");
   val.className = "te-val";
+  // E3：重疊警示（時長旁的紅字，repaint 時即時增減）
+  const warn = document.createElement("span");
+  warn.className = "te-overlap";
+  warn.hidden = true;
   const inS = mkTimeInput("起點時間（可打 12.34 或 1:23.45）");
   const inE = mkTimeInput("終點時間（可打 12.34 或 1:23.45）");
   const repaint = () => {
@@ -1080,6 +1183,9 @@ function buildTimeToolbar(target) {
     inS.value = fmtTimeCard(t.start);
     inE.value = fmtTimeCard(t.end);
     val.textContent = `${(t.end - t.start).toFixed(2)}s`;
+    const msgs = timeOverlapWarnings(target.domKey, t);
+    warn.textContent = msgs.join("｜");
+    warn.hidden = msgs.length === 0;
     const card = document.querySelector(
       `#cards-list .card[data-idx="${target.domKey}"]`,
     );
@@ -1152,6 +1258,14 @@ function buildTimeToolbar(target) {
     s.textContent = t;
     return s;
   };
+  // E1：循環試聽 toggle。開工具列時 toggleTimeEdit 會自動 startTimeLoop，
+  // 這裡建鈕時帶當下狀態（整列重繪重建工具列時循環不中斷，鈕的亮暗要跟上）。
+  const loopBtn = mk("循環", "循環試聽這張卡（P 鍵同效）", () =>
+    toggleTimeLoop(),
+  );
+  loopBtn.classList.add("te-loop");
+  loopBtn.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
+  loopBtn.classList.toggle("active", _teLoopOn);
   bar.append(
     lab("起"),
     inS,
@@ -1169,11 +1283,20 @@ function buildTimeToolbar(target) {
     }),
     mk("−", "終點 −0.1s（⌥←）", () => nudge(0, -0.1)),
     mk("＋", "終點 +0.1s（⌥→）", () => nudge(0, 0.1)),
+    loopBtn,
     val,
+    warn,
   );
   if (target.reset) {
     bar.append(mk("還原", "清除這張卡的時間微調", () => target.reset()));
   }
+  // E2：快捷鍵提示列 —— 微調快捷鍵早就存在但介面零提示等於不存在，讓它們現形
+  const hints = document.createElement("div");
+  hints.className = "te-hints";
+  hints.innerHTML =
+    "<kbd>←→</kbd> 起點｜<kbd>⌥←→</kbd> 訖點｜<kbd>Shift</kbd> ×5｜<kbd>⌘</kbd> ×10｜" +
+    "<kbd>[</kbd> <kbd>]</kbd> 設為播放位置｜<kbd>P</kbd> 循環";
+  bar.append(hints);
   repaint();
   _timeEditCtl = { target, repaint };
   return bar;
@@ -1197,8 +1320,12 @@ const TIME_NUDGE_STEPS = { plain: 0.1, shift: 0.5, meta: 1.0 };
 document.addEventListener("keydown", onTimeNudgeKey);
 function onTimeNudgeKey(e) {
   if (!_timeEditCtl || state.timeEditKey === null) return;
-  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+  const isArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
+  const isBracket = e.key === "[" || e.key === "]";
+  if (!isArrow && !isBracket && e.key !== "Escape") return;
   if (e.ctrlKey) return;
+  // [ ] 打點與 Esc 關工具列都是無修飾鍵語意（⌘[ 這類瀏覽器組合不搶）
+  if (!isArrow && (e.metaKey || e.altKey || e.shiftKey)) return;
   const t = e.target;
   // 焦點在輸入框／字幕本文時讓出原生游標移動
   if (
@@ -1222,7 +1349,23 @@ function onTimeNudgeKey(e) {
   ) {
     return;
   }
+  if (e.key === "Escape") {
+    // E1：Esc 關工具列（循環一併停止）。輸入框內的 Esc 到不了這裡（上面焦點守衛讓開，
+    // 由輸入框自己還原值＋blur）—— 所以是「第一下還原輸入、第二下關工具列」。
+    e.preventDefault();
+    closeTimeEdit();
+    return;
+  }
   e.preventDefault();
+  if (isBracket) {
+    // E2：單鍵打點 —— [ 設起點、] 設訖點＝目前播放位置（與 ⇤/⇥ 鈕同路徑同效）
+    const cur = _timeEditCtl.target.get();
+    const now = $("#video").currentTime;
+    if (e.key === "[") _timeEditCtl.target.set(now, cur.end);
+    else _timeEditCtl.target.set(cur.start, now);
+    _timeEditCtl.repaint();
+    return;
+  }
   const step = e.metaKey
     ? TIME_NUDGE_STEPS.meta
     : e.shiftKey
@@ -1259,11 +1402,29 @@ function toggleTimeEdit(target, cardEl) {
     cardEl.classList.remove("editing-time");
     state.timeEditKey = null;
     _timeEditCtl = null;
+    stopTimeLoop(); // E1：再點 ⏱ 關工具列 → 停循環
   } else {
     cardEl.appendChild(buildTimeToolbar(target));
     cardEl.classList.add("editing-time");
     state.timeEditKey = target.domKey;
+    startTimeLoop(); // E1：開工具列（含切到別卡）即自動循環試聽該卡區間
   }
+}
+
+// Esc（或任何程式路徑）直接關掉目前開著的時間工具列；循環一併停止
+function closeTimeEdit() {
+  if (state.timeEditKey === null) return;
+  const card = document.querySelector(
+    `#cards-list .card[data-idx="${state.timeEditKey}"]`,
+  );
+  if (card) {
+    const bar = card.querySelector(".card-time-edit");
+    if (bar) bar.remove();
+    card.classList.remove("editing-time");
+  }
+  state.timeEditKey = null;
+  _timeEditCtl = null;
+  stopTimeLoop();
 }
 
 // 渲染一張「新增字卡」列（自包，不碰既有卡的 sus / split / cam 邏輯）
@@ -1324,6 +1485,7 @@ function renderNewCardRow(r, list) {
     if (state.timeEditKey === `new:${nc.tempId}`) {
       state.timeEditKey = null;
       _timeEditCtl = null;
+      stopTimeLoop(); // E1：刪掉正在編輯的新卡 → 停循環
     }
     renderCards();
     renderTopbar();
@@ -2773,6 +2935,7 @@ async function loadEpisodeState() {
   state.cardMerges = new Set();
   state.timeEditKey = null;
   _timeEditCtl = null;
+  stopTimeLoop(); // E1：換集 → 停循環，避免舊集的循環邊界殘留
   state.newCards = [];
   state.newCardSeq = 0;
   state.cardTimings = new Map();
@@ -3391,6 +3554,7 @@ function autoSkipDeletedSegments() {
   const v = $("#video");
   if (v.paused) return;
   if (_auditionEnd != null) return; // 試聽中不搶播放控制權
+  if (_teLoopOn) return; // E1：循環試聽中不搶播放控制權
   const jumped = nextKeepTime(v.currentTime);
   if (jumped > v.currentTime + 0.01) v.currentTime = jumped;
 }
@@ -7684,6 +7848,7 @@ $("#card-insert-btn").addEventListener("click", () => {
   state.newCards.push({ tempId, start, end, text: "" });
   state.timeEditKey = null;
   _timeEditCtl = null;
+  stopTimeLoop(); // E1：插卡會關掉原工具列 → 一併停循環
   renderCards();
   renderTopbar();
   renderCaption();
