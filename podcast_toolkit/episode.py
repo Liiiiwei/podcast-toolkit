@@ -42,7 +42,20 @@ class Episode:
         return self.resolve_episode_path(self.cfg["main_srt"])
 
     def main_audio(self) -> Path:
-        """Gemini 轉字幕的輸入音檔。預設找 01_母帶/ 內最新一個 .m4a / .mp3 / .wav。"""
+        """轉字幕／波形的主音訊。
+
+        優先採用 episode.yaml 宣告的正典音軌 audio.path（與 assemble 出片音軌同一份，
+        多軌集才不會選到單支 mic → 波形只反映一位講者）；未設 audio.path 或該檔不存在時，
+        才 fallback 找 01_母帶/ 內最新一個 .m4a / .mp3 / .wav。
+        """
+        # 正典優先：與 assemble.py 讀 audio.path 同一份路徑解析（resolve_episode_path 展 {name}）
+        audio_cfg = self.cfg.get("audio") or {}
+        declared = audio_cfg.get("path")
+        if declared:
+            candidate = self.resolve_episode_path(declared)
+            if candidate.exists():
+                return candidate
+
         master = self.subdir("master")
         candidates = sorted(
             [p for p in master.glob("*") if p.suffix.lower() in (".m4a", ".mp3", ".wav")],

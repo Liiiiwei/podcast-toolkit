@@ -1089,6 +1089,60 @@ def test_mic_paths_skips_empty_values(tmp_episode_dir):
     assert list(paths.keys()) == ["a"]
 
 
+# --- main_audio()：正典 audio.path 優先於母帶 glob（波形/轉錄選錯音源 root fix）---
+
+
+def _add_masters_with_mtimes(ep_dir, files):
+    """在 01_母帶/ 建多個音檔並指定 mtime（秒）。files: [(檔名, mtime), ...]。"""
+    import os
+    master = ep_dir / "01_母帶"
+    for name, mtime in files:
+        p = master / name
+        p.write_bytes(b"AUDIO")
+        os.utime(p, (mtime, mtime))
+
+
+def test_main_audio_prefers_declared_audio_path_over_newer_glob(tmp_episode_dir):
+    """魁哥實況回歸：audio.path 宣告正典全場混音；即使母帶另有 mtime 更新的單軌 mic，
+    main_audio 也要回傳宣告的混音檔（波形/轉錄才不會只反映一位講者）。"""
+    _add_masters_with_mtimes(tmp_episode_dir, [
+        ("Stereo Mix.wav", 1_000),     # 正典全場混音（mtime 較舊）
+        ("Track3-Mic 3.wav", 2_000),   # 單軌 mic（mtime 更新 → glob 會誤選它）
+    ])
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "audio:\n  path: 01_母帶/Stereo Mix.wav\n  sync_offset: -5.236\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    assert ep.main_audio().name == "Stereo Mix.wav"
+
+
+def test_main_audio_falls_back_to_glob_when_no_audio_path(tmp_episode_dir):
+    """沒設 audio.path（多數單軌集）→ 沿用原本『母帶內最新一個音檔』的 glob 行為。"""
+    _add_masters_with_mtimes(tmp_episode_dir, [
+        ("old.wav", 1_000),
+        ("newest.m4a", 2_000),
+    ])
+    ep = Episode(tmp_episode_dir)
+    assert ep.main_audio().name == "newest.m4a"
+
+
+def test_main_audio_falls_back_to_glob_when_declared_missing(tmp_episode_dir):
+    """audio.path 設了但檔案不存在（打錯路徑/檔案還沒放）→ 不 raise、不回傳幽靈路徑，
+    退回 glob 最新母帶，維持可用。"""
+    _add_masters_with_mtimes(tmp_episode_dir, [("real.wav", 1_000)])
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    yaml_path.write_text(
+        yaml_path.read_text(encoding="utf-8")
+        + "audio:\n  path: 01_母帶/不存在的混音.wav\n",
+        encoding="utf-8",
+    )
+    ep = Episode(tmp_episode_dir)
+    assert ep.main_audio().name == "real.wav"
+
+
 def test_output_v2_speakers_json_path(tmp_episode_dir):
     """speakers sidecar 命名與 cameras.json 同形狀（_final_v2.speakers.json）。"""
     ep = Episode(tmp_episode_dir)
