@@ -115,6 +115,15 @@ def cancel_job() -> bool:
     # 這裡輪詢等它把 state 收回 idle，讓回傳即代表「可安全重跑」。
     if coordinator is not None:
         coordinator.join(timeout=CANCEL_JOIN_TIMEOUT_S)
+        # 防禦性收尾：join 回來後 coordinator 理應已經結束。若 state 卻還卡在
+        # running/preparing，代表它是死於收尾動作中途的未捕捉例外（_run_queue 正常
+        # 的失敗路徑會自己 set state=error/_reset，這裡是防「還有沒想到的例外」的
+        # 最後一道防線）——沒有機會自己把 state 收回去。強制收回，確保「取消」
+        # 一定有效，job slot 不會被永久鎖死到只能重開整個 app。
+        with _LOCK:
+            stuck = _STATE["state"] in ("running", "preparing")
+        if stuck and not coordinator.is_alive():
+            _reset(error="合成流程異常中止（背景程序未正常收尾），已強制取消")
     else:
         deadline = monotonic() + CANCEL_JOIN_TIMEOUT_S
         while monotonic() < deadline:
@@ -273,7 +282,13 @@ def _cancelled() -> bool:
 
 
 def _run_queue(plans: list[dict]) -> None:
-    """coordinator：依序跑 plans，任一失敗就停止後續；使用者取消則收回 idle。"""
+    """coordinator：依序跑 plans，任一失敗就停止後續；使用者取消則收回 idle。
+
+    每個 plan 的本體包在 try/except 裡：coordinator 跑在背景 daemon thread，
+    Python thread 的未捕捉例外預設只印 traceback 到 stderr、不會往外傳、
+    不會有任何人知道——若不接住，state 會永遠停在 running（最後一行的
+    state=done 只在整個迴圈正常跑完後才會執行到），使用者連取消都救不回來，
+    只能強制關掉整個 app。任何一步出錯都要讓 state 可見地變成 error。"""
     for i, plan in enumerate(plans):
         if _cancelled():
             _reset()
@@ -285,44 +300,52 @@ def _run_queue(plans: list[dict]) -> None:
             percent=0.0,
             eta_s=None,
         )
-        # 旋轉拉正預烤：主合成前先把需要的 proxy 建好（已建好 / 前一個 target 剛建好 → 跳過）。
-        # 任一預烤失敗 → 中止整批（_run_prebake 已 set state=error）。
-        for pb in plan.get("prebake", []):
-            if _leveled_proxy_valid(pb["proxy"], pb["meta"], pb["src"], pb["angle"]):
-                continue
-            if not _run_prebake(pb):
-                if _cancelled():
-                    _reset()  # 預烤中被取消 → 收回 idle，非錯誤
+        try:
+            # 旋轉拉正預烤：主合成前先把需要的 proxy 建好（已建好 / 前一個 target 剛建好 → 跳過）。
+            # 任一預烤失敗 → 中止整批（_run_prebake 已 set state=error）。
+            for pb in plan.get("prebake", []):
+                if _leveled_proxy_valid(pb["proxy"], pb["meta"], pb["src"], pb["angle"]):
+                    continue
+                if not _run_prebake(pb):
+                    if _cancelled():
+                        _reset()  # 預烤中被取消 → 收回 idle，非錯誤
+                    return
+                # 預烤完回到該 target 的進度起點
+                _set(current=plan["output_kind"], percent=0.0, eta_s=None)
+            cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
+            # encoding 明寫 utf-8：ffmpeg stderr 含中文集名/路徑，若靠 locale 預設
+            # （.app 從 Finder 啟動時退回 ascii）會 UnicodeDecodeError。errors=replace
+            # 保底不讓罕見壞位元組炸掉整條合成。
+            proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
+                         text=True, encoding="utf-8", errors="replace", bufsize=1)
+            _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
+
+            # 使用者取消（ffmpeg 已被 kill）：清乾淨收回 idle，不當成錯誤。
+            if _cancelled():
+                _reset()
                 return
-            # 預烤完回到該 target 的進度起點
-            _set(current=plan["output_kind"], percent=0.0, eta_s=None)
-        cmd = list(plan["cmd"]) + ["-progress", "pipe:1", "-nostats"]
-        # encoding 明寫 utf-8：ffmpeg stderr 含中文集名/路徑，若靠 locale 預設
-        # （.app 從 Finder 啟動時退回 ascii）會 UnicodeDecodeError。errors=replace
-        # 保底不讓罕見壞位元組炸掉整條合成。
-        proc = Popen(cmd, cwd=plan["cwd"], stdout=PIPE, stderr=PIPE,
-                     text=True, encoding="utf-8", errors="replace", bufsize=1)
-        _pump_progress(proc, plan["total_dur"], plan["out"], plan["tmp_out"])
+            # _pump_progress 失敗會 set state=error；成功只更新 percent，
+            # 最終 done 由這裡統一設——否則多 target 間隙會被前端 poll 到假的 done。
+            with _LOCK:
+                failed = _STATE["state"] == "error"
+            if failed:
+                return  # 中止後續
 
-        # 使用者取消（ffmpeg 已被 kill）：清乾淨收回 idle，不當成錯誤。
-        if _cancelled():
-            _reset()
+            # 成功：影片已 rename 完成。sidecar 模式才把對齊好的字幕 .srt 落在成品旁。
+            outputs = [str(plan["out"])]
+            sidecar = plan.get("sidecar_srt")
+            if sidecar:
+                sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
+                outputs.append(str(sidecar["path"]))
+            with _LOCK:
+                _STATE["output_files"].extend(outputs)
+        except Exception as e:
+            # 例如 sidecar 目標路徑的外接硬碟斷線/權限被拒/磁碟已滿、或 Popen 找不到
+            # ffmpeg。主影片若已經 rename 完成，錯誤訊息附註一句，使用者才不會誤以為
+            # 整個合成都沒有產出。
+            note = "；主影片已產出，僅收尾步驟失敗" if plan["out"].exists() else ""
+            _set(state="error", error=f"合成中止：{e}{note}")
             return
-        # _pump_progress 失敗會 set state=error；成功只更新 percent，
-        # 最終 done 由這裡統一設——否則多 target 間隙會被前端 poll 到假的 done。
-        with _LOCK:
-            failed = _STATE["state"] == "error"
-        if failed:
-            return  # 中止後續
-
-        # 成功：影片已 rename 完成。sidecar 模式才把對齊好的字幕 .srt 落在成品旁。
-        outputs = [str(plan["out"])]
-        sidecar = plan.get("sidecar_srt")
-        if sidecar:
-            sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
-            outputs.append(str(sidecar["path"]))
-        with _LOCK:
-            _STATE["output_files"].extend(outputs)
     # 全部跑完
     _set(state="done", percent=100.0, eta_s=0)
 

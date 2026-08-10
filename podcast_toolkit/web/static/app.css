@@ -2007,6 +2007,10 @@ dialog.modal::backdrop {
   background: var(--danger-soft);
   color: var(--danger);
 }
+.assemble-status-pill[data-state="stalled"] {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
 @keyframes assemble-pulse {
   0%,
   100% {

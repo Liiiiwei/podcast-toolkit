@@ -6089,6 +6089,19 @@ let _lastAssembleTargets = null;
 let _lastAssembleTitle = null;
 let _lastAssemblePreviewSec = null;
 
+// 卡死偵測：state 停在 running/preparing（含輪詢連線失敗）卻連續 ASSEMBLE_STALL_WARN_MS
+// 都沒有任何變化 → 顯示可視警示，確保使用者看得到「這不正常」且取消/關閉一定按得到。
+// Threshold 故意設得比後端自己的 ffmpeg stdout watchdog 長（FFMPEG_STALL_TIMEOUT_S=120s，
+// 見 assemble_job.py），讓後端自己的偵測與收尾先有機會把 state 轉成 error；這裡是「連
+// 後端的機制都沒能讓 state 動起來」時的最後一道防線——例如收尾卡在真正無法中斷的
+// blocking syscall（已斷線外接硬碟/NFS stale handle），Python thread 連 join 都等不到
+// 它死，後端 cancel_job 的防禦性回收也無法強制生效，此時只剩前端能讓使用者看見異常
+// 並提供離開路徑。
+const ASSEMBLE_STALL_WARN_MS = 150000;
+let _assembleStallSince = null; // 目前這段「沒有新進展」從什麼時候開始算
+let _assembleStallKey = null; // 上一次成功拿到的 state 快照 key，用來判斷有沒有變化
+let _assembleStalled = false; // 是否已經顯示卡住警示
+
 function fmtEta(s) {
   if (s == null) return "估算中…";
   if (s <= 0) return "完成";
@@ -6109,7 +6122,9 @@ function stopAssemblePoll() {
 function isAssembleActive() {
   const pill = $("#assemble-pill");
   const st = pill && pill.getAttribute("data-state");
-  return st === "starting" || st === "running";
+  // stalled：後端 state 其實還是 running/preparing，只是卡死偵測把 pill 轉了警示色；
+  // 取消鈕仍要走「打 /cancel」分支，不能被誤判成 done/error 而只是純關閉不送請求。
+  return st === "starting" || st === "running" || st === "stalled";
 }
 
 // 輪詢 assemble status 直到離開 running/preparing（或 timeout）。回傳最終 state。
@@ -6188,6 +6203,10 @@ function resetAssembleModal() {
   $("#assemble-current-label").textContent = "準備中…";
   $("#assemble-msg").textContent = "";
   setAssemblePill("starting", "啟動中");
+  // 卡死偵測歸零：新的一輪合成重新起算，避免延續上一輪殘留的計時/警示
+  _assembleStallSince = null;
+  _assembleStallKey = null;
+  _assembleStalled = false;
   // 輸出列表、ffmpeg 訊息折疊：歸零並隱藏
   renderAssembleOutputs([]);
   const logWrap = $("#assemble-log-wrap");
@@ -6225,6 +6244,70 @@ function showAssembleErrorState(message) {
         previewSec: _lastAssemblePreviewSec,
       });
     };
+  }
+}
+
+// 卡死警示：把 modal 標題轉成警示色、pill 轉成「疑似卡住」，並在訊息區給出明確建議
+// （繼續等 or 直接取消）。不當成 error 處理——不確定真的死了，也可能剛好卡在合理的
+// 慢動作，所以不顯示「重試」：重試等於馬上再打一次 /api/assemble，這時後端 job slot
+// 多半仍是 running，只會撞 409。取消鈕不用特別處理：isAssembleActive() 已把
+// "stalled" 視為 active，點下去一樣會走 /api/assemble/cancel 那條路。
+function _showAssembleStallWarning() {
+  setModalStatusTitle(
+    "assemble-title",
+    "alert-triangle",
+    "進度長時間沒有更新",
+    "warning",
+  );
+  setAssemblePill("stalled", "疑似卡住");
+  const mins = Math.round(ASSEMBLE_STALL_WARN_MS / 60000);
+  $("#assemble-current-label").textContent =
+    `已超過 ${mins} 分鐘沒有任何變化，流程可能已經中止`;
+  const logWrap = $("#assemble-log-wrap");
+  $("#assemble-msg").textContent =
+    "合成流程長時間沒有回報新進度，實際輸出檔可能已經產生、也可能沒有。建議按下方" +
+    "「取消」安全結束並回到集數頁確認檔案；需要的話可以再重新合成一次。若取消後仍卡" +
+    "住，代表背景程序異常，請重新啟動本機 App。";
+  logWrap.hidden = false;
+  logWrap.open = true;
+}
+
+// 解除卡死警示：收掉被強制展開的訊息框。標題／pill／進度數字不用在這裡管——呼叫端
+// 若是因為觀察到新進展而解除，該輪的正常渲染已經蓋回正確畫面；若是因為進了 done
+// 收尾，那邊自己的渲染也會蓋掉標題/pill，這裡只收乾淨殘留的訊息框。
+function _dismissAssembleStallWarning() {
+  if (!_assembleStalled) return;
+  _assembleStalled = false;
+  const logWrap = $("#assemble-log-wrap");
+  logWrap.hidden = true;
+  logWrap.open = false;
+}
+
+// 卡死偵測：把這一輪的 (state, percent, current, index) 組成快照 key，和上次比對；
+// 有變化就重新起算計時，連續 ASSEMBLE_STALL_WARN_MS 沒變化才示警。只從「preparing/
+// running 收到新狀態」與「fetch 失敗」兩處呼叫（s 傳 null 代表 fetch 失敗，視為同樣
+// 沒有新進展，但不覆寫 key——等真的連線恢復、且數值有變化才重新起算）。idle/done/
+// error 不會呼叫到這裡：那幾態各自的渲染已經是明確結果，不需要卡死偵測；模組層級
+// 變數只在 resetAssembleModal() 開新一輪時歸零。
+function _trackAssembleStaleness(s) {
+  const now = Date.now();
+  const key = s ? `${s.state}|${s.percent}|${s.current}|${s.index}` : null;
+  if (key !== null && key !== _assembleStallKey) {
+    _assembleStallKey = key;
+    _assembleStallSince = now;
+    _dismissAssembleStallWarning();
+    return;
+  }
+  if (_assembleStallSince === null) {
+    _assembleStallSince = now;
+    return;
+  }
+  if (
+    !_assembleStalled &&
+    now - _assembleStallSince >= ASSEMBLE_STALL_WARN_MS
+  ) {
+    _assembleStalled = true;
+    _showAssembleStallWarning();
   }
 }
 
@@ -6313,6 +6396,9 @@ async function _pollAssembleOnce() {
     const r = await fetch("/api/assemble/status");
     s = await r.json();
   } catch (e) {
+    // 連線失敗也算「沒有確認到新進展」，一併計入卡死偵測的計時器：後端整個沒回應
+    // 太久，使用者一樣要看得到警示，不能永遠靜默重試（見 _trackAssembleStaleness）。
+    _trackAssembleStaleness(null);
     return; // 暫時失敗，下次再試
   }
 
@@ -6325,6 +6411,7 @@ async function _pollAssembleOnce() {
     // 佔位過渡態：素材檢查中（ffprobe/建 srt），ffmpeg 還沒起來
     setAssemblePill("starting", "準備中");
     $("#assemble-current-label").textContent = "準備素材中…";
+    _trackAssembleStaleness(s);
     return;
   }
 
@@ -6342,11 +6429,13 @@ async function _pollAssembleOnce() {
     $("#assemble-percent").textContent = `${pct.toFixed(1)}%`;
     $("#assemble-eta").textContent = fmtEta(s.eta_s);
     $("#assemble-fill").style.width = `${pct.toFixed(1)}%`;
+    _trackAssembleStaleness(s);
     return;
   }
 
   if (s.state === "done") {
     stopAssemblePoll();
+    _dismissAssembleStallWarning();
     setModalStatusTitle(
       "assemble-title",
       "circle-check",
@@ -6394,6 +6483,7 @@ async function _pollAssembleOnce() {
 
   if (s.state === "error") {
     stopAssemblePoll();
+    _dismissAssembleStallWarning();
     showAssembleErrorState(s.error || "未知錯誤");
     return;
   }
