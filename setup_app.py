@@ -32,6 +32,9 @@ DATA_FILES = [
     # defaults.yaml + assets → Resources 根（bundle 內 toolkit_root() = Contents/Resources）。
     # 少了它們：開單集會 load_defaults 找不到 defaults.yaml→500、合成找不到 intro/outro/封面。
     ("", ["defaults.yaml"]),
+    # 開新集的範本（init.py:45/60 用 toolkit_root()/templates 讀）。少了它們：
+    # 打包版開新集會 read_text 找不到→FileNotFoundError→前端「init 失敗」紅字。
+    ("templates", ["templates/episode.yaml", "templates/TODO.md"]),
     ("assets", [
         "assets/intro.mp4",
         "assets/outro.mp3",
