@@ -1,0 +1,1713 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>影片模式 · 時間軸線性剪輯（原型）</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <!-- 配色/間距/字體一律沿用主編輯器的 tokens.css，避免自創色票 -->
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      /* ── 原型專屬版面：只用 tokens.css 變數，無寫死色碼 ─────────────── */
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: var(--text-base);
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* 頂部列：標題 + demo 徽章 + 右側即時統計 */
+      .vt-topbar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        padding: var(--space-md) var(--space-xl);
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .vt-title {
+        font-size: var(--text-lg);
+        font-weight: 600;
+      }
+      .vt-badge {
+        font-size: var(--text-xs);
+        color: var(--accent);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        padding: 1px var(--space-sm);
+      }
+      .vt-badge.mode-real {
+        color: var(--success);
+        border-color: var(--success);
+      }
+      .vt-stats {
+        margin-left: auto;
+        display: flex;
+        gap: var(--space-xl);
+      }
+      .vt-stat {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        line-height: 1.25;
+      }
+      .vt-stat-label {
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+      }
+      .vt-stat-value {
+        font-family: var(--font-mono);
+        font-size: var(--text-lg);
+        font-variant-numeric: tabular-nums;
+      }
+      .vt-stat.is-cut .vt-stat-value {
+        color: var(--danger);
+      }
+      .vt-stat.is-final .vt-stat-value {
+        color: var(--accent);
+      }
+
+      /* 主體：影片預覽在上、時間軸在下 */
+      .vt-main {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-lg);
+        padding: var(--space-xl);
+        overflow: auto;
+      }
+      .vt-stage {
+        display: flex;
+        justify-content: center;
+      }
+      #vt-video {
+        width: 100%;
+        max-width: 640px;
+        aspect-ratio: 16 / 9;
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+      }
+
+      /* 播放控制列 */
+      .vt-controls {
+        display: flex;
+        align-items: center;
+        gap: var(--space-md);
+        flex-wrap: wrap;
+      }
+      .vt-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-xs);
+        min-height: 30px;
+        padding: 0 var(--space-md);
+        font-size: var(--text-base);
+        color: var(--text);
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+      }
+      .vt-btn:hover:not(:disabled) {
+        border-color: var(--accent);
+      }
+      .vt-btn:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .vt-time {
+        font-family: var(--font-mono);
+        font-size: var(--text-md);
+        font-variant-numeric: tabular-nums;
+        color: var(--text-dim);
+      }
+      .vt-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-xs);
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        cursor: pointer;
+        user-select: none;
+      }
+      .vt-spacer {
+        margin-left: auto;
+      }
+      .vt-zoom {
+        display: inline-flex;
+        gap: 2px;
+      }
+      .vt-zoom .vt-btn {
+        min-width: 30px;
+        justify-content: center;
+        padding: 0 var(--space-sm);
+      }
+
+      /* 時間軸 */
+      .vt-tl-head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-sm);
+        margin-bottom: var(--space-xs);
+      }
+      .vt-tl-title {
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        font-weight: 500;
+      }
+      .vt-tl-hint {
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+      }
+      .vt-tl-scroll {
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding-bottom: var(--space-xs);
+        scrollbar-width: thin;
+        scrollbar-color: var(--border-strong) transparent;
+      }
+      .vt-tl-scroll::-webkit-scrollbar {
+        height: 7px;
+      }
+      .vt-tl-scroll::-webkit-scrollbar-thumb {
+        background: var(--border-strong);
+        border-radius: var(--radius-sm);
+      }
+      /* 時間軸主體：寬度 = zoom×100%（放大後靠外層捲動），區塊用 left%/width% 定位 */
+      .vt-timeline {
+        position: relative;
+        width: 100%;
+        /* 波形移到最下面當基準尺，壓矮讓上面兩軌更顯眼 */
+        height: 64px;
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      #vt-waveform {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1;
+      }
+      /* 剪除段：變暗 + 紅邊 + 斜紋，一眼跟保留段分開；點擊可取消 */
+      .vt-cut {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        z-index: 2;
+        background-color: var(--backdrop-strong);
+        background-image: repeating-linear-gradient(
+          45deg,
+          var(--danger-soft),
+          var(--danger-soft) 4px,
+          transparent 4px,
+          transparent 8px
+        );
+        border-left: 2px solid var(--danger);
+        border-right: 2px solid var(--danger);
+        cursor: pointer;
+      }
+      .vt-cut:hover {
+        background-color: var(--backdrop-dim);
+      }
+      .vt-cut-label {
+        position: absolute;
+        top: var(--space-xs);
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+        color: var(--text);
+        background: var(--danger);
+        border-radius: var(--radius-sm);
+        padding: 0 var(--space-xs);
+        pointer-events: none;
+      }
+      /* 拖曳選區：虛線 accent 框 + accent 底 */
+      .vt-selection {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        z-index: 3;
+        background: var(--accent-soft);
+        border: 1px dashed var(--accent);
+        pointer-events: none;
+      }
+      /* 鍵盤 I/O 標的範圍會一直留在畫面上（拖曳選區放手就沒了），
+         所以給它實線與標籤，讓人知道這塊還等著被剪 */
+      .vt-selection.is-mark {
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        overflow: hidden;
+        padding-top: 2px;
+        font-size: var(--text-xs);
+        line-height: 1.2;
+        white-space: nowrap;
+        color: var(--accent);
+        border-style: solid;
+      }
+      /* 播放頭 */
+      .vt-playhead {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        margin-left: -1px;
+        background: var(--accent);
+        box-shadow: var(--shadow-sm);
+        pointer-events: none;
+        z-index: 4;
+      }
+
+      /* ── 影片 + 樣式面板並排 ─────────────────────────────────────── */
+      .vt-workspace {
+        display: flex;
+        gap: var(--space-lg);
+        align-items: stretch;
+        flex-wrap: wrap;
+      }
+      /* 舞台改為定位容器，讓字幕預覽疊在影片上 */
+      .vt-stage {
+        position: relative;
+        flex: 1 1 420px;
+        min-width: 320px;
+      }
+      #vt-video {
+        max-width: 100%;
+      }
+      .vt-toast {
+        position: absolute;
+        left: 50%;
+        top: 12px;
+        transform: translateX(-50%);
+        max-width: 88%;
+        padding: 6px 12px;
+        border-radius: 4px;
+        background: rgba(20, 20, 22, 0.92);
+        border: 1px solid var(--warning);
+        color: var(--text);
+        font-size: var(--text-xs);
+        line-height: 1.4;
+        white-space: nowrap;
+        pointer-events: none;
+        z-index: 20;
+      }
+      .vt-toast[hidden] {
+        display: none;
+      }
+      /* 影片上的即時字幕預覽（字色/描邊等內容色由 JS inline 寫入，非 UI chrome）*/
+      .vt-sub-preview {
+        position: absolute;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        padding: 0 6%;
+        pointer-events: none;
+        z-index: 5;
+      }
+      /* 這句已升格成標題卡時整塊收掉，不然會留一塊沒有字的底色 */
+      .vt-sub-preview[hidden] {
+        display: none;
+      }
+      .vt-sub-preview-text {
+        display: inline-block;
+        max-width: 100%;
+        text-align: center;
+        line-height: 1.25;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      /* ── 右欄：直式編輯欄（標題卡在上、字幕逐句在下）───────────────── */
+      .vt-side {
+        flex: 0 1 330px;
+        min-width: 280px;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        padding: var(--space-md);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+      }
+      .vt-side-sec {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        min-height: 0;
+      }
+      /* 字幕區吃掉剩餘高度，清單自己捲 —— 右欄整體不長高 */
+      .vt-side-grow {
+        flex: 1 1 auto;
+      }
+      /* 區塊標頭本身就是展開／收合鈕：右欄三個區塊都收得起來，
+         想專心改字幕就把標題卡收掉，不必為了看清單一直捲。 */
+      .vt-side-head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-sm);
+        width: 100%;
+        appearance: none;
+        background: none;
+        border: 0;
+        padding: 0;
+        color: inherit;
+        text-align: left;
+        cursor: pointer;
+      }
+      .vt-side-caret {
+        flex: 0 0 auto;
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+      }
+      .vt-side-head:hover .vt-side-caret {
+        color: var(--text);
+      }
+      .vt-side-title {
+        font-size: var(--text-md);
+        font-weight: 600;
+      }
+      .vt-side-note {
+        margin-left: auto;
+        text-align: right;
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+      }
+      .vt-side-body {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        min-height: 0;
+      }
+      /* 字幕區的內容才吃剩餘高度；收合後整個區塊縮回標頭那一行 */
+      .vt-side-grow > .vt-side-body {
+        flex: 1 1 auto;
+      }
+      .vt-side-sec.is-collapsed {
+        flex: 0 0 auto;
+      }
+      .vt-side-sec.is-collapsed > .vt-side-body {
+        display: none;
+      }
+      /* 所有輔助說明統一壓成最小級、最淡色，不跟內容搶視線 */
+      .vt-tpl-hint {
+        margin: 0;
+        font-size: var(--text-xs);
+        line-height: 1.6;
+        color: var(--text-faint);
+      }
+      /* ── 字幕逐句清單 ─────────────────────────────────────────── */
+      .vt-line-list {
+        flex: 1 1 auto;
+        min-height: 120px;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .vt-line {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+        padding: 2px 4px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+      }
+      /* 播放頭正落在這句：左緣一條橘、時間戳提亮，掃視時抓得到「現在唸到哪」。
+         放在 :hover/:focus-within 之前，正在改字那列的樣式才蓋得過它 */
+      .vt-line.is-playing {
+        background: rgba(255, 120, 73, 0.1);
+        box-shadow: inset 2px 0 0 var(--accent);
+      }
+      .vt-line.is-playing .vt-line-time {
+        color: var(--accent);
+      }
+      .vt-line:hover {
+        background: var(--surface-raised);
+      }
+      .vt-line:focus-within {
+        background: var(--surface-raised);
+        border-color: var(--accent);
+      }
+      .vt-line-time {
+        flex: 0 0 auto;
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+        cursor: pointer;
+      }
+      .vt-line-time:hover {
+        color: var(--accent);
+      }
+      .vt-line-input {
+        flex: 1;
+        min-width: 0;
+        padding: 3px 0;
+        color: var(--text);
+        background: transparent;
+        border: 0;
+        outline: none;
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+      }
+      /* 工具鈕平常不佔視覺，滑到／編到那一列才浮出來 */
+      /* 沒在編輯的長句收成省略號，右欄邊緣才不會出現半個字 */
+      .vt-line-input:not(:focus) {
+        text-overflow: ellipsis;
+      }
+      .vt-line-tools {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 2px;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .vt-line:hover .vt-line-tools,
+      .vt-line:focus-within .vt-line-tools,
+      /* 已升格的列常顯工具列：不 hover 也看得出這句由標題卡代勞 */
+      .vt-line.is-carded .vt-line-tools {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .vt-line-tool {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--surface-sunken);
+        color: var(--text-dim);
+        border: 1px solid var(--border);
+        border-radius: 3px;
+        line-height: 1;
+        padding: 3px;
+        cursor: pointer;
+      }
+      /* 圖示吃 currentColor：hover／已升格／危險色全部沿用既有規則 */
+      .vt-line-tool svg {
+        display: block;
+        width: 13px;
+        height: 13px;
+      }
+      .vt-line-tool:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--text);
+      }
+      .vt-line-tool.is-card:hover:not(:disabled) {
+        border-color: var(--cam-a-bright);
+        color: var(--cam-a-bright);
+      }
+      .vt-line-tool.is-danger:hover:not(:disabled) {
+        border-color: var(--danger);
+        color: var(--danger);
+      }
+      /* 已升格：鈕常亮，告訴使用者這句的字幕已經由標題卡代勞 */
+      .vt-line-tool.is-card.is-on {
+        border-color: var(--cam-a-bright);
+        color: var(--cam-a-bright);
+      }
+      .vt-line-tool:disabled {
+        opacity: 0.3;
+        cursor: default;
+      }
+      /* 落在剪除區的句子：淡化＋劃掉，跟時間軸同一套語彙 */
+      .vt-line.is-cut {
+        opacity: 0.4;
+      }
+      .vt-line.is-cut .vt-line-input {
+        text-decoration: line-through;
+      }
+      .vt-line.is-partial {
+        box-shadow: inset 2px 0 0 var(--warning);
+      }
+      /* 時間軸上被選到的那一句：與右欄清單雙向對應 */
+      .vt-sub.is-active {
+        box-shadow: 0 0 0 2px var(--accent);
+      }
+      .vt-field {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-sm);
+      }
+      .vt-field-label {
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        flex: 0 0 auto;
+      }
+      .vt-field-val {
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+        min-width: 34px;
+        text-align: right;
+        flex: 0 0 auto;
+      }
+      .vt-select {
+        flex: 1;
+        min-width: 0;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: var(--text-sm);
+        padding: 2px var(--space-sm);
+        min-height: 26px;
+      }
+      .vt-range {
+        flex: 1;
+        min-width: 0;
+        accent-color: var(--accent);
+      }
+      .vt-color {
+        width: 32px;
+        height: 26px;
+        padding: 0;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--surface-raised);
+        cursor: pointer;
+      }
+      /* segmented（粗體 / 邊框樣式 / 位置）*/
+      .vt-seg {
+        display: inline-flex;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .vt-seg button {
+        border: 0;
+        border-left: 1px solid var(--border);
+        background: var(--surface-raised);
+        color: var(--text-dim);
+        font-size: var(--text-xs);
+        padding: 3px var(--space-sm);
+        cursor: pointer;
+      }
+      .vt-seg button:first-child {
+        border-left: 0;
+      }
+      .vt-seg button.is-on {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      /* ── 字幕軌 / 標題卡軌（與波形同寬、同一時間刻度）─────────────── */
+      .vt-tl-body {
+        display: flex;
+        align-items: flex-start;
+        gap: var(--space-sm);
+      }
+      .vt-tl-gutter {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-xs);
+        flex: 0 0 auto;
+      }
+      .vt-gutter-cell {
+        display: flex;
+        align-items: center;
+        width: 32px;
+        font-size: var(--text-xs);
+        color: var(--text-faint);
+      }
+      .vt-tl-scroll {
+        flex: 1;
+        min-width: 0;
+      }
+      /* 三軌共用的縮放容器：寬度 = zoom×100%，三軌各 width:100% 自動對齊 */
+      .vt-tracks {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-xs);
+        width: 100%;
+      }
+      .vt-sub-track {
+        position: relative;
+        width: 100%;
+        height: 44px;
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      /* 標題卡軌：用藍色與字幕軌（橘）區分 */
+      .vt-card-track {
+        border-color: var(--cam-a-bright);
+      }
+      .vt-card-track.is-dropping {
+        border-color: var(--cam-a-bright);
+        background: var(--cam-a-soft);
+      }
+      /* 字卡塊 */
+      .vt-sub {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        padding: 0 var(--space-xs);
+        font-size: var(--text-xs);
+        color: var(--text);
+        background: var(--accent-soft);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        cursor: grab;
+      }
+      .vt-sub.is-dragging {
+        cursor: grabbing;
+      }
+      .vt-sub-txt {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .vt-sub-flag {
+        flex: 0 0 auto;
+        font-size: 9px;
+        color: var(--warning);
+        background: var(--warning-soft);
+        border-radius: 2px;
+        padding: 0 3px;
+      }
+      /* 落在剪除區間內：壓暗 + 劃掉（視覺上消失）*/
+      .vt-sub.is-cut {
+        opacity: 0.3;
+        text-decoration: line-through;
+        background: transparent;
+        border-color: var(--border-strong);
+        color: var(--text-faint);
+      }
+      /* 跨在剪除邊界：虛線 warning 框 */
+      .vt-sub.is-partial {
+        border-style: dashed;
+        border-color: var(--warning);
+        background: var(--warning-soft);
+      }
+      /* 字幕塊兩端的改起訖把手（比照標題卡把手，用字幕軌的 accent 色）*/
+      .vt-sub-h {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 10px;
+        z-index: 3;
+        cursor: ew-resize;
+        background: var(--accent);
+        opacity: 0.4;
+        transition: opacity 0.1s ease;
+      }
+      .vt-sub-h.is-l {
+        left: 0;
+        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      }
+      .vt-sub-h.is-r {
+        right: 0;
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+      .vt-sub:hover .vt-sub-h,
+      .vt-sub.is-active .vt-sub-h,
+      .vt-sub.is-dragging .vt-sub-h {
+        opacity: 0.85;
+      }
+      /* 標題卡塊 */
+      .vt-card {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+        font-size: var(--text-xs);
+        color: var(--text);
+        background: var(--cam-a-soft);
+        border: 1px solid var(--cam-a-bright);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+        cursor: grab;
+      }
+      /* 落在剪除區：這張卡不會出現在成品裡，在軌上就講清楚（比照 .vt-sub.is-cut）*/
+      .vt-card.is-cut {
+        opacity: 0.35;
+        background: transparent;
+        border-style: dashed;
+        border-color: var(--border-strong);
+      }
+      .vt-card.is-cut .vt-card-txt {
+        color: var(--text-faint);
+        text-decoration: line-through;
+      }
+      /* 跨在剪除邊界：成品裡這張卡會變短 */
+      .vt-card.is-partial {
+        border-style: dashed;
+        border-color: var(--warning);
+      }
+      .vt-card.is-selected {
+        background: var(--cam-a);
+        box-shadow: 0 0 0 2px var(--cam-a-bright);
+      }
+      /* 剪除段兩端的微調把手；與標題卡把手同一套視覺語彙 */
+      .vt-cut-h {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 7px;
+        z-index: 3;
+        cursor: ew-resize;
+        background: #fff;
+        opacity: 0;
+      }
+      .vt-cut-h.is-l {
+        left: 0;
+      }
+      .vt-cut-h.is-r {
+        right: 0;
+      }
+      .vt-cut:hover .vt-cut-h,
+      .vt-cut-h.is-trimming {
+        opacity: 0.75;
+      }
+      .vt-card.is-dragging {
+        cursor: grabbing;
+        opacity: 0.85;
+      }
+      /* 兩端的改長度把手：平時就半透明可見（不必猜抓點在哪），
+         滑到卡上／選取時再加深。寬度 10px 比 7px 好抓。 */
+      .vt-card-h {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 10px;
+        z-index: 3;
+        cursor: ew-resize;
+        background: var(--cam-a-bright);
+        opacity: 0.45;
+        transition: opacity 0.1s ease;
+      }
+      .vt-card-h.is-l {
+        left: 0;
+        border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+      }
+      .vt-card-h.is-r {
+        /* × 鈕已移除，把手回到真正的右緣 —— 拖右邊就是改結尾 */
+        right: 0;
+        border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+      .vt-card:hover .vt-card-h,
+      .vt-card.is-selected .vt-card-h,
+      .vt-card.is-dragging .vt-card-h {
+        opacity: 0.85;
+      }
+      .vt-card-badge {
+        flex: 0 0 auto;
+        font-size: 9px;
+        color: var(--cam-a-bright);
+        border: 1px solid var(--cam-a-bright);
+        border-radius: 2px;
+        padding: 0 3px;
+      }
+      .vt-card-txt {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* 就地編輯輸入框 */
+      .vt-sub-input {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        z-index: 6;
+        min-width: 140px;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-sm);
+        font-size: var(--text-xs);
+        font-family: var(--font-sans);
+        padding: 0 var(--space-xs);
+      }
+      /* 字幕軌內的剪除帶：讓剪除區塊跨到字幕軌，一眼看出哪些卡在剪除區 */
+      .vt-sub-cutband {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        z-index: 1;
+        pointer-events: none;
+        background-color: var(--backdrop-dim);
+        background-image: repeating-linear-gradient(
+          45deg,
+          var(--danger-soft),
+          var(--danger-soft) 4px,
+          transparent 4px,
+          transparent 8px
+        );
+      }
+
+      /* ── 標題卡：版型縮圖 ─────────────────────────────────────── */
+      .vt-tpl-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: var(--space-sm);
+      }
+      .vt-tpl {
+        position: relative;
+        height: 42px;
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        cursor: grab;
+        overflow: hidden;
+      }
+      .vt-tpl:hover {
+        border-color: var(--cam-a-bright);
+      }
+      .vt-tpl-name {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        text-align: center;
+        font-size: 9px;
+        color: var(--text-dim);
+        background: var(--backdrop-strong);
+        padding: 1px 0;
+      }
+      /* 縮圖內的假字塊，示意版型長相 */
+      .vt-tpl-mock {
+        position: absolute;
+        background: var(--text-dim);
+        border-radius: 1px;
+      }
+      /* ── 標題卡：選取後的檢視器（只有大小與位置）────────────────── */
+      .vt-card-inspector[hidden] {
+        display: none;
+      }
+      .vt-card-inspector {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        padding-top: var(--space-sm);
+        border-top: 1px solid var(--border);
+      }
+      /* 位置只靠直接拖，這顆是唯一的「回到版型預設位」出口 */
+      .vt-btn-reset {
+        background: var(--surface-sunken);
+        color: var(--text-dim);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: var(--text-xs);
+        padding: 3px var(--space-sm);
+        cursor: pointer;
+      }
+      .vt-btn-reset:hover {
+        border-color: var(--border-bright);
+        color: var(--text);
+      }
+      /* ── 進階摺疊區（字幕樣式）──────────────────────────────────── */
+      .vt-adv {
+        border-top: 1px solid var(--border);
+        padding-top: var(--space-sm);
+      }
+      .vt-adv > summary {
+        cursor: pointer;
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        list-style: none;
+      }
+      .vt-adv > summary::-webkit-details-marker {
+        display: none;
+      }
+      .vt-adv > summary::before {
+        content: "▸ ";
+        color: var(--text-faint);
+      }
+      .vt-adv[open] > summary::before {
+        content: "▾ ";
+      }
+      .vt-adv-body {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+        padding-top: var(--space-md);
+      }
+      /* ── 預覽區的標題卡疊層 ─────────────────────────────────────── */
+      .vt-card-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 6;
+        overflow: hidden;
+        /* 疊層本身不吃滑鼠，只有卡片可以拖，才不會擋住影片操作 */
+        pointer-events: none;
+      }
+      .vt-card-view {
+        pointer-events: auto;
+      }
+      .vt-card-view {
+        position: absolute;
+        cursor: grab;
+        user-select: none;
+        white-space: pre-wrap;
+        transform: translate(-50%, -50%);
+        /* 寬度必須固定成「內容寬」：絕對定位元素若讓瀏覽器自動收縮，
+           可用寬度＝容器寬 − left，卡愈往右推就愈窄，而 transform 是
+           按自身寬度算的百分比 —— 兩者相乘就會讓卡跑得比游標快。
+           max-content 讓寬度只由文字決定，拖到哪都不變，才拖得跟手。 */
+        width: max-content;
+        max-width: 92%;
+      }
+      .vt-card-view.is-dragging {
+        cursor: grabbing;
+      }
+      .vt-tpl.is-on {
+        border-color: var(--cam-a-bright);
+        background: var(--cam-a-soft);
+      }
+      /* 選取中的卡浮到最上層 —— 兩張卡時間重疊又位置相疊時，
+         被壓在下面的那張點不到也拖不動；選了就讓它可以直接抓。 */
+      .vt-card-view.is-selected {
+        outline: 1px dashed var(--cam-a-bright);
+        outline-offset: 3px;
+        z-index: 2;
+      }
+      /* 版型 A：重點大字 */
+      .vt-card-view.tpl-big {
+        max-width: 72%;
+        text-align: center;
+        font-weight: 800;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.62);
+        padding: 0.35em 0.7em;
+        border-radius: 0.12em;
+        letter-spacing: 0.02em;
+      }
+      /* 版型 B：下標條 */
+      .vt-card-view.tpl-lower {
+        text-align: left;
+        font-weight: 700;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.72);
+        padding: 0.3em 0.8em 0.3em 0.55em;
+        border-left: 0.18em solid #ff7849;
+      }
+      /* 版型 C：引言框 */
+      .vt-card-view.tpl-quote {
+        text-align: left;
+        font-weight: 500;
+        font-style: italic;
+        color: #fff;
+        background: rgba(0, 0, 0, 0.5);
+        padding: 0.5em 0.8em;
+        border: 0.06em solid rgba(255, 255, 255, 0.55);
+        border-radius: 0.1em;
+        max-width: 62%;
+      }
+      .vt-card-view.tpl-quote::before {
+        content: "\201C";
+        margin-right: 0.15em;
+        opacity: 0.7;
+      }
+      .vt-card-view.tpl-quote::after {
+        content: "\201D";
+        margin-left: 0.15em;
+        opacity: 0.7;
+      }
+
+      .vt-empty-note {
+        font-size: var(--text-sm);
+        color: var(--text-faint);
+      }
+      /* 頂列出片區：主要動作是「輸出影片」，JSON 面板降級成除錯入口 */
+      /* 合成進度：按下「輸出影片」之後，人要看得到進度、知道何時好、能喊停。
+         沒有這一段的話，按完只會看到「已開始合成影片」然後就沒下文了。 */
+      .vt-render {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+      .vt-render-text {
+        white-space: nowrap;
+        max-width: 26ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .vt-render.is-ok .vt-render-text {
+        color: var(--success);
+      }
+      .vt-render.is-error .vt-render-text {
+        color: var(--danger);
+      }
+      .vt-render-bar {
+        width: 88px;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        overflow: hidden;
+      }
+      .vt-render-fill {
+        display: block;
+        height: 100%;
+        width: 0%;
+        background: var(--accent);
+        transition: width 0.3s linear;
+      }
+      .vt-render.is-ok .vt-render-fill {
+        background: var(--success);
+      }
+      .vt-render.is-error .vt-render-fill {
+        background: var(--danger);
+      }
+      .vt-render-btn {
+        padding: 2px var(--space-sm);
+        font-size: var(--text-xs);
+      }
+      /* .vt-render 的 flex 和 .vt-btn 的 inline-flex 都會蓋掉 hidden 屬性自帶的
+         display:none，不補這條的話「收起」只是屬性上收起、畫面上照樣看得到、點得到。 */
+      .vt-render[hidden],
+      .vt-render-btn[hidden] {
+        display: none;
+      }
+      .vt-export-msg {
+        margin-left: auto;
+        max-width: 34ch;
+        font-size: var(--text-xs);
+        color: var(--danger);
+        text-align: right;
+      }
+      .vt-export-msg.is-ok {
+        color: var(--success);
+      }
+      .vt-export-msg.is-busy {
+        color: var(--text-dim);
+      }
+      .vt-targets {
+        display: flex;
+        gap: 2px;
+        padding: 2px;
+        background: var(--surface-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+      }
+      .vt-target {
+        cursor: pointer;
+      }
+      .vt-target input {
+        position: absolute;
+        opacity: 0;
+        pointer-events: none;
+      }
+      .vt-target span {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 var(--space-sm);
+        font-size: var(--text-sm);
+        color: var(--text-dim);
+        border-radius: calc(var(--radius-sm) - 1px);
+      }
+      .vt-target input:checked + span {
+        color: var(--bg);
+        background: var(--accent);
+      }
+      /* 鍵盤走訪看得到焦點在哪，不然這組 chip 對鍵盤使用者是隱形的 */
+      .vt-target input:focus-visible + span {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      .vt-targets.is-empty {
+        border-color: var(--danger);
+      }
+      .vt-btn.is-primary {
+        color: #fff;
+        background: var(--accent);
+        border-color: var(--accent);
+        font-weight: 600;
+      }
+      .vt-btn.is-primary:hover:not(:disabled) {
+        filter: brightness(1.1);
+      }
+      /* 剪輯指令 JSON：原型與後端之間的搬運格式，一般使用者不需要開 */
+      .vt-plan-open {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+      .vt-plan-mask {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--backdrop-strong);
+      }
+      .vt-plan-mask[hidden] {
+        display: none;
+      }
+      .vt-plan-box {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-sm);
+        width: min(760px, 90vw);
+        max-height: 82vh;
+        padding: var(--space-lg);
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+      }
+      .vt-plan-head {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-md);
+      }
+      .vt-plan-title {
+        font-size: var(--text-base);
+        color: var(--text);
+      }
+      .vt-plan-sum {
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+      .vt-plan-json {
+        flex: 1;
+        min-height: 320px;
+        padding: var(--space-sm);
+        font-family: var(--font-mono);
+        font-size: var(--text-xs);
+        line-height: 1.5;
+        color: var(--text);
+        background: var(--surface-sunken);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        resize: vertical;
+        white-space: pre;
+      }
+      .vt-plan-foot {
+        display: flex;
+        align-items: center;
+        gap: var(--space-sm);
+      }
+      /* 套用失敗的訊息留在面板上，不用 toast —— 這種錯誤要能邊看 JSON 邊改 */
+      .vt-plan-msg {
+        flex: 1;
+        font-size: var(--text-xs);
+        color: var(--danger);
+      }
+      .vt-plan-msg.is-ok {
+        color: var(--success);
+      }
+      .vt-plan-msg.is-busy {
+        color: var(--text-dim);
+      }
+      code {
+        font-family: var(--font-mono);
+        color: var(--text-dim);
+      }
+    </style>
+  </head>
+  <body class="theme-dark">
+    <header class="vt-topbar">
+      <span class="vt-title">影片模式 · 時間軸線性剪輯</span>
+      <span id="vt-mode-badge" class="vt-badge">原型</span>
+      <div class="vt-stats">
+        <div class="vt-stat">
+          <span class="vt-stat-label">原長</span>
+          <span class="vt-stat-value" id="vt-stat-orig">00:00.0</span>
+        </div>
+        <div class="vt-stat is-final">
+          <span class="vt-stat-label">剪後總長</span>
+          <span class="vt-stat-value" id="vt-stat-final">00:00.0</span>
+        </div>
+      </div>
+      <span class="vt-export-msg" id="vt-export-msg"></span>
+      <!-- 合成進度區：idle 時整區收起，開始合成才出現 -->
+      <div class="vt-render" id="vt-render" hidden>
+        <div
+          class="vt-render-bar"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          id="vt-render-bar"
+        >
+          <span class="vt-render-fill" id="vt-render-fill"></span>
+        </div>
+        <span
+          class="vt-render-text"
+          id="vt-render-text"
+          aria-live="polite"
+        ></span>
+        <button
+          id="vt-render-cancel"
+          class="vt-btn vt-render-btn"
+          type="button"
+          title="砍掉正在跑的 ffmpeg"
+        >
+          取消
+        </button>
+        <button
+          id="vt-render-reveal"
+          class="vt-btn vt-render-btn"
+          type="button"
+          hidden
+          title="在 Finder 開啟成品"
+        >
+          在 Finder 顯示
+        </button>
+        <button
+          id="vt-render-close"
+          class="vt-btn vt-render-btn"
+          type="button"
+          hidden
+          aria-label="收起進度"
+        >
+          ✕
+        </button>
+      </div>
+      <!-- 出片目標：後端支援 yt(16:9) / reels(9:16) / mp3，之前前端寫死只出 yt -->
+      <div
+        class="vt-targets"
+        id="vt-targets"
+        role="group"
+        aria-label="輸出目標"
+      >
+        <label class="vt-target" title="橫式 16:9，字幕走外掛 .srt">
+          <input type="checkbox" value="yt" checked />
+          <span>YT</span>
+        </label>
+        <label class="vt-target" title="直式 9:16，字幕一律硬燒進畫面">
+          <input type="checkbox" value="reels" />
+          <span>Reels</span>
+        </label>
+        <label class="vt-target" title="只出音檔，不算影片">
+          <input type="checkbox" value="mp3" />
+          <span>MP3</span>
+        </label>
+      </div>
+      <button
+        id="vt-preview"
+        class="vt-btn"
+        type="button"
+        title="只合成前 30 秒，先看看標題卡位置和字幕樣式對不對"
+      >
+        試看 30 秒
+      </button>
+      <button
+        id="vt-export"
+        class="vt-btn is-primary"
+        type="button"
+        title="把時間軸上的剪輯寫進這一集，然後直接合成影片"
+      >
+        輸出影片
+      </button>
+      <button
+        id="vt-plan-open"
+        class="vt-btn vt-plan-open"
+        type="button"
+        title="除錯用：看／編輯這一集的剪輯指令 JSON"
+      >
+        剪輯指令…
+      </button>
+    </header>
+
+    <main class="vt-main">
+      <div class="vt-workspace">
+        <div class="vt-stage">
+          <video id="vt-video" preload="metadata" playsinline></video>
+          <!-- 影片上的即時字幕預覽（樣式面板一改就跟著變）-->
+          <div class="vt-card-layer" id="vt-card-layer"></div>
+          <div class="vt-sub-preview" id="vt-sub-preview">
+            <span class="vt-sub-preview-text" id="vt-sub-preview-text"></span>
+          </div>
+          <!-- 「操作沒生效」時的一句話提示，2.2 秒自動收 -->
+          <div class="vt-toast" id="vt-toast" hidden></div>
+        </div>
+
+        <aside class="vt-side" id="vt-style-panel">
+          <div class="vt-side-sec" data-sec="card">
+            <button
+              class="vt-side-head"
+              type="button"
+              aria-expanded="true"
+              aria-controls="vt-sec-card"
+            >
+              <span class="vt-side-caret">▾</span>
+              <span class="vt-side-title">標題卡</span>
+              <span class="vt-side-note">拖到藍軌，或在字幕列點「卡」</span>
+            </button>
+            <div class="vt-side-body" id="vt-sec-card">
+              <div class="vt-tpl-grid" id="vt-tpl-grid">
+                <div
+                  class="vt-tpl"
+                  draggable="true"
+                  data-tpl="big"
+                  title="重點大字：置中粗體＋半透明底塊，用於段落開場、金句"
+                >
+                  <span
+                    class="vt-tpl-mock"
+                    style="left: 18%; right: 18%; top: 42%; height: 16%"
+                  ></span>
+                  <span
+                    class="vt-tpl-mock"
+                    style="
+                      left: 30%;
+                      right: 30%;
+                      top: 64%;
+                      height: 8%;
+                      opacity: 0.5;
+                    "
+                  ></span>
+                  <span class="vt-tpl-name">重點大字</span>
+                </div>
+                <div
+                  class="vt-tpl"
+                  draggable="true"
+                  data-tpl="lower"
+                  title="下標條：左下角橫條，主標＋副標，用於人名／身分／主題"
+                >
+                  <span
+                    class="vt-tpl-mock"
+                    style="left: 10%; right: 45%; bottom: 22%; height: 14%"
+                  ></span>
+                  <span
+                    class="vt-tpl-mock"
+                    style="
+                      left: 10%;
+                      right: 58%;
+                      bottom: 12%;
+                      height: 8%;
+                      opacity: 0.5;
+                    "
+                  ></span>
+                  <span class="vt-tpl-name">下標條</span>
+                </div>
+                <div
+                  class="vt-tpl"
+                  draggable="true"
+                  data-tpl="quote"
+                  title="引言框：帶引號的框、可多行，用於引用金句"
+                >
+                  <span
+                    class="vt-tpl-mock"
+                    style="
+                      left: 16%;
+                      right: 16%;
+                      top: 32%;
+                      height: 36%;
+                      background: none;
+                      border: 1px solid var(--text-faint);
+                    "
+                  ></span>
+                  <span
+                    class="vt-tpl-mock"
+                    style="left: 24%; right: 24%; top: 44%; height: 8%"
+                  ></span>
+                  <span class="vt-tpl-name">引言框</span>
+                </div>
+              </div>
+              <p class="vt-tpl-hint" id="vt-tpl-hint">拖版型到藍軌新增一張卡</p>
+
+              <div class="vt-card-inspector" id="vt-card-inspector" hidden>
+                <div class="vt-field">
+                  <span class="vt-field-label">大小</span>
+                  <input
+                    class="vt-range"
+                    id="ct-scale"
+                    type="range"
+                    min="40"
+                    max="220"
+                    step="5"
+                    value="100"
+                  />
+                  <span class="vt-field-val" id="ct-scale-val">100%</span>
+                </div>
+                <div class="vt-field">
+                  <span class="vt-field-label">位置</span>
+                  <button type="button" class="vt-btn-reset" id="ct-reset-pos">
+                    回版型預設位
+                  </button>
+                </div>
+                <p class="vt-tpl-hint">位置直接在影片上拖，拖到哪就停在哪</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 字幕：逐句直式清單，改字／斷句／合併全在這裡做 -->
+          <div class="vt-side-sec vt-side-grow" data-sec="subs">
+            <button
+              class="vt-side-head"
+              type="button"
+              aria-expanded="true"
+              aria-controls="vt-sec-subs"
+            >
+              <span class="vt-side-caret">▾</span>
+              <span class="vt-side-title">字幕</span>
+              <span class="vt-side-note" id="vt-line-count"></span>
+            </button>
+            <div class="vt-side-body" id="vt-sec-subs">
+              <div class="vt-line-list" id="vt-line-list"></div>
+              <p class="vt-tpl-hint">
+                Enter 斷句　句首 Backspace 併入前句　Tab 下一句
+              </p>
+            </div>
+          </div>
+
+          <details class="vt-adv" id="vt-adv">
+            <summary>進階：字幕樣式</summary>
+            <div class="vt-adv-body">
+              <div class="vt-field">
+                <span class="vt-field-label">字型</span>
+                <select class="vt-select" id="st-font">
+                  <option value="Hiragino Sans GB">Hiragino Sans GB</option>
+                  <option value="思源黑體">思源黑體</option>
+                  <option value="蘋方">蘋方</option>
+                  <option value="Noto Sans TC">Noto Sans TC</option>
+                </select>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">字級</span>
+                <input
+                  class="vt-range"
+                  type="range"
+                  id="st-size"
+                  min="24"
+                  max="140"
+                  step="2"
+                  value="60"
+                />
+                <span class="vt-field-val" id="st-size-val">60</span>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">粗體</span>
+                <div class="vt-seg" id="st-bold">
+                  <button type="button" data-v="1" class="is-on">開</button>
+                  <button type="button" data-v="0">關</button>
+                </div>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">字色</span>
+                <input
+                  class="vt-color"
+                  type="color"
+                  id="st-primary"
+                  value="#ffffff"
+                />
+                <span class="vt-field-val" id="st-primary-val"
+                  >&amp;H00FFFFFF</span
+                >
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">描邊色</span>
+                <input
+                  class="vt-color"
+                  type="color"
+                  id="st-outline-col"
+                  value="#000000"
+                />
+                <span class="vt-field-val" id="st-outline-col-val"
+                  >&amp;H00000000</span
+                >
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">邊框樣式</span>
+                <div class="vt-seg" id="st-border">
+                  <button type="button" data-v="1" class="is-on">
+                    描邊＋陰影
+                  </button>
+                  <button type="button" data-v="3">底色塊</button>
+                </div>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">描邊粗細</span>
+                <input
+                  class="vt-range"
+                  type="range"
+                  id="st-outline"
+                  min="0"
+                  max="6"
+                  step="1"
+                  value="2"
+                />
+                <span class="vt-field-val" id="st-outline-val">2</span>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">陰影</span>
+                <input
+                  class="vt-range"
+                  type="range"
+                  id="st-shadow"
+                  min="0"
+                  max="6"
+                  step="1"
+                  value="1"
+                />
+                <span class="vt-field-val" id="st-shadow-val">1</span>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">位置</span>
+                <div class="vt-seg" id="st-align">
+                  <button type="button" data-v="2" class="is-on">底部</button>
+                  <button type="button" data-v="10">正中</button>
+                  <button type="button" data-v="6">頂部</button>
+                </div>
+              </div>
+
+              <div class="vt-field">
+                <span class="vt-field-label">垂直微調</span>
+                <input
+                  class="vt-range"
+                  type="range"
+                  id="st-marginv"
+                  min="0"
+                  max="400"
+                  step="10"
+                  value="100"
+                />
+                <span class="vt-field-val" id="st-marginv-val">100</span>
+              </div>
+            </div>
+          </details>
+        </aside>
+      </div>
+
+      <div class="vt-controls">
+        <button id="vt-play" class="vt-btn" type="button">▶ 播放</button>
+        <span class="vt-time" id="vt-time">00:00.0 / 00:00.0</span>
+        <label class="vt-toggle">
+          <input type="checkbox" id="vt-skip" checked />
+          播放時跳過剪除段
+        </label>
+        <div class="vt-spacer"></div>
+        <!-- 復原走 ⌘Z（時間軸 ⓘ 有寫）；縮到最小就是適合寬度，不另設鈕 -->
+        <div class="vt-zoom">
+          <button
+            id="vt-zoom-out"
+            class="vt-btn"
+            type="button"
+            title="縮小（縮到底＝適合寬度）"
+          >
+            −
+          </button>
+          <button id="vt-zoom-in" class="vt-btn" type="button" title="放大">
+            ＋
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <div class="vt-tl-head">
+          <span class="vt-tl-title">時間軸</span>
+          <!-- 長 hint 已收成淡色 ⓘ（原生 tooltip）-->
+          <span
+            class="vt-tl-hint"
+            title="拖曳＝標記剪除；點剪除段＝取消；⌘Z 復原&#10;點字幕塊＝跳到右欄那一句&#10;鍵盤：← → 移動播放頭（⇧ 跨大步）、I 進點、O 出點、⌫ 剪除、Esc 取消"
+            aria-label="操作說明"
+            >ⓘ</span
+          >
+        </div>
+        <div class="vt-tl-body">
+          <div class="vt-tl-gutter" aria-hidden="true">
+            <div class="vt-gutter-cell" style="height: 44px">標題卡</div>
+            <div class="vt-gutter-cell" style="height: 44px">字幕</div>
+            <div class="vt-gutter-cell" style="height: 64px">波形</div>
+          </div>
+          <div class="vt-tl-scroll" id="vt-tl-scroll">
+            <div class="vt-tracks" id="vt-tracks">
+              <!-- 由上而下：標題卡 → 字幕 → 波形。聲音放最下面當基準尺 -->
+              <div class="vt-sub-track vt-card-track" id="vt-card-track"></div>
+              <div class="vt-sub-track" id="vt-sub-track"></div>
+              <div class="vt-timeline" id="vt-timeline">
+                <canvas id="vt-waveform"></canvas>
+              </div>
+              <!-- 播放頭：跨越三軌 -->
+              <div class="vt-playhead" id="vt-playhead" style="left: 0"></div>
+            </div>
+          </div>
+        </div>
+        <p class="vt-empty-note" id="vt-empty-note" hidden></p>
+      </div>
+    </main>
+
+    <!-- 輸出／匯入剪輯指令：可編輯，改完按「套用這份指令」就吃回時間軸 -->
+    <div class="vt-plan-mask" id="vt-plan" hidden>
+      <div class="vt-plan-box">
+        <div class="vt-plan-head">
+          <span class="vt-plan-title">剪輯指令</span>
+          <span class="vt-plan-sum" id="vt-plan-sum"></span>
+        </div>
+        <textarea
+          class="vt-plan-json"
+          id="vt-plan-json"
+          spellcheck="false"
+        ></textarea>
+        <div class="vt-plan-foot">
+          <button id="vt-plan-copy" class="vt-btn" type="button">複製</button>
+          <button
+            id="vt-plan-apply"
+            class="vt-btn"
+            type="button"
+            title="把上面這份 JSON 吃回時間軸（可用 ⌘Z 復原）"
+          >
+            套用這份指令
+          </button>
+          <button
+            id="vt-plan-push"
+            class="vt-btn"
+            type="button"
+            title="把這份指令寫進這一集：cuts 進 episode.yaml、字幕覆寫 _v2.srt（舊檔留 .bak）"
+          >
+            送到這一集
+          </button>
+          <button
+            id="vt-plan-render"
+            class="vt-btn"
+            type="button"
+            title="寫入後直接合成前 30 秒試看片"
+          >
+            送出並合成試看
+          </button>
+          <span class="vt-plan-msg" id="vt-plan-msg"></span>
+          <button id="vt-plan-close" class="vt-btn" type="button">關閉</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="video-edit-prototype.js"></script>
+  </body>
+</html>
