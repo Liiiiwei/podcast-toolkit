@@ -12,6 +12,11 @@ from functools import lru_cache
 from pathlib import Path
 from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.segment_plan import (
+    keep_intervals,
+    merge_intervals,
+    removed_with_trim,
+)
 
 
 def _has_subtitles_filter(ffmpeg_path: str) -> bool:
@@ -189,6 +194,14 @@ def cut_intervals_from_cfg(
     else:
         cuts = cfg.get("cuts")
         if cuts:
+            if cfg.get("deletions"):
+                # 兩個編輯器各存過一次就會並存。以 cuts 為準是對的（時間版是正典），
+                # 但不能默默吃掉另一半——講清楚哪一邊這次沒生效。
+                print(
+                    "⚠ episode.yaml 同時有 cuts（時間版刪段）與 deletions（字幕卡刪段）："
+                    "本次以 cuts 為準，deletions 不生效。請在其中一邊重新存檔以統一。",
+                    file=sys.stderr,
+                )
             intervals = []
             for c in cuts:
                 if isinstance(c, dict):
@@ -1380,14 +1393,10 @@ def prepare_assembly(
         deletion_intervals = []
         removed_intervals = _removed_intervals_from_segments(segments, main_dur_src)
     else:
-        # 單機：cut_intervals 直接當刪除區間 + 頭尾 trim
-        deletion_intervals = list(cut_intervals)
-        if head_trim > 0:
-            deletion_intervals.append((0.0, head_trim))
-        if tail_trim > 0:
-            deletion_intervals.append((main_dur - tail_trim, main_dur))
-        # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ 映射位移才不會重複扣
-        deletion_intervals = _merge_intervals(deletion_intervals)
+        # 單機：刪段 + 頭尾 trim，與雙機共用 removed_with_trim（trim 不再兩條路各自硬接）
+        deletion_intervals = removed_with_trim(
+            cut_intervals, main_dur, head_trim, tail_trim
+        )
         removed_intervals = deletion_intervals
 
         if burn_subs and cut_intervals:
@@ -1409,9 +1418,11 @@ def prepare_assembly(
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
         if deletion_intervals:
-            # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
-            deleted_total = sum(b - a for a, b in deletion_intervals)
-            main_dur = main_dur - deleted_total
+            # main_dur 用於 fade-out 計時。用「保留區間加總」算，與 multicam 同一個公式
+            # （前科：這裡用相減、那裡用相加，兩條公式各自維護就會兜不攏）
+            main_dur = sum(
+                b - a for a, b in keep_intervals(deletion_intervals, main_dur)
+            )
 
     # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
     main_dur = main_dur / speed_factor
@@ -1662,20 +1673,9 @@ def prepare_assembly(
     }
 
 
-def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """把重疊／相鄰的區間併成不重疊的聯集（依 start 排序後掃描）。
-
-    必須在餵給 _original_to_mp4_time 前先併：該函式是「逐段加總被刪長度」算位移，
-    重疊區間會被各扣一次（母片 ffmpeg 的 select='not(A+B)' 是布林聯集只算一次，兩邊就會兜不攏）。
-    head_trim 區間常與開頭的 cut／silence 重疊，故 append 完頭尾 trim 必須再 merge。
-    """
-    out: list[tuple[float, float]] = []
-    for a, b in sorted(intervals):
-        if out and a <= out[-1][1] + 1e-9:
-            out[-1] = (out[-1][0], max(out[-1][1], b))
-        else:
-            out.append((a, b))
-    return out
+# 區間聯集併軌到 segment_plan（本檔曾有一份幾乎相同的複本，兩份的容差還不一致）。
+# 舊名保留：既有呼叫端與測試都用 assemble._merge_intervals。
+_merge_intervals = merge_intervals
 
 
 def _original_to_mp4_time(t_src: float, deletion_intervals: list[tuple[float, float]]) -> float:
@@ -1849,15 +1849,13 @@ def extract_reels_clips(
 
     # 刪段時間版（cuts + 靜音剪段，與主合成同源；reels 母片已扣掉故 clip 換算需一致）
     silence_cuts = _silence_cuts_from_cfg(ep)
-    deletion_intervals = list(
-        cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts)
+    # head/tail trim 與主合成、雙機共用 removed_with_trim（三處不再各自硬接）
+    deletion_intervals = removed_with_trim(
+        cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts),
+        main_dur,
+        head_trim,
+        tail_trim,
     )
-    if head_trim > 0:
-        deletion_intervals.append((0.0, head_trim))
-    if tail_trim > 0:
-        deletion_intervals.append((main_dur - tail_trim, main_dur))
-    # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ clip 換算位移才不會重複扣
-    deletion_intervals = _merge_intervals(deletion_intervals)
 
     if clip_names is not None:
         wanted = set(clip_names)

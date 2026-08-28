@@ -2,7 +2,11 @@
 from pathlib import Path
 
 from podcast_toolkit import assemble, srt_io
-from podcast_toolkit.segment_plan import build_segment_plan
+from podcast_toolkit.segment_plan import (
+    build_segment_plan,
+    keep_intervals,
+    removed_with_trim,
+)
 
 
 def _cards(*rows):
@@ -180,3 +184,95 @@ def test_equivalence_legacy_deletions_vs_cuts():
         {"cam": "a", "start": 0.0, "end": 4.0},
         {"cam": "a", "start": 8.0, "end": 12.0},
     ]
+
+
+# --- Phase 2 併軌：head/tail trim 只有一個產生點、單機與雙機共用同一條「剪後時長」公式 ---
+
+
+def test_removed_with_trim_merges_trim_into_cut_intervals():
+    """head/tail trim 進 removed 家族，且與開頭/結尾重疊的 cut 只算一次（不可重複扣）。"""
+    # head_trim=3 與 cut (1,2) 完全重疊 → 併成 (0,3)；tail_trim=2 → (10,12)
+    assert removed_with_trim([(1.0, 2.0), (5.0, 6.0)], 12.0, 3.0, 2.0) == [
+        (0.0, 3.0),
+        (5.0, 6.0),
+        (10.0, 12.0),
+    ]
+    # 沒設 trim 時原樣（只做排序併重疊）
+    assert removed_with_trim([(5.0, 6.0)], 12.0) == [(5.0, 6.0)]
+
+
+def test_keep_intervals_is_complement_and_sums_to_trimmed_duration():
+    """保留區間 = [0, main_dur] 的補集；總和 = 剪後時長。"""
+    removed = removed_with_trim([(5.0, 6.0)], 12.0, 3.0, 2.0)
+    keep = keep_intervals(removed, 12.0)
+    assert keep == [(3.0, 5.0), (6.0, 10.0)]
+    assert sum(b - a for a, b in keep) == 6.0  # 12 − (3 head + 1 cut + 2 tail)
+
+
+def test_single_cam_and_multicam_agree_on_trimmed_duration():
+    """[併軌的驗收點] 同一份刪段+trim，單機的「保留區間加總」要等於雙機 segment plan 的加總。
+
+    前科：單機用「總長 − 刪除總長」相減、雙機用「保留段加總」相加，兩條公式各自維護。
+    """
+    cut_intervals = [(4.0, 8.0)]
+    main_dur, head, tail = 20.0, 3.0, 2.0
+
+    single = sum(
+        b - a
+        for a, b in keep_intervals(
+            removed_with_trim(cut_intervals, main_dur, head, tail), main_dur
+        )
+    )
+    segs = build_segment_plan(
+        cut_intervals=cut_intervals,
+        cam_transitions=[],
+        main_dur=main_dur,
+        head_trim_sec=head,
+        tail_trim_sec=tail,
+    )
+    multi = sum(s["end"] - s["start"] for s in segs)
+
+    assert single == multi == 11.0  # 20 − (3 + 4 + 2)
+
+
+def test_trimmed_duration_correct_when_cut_runs_past_end_of_video():
+    """[會分歧的那個案例] 刪段尾端超出正片長度時，只有「保留區間加總」算得對。
+
+    末卡的 end 常比影片實際長度多一點（轉錄尾巴、cut_pad 外吃），舊的
+    「總長 − 刪除總長」會把超出片尾的那段也扣掉 → 剪後時長短報，fade-out 時間點跟著錯。
+    範圍內的數字兩條公式會得到同樣答案，所以這個案例是唯一能分辨兩者的。
+    """
+    cut_intervals = [(19.0, 25.0)]  # 末段延伸到片長 20s 之外
+    main_dur = 20.0
+    removed = removed_with_trim(cut_intervals, main_dur)
+
+    assert sum(b - a for a, b in keep_intervals(removed, main_dur)) == 19.0  # 正確
+    assert main_dur - sum(b - a for a, b in removed) == 14.0  # 舊公式：短報 5 秒
+
+    segs = build_segment_plan(
+        cut_intervals=cut_intervals, cam_transitions=[], main_dur=main_dur
+    )
+    assert sum(s["end"] - s["start"] for s in segs) == 19.0  # 雙機一直都是對的
+
+
+def test_cam_transition_inside_trimmed_head_is_not_dropped():
+    """[併軌時差點寫壞的地方] trim 掉的片頭裡的鏡頭切換點必須保留。
+
+    若把 trim 當成 deleted_intervals 一起餵進切換點過濾，切到 cam B 的那個點會被丟掉，
+    第一個保留段就退回 default_cam（畫面整段跑錯鏡頭），而且測不出來。
+    """
+    segs = build_segment_plan(
+        cut_intervals=[],
+        cam_transitions=[{"t": 2.0, "cam": "b"}],  # 落在被 trim 掉的 [0,5) 內
+        main_dur=20.0,
+        head_trim_sec=5.0,
+    )
+    assert segs == [{"cam": "b", "start": 5.0, "end": 20.0}]
+
+
+def test_cut_and_deletions_coexist_warns_instead_of_silently_dropping(capsys):
+    """兩個編輯器各存過一次 → cuts 為準，但不可靜默吃掉 deletions（失敗路徑要看得見）。"""
+    out = assemble.cut_intervals_from_cfg({"cuts": [[0.0, 5.0]], "deletions": [2]}, CARDS)
+    assert out == [(0.0, 5.0)]  # 以 cuts 為準
+    err = capsys.readouterr().err
+    assert "cuts" in err and "deletions" in err
