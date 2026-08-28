@@ -7082,6 +7082,14 @@ function openCamModal() {
   showModal("cam-modal");
 }
 
+// 影片模式原型：開新分頁，不離開這一頁的編輯狀態（原型與編輯器共用同一台 server、
+// 同一集，讀寫的都是 _v2.srt）。noopener 是開新分頁的既定安全預設。
+$("#video-mode-btn")?.addEventListener("click", () => {
+  // 絕對路徑：編輯器本身掛在 "/"，相對路徑會解析成 /video-edit-prototype.html（沒有這個路由，404）。
+  // 原型頁只存在於 static 掛載點底下，它自己的 tokens.css / sample-*.json 也都靠這個目錄的相對路徑。
+  window.open("/static/video-edit-prototype.html", "_blank", "noopener");
+});
+
 $("#cam-btn").addEventListener("click", openCamModal);
 $("#cam-cancel").addEventListener("click", () => hideModal("cam-modal"));
 

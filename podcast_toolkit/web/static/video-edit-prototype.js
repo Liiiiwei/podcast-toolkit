@@ -2235,14 +2235,13 @@
         return null;
       }
     }
-    if (
-      plan.source === "demo" &&
-      !confirm(
-        "現在是示範資料，送出會用假字幕覆蓋這一集的 _v2.srt（舊檔會留 .bak）。確定要送？",
-      )
-    ) {
-      return null;
-    }
+    // 送出一律覆蓋這一集的 _v2.srt，真集也一樣（舊版只在 demo 問，真集靜默覆蓋 ——
+    // 但真集被蓋掉的是真字幕，代價更大）。demo 另外點名資料是假的。
+    const warn =
+      plan.source === "demo"
+        ? "現在是示範資料，送出會用假字幕覆蓋這一集的 _v2.srt（舊檔會留 .bak）。確定要送？"
+        : "送出會覆蓋這一集的 _v2.srt 與剪輯設定（舊檔會留 .bak）。確定要送？";
+    if (!confirm(warn)) return null;
     if (render && !checkBeforeRender(plan)) return null;
     setPlanBusy(true, render ? "送出並合成中…" : "送出中…");
     try {
@@ -2622,16 +2621,26 @@
     }
   }
 
-  // demo 字幕：sample-subtitles.json（真模式先沿用同一份 demo，未接後端字幕 API）
+  // 字幕：demo 讀 static 假資料，真模式讀後端正典字幕（_final_v2.srt）。
+  // 失敗回 null 而不是空陣列 —— 空陣列是「這集真的一句字幕都沒有」的合法狀態，
+  // 兩者混在一起，載入失敗就會靜默偽裝成「沒字幕」。
   async function loadSubs() {
+    const url = DEMO ? "sample-subtitles.json" : "/api/subtitles";
     try {
-      const r = await fetch("sample-subtitles.json", { cache: "no-store" });
-      if (!r.ok) return [];
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) return null;
       const data = await r.json();
-      return Array.isArray(data.subs) ? data.subs : [];
+      return Array.isArray(data.subs) ? data.subs : null;
     } catch (_) {
-      return [];
+      return null;
     }
+  }
+
+  // 載入失敗提示：多個資源同時失敗時累加，不要後者蓋掉前者（蓋掉會漏診斷線索）
+  function showEmptyNote(msg) {
+    const note = $("vt-empty-note");
+    note.textContent = note.hidden ? msg : `${note.textContent} ${msg}`;
+    note.hidden = false;
   }
 
   function setDuration(d) {
@@ -2660,11 +2669,11 @@
     });
     v.addEventListener("error", () => {
       // 影片載入失敗（真模式沒開集/沒影片）→ 用波形時長撐住時間軸，不靜默假裝成功
-      const note = $("vt-empty-note");
-      note.hidden = false;
-      note.textContent = DEMO
-        ? "找不到 sample-video.mp4（請從 static 目錄提供）。"
-        : "影片載入失敗：真模式需要 app server 已開啟一集且該集有主影片（/api/video 回 200）。";
+      showEmptyNote(
+        DEMO
+          ? "找不到 sample-video.mp4（請從 static 目錄提供）。"
+          : "影片載入失敗：真模式需要 app server 已開啟一集且該集有主影片（/api/video 回 200）。",
+      );
     });
 
     const wf = await loadWaveformData();
@@ -2672,14 +2681,24 @@
       state.waveform = wf;
       setDuration(wf.duration || 0);
     } else {
-      const note = $("vt-empty-note");
-      note.hidden = false;
-      note.textContent = DEMO
-        ? "找不到 sample-waveform.json。"
-        : "波形載入失敗：真模式需要 app server 已開啟一集（/api/waveform 回 200）。";
+      showEmptyNote(
+        DEMO
+          ? "找不到 sample-waveform.json。"
+          : "波形載入失敗：真模式需要 app server 已開啟一集（/api/waveform 回 200）。",
+      );
     }
 
-    state.subs = await loadSubs(); // 載入 demo 字幕卡
+    const subs = await loadSubs();
+    if (subs) {
+      state.subs = subs;
+    } else {
+      state.subs = [];
+      showEmptyNote(
+        DEMO
+          ? "找不到 sample-subtitles.json。"
+          : "字幕載入失敗：真模式需要該集已轉好字幕（/api/subtitles 回 200，來源是 _final_v2.srt）。",
+      );
+    }
     bindStylePanel(); // 綁定字幕樣式面板（收在進階摺疊區）
     bindPlanDialog(); // 綁定「輸出剪輯指令」面板
     if (!DEMO) attachRenderWatch(); // 重整前若已在合成，接回去繼續顯示進度

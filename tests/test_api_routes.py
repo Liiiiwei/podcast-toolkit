@@ -341,6 +341,46 @@ def test_get_episode_returns_suspicious_pause_per_card(tmp_episode_dir):
     assert "reaction_only" in cards[1]["suspicious_reasons"]
 
 
+def test_get_subtitles_returns_v2_srt_in_sample_json_shape(tmp_episode_dir):
+    """/api/subtitles 給影片模式時間軸用：回的形狀要跟 sample-subtitles.json 一樣，
+    前端 demo 與真集才能共用同一段程式碼。"""
+    from podcast_toolkit.web.api import build_app
+
+    srt = (
+        "1\n00:00:00,400 --> 00:00:02,200\n大家好歡迎收聽\n\n"
+        "2\n00:00:03,000 --> 00:00:05,500\n今天聊一個有趣的主題\n"
+    )
+    (tmp_episode_dir / "03_成品" / "測試集_final_v2.srt").write_text(
+        srt, encoding="utf-8"
+    )
+    app = build_app(Episode(tmp_episode_dir), shutdown=lambda: None)
+
+    r = TestClient(app).get("/api/subtitles")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["version"] == 1
+    # duration 是最後一句的迄點，不是媒體長度
+    assert data["duration"] == pytest.approx(5.5)
+    assert [s["text"] for s in data["subs"]] == ["大家好歡迎收聽", "今天聊一個有趣的主題"]
+    # 欄位只有這三個：多的欄位前端 buildPlan 不會轉，少的會讓時間軸畫不出來
+    assert set(data["subs"][0]) == {"start", "end", "text"}
+    assert data["subs"][0]["start"] == pytest.approx(0.4)
+
+
+def test_get_subtitles_404_when_no_v2_srt(tmp_episode_dir):
+    """沒轉字幕就回 404，不要回空陣列——空陣列會被前端當成「這集真的沒字幕」。"""
+    from podcast_toolkit.web.api import build_app
+
+    v2 = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    if v2.exists():
+        v2.unlink()
+    app = build_app(Episode(tmp_episode_dir), shutdown=lambda: None)
+
+    r = TestClient(app).get("/api/subtitles")
+    assert r.status_code == 404
+    assert "轉字幕" in r.json()["detail"]
+
+
 def test_start_job_rejects_when_running(tmp_episode_full):
     from podcast_toolkit.web import assemble_job
     from podcast_toolkit.episode import Episode
