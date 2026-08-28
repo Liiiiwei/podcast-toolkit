@@ -11,9 +11,11 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 AJ="podcast_toolkit/web/static/app.js"
+TL="podcast_toolkit/web/static/timeline.js"  # Phase 3 抽出的時間軸模組，M3 打在這裡
 BK=$(mktemp -d)
 cp "$AJ" "$BK/app.js"
-restore() { cp "$BK/app.js" "$AJ"; }
+cp "$TL" "$BK/timeline.js"
+restore() { cp "$BK/app.js" "$AJ"; cp "$BK/timeline.js" "$TL"; }
 trap restore EXIT
 
 T="tests/test_editor_browser_smoke.py"
@@ -39,7 +41,9 @@ perl -0pi -e 's/^function renderCards\(\) \{$/function renderCards() {\n  return
 run "M2 renderCards 不渲染" "test_s2_cards_rendered"
 
 # M3 時間軸區塊 class 改名（區塊還在，但選擇器找不到＝等同沒畫）
-perl -0pi -e 's/    block\.className = "tl-block";/    block.className = "tl-blockX";  \/\/ MUTANT/' "$AJ"
+# 注意打的是 $TL 不是 $AJ —— 這行 Phase 3 已隨 renderCardTimeline 搬進 timeline.js，
+# 繼續打 app.js 會變成「改不到東西→測試照樣綠→印 ✗」的假訊號。
+perl -0pi -e 's/    block\.className = "tl-block";/    block.className = "tl-blockX";  \/\/ MUTANT/' "$TL"
 run "M3 時間軸不畫區塊" "test_s3_timeline_rendered"
 
 # M4 存檔 payload 不帶 cards（改的字送不出去＝「寫得進讀不回」的前科形狀）
@@ -49,6 +53,12 @@ run "M4 存檔不帶改過的字" "test_s4_edit_and_save_round_trip"
 # M5 未存徽章恆亮（髒值判斷失效 → 沒改東西也顯示有未存）
 perl -0pi -e 's/    const n = unsavedCount\(\);/    const n = 1;  \/\/ MUTANT/' "$AJ"
 run "M5 未存徽章恆亮" "test_s4_edit_and_save_round_trip"
+
+# M6 拆檔專屬：timeline.js 少一個 export（app.js 那端的 import 就對不上）。
+# 這是 Phase 3 拆檔**新引進**的失敗模式，前五個突變都涵蓋不到：
+# 模組連結期就失敗 → 整包一行都不會執行。
+perl -0pi -e 's/^  renderCardTimeline,$/  \/\/ MUTANT: renderCardTimeline 沒 export/m' "$TL"
+run "M6 timeline.js 少一個 export" "test_s1_no_uncaught_js_exception_on_load"
 
 echo "== 還原後確認全綠 =="
 PATH="/usr/bin:$PATH" /usr/bin/python3 -m pytest "$T" -q 2>&1 | tail -2
