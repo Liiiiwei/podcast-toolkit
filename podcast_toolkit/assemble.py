@@ -10,6 +10,7 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
 
 
@@ -255,6 +256,7 @@ def _write_ass_from_srt(
     *,
     speaker_spans: list[tuple[float, float, str]] | None = None,
     style: dict | None = None,
+    cards_overlay: list[dict] | None = None,
 ) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
@@ -271,6 +273,9 @@ def _write_ass_from_srt(
 
     只有時間真的重疊的卡才分排，不做「延長前一句製造重疊」的前處理——
     Breeze 相鄰卡 gap 幾乎恆為 0，人為延長會讓每次換講者都疊（分開講≠同時講，使用者裁決）。
+
+    cards_overlay（標題卡）會以更高的 Layer 追加在字幕事件之後，整組用 inline
+    override tag 畫（見 title_cards 模組），所以 force_style 蓋不到它。
     """
     from podcast_toolkit import dual_line, srt_io
 
@@ -319,6 +324,13 @@ def _write_ass_from_srt(
         text = (e["text"] or "").replace("\r\n", "\n").replace("\n", "\\N")
         rows.append(
             f"Dialogue: 0,{_fmt(e['start'])},{_fmt(e['end'])},Default,,0,0,{margin_v},,{text}\n"
+        )
+    if cards_overlay:
+        rows.extend(
+            title_cards.ass_events(
+                cards_overlay, play_res_x, play_res_y,
+                font_name=(style or {}).get("font_name") or "Arial",
+            )
         )
     dst.write_text("".join(rows), encoding="utf-8")
 
@@ -1287,6 +1299,21 @@ def prepare_assembly(
 
     # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
     # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
+    # 標題卡：原型時間軸上做的大字報／下標條／引言框，跟字幕燒在同一個 ASS，
+    # 合成的濾鏡鏈完全不用動。時間軸跟字幕一致（兩者都在 select/setpts 之前燒，
+    # 每塊的 t 仍是原始時間軸），所以只要套用跟 SRT 同一個 srt_total_shift。
+    overlay_cards = title_cards.normalize(cfg.get("title_cards"))
+    if overlay_cards and abs(srt_total_shift) >= 0.001:
+        shifted_cards = []
+        for c in overlay_cards:
+            end = c["end"] + srt_total_shift
+            if end <= 0:
+                continue
+            shifted_cards.append(
+                {**c, "start": max(0.0, c["start"] + srt_total_shift), "end": end}
+            )
+        overlay_cards = shifted_cards
+
     srt_rel: str | None = None
     if burn_subs:
         if output_kind == "yt":
@@ -1299,6 +1326,7 @@ def prepare_assembly(
         _write_ass_from_srt(
             srt, ass_path, ass_res_w, ass_res_h,
             speaker_spans=dual_spans, style=sub_style,
+            cards_overlay=overlay_cards,
         )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
@@ -1367,6 +1395,8 @@ def prepare_assembly(
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
             filter_srt_by_intervals(srt, clean_srt, cut_intervals)
             srt = clean_srt
+            # 標題卡用跟字幕同一條判準（起點落在剪除區就丟），時間同樣不位移
+            overlay_cards = title_cards.drop_by_intervals(overlay_cards, cut_intervals)
             # 過濾後仍要轉成標明 PlayResX/Y 的 ASS 再燒；直接燒 SRT 會讓 libass 用預設
             # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
             # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
@@ -1374,6 +1404,7 @@ def prepare_assembly(
             _write_ass_from_srt(
                 clean_srt, clean_ass, ass_res_w, ass_res_h,
                 speaker_spans=dual_spans, style=sub_style,
+                cards_overlay=overlay_cards,
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 

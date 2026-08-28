@@ -7,9 +7,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
 
 from podcast_toolkit import audio_align, silencedetect
+from podcast_toolkit.assemble import AssembleError
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
-from podcast_toolkit.web import episode_io
+from podcast_toolkit.web import assemble_job, episode_io, plan_io
 from podcast_toolkit.web.shared import RouteContext, validate_episode_path
 
 
@@ -29,6 +30,65 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         # 還是拿 build_app 當下 cache 的 cfg，A/B toggle 等依賴 refetch 的 UI 不會更新
         holder["ep"] = Episode(ep.dir)
         return {"ok": True}
+
+    @app.post("/api/apply-plan")
+    def apply_plan_route(payload: dict):
+        """收影片剪輯原型的剪輯指令，套進這一集；帶 targets 就順手開合成 job。
+
+        payload: {
+          "plan": {...} 或 JSON 字串（也接受直接把 plan 本體當 payload 送），
+          "targets": ["yt"],        # optional，給了才合成
+          "force": false,           # optional，同 /api/assemble
+          "preview_sec": 30,        # optional，只出前 N 秒試看
+        }
+        cuts 寫進 episode.yaml、字幕整份覆寫 _v2.srt（先備份 .bak）、字幕樣式逐鍵疊進
+        subtitle_style、標題卡寫進 title_cards（assemble 會跟字幕燒在同一個 ASS）。
+        """
+        ep = ctx.require_ep()
+        if assemble_job.is_busy():
+            # 合成中改 SRT / yaml 會讓輸出對不上任何一版指令，直接擋掉
+            raise HTTPException(status_code=409, detail="正在合成中，請等合成結束或先取消再套用剪輯指令")
+        raw = payload.get("plan", payload)
+        try:
+            plan = plan_io.parse_plan(raw)
+        except plan_io.PlanError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not plan["subtitles"]:
+            raise HTTPException(status_code=400, detail="剪輯指令裡沒有任何字幕，套用會清空這集的字幕")
+        summary = plan_io.apply_plan(ep, plan)
+        # 重新 init 讓 cfg 反映剛寫入的 cuts / subtitle_style，下面的合成才吃得到
+        holder["ep"] = Episode(ep.dir)
+
+        targets = payload.get("targets") or []
+        if not targets:
+            return {"ok": True, "applied": summary, "assemble": None}
+        if not isinstance(targets, list):
+            raise HTTPException(status_code=400, detail="targets 必須是 list（例如 ['yt']）")
+        preview_sec = payload.get("preview_sec")
+        if preview_sec is not None:
+            try:
+                preview_sec = int(preview_sec)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="preview_sec 必須是正整數")
+            if preview_sec <= 0:
+                preview_sec = None
+        try:
+            info = assemble_job.start_job(
+                holder["ep"], targets=targets,
+                force=bool(payload.get("force")), preview_sec=preview_sec,
+            )
+        except AssembleError as e:
+            # AssembleError 繼承 RuntimeError，必須先攔（同 /api/assemble）
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {
+            "ok": True,
+            "applied": summary,
+            "assemble": {"targets": info["targets"], "out_paths": info["out_paths"]},
+        }
 
     @app.post("/api/episode/mics")
     def post_episode_mics(payload: dict):
