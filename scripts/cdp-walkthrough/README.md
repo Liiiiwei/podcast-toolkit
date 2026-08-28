@@ -15,8 +15,12 @@
 |------|------|------|
 | `vt-cdp/` | `/private/tmp/vt-cdp` | 52 支。主力走查：`drive.py`、`drive2.py`–`drive39.py`（無 drive18）、診斷用 `diag*.py`／`probe*.py`、截圖用 `shot*.py`、突變測試 `mut34.py` |
 | `vt-proto/` | `/private/tmp/vt-proto` | 6 支。早期原型走查 `drive.py`／`drive2.py`／`drive_subdrag.py`、點擊命中診斷 `probe_click*.py`，以及 **`range_server.py`** |
+| `vt-realmode/` | 2026-08-27 session scratchpad | 3 支。真模式走查 `drive_entry.py`（UI 入口／真模式載真字幕／確認框不分模式都跳，含逐項突變測試）、`drive_b3.py`（改真集的 `_final_v2.srt` 證明頁面讀的是那個檔，`finally` 還原），以及它們的伴生伺服器 **`serve_sandbox.py`** |
 
-兩個目錄各有一支同名 `drive.py`，內容不同，所以分開放。
+`vt-cdp/` 與 `vt-proto/` 各有一支同名 `drive.py`，內容不同，所以分開放。
+
+`vt-realmode/` 的兩支走查**必須先跑 `serve_sandbox.py`**（把 `build_app` 綁到沙盒集起在 8792，
+刻意不寫 lockfile 以免干擾使用者正在跑的 instance）。它們打的是 8792，沒有這支就整批連不上。
 
 `vt-proto/range_server.py` 是這裡面唯一「拿來就能用」的東西：一支支援 HTTP Range 的靜態伺服器。
 `python -m http.server` 不回 206，瀏覽器會判定影片不可 seek（`seekable.length === 0`）而且**不拋任何錯**，
@@ -28,12 +32,17 @@
 搭配同目錄的 `sample-video.mp4`（640×360／24 秒／合成彩條測試訊號）、
 `sample-waveform.json`、`sample-subtitles.json`。demo 模式不需要開集或後端。
 
+`vt-realmode/` 例外：它驗的正是「真模式」，所以要有後端（`serve_sandbox.py`）＋一個真的集
+（沙盒集 `/private/tmp/pt-e2e/20260825 端對端測試`），頁面走的是 `/static/…`（不帶 `?demo=1`）。
+
 ## 怎麼讓它跑起來
 
 1. **Python 要 3.12 以上。** 這些腳本當時跑在 `/private/tmp/pt-venv`（Python 3.14）。
    其中 `drive19.py`／`drive25.py`／`drive26.py` 用了 f-string 內含反斜線的寫法，
    **在 Python 3.9／3.11 會直接 SyntaxError**（本機 `/usr/bin/python3` 是 3.9.6，跑不動）。
    需要 `websockets` 套件。
+   （`vt-realmode/` 的三支沒用到那種寫法，在 `/usr/bin/python3` 3.9.6 跑得動 —— 而且**必須**用它，
+   因為後端要 `fastapi`／`uvicorn`／`websockets`，Homebrew 的 python3 缺 `audioop`。）
 2. **起 Range 伺服器**：`cd` 到 `podcast_toolkit/web/static/`，`PORT=8791 python3 <本目錄>/vt-proto/range_server.py`。
 3. **起 headless Chrome**：`--remote-debugging-port=9333 --user-data-dir=<全新目錄>`。
    用 Bash 工具的 `run_in_background` 起，不要用 `nohup ... &`（工具呼叫結束會把子程序殺掉）。
@@ -49,7 +58,9 @@
 | `vt-cdp/drive39.py:3` | `exec(open("/private/tmp/vt-cdp/drive11.py")…)` | **跨檔相依**：從 drive11 借共用的 CDP 類別 |
 | `vt-cdp/mut34.py:2`、`vt-proto/drive*.py` | `/Users/Mac365/conductor/workspaces/podcast-toolkit/colombo/…` | 當時 Conductor worktree 的絕對路徑 |
 | `vt-proto/drive.py:7` | `ws://127.0.0.1:9223/devtools/browser/<UUID>` | 一次性的 Chrome UUID，早就失效 |
-| 各處 | port 8791／8877（站台）、9333／9223（CDP） | 連接埠 |
+| `vt-realmode/serve_sandbox.py:4` | `/Users/Mac365/conductor/workspaces/podcast-toolkit/colombo` | `sys.path` 插入點，換 worktree 要改 |
+| `vt-realmode/serve_sandbox.py:11`、`drive_b3.py:84` | `/private/tmp/pt-e2e/20260825 端對端測試` | 沙盒集；`drive_b3.py` 會就地改它的 `_final_v2.srt` 再還原 |
+| 各處 | port 8791／8792／8877（站台）、9333／9223（CDP） | 連接埠 |
 
 刻意保留原樣沒有改寫 —— 現在改了也沒辦法重跑驗證，留原檔至少是誠實的紀錄。
 
