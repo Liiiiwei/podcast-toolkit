@@ -5,7 +5,8 @@
 真的會開瀏覽器點下去的門檻在 `tests/test_editor_browser_smoke.py`（Phase 3 拆檔的驗收門檻）。
 
 APP_JS 是**所有編輯器前端模組的串接**，不是單一檔案 —— 拆檔（Phase 3）會讓程式碼換檔，
-只讀 app.js 的話「東西只是搬家」會被誤判成「東西被刪了」。新增模組時記得加進 EDITOR_JS。
+只讀 app.js 的話「東西只是搬家」會被誤判成「東西被刪了」。
+新增模組時加進 conftest.py 的 EDITOR_JS，漏加會被下面第一個測試擋下。
 
 Note: Reels 功能已從 UI 移除（6d02e7e）；旋轉控制項也已移除（保留後端 rotate 欄位）。
 """
@@ -15,14 +16,15 @@ from pathlib import Path
 import podcast_toolkit.web as web_pkg
 from podcast_toolkit import config
 
+from .conftest import EDITOR_JS, editor_js_source
+
 STATIC = Path(web_pkg.__file__).parent / "static"
 INDEX_HTML = (STATIC / "index.html").read_text(encoding="utf-8")
 APP_CSS = (STATIC / "app.css").read_text(encoding="utf-8")
 
-# 編輯器前端的所有模組（app.js 是進入點，其餘是 Phase 3 之後陸續抽出的）。
-# 下面的斷言一律對「串接後的全文」做，才不會把搬家誤判成刪除。
-EDITOR_JS = ["app.js", "timeline.js"]
-APP_JS = "\n".join((STATIC / name).read_text(encoding="utf-8") for name in EDITOR_JS)
+# 下面的斷言一律對「所有編輯器模組串接後的全文」做，才不會把搬家誤判成刪除。
+# 模組清單在 conftest.py（不只這個檔要用，見該處註解）。
+APP_JS = editor_js_source()
 
 # 現行輸出選單（YT 完整版／原速 MP3／5 分鐘預覽）
 OUTPUT_BUTTON_IDS = [

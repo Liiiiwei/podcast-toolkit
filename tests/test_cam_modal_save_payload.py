@@ -12,11 +12,20 @@ from pathlib import Path
 
 import podcast_toolkit.web as web_pkg
 
+from .conftest import editor_js_source
+
 STATIC = Path(web_pkg.__file__).parent / "static"
+
+# APP_JS 只有 app.js：下面三個測試驗的是 app.js 自己的結構（cam-modal 的 handler 綁定、
+# _camModalSavePayload 的函式體），_handler_block 的索引運算也依賴單檔位置。
 APP_JS = (STATIC / "app.js").read_text(encoding="utf-8")
 
+# 「全 app 只有一套 builder」這件事跨模組，必須看串接後的全文。
+# Phase 3 把 buildSavePayload 搬進 api.js 時，只讀 app.js 會把搬家讀成「12 個欄位全被刪」。
+EDITOR_JS_SRC = editor_js_source()
+
 # 這些是主存檔 payload 的專屬 key 字面量（形如 "key:" 的物件欄位）。
-# 全檔只允許出現一次（在 buildSavePayload 裡）；出現第二次＝有人又手寫了
+# 全前端只允許出現一次（在 buildSavePayload 裡）；出現第二次＝有人又手寫了
 # 第二套 builder，會重演「漏欄位→存檔清資料」的 H1 bug。
 SAVE_PAYLOAD_UNIQUE_KEYS = [
     "crop_yt:",
@@ -53,11 +62,14 @@ def test_old_cam_modal_builder_removed():
 
 
 def test_save_payload_keys_defined_exactly_once():
-    # 任何第二套 builder 都得重寫這些 key → 出現次數 >1 即紅
-    dup = {k: APP_JS.count(k) for k in SAVE_PAYLOAD_UNIQUE_KEYS if APP_JS.count(k) != 1}
+    # 任何第二套 builder 都得重寫這些 key → 出現次數 >1 即紅；
+    # 次數 0 也是紅（欄位被整個刪掉 = 那個設定從此送不出去）。
+    src = EDITOR_JS_SRC
+    dup = {k: src.count(k) for k in SAVE_PAYLOAD_UNIQUE_KEYS if src.count(k) != 1}
     assert not dup, (
-        f"save payload key 在 app.js 出現次數 != 1：{dup}；"
-        "疑似有人新增了第二套 payload builder（H1 資料遺失 bug 的根源）"
+        f"save payload key 在編輯器前端出現次數 != 1：{dup}；"
+        ">1 疑似有人新增了第二套 payload builder（H1 資料遺失 bug 的根源）；"
+        "0 則是欄位被刪或模組沒登記進 conftest.EDITOR_JS"
     )
 
 

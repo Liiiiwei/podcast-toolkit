@@ -12,10 +12,12 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 AJ="podcast_toolkit/web/static/app.js"
 TL="podcast_toolkit/web/static/timeline.js"  # Phase 3 抽出的時間軸模組，M3 打在這裡
+AP="podcast_toolkit/web/static/api.js"      # Phase 3 抽出的傳輸層，M4／M7 打在這裡
 BK=$(mktemp -d)
 cp "$AJ" "$BK/app.js"
 cp "$TL" "$BK/timeline.js"
-restore() { cp "$BK/app.js" "$AJ"; cp "$BK/timeline.js" "$TL"; }
+cp "$AP" "$BK/api.js"
+restore() { cp "$BK/app.js" "$AJ"; cp "$BK/timeline.js" "$TL"; cp "$BK/api.js" "$AP"; }
 trap restore EXIT
 
 T="tests/test_editor_browser_smoke.py"
@@ -47,7 +49,9 @@ perl -0pi -e 's/    block\.className = "tl-block";/    block.className = "tl-blo
 run "M3 時間軸不畫區塊" "test_s3_timeline_rendered"
 
 # M4 存檔 payload 不帶 cards（改的字送不出去＝「寫得進讀不回」的前科形狀）
-perl -0pi -e 's/    cards: \[\.\.\.state\.textOverrides\.entries\(\)\]/    cards: [] \/* MUTANT *\//' "$AJ"
+# 注意打的是 $AP 不是 $AJ —— 這行 Phase 3 已隨 buildSavePayload 搬進 api.js，
+# 繼續打 app.js 會變成「改不到東西→測試照樣綠→印 ✗」的假訊號。
+perl -0pi -e 's/    cards: \[\.\.\.state\.textOverrides\.entries\(\)\]/    cards: [] \/* MUTANT *\//' "$AP"
 run "M4 存檔不帶改過的字" "test_s4_edit_and_save_round_trip"
 
 # M5 未存徽章恆亮（髒值判斷失效 → 沒改東西也顯示有未存）
@@ -59,6 +63,10 @@ run "M5 未存徽章恆亮" "test_s4_edit_and_save_round_trip"
 # 模組連結期就失敗 → 整包一行都不會執行。
 perl -0pi -e 's/^  renderCardTimeline,$/  \/\/ MUTANT: renderCardTimeline 沒 export/m' "$TL"
 run "M6 timeline.js 少一個 export" "test_s1_no_uncaught_js_exception_on_load"
+
+# M7 同上，換成 api.js 少一個 export（第二刀抽出的傳輸層也要有自己的連結期守衛）。
+perl -0pi -e 's/^export function buildSavePayload/function buildSavePayload/m' "$AP"
+run "M7 api.js 少一個 export" "test_s1_no_uncaught_js_exception_on_load"
 
 echo "== 還原後確認全綠 =="
 PATH="/usr/bin:$PATH" /usr/bin/python3 -m pytest "$T" -q 2>&1 | tail -2
