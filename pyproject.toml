@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "podcast-toolkit"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Podcast 錄製後製工具：分軌轉錄、字幕編輯、自動合成"
 requires-python = ">=3.9"
 dependencies = [
@@ -40,6 +40,9 @@ podcast = "podcast_toolkit.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["podcast_toolkit*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "podcast_toolkit.version.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

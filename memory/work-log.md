@@ -11,3 +11,9 @@
 - **產出：** Python 相容性與建置辨識修正已推送至 `2d83786`。
 - **財富維度：** 系統建設
 - **能量感受：** 專注
+
+## 2026-09-05（版本來源）
+
+- **做了什麼：** 將 Python 套件、macOS App 與 DMG 打包腳本改為共用 `podcast_toolkit.version.__version__`。
+- **驗證：** 版本來源、API 與啟動器測試共 `53 passed`；`bash -n build_app.sh` 與 `git diff --check` 通過。
+- **下一步：** 補 Breeze sidecar 資產清單與建置前檢查，再同步 README。

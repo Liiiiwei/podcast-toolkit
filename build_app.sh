@@ -44,7 +44,7 @@ if [[ -z "$STAGE" ]]; then
 fi
 APP="dist/JOIN Podcast Toolkit.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
-VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s*\"([^\"]+)\"',open('setup_app.py').read()).group(1))" 2>/dev/null || echo "0.1.0")
+VER=$(python3 -c "from podcast_toolkit.version import __version__; print(__version__)" 2>/dev/null || echo "unknown")
 # build 標記＝日期＋git short SHA（例 20260717-ddfd83d），讓每顆 DMG 檔名/掛載名/
 # 安裝說明都認得出是哪天、哪版程式碼打的（同一天多次、同一 commit 重打都不撞名）。
 # 非 git 環境或有未提交改動時退回 nogit / 加 -dirty 尾綴。

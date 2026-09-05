@@ -11,6 +11,8 @@ import sys
 
 from setuptools import setup
 
+from podcast_toolkit.version import __version__
+
 # py2app 的 modulegraph 用遞迴遍歷 AST，遇到 pydantic/fastapi 這種大模組會爆預設遞迴上限
 # （RecursionError）。建置前拉高，是官方/社群公認的 workaround。
 sys.setrecursionlimit(10000)
@@ -89,9 +91,9 @@ OPTIONS = {
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
         # CFBundleVersion 帶成每次都變的 build 識別碼（給 Finder / crash log 認版），
         # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回版號。
-        # CFBundleShortVersionString 維持 marketing 版號不動（0.2.0）。
-        "CFBundleVersion": os.environ.get("BUILD_ID", "0.2.0"),
-        "CFBundleShortVersionString": "0.2.0",
+        # CFBundleShortVersionString 使用套件的唯一版本來源。
+        "CFBundleVersion": os.environ.get("BUILD_ID", __version__),
+        "CFBundleShortVersionString": __version__,
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
         # Finder/launchd 啟動時環境沒有 LANG/LC_ALL → Python 3.9 locale 退回
