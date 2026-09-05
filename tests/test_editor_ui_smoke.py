@@ -16,6 +16,7 @@ STATIC = Path(web_pkg.__file__).parent / "static"
 INDEX_HTML = (STATIC / "index.html").read_text(encoding="utf-8")
 APP_JS = (STATIC / "app.js").read_text(encoding="utf-8")
 APP_CSS = (STATIC / "app.css").read_text(encoding="utf-8")
+BUILD_SH = (Path(__file__).parents[1] / "build_app.sh").read_text(encoding="utf-8")
 
 # 現行輸出選單（YT 完整版／原速 MP3／5 分鐘預覽）
 OUTPUT_BUTTON_IDS = [
@@ -89,6 +90,11 @@ def test_shared_save_sends_episode_identity():
     end = APP_JS.index("function setSaveBtnLabel", start)
     block = APP_JS[start:end]
     assert "episode_dir: state.episodeDir" in block
+
+
+def test_build_marks_untracked_files_dirty():
+    """打包識別必須包含未追蹤檔案，避免 App 內容與 Git 版本不一致。"""
+    assert "git status --porcelain --untracked-files=normal" in BUILD_SH
 
 
 def test_transcribe_poll_ignores_status_from_another_episode():

@@ -50,7 +50,9 @@ VER=$(python3 -c "import re;print(re.search(r'CFBundleShortVersionString\"\s*:\s
 # 非 git 環境或有未提交改動時退回 nogit / 加 -dirty 尾綴。
 BUILD_DATE=$(date +%Y%m%d)
 GIT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "nogit")
-git diff --quiet 2>/dev/null || GIT_SHA="${GIT_SHA}-dirty"
+if [[ -n "$(git status --porcelain --untracked-files=normal 2>/dev/null)" ]]; then
+    GIT_SHA="${GIT_SHA}-dirty"
+fi
 BUILD_TAG="${BUILD_DATE}-${GIT_SHA}"
 DMG="dist/JOIN-Podcast-Toolkit-${VER}-${BUILD_TAG}.dmg"
 
