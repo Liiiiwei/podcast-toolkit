@@ -74,6 +74,31 @@ def test_save_does_not_auto_open_output_menu():
     assert 'classList.add("pulse")' not in APP_JS, "存檔後不應高亮閃爍合成鈕"
 
 
+def test_subtitle_shift_uses_shared_save_recovery():
+    """字幕偏移也必須走共用存檔通道，避免 HTTP 409 時漏掉復原流程。"""
+    start = APP_JS.index("function setupSrtShift()")
+    end = APP_JS.index("async function loadFiles()", start)
+    block = APP_JS[start:end]
+    assert "await postSave({ subtitle_offset_sec: offset })" in block
+    assert 'fetch("/api/save"' not in block
+
+
+def test_shared_save_sends_episode_identity():
+    """共用存檔請求要帶目前集數識別，後端才能拒絕過期分頁。"""
+    start = APP_JS.index("function postSave(payload)")
+    end = APP_JS.index("function setSaveBtnLabel", start)
+    block = APP_JS[start:end]
+    assert "episode_dir: state.episodeDir" in block
+
+
+def test_transcribe_poll_ignores_status_from_another_episode():
+    """背景工作狀態帶錯集時，前端不可把舊集結果顯示在目前集。"""
+    start = APP_JS.index("async function _pollTranscribeOnce()")
+    end = APP_JS.index("async function finishTranscribe", start)
+    block = APP_JS[start:end]
+    assert "s.episode_dir !== state.episodeDir" in block
+
+
 # --- 預設值：defaults.yaml 與前端表單必須一致 ---
 
 

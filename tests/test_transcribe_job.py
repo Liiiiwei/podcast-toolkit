@@ -45,6 +45,10 @@ def test_initial_state_is_idle():
     assert status["percent"] == 0.0
     assert status["error"] is None
     assert status["out_srt"] is None
+    assert status["job_id"] is None
+    assert status["episode_dir"] is None
+    assert status["warnings"] == []
+    assert status["summary"] is None
 
 
 def test_start_job_sets_running_then_done(monkeypatch, tmp_episode_dir):
@@ -89,6 +93,8 @@ def test_start_job_sets_running_then_done(monkeypatch, tmp_episode_dir):
     assert done["percent"] == 100.0
     assert done["out_srt"] == "03_成品/測試集_final_v2.srt"
     assert done["error"] is None
+    assert done["job_id"] is not None
+    assert done["episode_dir"] == str(tmp_episode_dir.resolve())
 
 
 def test_start_job_rejects_when_already_running(monkeypatch, tmp_episode_dir):
@@ -530,12 +536,12 @@ def test_breeze_python_bundled_requires_both_runtime_and_sitepackages(tmp_path):
 
 # --- Breeze 收尾階段：跳過的步驟不能靜默（reflow 舊行為是 except: pass）---
 
-def _run_breeze_with_stub_asr(monkeypatch, tmp_path, ep_dir, *, reflow):
+def _run_breeze_with_stub_asr(monkeypatch, tmp_path, ep_dir, *, reflow, polish=None):
     """跑一次 _run_breeze，但把 ASR/ingest/proofread 都換成立即成功的假件。
 
     只留 reflow 這一段是真的被呼叫，方便單獨驗它失敗時的行為。
     """
-    from podcast_toolkit import ingest_breeze, proofread, subtitle_cleanup
+    from podcast_toolkit import ingest_breeze, proofread, subtitle_cleanup, subtitle_polish
 
     # 假 Breeze 專案：make_subtitle.py 什麼都不做直接 exit 0
     bdir = tmp_path / "fake_breeze"
@@ -546,6 +552,8 @@ def _run_breeze_with_stub_asr(monkeypatch, tmp_path, ep_dir, *, reflow):
     monkeypatch.setattr(proofread, "resolve_provider", lambda cfg: "claude")
     monkeypatch.setattr(proofread, "run", lambda d: 0)
     monkeypatch.setattr(subtitle_cleanup, "reflow_episode", reflow)
+    if polish is not None:
+        monkeypatch.setattr(subtitle_polish, "run", polish)
 
     ep = Episode(ep_dir)
     job = transcribe_job._grab_slot(state="running", mode="breeze", phase="breeze-asr")
@@ -567,9 +575,9 @@ def test_reflow_failure_leaves_note_instead_of_silent_done(
 
     # 失敗不擋：字幕已匯入，終態仍是 done
     assert status["state"] == "done"
-    # 但要留下可見的 note，且帶原始例外訊息（不然無從判斷是哪一步壞了）
-    assert "斷句重整跳過" in (status.get("note") or ""), status
-    assert "斷句引擎爆了" in status["note"]
+    # 警告不能被後續字幕摘要覆蓋，且要帶原始例外訊息。
+    assert any("斷句重整跳過" in warning for warning in (status.get("warnings") or [])), status
+    assert "斷句引擎爆了" in " ".join(status["warnings"])
 
 
 def test_reflow_success_leaves_no_note(monkeypatch, tmp_path, tmp_episode_dir):
@@ -578,4 +586,18 @@ def test_reflow_success_leaves_no_note(monkeypatch, tmp_path, tmp_episode_dir):
         monkeypatch, tmp_path, tmp_episode_dir, reflow=lambda _dir: None
     )
     assert status["state"] == "done"
-    assert not status.get("note")
+    assert not status.get("warnings")
+    assert "字幕拋光完成" in (status.get("summary") or "")
+
+
+def test_invalid_polish_report_does_not_finish_job(monkeypatch, tmp_path, tmp_episode_dir):
+    status = _run_breeze_with_stub_asr(
+        monkeypatch,
+        tmp_path,
+        tmp_episode_dir,
+        reflow=lambda _dir: None,
+        polish=lambda _dir: {"ok": False, "after": {"errors": 1}},
+    )
+
+    assert status["state"] == "error"
+    assert "字幕拋光驗證未通過" in status["error"]

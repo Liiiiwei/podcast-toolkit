@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, Response
@@ -19,8 +20,21 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
     @app.post("/api/save")
     def save(payload: dict):
         ep = ctx.require_ep()
+        requested_dir = payload.get("episode_dir")
+        if requested_dir:
+            try:
+                requested_path = Path(str(requested_dir)).expanduser().resolve()
+            except (OSError, RuntimeError, ValueError):
+                raise HTTPException(status_code=409, detail="集數識別無效，請重新載入目前集數")
+            if requested_path != ep.dir:
+                raise HTTPException(
+                    status_code=409,
+                    detail="目前集數已變更，請重新載入後再儲存",
+                )
+        save_payload = dict(payload)
+        save_payload.pop("episode_dir", None)
         try:
-            episode_io.save_state(ep, payload)
+            episode_io.save_state(ep, save_payload)
         except ValueError as e:
             # 不合法的 card_timings（end<=start / 非數字）等 → 400 帶中文訊息，而非裸 500。
             # save_state 在寫任何檔案前就 raise，所以無檔案損壞之虞。

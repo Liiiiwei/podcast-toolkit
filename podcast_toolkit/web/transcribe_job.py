@@ -3,7 +3,7 @@
 模組層級單一 job slot：同時間只能跑一個轉字幕。
 前端流程：POST /api/transcribe → start_job() → 每秒 GET /api/transcribe/status。
 
-Phase 順序：compress → upload → resegment → done
+Phase 順序：compress → upload → resegment → polish → done
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ _WORKER: threading.Thread | None = None
 _STATE: dict[str, Any] = {
     "state": "idle",       # idle | running | done | error | cancelled
     "mode": "single",      # single | per-mic
-    "phase": None,         # single: None | compress | upload | resegment
+    "phase": None,         # single: None | compress | upload | resegment | polish
                            # per-mic: None | per-mic-transcribe | srt-merge | resegment
     "percent": 0.0,        # 該 phase 內 0-100（per-mic 用 done軌/總軌 換算）
     "src_path": None,      # 來源檔（相對 ep.dir）
@@ -80,7 +80,11 @@ _STATE: dict[str, Any] = {
     "mics_progress": None, # per-mic only：{a: "vad", b: "gemini", c: "done"} 等
     "error": None,
     "note": None,          # 成功但中途有步驟被跳過（校對／斷句重整）的提示
+    "warnings": [],        # pipeline 中各階段累積的警告
+    "summary": None,       # pipeline 成功摘要，不與 warnings 共用欄位
     "started_at": None,
+    "job_id": None,
+    "episode_dir": None,
 }
 
 
@@ -133,7 +137,11 @@ def _reset_locked(**kwargs) -> None:
         # 一定要跟著重置 —— 否則上一次轉錄的「校對／斷句跳過」提示會漏到下一次，
         # 讓使用者看到根本沒發生過的警告
         "note": None,
+        "warnings": [],
+        "summary": None,
         "started_at": None,
+        "job_id": None,
+        "episode_dir": None,
     })
     _STATE.update(kwargs)
 
@@ -164,6 +172,16 @@ def _set_job(job: int, **kwargs) -> None:
             # 有非零百分比 = 已看過真實進度 → watchdog 改用一般 stall 判準
             _PROGRESS_SEEN = True
         _STATE.update(kwargs)
+
+
+def _append_warning(job: int, message: str) -> None:
+    with _LOCK:
+        if job != _CURRENT_JOB:
+            return
+        warnings = list(_STATE.get("warnings") or [])
+        warnings.append(message)
+        _STATE["warnings"] = warnings
+        _STATE["note"] = "\n".join(warnings)
 
 
 def _job_alive(job: int) -> bool:
@@ -287,6 +305,7 @@ def start_job(
         src_path=src_rel,
         started_at=monotonic(),
     )
+    _set_job(job, job_id=job, episode_dir=str(ep.dir))
     _spawn_worker(_run, (ep, src, provider, api_key, typo_entries, glossary, job))
     return {"src_path": src_rel}
 
@@ -384,6 +403,7 @@ def start_per_mic_job(
         mics_progress=init_progress,
         started_at=monotonic(),
     )
+    _set_job(job, job_id=job, episode_dir=str(ep.dir))
     _spawn_worker(_run_per_mic, (ep, sorted(speakers), force, job))
     return {"speakers": sorted(speakers)}
 
@@ -566,7 +586,7 @@ def _breeze_python(bdir: Path) -> tuple[str, dict[str, str] | None]:
 
 
 def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[str, Any]:
-    """一鍵 Breeze：Breeze ASR 產含講者字幕 → ingest_breeze → 本地校對。整條龍背景跑。"""
+    """一鍵 Breeze：Breeze ASR 產含講者字幕 → ingest_breeze → 本地校對 → 字幕拋光。"""
     bdir = _breeze_dir()
     if bdir is None:
         raise RuntimeError(
@@ -577,12 +597,13 @@ def start_breeze_job(ep: Episode, *, guest: str = "", terms: str = "") -> dict[s
         state="running", mode="breeze", phase="breeze-asr",
         percent=0.0, started_at=monotonic(),
     )
+    _set_job(job, job_id=job, episode_dir=str(ep.dir))
     _spawn_worker(_run_breeze, (ep, bdir, guest or "", terms or "", job))
-    return {"ok": True}
+    return {"ok": True, "job_id": job, "episode_dir": str(ep.dir)}
 
 
 def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> None:
-    """背景 worker：Breeze ASR → ingest_breeze → proofread → done/error。"""
+    """背景 worker：Breeze ASR → ingest_breeze → proofread → polish → done/error。"""
     import subprocess
 
     from podcast_toolkit import ingest_breeze, proofread
@@ -661,11 +682,11 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
             setj(phase="proofread", percent=0.0)
             rc_proof = proofread.run(ep.dir)
             if rc_proof not in (0, None):
-                setj(note="校對跳過（校對失敗，請確認 Claude Code 已安裝）")
+                _append_warning(job, "校對跳過（校對失敗，請確認 Claude Code 已安裝）")
         else:
-            setj(note="校對跳過（未偵測到本地 Claude Code 引擎）")
+            _append_warning(job, "校對跳過（未偵測到本地 Claude Code 引擎）")
     except Exception as e:
-        setj(note=f"校對跳過（例外：{e}）")
+        _append_warning(job, f"校對跳過（例外：{e}）")
 
     # 4) 依語句重切（要在 proofread 之後，需其加的空格當語句邊界；失敗不擋）
     #    失敗不擋，但一定要留 note —— 否則使用者只看到「完成」，
@@ -674,7 +695,33 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         from podcast_toolkit.subtitle_cleanup import reflow_episode
         reflow_episode(ep.dir)
     except Exception as e:
-        setj(note=f"斷句重整跳過（例外：{e}）")
+        _append_warning(job, f"斷句重整跳過（例外：{e}）")
+
+    # 5) 字幕最後拋光：只做時間戳可判斷的保守修復，並輸出驗證報告。
+    if not _job_alive(job):
+        return
+    setj(phase="polish", percent=0.0)
+    try:
+        from podcast_toolkit import subtitle_polish
+        report = subtitle_polish.run(ep.dir)
+        after = report.get("after") or {}
+        setj(summary=(
+            "字幕拋光完成："
+            f"合併閃字幕 {report.get('merged_flash_cards', 0)} 張、"
+            f"拆超長/過快 {report.get('split_problem_cards', 0)} 張；"
+            f"格式錯誤 {after.get('errors', 0)}、"
+            f"閃字幕 {after.get('short_flash', 0)}、"
+            f"超長 {after.get('long_hold', 0)}、"
+            f"過快 {after.get('fast', 0)}"
+        ))
+        if not report.get("ok", True):
+            setj(
+                state="error",
+                error="字幕拋光驗證未通過，原字幕未寫入；請查看拋光報告",
+            )
+            return
+    except Exception as e:
+        _append_warning(job, f"字幕拋光跳過（例外：{e}）")
 
     out_srt_rel = str(ep.output_v2_srt().relative_to(ep.dir))
-    setj(state="done", phase="proofread", percent=100.0, out_srt=out_srt_rel)
+    setj(state="done", phase="polish", percent=100.0, out_srt=out_srt_rel)

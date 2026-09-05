@@ -112,6 +112,22 @@ def test_post_save_invalid_card_timings_returns_400(client):
     assert r2.status_code == 400
 
 
+def test_post_save_rejects_stale_episode_identity(client, tmp_episode_dir):
+    """分頁持有舊集識別時，/api/save 必須拒絕寫入目前集數。"""
+    before = (tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8")
+    r = client.post(
+        "/api/save",
+        json={
+            "episode_dir": str(tmp_episode_dir.parent / "另一集"),
+            "deletions": [99],
+            "cards": [],
+        },
+    )
+
+    assert r.status_code == 409
+    assert (tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8") == before
+
+
 def test_post_shutdown_calls_callback(client, tmp_episode_dir):
     called = {"n": 0}
     from podcast_toolkit.web.api import build_app

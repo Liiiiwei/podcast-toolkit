@@ -1,6 +1,7 @@
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 const state = {
   name: "",
+  episodeDir: "",
   activeVersion: "yt", // "yt" | "reels"
   cropYt: null,
   cropReels: null,
@@ -2887,6 +2888,10 @@ async function loadEpisodeState() {
   if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
   const data = await r.json();
   state.name = data.name;
+  state.episodeDir = data.episode_dir || state.episodeDir || "";
+  if (state.episodeDir) {
+    localStorage.setItem("edit.episodeDir", state.episodeDir);
+  }
   // crop_yt / crop_reels：拆 base + .b override 成兩個 state（前端編輯流好用）
   const ytIn = data.crop_yt || null;
   state.cropYt = ytIn
@@ -3184,16 +3189,8 @@ function setupSrtShift() {
     const btn = $("#srt-shift-btn");
     btn.disabled = true;
     try {
-      // 走 /api/save 局部存檔（key-presence）：只寫 subtitle_offset_sec，不動 srt / 其他欄位
-      const r = await fetch("/api/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subtitle_offset_sec: offset }),
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.detail || `HTTP ${r.status}`);
-      }
+      // 走共用局部存檔通道，讓 HTTP 409 也能重新開集後重試。
+      await postSave({ subtitle_offset_sec: offset });
       // 重載讓 preview 依新偏移重算顯示時間（磁碟 _v2.srt 維持原狀）
       await loadEpisodeState();
       renderCards();
@@ -4348,11 +4345,29 @@ function setupDrawer() {
 let _saveChain = Promise.resolve();
 function postSave(payload) {
   const run = async () => {
-    const r = await fetch("/api/save", {
+    let r = await fetch("/api/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, episode_dir: state.episodeDir }),
     });
+    if (r.status === 409) {
+      const episodeDir =
+        state.episodeDir || localStorage.getItem("edit.episodeDir") || "";
+      if (episodeDir) {
+        const reopen = await fetch("/api/episodes/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: episodeDir }),
+        });
+        if (reopen.ok) {
+          r = await fetch("/api/save", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...payload, episode_dir: state.episodeDir }),
+          });
+        }
+      }
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r;
   };
@@ -5195,6 +5210,7 @@ const TRANSCRIBE_PHASE_BUCKET = {
   "breeze-asr": "compress",
   ingest: "upload",
   proofread: "resegment",
+  polish: "resegment",
 };
 const bucketOfPhase = (phase) => TRANSCRIBE_PHASE_BUCKET[phase] || phase;
 const TRANSCRIBE_PHASE_LABELS = {
@@ -5207,6 +5223,7 @@ const TRANSCRIBE_PHASE_LABELS = {
   "breeze-asr": "Breeze 轉錄中（最久，請耐心等，勿關分頁）",
   ingest: "匯入字幕（去講者標籤 → 講者表）",
   proofread: "本地校對（同音字／術語）",
+  polish: "字幕拋光與驗證",
 };
 let _transcribePollTimer = null;
 
@@ -5324,6 +5341,7 @@ const BREEZE_PHASE_SPAN = {
   "breeze-asr": [0, 92],
   ingest: [92, 96],
   proofread: [96, 99],
+  polish: [99, 100],
 };
 function computeBreezeOverallPercent(phase, percent) {
   const span = BREEZE_PHASE_SPAN[phase];
@@ -5520,6 +5538,9 @@ async function _pollTranscribeOnce() {
   }
 
   if (s.state === "idle") return;
+  if (s.episode_dir && state.episodeDir && s.episode_dir !== state.episodeDir) {
+    return;
+  }
 
   if (s.state === "running") {
     const phase = s.phase || "compress";
@@ -5541,7 +5562,13 @@ async function _pollTranscribeOnce() {
 
   if (s.state === "done") {
     stopTranscribePoll();
-    finishTranscribe({ ok: true, out_srt: s.out_srt, note: s.note });
+    finishTranscribe({
+      ok: true,
+      out_srt: s.out_srt,
+      note: s.note,
+      summary: s.summary,
+      warnings: s.warnings,
+    });
     return;
   }
 
@@ -5559,7 +5586,7 @@ async function _pollTranscribeOnce() {
   }
 }
 
-async function finishTranscribe({ ok, out_srt, error, note }) {
+async function finishTranscribe({ ok, out_srt, error, note, summary, warnings }) {
   const cancel = $("#transcribe-cancel");
   const go = $("#transcribe-go");
   if (ok) {
@@ -5569,11 +5596,15 @@ async function finishTranscribe({ ok, out_srt, error, note }) {
     setModalStatusTitle("transcribe-title", "circle-check", "完成", "success");
     // note = 轉錄成功但中途有步驟被跳過（校對／斷句重整失敗）。
     // 不顯示的話使用者只會看到「完成」，拿到一份沒校對／沒重整的字幕卻不知情。
-    const noteHtml = note
-      ? `<div class="modal-hint warn">⚠ ${escAttr(note)}</div>`
+    const warningText = (warnings && warnings.length ? warnings.join("\n") : note) || "";
+    const summaryHtml = summary
+      ? `<div class="modal-hint">${escAttr(summary)}</div>`
+      : "";
+    const noteHtml = warningText
+      ? `<div class="modal-hint warn">⚠ ${escAttr(warningText).replace(/\n/g, "<br>")}</div>`
       : "";
     $("#transcribe-msg").innerHTML =
-      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。${noteHtml}`;
+      `已寫入：<code>${out_srt || "_v2.srt"}</code><br>編輯區已重新載入，可以繼續編輯字幕。${summaryHtml}${noteHtml}`;
 
     await loadEpisodeState();
     renderTopbar();
@@ -7654,6 +7685,8 @@ async function switchEpisode(newPath) {
     video.load();
     // 重新拉所有狀態（episode/dict/files/config）
     await load();
+    state.episodeDir = state.episodeDir || newPath;
+    localStorage.setItem("edit.episodeDir", state.episodeDir);
     // 換集後強制把 drawer 展開並切到 files tab，避免 stale localStorage
     // 讓使用者誤以為新集沒有檔案（實際只是 drawer collapsed 或停在 typo tab）
     try {
