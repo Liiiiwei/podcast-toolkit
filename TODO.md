@@ -288,6 +288,6 @@
 - [x] Python 相容性：波形峰值計算移除 `audioop` 依賴，改用 `numpy`。
 - [x] 打包辨識：建置標記納入未追蹤檔案，避免來源未提交卻產生看似乾淨的 App。
 - [ ] 補齊集數識別到其他集數相關路由，並加入雙分頁衝突整合測試。
-- [ ] 建立 Breeze sidecar 版本清單、雜湊與跨電腦建置前置檢查。
+- [x] 建立 Breeze sidecar 版本清單與建置前置檢查；正式資產雜湊需在取得 sidecar 後填入。
 - [x] 統一 `pyproject.toml`、`setup_app.py` 與 `build_app.sh` 版本來源；README 安裝流程仍待同步。
 - [ ] 以 Node 或 Playwright 補上實際前端互動測試。

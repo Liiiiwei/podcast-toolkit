@@ -76,13 +76,8 @@ fi
 echo "  ✓ macOS arm64"
 
 echo "→ 檢查 Breeze sidecar（$STAGE）"
-for part in py-runtime/bin/python3.9 site-packages make_subtitle.py cache/whisper/breeze-asr-25.pt; do
-    if [[ ! -e "$STAGE/$part" ]]; then
-        echo "✗ sidecar 缺件：$STAGE/$part"
-        echo "  請先依本檔頂端註解組好 ~/.podcast-toolkit/breeze-stage/（組一次即可）。"
-        exit 1
-    fi
-done
+python3 scripts/check_breeze_stage.py "$STAGE" \
+    --manifest scripts/breeze-stage-manifest.json
 echo "  ✓ sidecar 齊備（$(du -sh "$STAGE" | cut -f1)）"
 
 echo "→ [0/5] 寫入 build 識別碼（$BUILD_ID）"

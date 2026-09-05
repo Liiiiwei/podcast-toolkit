@@ -17,3 +17,9 @@
 - **做了什麼：** 將 Python 套件、macOS App 與 DMG 打包腳本改為共用 `podcast_toolkit.version.__version__`。
 - **驗證：** 版本來源、API 與啟動器測試共 `53 passed`；`bash -n build_app.sh` 與 `git diff --check` 通過。
 - **下一步：** 補 Breeze sidecar 資產清單與建置前檢查，再同步 README。
+
+## 2026-09-05（Breeze 資產檢查）
+
+- **做了什麼：** 新增 Breeze sidecar 版本與必要檔案清單，加入路徑存在性、版本與可選 SHA-256 雜湊檢查；打包腳本改為前置執行檢查。
+- **驗證：** sidecar、版本、背景轉錄與 API 回歸測試共 `72 passed`；`bash -n build_app.sh` 與 `git diff --check` 通過。
+- **備註：** 目前清單保留空白雜湊，待取得正式 sidecar 後可填入實際雜湊，不把大型模型放入 Git。
