@@ -1,14 +1,14 @@
 """一鍵自動後製編排：把字幕選好後能自動做的事串起來，只剩人工確認 + 輸出。
 
 步驟（任一步可關）：
-1. **校對**（proofread）：本地 Claude Code / Gemini 逐句修字幕，就地改 _v2.srt（先備份）。
+1. **校對**（proofread）：App 內建本機模型逐句修字幕，就地改 _v2.srt（先備份）。
 2. **鏡頭對應**（camera）：分軌集才有意義——要有 speakers.json（誰在講話）才推得出切鏡。
    單軌混音集沒有講者資料 → 自動略過，鏡頭維持原本（手動標記或無）。
 3. **去頭去尾**（trim）：偵測正片頭尾靜音，補進 episode.yaml 的 head/tail_trim_sec
    （只補沒設過的，尊重手動值）。
 
-設計原則同 proofread：對「非 Claude Code 使用者」零影響——校對 provider=auto 找不到引擎就
-安靜跳過，鏡頭 / 去頭尾純本機 ffmpeg，不外聯任何 API。
+設計原則同 proofread：校對 provider=auto 優先使用 App 內建模型；開發環境若缺模型資產就
+保留 Claude Code 舊版相容路徑。鏡頭與去頭尾使用本機 ffmpeg，不外聯任何 API。
 """
 from __future__ import annotations
 

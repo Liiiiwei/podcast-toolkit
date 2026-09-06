@@ -72,6 +72,30 @@ def test_extract_json_object_no_json_raises():
         pd._extract_json_object("完全沒有大括號")
 
 
+def test_run_editor_model_uses_local_llm_without_claude(monkeypatch):
+    """沒有 Claude Code 時仍由內建本機模型產出文案。"""
+    expected = {
+        "title_recommended": "凱特王的創業路",
+        "title_alternatives": ["從離職到創業"],
+        "description": "凱特分享創業歷程。",
+        "chapters": [{"time": "0:00", "title": "開場"}],
+        "highlights": ["創業歷程"],
+        "social": "完整故事請收聽本集。",
+        "hashtags": ["創業"],
+    }
+    monkeypatch.setattr(pd.local_llm, "is_available", lambda: True)
+    monkeypatch.setattr(pd.local_llm, "complete_json", lambda prompt, **kwargs: expected)
+    monkeypatch.setattr(pd.shutil, "which", lambda name: None)
+
+    assert pd._run_editor_model("提示", model=None, timeout=30) == expected
+
+
+def test_validate_publish_data_rejects_missing_required_field():
+    """缺少章節等必要欄位時不得寫出半成品。"""
+    with pytest.raises(pd.PublishDocError, match="缺少必要欄位"):
+        pd._validate_publish_data({"title_recommended": "只有標題"})
+
+
 def test_render_doc_has_all_sections_and_glossary():
     data = {
         "title_recommended": "測試標題｜我愛上班 EP__",

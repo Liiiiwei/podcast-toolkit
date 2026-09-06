@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -18,7 +19,15 @@ from podcast_toolkit.constants import EPISODE_GLOSSARY_FILENAME
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+def resolve_static_dir() -> Path:
+    """回傳靜態檔實體目錄；封裝模式不可從套件 zip 的 ``__file__`` 推導。"""
+    if getattr(sys, "frozen", False):
+        return pt_config.toolkit_root() / "podcast_toolkit/web/static"
+    return Path(__file__).resolve().parent / "static"
+
+
+STATIC_DIR = resolve_static_dir()
 COMMON_GLOSSARY_PATH = Path.home() / ".podcast-toolkit" / "common-glossary.json"
 
 # 可轉字幕的副檔名（含音訊與含音訊軌的影片）

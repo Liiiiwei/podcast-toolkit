@@ -61,7 +61,14 @@ def test_qa_filter_skips_noop_and_empty():
 def test_resolve_provider_explicit_and_auto(monkeypatch):
     assert proofread.resolve_provider({"proofread": {"provider": "off"}}) is None
 
-    # auto + 有 claude CLI → claude_code
+    # auto + 內建模型可用 → 永遠先走完全離線的 local_llm
+    monkeypatch.setattr(proofread.local_llm, "is_available", lambda: True)
+    monkeypatch.setattr(proofread.shutil, "which", lambda n: "/x/claude")
+    assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "local_llm"
+    assert proofread.resolve_provider({"proofread": {"provider": "local_llm"}}) == "local_llm"
+
+    # 沒有內建模型但有 claude CLI → 保留舊版相容路徑
+    monkeypatch.setattr(proofread.local_llm, "is_available", lambda: False)
     monkeypatch.setattr(proofread.shutil, "which",
                         lambda n: "/x/claude" if n == "claude" else None)
     assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "claude_code"
@@ -73,6 +80,41 @@ def test_resolve_provider_explicit_and_auto(monkeypatch):
     assert proofread.resolve_provider(
         {"proofread": {"provider": "auto"}, "gemini_api_key": "k"}) is None
     assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) is None
+
+
+def test_run_local_llm_uses_fixed_fields_and_normalizes_corrections(monkeypatch):
+    """本機模型陣列格式會轉成既有的卡號修正對照。"""
+    monkeypatch.setattr(
+        proofread.local_llm,
+        "complete_json",
+        lambda prompt, **kwargs: [
+            {"idx": 1, "text": "郝慧川是今天的來賓"},
+            {"idx": "bad", "text": "忽略"},
+            {"idx": 9},
+        ],
+    )
+    cards = [
+        {"idx": 1, "text": "好慧川是今天的來賓"},
+        {"idx": 2, "text": "原文"},
+    ]
+
+    out = proofread._run_local_llm(
+        cards,
+        [{"canonical": "郝慧川", "sounds_like": ["好慧川"]}],
+        cfg={"proofread": {"chunk_size": 10}},
+    )
+
+    assert out == {1: "郝慧川是今天的來賓"}
+
+
+def test_cli_accepts_local_llm_provider():
+    """使用者可明確指定內建模型，不會被 argparse 擋下。"""
+    from podcast_toolkit.cli import build_parser
+
+    proofread_args = build_parser().parse_args(["proofread", ".", "--provider", "local_llm"])
+    auto_args = build_parser().parse_args(["auto", ".", "--provider", "local_llm"])
+    assert proofread_args.provider == "local_llm"
+    assert auto_args.provider == "local_llm"
 
 
 def test_proofread_cards_dispatches_and_normalizes_keys(monkeypatch):

@@ -67,7 +67,7 @@ flowchart TD
 
 **轉字幕與校對**
 - **一鍵 Breeze 轉字幕（本地、自動標講者）** — 按一顆就把分軌錄音整條龍跑完：各軌 mic 聽打 → 自動標誰在講（a/b/c）→ 匯入字幕卡 → 本地校對。免金鑰、聲音不上雲。
-- **AI 逐句字幕校對（本地零金鑰）** — 轉完自動用本地 Claude Code 依保守規則修同音近音錯字、台灣慣用字與代名詞，只改文字不動時間；沒裝也照跑不報錯。
+- **AI 逐句字幕校對（本地零金鑰）** — 轉完自動用 App 內建的 Qwen3 4B 與 llama.cpp，依保守規則修同音近音錯字、台灣慣用字與代名詞；只改文字不動時間，完全離線且不需安裝 Claude Code。
 - **瀏覽器字幕卡逐句校對** — 字幕攤成一張張卡直接改字，Enter 切句、Backspace 合併，可插卡／刪卡，存檔自動重編號，卡號（#idx）方便對照溝通。
 - **專有名詞詞庫（本集／跨集／全域三層合併）** — 先把人名品牌暱稱教給引擎，轉字幕當提詞、校對自動修正，減少一直校同一個錯字。
 
@@ -188,16 +188,19 @@ git switch vs/subtitle-polish-flow
 ./install.sh
 ```
 
-`install.sh` 會安裝開發用 CLI 與 Breeze 環境；Breeze 模型不放進 Git，第一次轉字幕時才下載。若要在另一台 Apple Silicon Mac 建立完整 App，需另外準備 Breeze sidecar，再執行：
+`install.sh` 會安裝開發用 CLI 與 Breeze 環境；大型模型不放進 Git。若要在另一台 Apple Silicon Mac 建立完整 App，需另外準備 Breeze 與本機語言模型 sidecar，再執行：
 
 ```bash
 export BREEZE_STAGE="$HOME/.podcast-toolkit/breeze-stage"
+export LOCAL_LLM_STAGE="$HOME/.podcast-toolkit/local-llm-stage"
 python3 scripts/check_breeze_stage.py "$BREEZE_STAGE" \
   --manifest scripts/breeze-stage-manifest.json
+python3 scripts/check_local_llm_stage.py "$LOCAL_LLM_STAGE" \
+  --manifest scripts/local-llm-stage-manifest.json
 ./build_app.sh
 ```
 
-建置前檢查會確認 `breeze-asr-25` 的必要執行檔、套件目錄、詞典與模型都存在。正式 sidecar 取得後，可將實際檔案的 SHA-256 填入 `scripts/breeze-stage-manifest.json`，讓跨電腦建置進一步驗證資產是否一致。
+建置前檢查會確認 `breeze-asr-25`、Qwen3 4B、llama.cpp 的必要執行檔、套件目錄、詞典、授權與模型雜湊都正確。完整 App 內含兩套模型，執行轉字幕、字幕校對與上架文案時都不需網路或 API 金鑰。
 
 ---
 
@@ -392,13 +395,13 @@ glossary:
 - `podcast suggest-cameras <集>` — 依講者 + `camera_rule` 推 A/B 切換點（web「依講者推 A/B」走這步）
 - `podcast resegment <集> [--force]` — 字幕重新斷句
 - `podcast check-seg <集>` — 斷句體檢：列出過長／掛尾連接詞／過短的卡號（只讀不改）
-- `podcast proofread <集>` — 本地校對（Claude Code；沒裝就跳過）
+- `podcast proofread <集>` — 使用內建 Qwen3 4B 本地校對，完全離線、不需 Claude Code
 - `podcast glossary-suggest <集>` / `podcast glossary-review <集>` — 掃全稿挑疑似錯字專名 → 終端逐條勾選入本集詞庫
 - `podcast diarize <集>` — 本地能量分講者：讀混音 `words.json` + 各軌 mic wav 重算講者標（零雲端）。**想改講者標只能走這條**，重跑 Breeze 沒有用（講者是靠能量貼的，不是 ASR 認的）
 - `podcast auto <集>` — 一鍵自動後製（校對 + 推鏡頭 + 去頭尾）
 - `podcast assemble <集> [--force]` — 合成 YT 完整版
 - `podcast edit <集>` / `podcast ui` — 開瀏覽器介面
-- `podcast publish-doc <集> [--ep N]` — 產 YouTube 上架文案：標題／說明欄／章節／重點／社群短文（章節時間對齊成品時間軸，本地 Claude Code 跑，介面上沒有這個功能）
+- `podcast publish-doc <集> [--ep N]` — 使用內建 Qwen3 4B 產 YouTube 上架文案：標題／說明欄／章節／重點／社群短文（章節時間對齊成品時間軸，完全離線；介面上沒有這個功能）
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 

@@ -682,9 +682,9 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
             setj(phase="proofread", percent=0.0)
             rc_proof = proofread.run(ep.dir)
             if rc_proof not in (0, None):
-                _append_warning(job, "校對跳過（校對失敗，請確認 Claude Code 已安裝）")
+                _append_warning(job, "校對跳過（本機模型執行失敗，請重新安裝完整 App）")
         else:
-            _append_warning(job, "校對跳過（未偵測到本地 Claude Code 引擎）")
+            _append_warning(job, "校對跳過（未偵測到內建本機模型）")
     except Exception as e:
         _append_warning(job, f"校對跳過（例外：{e}）")
 

@@ -63,7 +63,7 @@ def cmd_ingest_breeze(args):
         except Exception as e:  # 偵測是加值步驟，壞了不該擋住匯入/校對
             print(f"（模糊字偵測略過：{e}）")
     # 接上後處理：Breeze 路線原本只去 [MicN] 直出、不跑校對 → 字幕沒被校對（同音/術語/glossary）。
-    # 匯入成功後，有裝 claude 就自動接著本地校對；沒裝（resolve_provider 回 None）就安靜跳過。
+    # 匯入成功後自動接著用內建模型校對；開發環境缺資產時才走舊版相容路徑。
     if rc == 0 and not args.no_proofread:
         if proofread.resolve_provider(Episode(path).cfg):
             print("→ 接著跑本地校對 proofread …")
@@ -173,15 +173,15 @@ def build_parser():
     pcs.add_argument("--limit", type=int, default=12, help="每類最多列幾筆範例（預設 12）")
     pcs.set_defaults(func=cmd_check_seg)
 
-    pp = sub.add_parser("proofread", help="字幕語意校對（本地 Claude Code，就地改 _v2.srt）")
+    pp = sub.add_parser("proofread", help="字幕語意校對（內建本機模型，就地改 _v2.srt）")
     pp.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     pp.add_argument(
-        "--provider", choices=["claude_code", "off"], default=None,
+        "--provider", choices=["local_llm", "claude_code", "off"], default=None,
         help="覆寫設定的校對 provider（預設讀 episode.yaml / defaults.yaml 的 proofread.provider=auto）",
     )
     pp.add_argument(
         "--model", default=None,
-        help="覆寫校對模型（claude --model，如 sonnet / opus / haiku）",
+        help="覆寫舊版 Claude Code 相容路徑的模型；內建模型固定使用 App 資產",
     )
     pp.add_argument("--force", action="store_true", help="保留參數一致性（校對一律就地覆寫並備份）")
     pp.set_defaults(func=cmd_proofread)
@@ -195,12 +195,12 @@ def build_parser():
     pao.add_argument("--no-camera", action="store_true", help="跳過鏡頭對應")
     pao.add_argument("--no-trim", action="store_true", help="跳過去頭去尾")
     pao.add_argument(
-        "--provider", choices=["claude_code", "off"], default=None,
-        help="覆寫校對 provider（預設 auto：本地 Claude Code → 跳過）",
+        "--provider", choices=["local_llm", "claude_code", "off"], default=None,
+        help="覆寫校對 provider（預設 auto：內建本機模型優先）",
     )
     pao.add_argument(
         "--model", default=None,
-        help="覆寫校對模型（如 sonnet / opus / haiku）；校對是 bulk 任務，sonnet 比預設快很多",
+        help="覆寫舊版 Claude Code 相容路徑的模型；內建模型固定使用 App 資產",
     )
     pao.add_argument("--force", action="store_true", help="重跑（含重測頭尾靜音、覆寫既有 trim）")
     pao.set_defaults(func=cmd_auto)
@@ -276,13 +276,13 @@ def build_parser():
 
     ppd = sub.add_parser(
         "publish-doc",
-        help="產 YouTube 上架文案（標題／說明欄／章節／重點／社群短文；章節對齊成品時間軸，本地 Claude Code）",
+        help="產 YouTube 上架文案（章節對齊成品時間軸，內建本機模型完全離線生成）",
     )
     ppd.add_argument("path", nargs="?", default=".", help="集資料夾路徑（預設：當前目錄）")
     ppd.add_argument("--ep", default=None, help="EP 編號（填入標題的 EP__ 佔位）")
     ppd.add_argument(
         "--model", default=None,
-        help="覆寫產文案模型（claude --model，如 sonnet / opus）；預設用 Claude Code 預設模型",
+        help="覆寫舊版 Claude Code 相容路徑的模型；內建模型固定使用 App 資產",
     )
     ppd.set_defaults(func=cmd_publish_doc)
 

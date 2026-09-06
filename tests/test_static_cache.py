@@ -6,12 +6,14 @@ Cache-Control: no-cache（api.py NoCacheStaticFiles），瀏覽器每次 revalid
 檔案沒變就 304。這組測試釘住該行為，避免之後改回裸 StaticFiles。
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.web.api import build_app
+from podcast_toolkit.web import shared
 
 
 @pytest.fixture
@@ -86,3 +88,11 @@ def test_html_has_no_manual_version_params(page):
     )
     text = (static_dir / page).read_text(encoding="utf-8")
     assert "?v=" not in text
+
+
+def test_packaged_static_dir_uses_toolkit_resource_root(monkeypatch, tmp_path):
+    """封裝模組位於 zip 時，靜態檔仍須從 App 的 Resources 實體目錄讀取。"""
+    monkeypatch.setattr(shared.pt_config, "toolkit_root", lambda: tmp_path)
+    monkeypatch.setattr(shared, "sys", SimpleNamespace(frozen=True), raising=False)
+
+    assert shared.resolve_static_dir() == tmp_path / "podcast_toolkit/web/static"

@@ -9,6 +9,7 @@
 import os
 import sys
 
+from py2app.build_app import py2app
 from setuptools import setup
 
 from podcast_toolkit.version import __version__
@@ -16,6 +17,14 @@ from podcast_toolkit.version import __version__
 # py2app 的 modulegraph 用遞迴遍歷 AST，遇到 pydantic/fastapi 這種大模組會爆預設遞迴上限
 # （RecursionError）。建置前拉高，是官方/社群公認的 workaround。
 sys.setrecursionlimit(10000)
+
+
+class PodcastAppBuild(py2app):
+    """隔離 CLI 套件中繼資料；App 的收集來源由 OPTIONS 明確管理。"""
+
+    def finalize_options(self):
+        self.distribution.install_requires = []
+        super().finalize_options()
 
 APP = ["podcast_toolkit/launcher.py"]
 DATA_FILES = [
@@ -51,6 +60,9 @@ DATA_FILES = [
 ]
 OPTIONS = {
     "argv_emulation": False,
+    # Python 3.14 隨附的 liblzma.5.dylib 不能由目前 Xcode strip 安全改寫；
+    # 強行剝除會破壞 __LINKEDIT，讓 py2app 與最終 App 簽章都失敗。
+    "strip": False,
     # app 圖示：銀麥 3D 合成在深藍 macOS squircle 底（assets/AppIcon.icns）。
     # 換圖示只需重打包一次即生效（py2app 會把它設成 CFBundleIconFile）。
     "iconfile": "assets/AppIcon.icns",
@@ -75,6 +87,9 @@ OPTIONS = {
         "numba", "llvmlite", "scipy", "sympy",
         "huggingface_hub", "transformers", "safetensors",
         "PyInstaller", "pytest",
+        # 主程式不使用 Pillow；誤收會與 Homebrew xz 各帶一份同名 liblzma，
+        # py2app 0.28.10 覆寫時不截短，產生無法簽章的 Mach-O。
+        "PIL",
     ],
     # uvicorn/starlette 大量動態 import，modulegraph 常漏 → 正式（非 alias）build 必補：
     "includes": [
@@ -113,5 +128,5 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
-    setup_requires=["py2app"],
+    cmdclass={"py2app": PodcastAppBuild},
 )

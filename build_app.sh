@@ -3,10 +3,11 @@
 # 用法：./build_app.sh
 #
 # 產物：
-#   dist/JOIN Podcast Toolkit.app          ── 自帶 Python runtime、ffmpeg、Breeze 語音辨識（含 2.9G 權重）
+#   dist/JOIN Podcast Toolkit.app          ── 自帶 Python runtime、ffmpeg、Breeze 語音辨識與 Qwen3 4B
 #   dist/JOIN-Podcast-Toolkit-<ver>.dmg    ── 拖曳安裝用的磁碟映像（內含 app + Applications 捷徑 + 中文安裝說明）
 #
-# 設計：主 app 走精簡路線（不含 torch），轉字幕交給內附的 Breeze sidecar 子進程。
+# 設計：主 app 走精簡路線（不含 torch），轉字幕交給內附的 Breeze sidecar 子進程；
+#       字幕校對與上架文案交給內附的 Qwen3 4B + llama.cpp，全程不需網路。
 #       sidecar = 相對化的 CLT Python3.9 framework + arm64 cp39 site-packages + Breeze 程式 + 權重。
 #
 # ── 先決條件：已組好的 Breeze sidecar 放在 ~/.podcast-toolkit/breeze-stage/ ─────────
@@ -32,6 +33,25 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+
+safe_discard() {
+    local target="$1"
+    [[ -e "$target" || -L "$target" ]] || return 0
+    case "$(cd "$(dirname "$target")" && pwd -P)/$(basename "$target")" in
+        "$ROOT/build"|"$ROOT/dist/JOIN Podcast Toolkit.app"|"$ROOT/_pkgbuild/dmg-staging"|"$ROOT"/dist/JOIN-Podcast-Toolkit-*.dmg)
+            ;;
+        *)
+            echo "✗ 拒絕清除未列入白名單的路徑：$target"
+            exit 1
+            ;;
+    esac
+    if command -v trash >/dev/null 2>&1; then
+        trash "$target"
+    else
+        mkdir -p "$HOME/.Trash"
+        mv "$target" "$HOME/.Trash/$(basename "$target").$(date +%Y%m%dT%H%M%S)"
+    fi
+}
 # sidecar 落腳處：環境變數優先（想暫時換一份時用），否則家目錄的固定家，
 # 最後才退回舊的 in-repo 路徑（向後相容，別台機器沿用舊佈局也還能打包）。
 STAGE="${BREEZE_STAGE:-}"
@@ -42,6 +62,7 @@ if [[ -z "$STAGE" ]]; then
         STAGE="_pkgbuild/breeze-stage"
     fi
 fi
+LOCAL_LLM_STAGE="${LOCAL_LLM_STAGE:-$HOME/.podcast-toolkit/local-llm-stage}"
 APP="dist/JOIN Podcast Toolkit.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
 VER=$(python3 -c "from podcast_toolkit.version import __version__; print(__version__)" 2>/dev/null || echo "unknown")
@@ -80,7 +101,12 @@ python3 scripts/check_breeze_stage.py "$STAGE" \
     --manifest scripts/breeze-stage-manifest.json
 echo "  ✓ sidecar 齊備（$(du -sh "$STAGE" | cut -f1)）"
 
-echo "→ [0/5] 寫入 build 識別碼（$BUILD_ID）"
+echo "→ 檢查本機模型 sidecar（$LOCAL_LLM_STAGE）"
+python3 scripts/check_local_llm_stage.py "$LOCAL_LLM_STAGE" \
+    --manifest scripts/local-llm-stage-manifest.json
+echo "  ✓ 本機模型齊備（Qwen3 4B Q4_K_M）"
+
+echo "→ [0/6] 寫入 build 識別碼（$BUILD_ID）"
 # 兩份都從同一個 $BUILD_ID 寫出，內容保證一致。這兩檔是每次 build 的產物、
 # 不進 git（.gitignore 已排除），所以要在 py2app 掃描前先產出。
 cat > podcast_toolkit/_build_info.py <<PY
@@ -92,21 +118,38 @@ PY
 printf '{"build_id": "%s"}\n' "$BUILD_ID" > podcast_toolkit/web/static/build-info.json
 echo "  ✓ _build_info.py + static/build-info.json"
 
-echo "→ [1/5] py2app 打包精簡主 app"
-rm -rf build "$APP"
+echo "→ [1/6] py2app 打包精簡主 app"
+safe_discard build
+safe_discard "$APP"
 PYTHONPATH=. python3 setup_app.py py2app >/dev/null
 echo "  ✓ $APP（$(du -sh "$APP" | cut -f1)，尚未含 Breeze）"
 
-echo "→ [2/5] 注入 Breeze sidecar 到 Contents/Resources/breeze"
-ditto "$STAGE" "$APP/Contents/Resources/breeze"
+echo "→ [2/6] 注入 Breeze sidecar 到 Contents/Resources/breeze"
+if ! cp -cR "$STAGE" "$APP/Contents/Resources/breeze" 2>/dev/null; then
+    ditto "$STAGE" "$APP/Contents/Resources/breeze"
+fi
 echo "  ✓ 注入完成（app 現為 $(du -sh "$APP" | cut -f1)）"
 
-echo "→ [3/5] ad-hoc 簽章整個 bundle（含巢狀 python3.9 / torch .so）"
+echo "→ [3/6] 注入完全離線本機模型"
+python3 scripts/copy_local_llm_stage.py \
+    "$LOCAL_LLM_STAGE" "$APP/Contents/Resources/local-llm"
+echo "  ✓ 本機模型注入完成（app 現為 $(du -sh "$APP" | cut -f1)）"
+
+echo "→ [4/6] ad-hoc 簽章整個 bundle（含巢狀 python3.9 / torch .so / llama.cpp）"
 codesign --deep --force -s - "$APP"
 codesign --verify --deep --strict "$APP" && echo "  ✓ 簽章驗證通過"
 
-echo "→ [4/5] 組 DMG staging（app + Applications 捷徑 + 中文安裝說明）"
-rm -rf "$DMG_STAGE"; mkdir -p "$DMG_STAGE"
+if [[ "${SKIP_DMG:-0}" == "1" ]]; then
+    echo "→ [5/6] 略過 DMG（SKIP_DMG=1）"
+    echo "→ [6/6] 可測 App 已完成"
+    echo "✅ 打包完成"
+    echo "   App ：$APP"
+    exit 0
+fi
+
+echo "→ [5/6] 組 DMG staging（app + Applications 捷徑 + 中文安裝說明）"
+safe_discard "$DMG_STAGE"
+mkdir -p "$DMG_STAGE"
 cat > "$DMG_STAGE/安裝說明.txt" <<'TXT'
 JOIN Podcast Toolkit 安裝說明
 =============================
@@ -138,7 +181,8 @@ JOIN Podcast Toolkit 安裝說明
 
 【關於轉字幕】
 • 內建 Breeze 語音辨識模型（約 2.9GB），完全離線、不連網、不上傳。
-• 這也是 App 較大（約 4GB）的原因。
+• 內建 Qwen3 4B 語言模型（約 2.4GB），字幕校對與上架文案不需 Claude Code。
+• 這也是 App 較大（約 6.5GB）的原因。
 
 【疑難排解】
 • 若出現「JOIN Podcast Toolkit 已損毀，無法打開」：那是隔離屬性造成，執行上方【方法 B】即可解決。
@@ -150,14 +194,14 @@ ditto "$APP" "$DMG_STAGE/JOIN Podcast Toolkit.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 echo "  ✓ staging 就緒"
 
-echo "→ [5/5] 產生壓縮 DMG（4G，UDZO，需數分鐘）"
-rm -f "$DMG"
+echo "→ [6/6] 產生壓縮 DMG（約 6G，UDZO，需數分鐘）"
+safe_discard "$DMG"
 hdiutil create -volname "JOIN Podcast Toolkit $BUILD_TAG" -srcfolder "$DMG_STAGE" \
     -fs HFS+ -format UDZO -imagekey zlib-level=6 -ov "$DMG" >/dev/null
 echo "  ✓ $DMG（$(du -sh "$DMG" | cut -f1)）"
 
 echo "→ 清理 DMG staging（省 4G 暫存）"
-rm -rf "$DMG_STAGE"
+safe_discard "$DMG_STAGE"
 
 echo ""
 echo "✅ 打包完成"
