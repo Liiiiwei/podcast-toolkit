@@ -1603,12 +1603,16 @@ def prepare_assembly(
             ]
         total_dur = main_dur
 
-    # preview 模式：在 -movflags 前插 -t，截斷整段輸出（含 intro+正片+outro 全鏈路）為前 N 秒
-    # （audio_only 的 MP3 cmd 沒有 -movflags，也不走 preview）
-    if preview_sec and preview_sec > 0 and not audio_only:
-        insert_at = cmd.index("-movflags")
-        cmd[insert_at:insert_at] = ["-t", str(preview_sec)]
-        total_dur = min(total_dur, float(preview_sec))
+    # 完整版不需要 faststart。它會在長片編碼完成後再原地搬移 moov atom；
+    # 收尾若遇到磁碟壓力或 ffmpeg 內部錯誤，會讓已完成的整次合成被判定失敗。
+    # 預覽檔很小，保留 faststart 方便瀏覽器立即播放。
+    if not audio_only:
+        movflags_at = cmd.index("-movflags")
+        if preview_sec and preview_sec > 0:
+            cmd[movflags_at:movflags_at] = ["-t", str(preview_sec)]
+            total_dur = min(total_dur, float(preview_sec))
+        else:
+            del cmd[movflags_at:movflags_at + 2]
 
     # sidecar 字幕（輸出字幕與影片）：把源字幕映射到成品時間軸（收刪段 → ÷倍速 → +片頭偏移）。
     # YT 正片接在片頭後 → intro_offset=intro_duration；Reels 無片頭 = 0。呼叫端跑完 ffmpeg 成功才落檔。

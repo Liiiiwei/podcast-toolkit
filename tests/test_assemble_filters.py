@@ -108,6 +108,16 @@ def test_prepare_assembly_tmp_out_keeps_mp4_extension(tmp_episode_full):
     assert tmp_out.name.startswith(".")
 
 
+@pytest.mark.parametrize("output_kind", ["yt", "reels"])
+def test_prepare_assembly_full_video_skips_faststart_second_pass(
+    tmp_episode_full, output_kind
+):
+    """完整版不應啟動 faststart 第二階段，以免長片完成編碼後才在索引搬移失敗。"""
+    plan = prepare_assembly(tmp_episode_full, output_kind=output_kind, force=True)
+
+    assert "+faststart" not in plan["cmd"]
+
+
 def test_prepare_assembly_reels_skips_intro_outro(tmp_episode_full):
     """output_kind='reels' 時 ffmpeg cmd 不含 intro / outro 輸入。"""
     _disable_cover(tmp_episode_full)
