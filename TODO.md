@@ -6,6 +6,7 @@
 
 - [ ] 建立固定的 `~/.podcast-toolkit/breeze-stage`，避免未指定 `BREEZE_STAGE` 時無法重新打包。
 - [ ] 準備至少 10 GiB 可用空間後，以一支長片再做完整合成驗收。
+- [ ] 對外發布前，從乾淨工作樹重打包 App／DMG，讓 build ID 與遠端提交一致。
 - [ ] 凱特王專案補入 `03_成品/凱特王_final.mp4` 後，驗收正式影片合成。
 
 ## 自動化後製管線（feat/auto-pipeline）
