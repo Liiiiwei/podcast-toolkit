@@ -130,6 +130,22 @@ def test_prepare_assembly_reels_skips_intro_outro(tmp_episode_full):
     assert "concat" not in plan["cmd"][fc_idx + 1]
 
 
+def test_prepare_assembly_mp4_skips_faststart_second_pass(tmp_episode_full):
+    """本地成品不做 faststart 第二次整檔搬移，避免數 GB MP4 在收尾階段失敗。"""
+    for output_kind in ("yt", "reels"):
+        plan = prepare_assembly(tmp_episode_full, output_kind=output_kind, force=True)
+        assert "-movflags" not in plan["cmd"]
+        assert "+faststart" not in plan["cmd"]
+
+
+def test_prepare_assembly_preview_inserts_duration_before_output(tmp_episode_full):
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, preview_sec=300,
+    )
+    assert plan["cmd"][-3:-1] == ["-t", "300"]
+    assert plan["cmd"][-1].endswith(".mp4")
+
+
 def test_prepare_assembly_reels_uses_crop_reels(tmp_episode_full):
     """Reels 分支讀 cfg['crop_reels'] 而非 crop_yt。"""
     ep_yaml = tmp_episode_full / "episode.yaml"

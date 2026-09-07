@@ -1502,7 +1502,6 @@ def prepare_assembly(
                 *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
-                "-movflags", "+faststart",
                 tmp_out_rel,
             ]
         else:
@@ -1536,7 +1535,6 @@ def prepare_assembly(
                 *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
-                "-movflags", "+faststart",
                 tmp_out_rel,
             ]
         total_dur = intro_dur + main_dur + outro_dur
@@ -1570,7 +1568,6 @@ def prepare_assembly(
                 *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
-                "-movflags", "+faststart",
                 tmp_out_rel,
             ]
         else:
@@ -1601,16 +1598,15 @@ def prepare_assembly(
                 *_video_encode_args(enc),
                 "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
                 "-ar", str(enc["audio_sample_rate"]),
-                "-movflags", "+faststart",
                 tmp_out_rel,
             ]
         total_dur = main_dur
 
-    # preview 模式：在 -movflags 前插 -t，截斷整段輸出（含 intro+正片+outro 全鏈路）為前 N 秒
-    # （audio_only 的 MP3 cmd 沒有 -movflags，也不走 preview）
+    # preview 模式：在輸出檔名前插 -t，截斷整段輸出（含 intro+正片+outro 全鏈路）為前 N 秒。
+    # MP4 刻意不開 faststart：本地成品／YouTube 上傳不需要二次整檔搬移，且數 GB 長片曾在
+    # moov atom 搬移階段失敗，白白丟掉已完成的編碼。
     if preview_sec and preview_sec > 0 and not audio_only:
-        insert_at = cmd.index("-movflags")
-        cmd[insert_at:insert_at] = ["-t", str(preview_sec)]
+        cmd[-1:-1] = ["-t", str(preview_sec)]
         total_dur = min(total_dur, float(preview_sec))
 
     # sidecar 字幕（輸出字幕與影片）：把源字幕映射到成品時間軸（收刪段 → ÷倍速 → +片頭偏移）。

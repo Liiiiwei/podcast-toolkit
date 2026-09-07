@@ -134,3 +134,29 @@ def test_cancel_after_coordinator_dies_force_recovers_state(tmp_path):
         "cancel_job 發現 coordinator 已死但 state 還卡在 running 時，必須強制收回，"
         f"不能無條件回 True 卻放著 job slot 永久卡死（實際 state={st['state']!r}）"
     )
+
+
+def test_ffmpeg_failure_preserves_output_and_surfaces_key_error_context(tmp_path):
+    """長片收尾失敗不能刪掉數 GB 成果，且真正錯誤不能被最後五行摘要沖掉。"""
+    out = tmp_path / "episode.mp4"
+    tmp_out = tmp_path / ".episode.tmp.mp4"
+    script = (
+        f"printf partial > '{tmp_out}'; "
+        "printf 'Unable to re-open output file for shifting data\\n' >&2; "
+        "i=1; while [ $i -le 10 ]; do printf 'summary line %s\\n' $i >&2; i=$((i+1)); done; "
+        "exit 190"
+    )
+    proc = aj.Popen(
+        ["sh", "-c", script], stdout=aj.PIPE, stderr=aj.PIPE,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+    aj._reset(state="running", queue=["yt"], current="yt", total=1)
+
+    aj._pump_progress(proc, 1.0, out, tmp_out)
+
+    failed = tmp_path / "episode.failed.mp4"
+    assert failed.read_bytes() == b"partial"
+    assert not tmp_out.exists()
+    error = aj.get_status()["error"]
+    assert "Unable to re-open output file" in error
+    assert str(failed) in error

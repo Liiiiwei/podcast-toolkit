@@ -462,15 +462,28 @@ def _pump_progress(proc: Popen, total_dur: float, out_path: Path,
         tmp_out.replace(out_path)
         _set(percent=100.0, eta_s=0)
     else:
-        # 失敗清 tmp，保留舊 out
-        try:
-            if tmp_out.exists():
-                tmp_out.unlink()
-        except OSError:
-            pass
+        # 失敗時保留已寫出的內容：長片可能已編完整支、只在 trailer / faststart 收尾失敗，
+        # 直接 unlink 會讓數十分鐘成果與真正故障證據一起消失。改成可見的 .failed 檔；
+        # rename 若也失敗（磁碟／權限問題）就留在原 tmp 路徑並照樣回報位置。
+        failed_path: Path | None = None
+        if tmp_out.exists():
+            candidate = out_path.with_name(f"{out_path.stem}.failed{out_path.suffix}")
+            try:
+                tmp_out.replace(candidate)
+                failed_path = candidate
+            except OSError:
+                failed_path = tmp_out
         if stalled[0]:
             msg = f"ffmpeg 超過 {FFMPEG_STALL_TIMEOUT_S}s 沒有進度輸出，已強制終止（疑似卡死）"
         else:
-            tail = "\n".join((stderr_tail or "").strip().splitlines()[-5:])
-            msg = f"ffmpeg 結束碼 {returncode}：{tail}" if tail else f"ffmpeg 結束碼 {returncode}"
+            lines = (stderr_tail or "").strip().splitlines()
+            keywords = ("error", "failed", "unable", "invalid", "denied", "no space")
+            selected = [line for line in lines if any(k in line.lower() for k in keywords)]
+            selected.extend(lines[-10:])
+            # 關鍵錯誤可能出現在統計摘要前；去重後最多回報 20 行，兼顧診斷與 API 大小。
+            context = list(dict.fromkeys(selected))[-20:]
+            detail = "\n".join(context)
+            msg = f"ffmpeg 結束碼 {returncode}：{detail}" if detail else f"ffmpeg 結束碼 {returncode}"
+        if failed_path is not None:
+            msg += f"\n未完成影片已保留：{failed_path}"
         _set(state="error", error=msg)
