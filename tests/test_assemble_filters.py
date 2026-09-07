@@ -246,6 +246,69 @@ def test_prepare_assembly_clamps_deletion_past_video_eof_for_duration(tmp_episod
     assert plan["main_dur"] == pytest.approx(97.85)
 
 
+def test_prepare_assembly_seek_cut_inputs_skips_deleted_source_ranges(tmp_episode_full):
+    """長刪段最佳化：每個保留段各自用 input -ss/-t，不能再靠 select 掃完整母帶。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["cuts"] = [[10.0, 80.0]]
+    data.setdefault("encode", {})["seek_cut_inputs"] = True
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    cmd = plan["cmd"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+
+    assert cmd.count("-ss") == 2
+    assert cmd.count("-t") >= 3  # 兩個保留段 inputs + outro image
+    assert sum(str(x).endswith("測試集.mp4") for x in cmd) == 2
+    assert "select='not(" not in fc
+    assert "concat=n=2:v=1:a=1[main_v_raw][main_a_raw]" in fc
+    assert "_v2_seeked_assembled_yt_1920x1080.ass" in fc
+
+
+def test_prepare_assembly_seek_cut_inputs_external_audio_bakes_offset_into_seek(
+    tmp_episode_full,
+):
+    """外接 WAV + 長刪段：每個保留段的 audio seek 要各自 -ss (段起點 + sync_offset)，
+    把對齊烘進 seek，而不是走 legacy atrim。凱特王集就是這條路徑。"""
+    (tmp_episode_full / "01_母帶" / "mix.wav").write_bytes(b"")
+
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    # cuts 在 _v2/WAV 時間軸；sync_offset=2.5 → 減 offset 後 cam-A 軸 = [10, 80]
+    data["cuts"] = [[12.5, 82.5]]
+    data["audio"] = {"path": "01_母帶/mix.wav", "sync_offset": 2.5}
+    data.setdefault("encode", {})["seek_cut_inputs"] = True
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    cmd = plan["cmd"]
+
+    # 收集 (ss, input) 配對：每個 -i 前最近的 -ss
+    video_ss, audio_ss = [], []
+    last_ss = None
+    for i, tok in enumerate(cmd):
+        if tok == "-ss":
+            last_ss = float(cmd[i + 1])
+        elif tok == "-i":
+            src = str(cmd[i + 1])
+            if src.endswith("測試集.mp4") and last_ss is not None:
+                video_ss.append(last_ss)
+            elif src.endswith("mix.wav") and last_ss is not None:
+                audio_ss.append(last_ss)
+
+    # 兩個保留段：video 與 audio 各兩個 seek input
+    assert len(video_ss) == 2
+    assert len(audio_ss) == 2
+    # 每段 audio seek = 對應 video seek + sync_offset(2.5)
+    for v, a in zip(video_ss, audio_ss):
+        assert a == pytest.approx(v + 2.5, abs=1e-3)
+
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # 外接音檔走 seek → 不再有 legacy atrim 對齊
+    assert "atrim=start=2.5" not in fc
+
+
 def test_prepare_assembly_reels_head_trim_also_applies(tmp_episode_full):
     """T21: Reels 分支也要套頭尾 trim。"""
     ep_yaml = tmp_episode_full / "episode.yaml"

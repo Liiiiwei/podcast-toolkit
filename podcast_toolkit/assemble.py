@@ -623,6 +623,76 @@ def build_filter_complex_yt(
     )
 
 
+def build_filter_complex_yt_seeked(
+    cfg: dict,
+    main_dur: float,
+    srt_rel: str | None,
+    video_indices: list[int],
+    audio_indices: list[int],
+    intro_idx: int,
+    outro_image_idx: int,
+    outro_audio_idx: int,
+    wm_input_idx: int | None = None,
+    speed_factor: float = 1.0,
+) -> str:
+    """YT 單鏡頭 seek 路徑：每個 input 已由 -ss/-t 限定為一個保留段。
+
+    與 select 路徑的差別是 FFmpeg demuxer 直接跳到各保留段，不必解碼中間被刪內容。
+    每段 input 時間軸從 0 開始，先 concat 成緊密正片，再燒已映射到緊密時間軸的字幕。
+    """
+    enc = cfg["encode"]
+    res_w, res_h = enc["resolution"].split("x")
+    intro_dur = cfg["assets"]["intro_duration"]
+    intro_fade_out = cfg["assets"]["intro_fade_out"]
+    style_str = build_style_string(cfg["subtitle_style"])
+    speed_v, speed_a = _speed_parts(speed_factor)
+    prep = _crop_part_str(cfg.get("crop_yt"), res_w, res_h, _rotate_for(cfg, "a"))
+
+    parts: list[str] = []
+    for i, (v_idx, a_idx) in enumerate(zip(video_indices, audio_indices)):
+        parts.append(
+            f"[{v_idx}:v]{prep}setpts=PTS-STARTPTS,setsar=1,"
+            f"fps={enc['framerate']},format={enc['pix_fmt']}[seek_v_{i}]"
+        )
+        parts.append(
+            f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:"
+            f"channel_layouts=stereo,asetpts=PTS-STARTPTS[seek_a_{i}]"
+        )
+    labels = "".join(f"[seek_v_{i}][seek_a_{i}]" for i in range(len(video_indices)))
+    parts.append(
+        f"{labels}concat=n={len(video_indices)}:v=1:a=1[main_v_raw][main_a_raw]"
+    )
+
+    v_main = f"[main_v_raw]{_subs_part(srt_rel, style_str)}"
+    if speed_v:
+        v_main += speed_v
+    v_main += f"fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5"
+    if _wm_enabled(cfg, wm_input_idx):
+        wm_w, xy = _wm_overlay_params(cfg["watermark"], int(res_w), int(res_h))
+        parts.append(f"{v_main}[main_v_pre]")
+        parts.append(f"[{wm_input_idx}:v]scale={wm_w}:-1[wm]")
+        parts.append(f"[main_v_pre][wm]overlay={xy}[v1]")
+    else:
+        parts.append(f"{v_main}[v1]")
+
+    parts.extend([
+        f"[main_a_raw]{speed_a}afade=t=in:st=0:d=0.5,"
+        f"afade=t=out:st={main_dur - 0.5}:d=0.5[a1]",
+        f"[{intro_idx}:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
+        f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:"
+        f"d={intro_fade_out}[v0]",
+        f"[{intro_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:"
+        f"channel_layouts=stereo,afade=t=out:st={intro_dur - intro_fade_out}:"
+        f"d={intro_fade_out}[a0]",
+        f"[{outro_image_idx}:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
+        f"format={enc['pix_fmt']},fade=t=in:st=0:d=0.5[v2]",
+        f"[{outro_audio_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:"
+        f"channel_layouts=stereo,afade=t=in:st=0:d=0.5[a2]",
+        "[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]",
+    ])
+    return ";".join(parts)
+
+
 def build_filter_complex_reels(
     cfg: dict,
     main_dur: float,
@@ -1329,6 +1399,7 @@ def prepare_assembly(
 
     # removed_intervals = 源時間軸上「被剪掉的區間」，sidecar .srt 映射用（單機 / 雙機共用同一套換算）
     segments: list[dict] = []
+    seek_segments: list[tuple[float, float]] = []
     sync_offset_b = 0.0
     if multicam:
         from podcast_toolkit import cameras_io
@@ -1365,6 +1436,15 @@ def prepare_assembly(
         deletion_intervals = _merge_intervals(deletion_intervals)
         removed_intervals = deletion_intervals
 
+        # 單鏡頭 YT 的快速刪段路徑：demuxer 對每個保留段做 -ss/-t，直接跳過長刪除段。
+        # 雙行字幕仍走原時間軸燒字，負 audio offset 需要前補靜音，兩者先保留 legacy 路徑。
+        seek_cut_inputs = bool(enc.get("seek_cut_inputs", True))
+        if (
+            output_kind == "yt" and not audio_only and deletion_intervals
+            and seek_cut_inputs and not dual_spans and audio_sync_offset >= 0
+        ):
+            seek_segments = _kept_intervals(deletion_intervals, main_dur_src)
+
         if burn_subs and cut_intervals:
             # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
@@ -1380,15 +1460,34 @@ def prepare_assembly(
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
+        if seek_segments and burn_subs:
+            # seek inputs 的 PTS 都從 0 開始，字幕也先收掉刪段映射到緊密正片時間軸。
+            compact_srt = ep.subdir("work") / f"_v2_seeked_assembled_{output_kind}.srt"
+            compact_srt.write_text(
+                build_sidecar_srt(all_cards, removed_intervals, 1.0, 0.0),
+                encoding="utf-8",
+            )
+            compact_ass = ep.subdir("work") / (
+                f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+            )
+            _write_ass_from_srt(compact_srt, compact_ass, ass_res_w, ass_res_h, style=sub_style)
+            srt_rel = (
+                str(compact_ass.relative_to(cwd))
+                if compact_ass.is_relative_to(cwd) else str(compact_ass)
+            )
+
         if deletion_intervals:
             # main_dur 用於 fade-out / concat 計時，只能扣掉實際落在影片範圍內的區間。
             # 外接 WAV／字幕時間軸可能比攝影機母帶長；若直接扣到 EOF 以外，fade 會提早，
             # 正片末端便成為一段黑畫面／靜音，直到 ffmpeg segment 真正結束才接片尾。
-            deleted_total = sum(
-                max(0.0, min(b, main_dur_src) - max(a, 0.0))
-                for a, b in deletion_intervals
-            )
-            main_dur = main_dur - deleted_total
+            if seek_segments:
+                main_dur = sum(e - s for s, e in seek_segments)
+            else:
+                deleted_total = sum(
+                    max(0.0, min(b, main_dur_src) - max(a, 0.0))
+                    for a, b in deletion_intervals
+                )
+                main_dur = main_dur - deleted_total
 
     # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
     main_dur = main_dur / speed_factor
@@ -1501,6 +1600,58 @@ def prepare_assembly(
                 cmd += ["-i", audio_rel_str]
             if wm_rel_str:
                 cmd += ["-i", wm_rel_str]
+            cmd += [
+                "-filter_complex", fc,
+                "-map", "[v]", "-map", "[a]",
+                *_video_encode_args(enc),
+                "-c:a", enc["audio_codec"], "-b:a", enc["audio_bitrate"],
+                "-ar", str(enc["audio_sample_rate"]),
+                tmp_out_rel,
+            ]
+        elif seek_segments:
+            # 快速刪段路徑：每個保留段由 demuxer 直接 -ss/-t seek 到源母帶，
+            # 不再逐幀解碼被刪內容。inputs 排列：
+            #   intro(0) + [每個保留段的 video seek] + [外接音檔則每段 audio seek]
+            #   + outro_image + outro_audio + [watermark]
+            # 外接 WAV：每段 -ss (段起點 + sync_offset)，把 offset 烘進 seek（offset>=0 已由條件保證），
+            # 不需 legacy 的 atrim 對齊。無外接音檔 → audio 直接用 video seek input 自帶音軌。
+            hw = _hwaccel_args(enc)
+            cmd = [ffmpeg_bin(), "-y", *hw, "-i", str(intro)]
+            video_indices: list[int] = []
+            next_idx = 1
+            for s, e in seek_segments:
+                cmd += [*hw, "-ss", f"{s:.3f}", "-t", f"{e - s:.3f}", "-i", main_rel]
+                video_indices.append(next_idx)
+                next_idx += 1
+            if audio_rel_str:
+                audio_indices: list[int] = []
+                for s, e in seek_segments:
+                    cmd += [
+                        "-ss", f"{s + audio_sync_offset:.3f}",
+                        "-t", f"{e - s:.3f}", "-i", audio_rel_str,
+                    ]
+                    audio_indices.append(next_idx)
+                    next_idx += 1
+            else:
+                audio_indices = list(video_indices)
+            outro_image_idx = next_idx
+            cmd += ["-loop", "1", "-t", str(outro_dur), "-i", str(outro_image)]
+            next_idx += 1
+            outro_audio_idx = next_idx
+            cmd += ["-i", str(outro_audio)]
+            next_idx += 1
+            wm_input_idx = None
+            if wm_rel_str:
+                wm_input_idx = next_idx
+                cmd += ["-i", wm_rel_str]
+                next_idx += 1
+            fc = build_filter_complex_yt_seeked(
+                cfg, main_dur=main_dur, srt_rel=srt_rel,
+                video_indices=video_indices, audio_indices=audio_indices,
+                intro_idx=0, outro_image_idx=outro_image_idx,
+                outro_audio_idx=outro_audio_idx,
+                wm_input_idx=wm_input_idx, speed_factor=speed_factor,
+            )
             cmd += [
                 "-filter_complex", fc,
                 "-map", "[v]", "-map", "[a]",
@@ -1649,6 +1800,30 @@ def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, 
         else:
             out.append((a, b))
     return out
+
+
+def _kept_intervals(
+    deletion_intervals: list[tuple[float, float]], total: float
+) -> list[tuple[float, float]]:
+    """把「刪除區間」反轉成「保留區間」，供 seek-input 快速刪段路徑逐段 -ss/-t。
+
+    deletion_intervals 需已 _merge_intervals（不重疊、依 start 排序）。回傳的每段
+    [start, end) 都夾在 [0, total] 內：total = 攝影機母帶源長度（main_dur_src），
+    落在 EOF 之外的刪除段自動忽略，避免產生負長或越界的保留段（對齊 9dcf461 的 clamp）。
+    """
+    kept: list[tuple[float, float]] = []
+    cursor = 0.0
+    for a, b in sorted(deletion_intervals):
+        a = max(0.0, a)
+        b = min(total, b)
+        if b <= a:
+            continue
+        if a > cursor + 1e-9:
+            kept.append((cursor, a))
+        cursor = max(cursor, b)
+    if cursor < total - 1e-9:
+        kept.append((cursor, total))
+    return kept
 
 
 def _original_to_mp4_time(t_src: float, deletion_intervals: list[tuple[float, float]]) -> float:

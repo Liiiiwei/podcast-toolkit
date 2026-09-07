@@ -97,6 +97,8 @@ def tmp_episode_full(tmp_episode_dir: Path, monkeypatch) -> Path:
     ep_yaml = tmp_episode_dir / "episode.yaml"
     _data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
     _data["speed"] = {"enabled": False}
+    # 多數既有 filter 字串測試固定驗證 legacy select 路徑；seek 路徑由專屬測試覆蓋。
+    _data["encode"] = {"seek_cut_inputs": False}
     ep_yaml.write_text(
         yaml.safe_dump(_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )

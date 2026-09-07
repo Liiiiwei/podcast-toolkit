@@ -205,6 +205,8 @@ encode:
   video_codec: "h264_videotoolbox"
   # hwaccel: 影片輸入用硬體解碼（兩路 4K 母帶收益最大）；libx264 fallback 時可拿掉
   hwaccel: "videotoolbox"
+  # 單鏡頭 YT 有長刪段時，把保留區段拆成 seek inputs；避免仍逐幀解碼被刪內容。
+  seek_cut_inputs: true
   # VBR 比 CRF 18 給的 ~3.75 Mbps 高一個量級；對齊 DJI 母帶常見 32-35 Mbps
   # 不走 CRF 是因為 CRF 對對話畫面（動態少）會省到剩 3-4 Mbps，肉眼比母帶軟
   # maxrate / bufsize 給 1.2× / 1.8× 的緩衝，讓快速場景可短暫衝高不爆炸
