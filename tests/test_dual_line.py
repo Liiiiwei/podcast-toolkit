@@ -400,6 +400,30 @@ def test_prepare_assembly_dual_line_survives_cuts(tmp_episode_full):
     assert sorted(m for m in _yt_ass_margins(tmp_episode_full) if m) == [SAMPLE_STACKED_MARGIN]
 
 
+def test_prepare_assembly_dual_line_survives_seek_cut_inputs(tmp_episode_full):
+    """seek 快速刪段路徑也要接上雙行：燒的是 _v2_seeked_assembled_*，講者 spans
+    得跟字幕卡一起 remap 到緊密軸，否則雙行上色掉光（凱特王集就是這條路）。
+
+    刪段 [30,90] 落在所有卡（10~20）之後，卡一張沒少、時間不位移，
+    雙行結果應與沒刪段時一模一樣。同時確認真的走 seek（燒的 ASS 是 seeked 那份）。
+    """
+    _write_overlap_v2(tmp_episode_full)
+    _set_cfg(tmp_episode_full, cuts=[[30.0, 90.0]], encode={"seek_cut_inputs": True})
+
+    plan = assemble.prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    cmd = plan["cmd"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # 確認真的走 seek 路徑，不是又退回 legacy
+    assert cmd.count("-ss") == 2
+    assert "_v2_seeked_assembled_yt" in fc
+    assert "select='not(" not in fc
+
+    burned = [p for p in (tmp_episode_full / "04_工作檔").glob("*.ass") if p.name in fc]
+    assert len(burned) == 1 and "seeked" in burned[0].name
+    margins = [d["margin_v"] for d in _dialogues(burned[0].read_text(encoding="utf-8"))]
+    assert sorted(m for m in margins if m) == [SAMPLE_STACKED_MARGIN]
+
+
 def test_prepare_assembly_dual_line_survives_subtitle_offset(tmp_episode_full):
     """字幕位移後講者標要跟著位移：兩邊同軸才對得上，否則講者全貼到同一個人身上。"""
     _write_overlap_v2(tmp_episode_full)

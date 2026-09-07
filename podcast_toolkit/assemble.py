@@ -1437,11 +1437,13 @@ def prepare_assembly(
         removed_intervals = deletion_intervals
 
         # 單鏡頭 YT 的快速刪段路徑：demuxer 對每個保留段做 -ss/-t，直接跳過長刪除段。
-        # 雙行字幕仍走原時間軸燒字，負 audio offset 需要前補靜音，兩者先保留 legacy 路徑。
+        # 雙行字幕（dual_spans）也走這條：講者 spans 與字幕卡在同一時間軸，下面 compact
+        # block 用同一個 map_src_to_output_time 一併重映射到緊密軸，雙行上色不掉。
+        # 負 audio offset 需要前補靜音，seek 的 -ss 給不了，這種仍保留 legacy 路徑。
         seek_cut_inputs = bool(enc.get("seek_cut_inputs", True))
         if (
             output_kind == "yt" and not audio_only and deletion_intervals
-            and seek_cut_inputs and not dual_spans and audio_sync_offset >= 0
+            and seek_cut_inputs and audio_sync_offset >= 0
         ):
             seek_segments = _kept_intervals(deletion_intervals, main_dur_src)
 
@@ -1470,7 +1472,23 @@ def prepare_assembly(
             compact_ass = ep.subdir("work") / (
                 f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
             )
-            _write_ass_from_srt(compact_srt, compact_ass, ass_res_w, ass_res_h, style=sub_style)
+            # 雙行：講者 spans 與字幕卡同軸，套字幕卡完全一樣的 remap 收掉刪段搬到緊密軸，
+            # 雙行上色才不會落在錯的時間。speed=1.0/offset=0 與 compact_srt 一致。
+            compact_spans = (
+                [
+                    (
+                        map_src_to_output_time(s, removed_intervals, 1.0, 0.0),
+                        map_src_to_output_time(e, removed_intervals, 1.0, 0.0),
+                        spk,
+                    )
+                    for s, e, spk in dual_spans
+                ]
+                if dual_spans else None
+            )
+            _write_ass_from_srt(
+                compact_srt, compact_ass, ass_res_w, ass_res_h,
+                speaker_spans=compact_spans, style=sub_style,
+            )
             srt_rel = (
                 str(compact_ass.relative_to(cwd))
                 if compact_ass.is_relative_to(cwd) else str(compact_ass)
