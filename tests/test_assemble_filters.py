@@ -228,6 +228,24 @@ def test_prepare_assembly_yt_trim_reduces_main_dur_for_fade_out(tmp_episode_full
     assert plan["main_dur"] == pytest.approx(96.5)
 
 
+def test_prepare_assembly_clamps_deletion_past_video_eof_for_duration(tmp_episode_full):
+    """外接字幕／音訊時間軸可能比攝影機母帶長。
+
+    超出影片 EOF 的刪除區間仍可交給 ffmpeg 處理音訊，但不能整段拿來扣影片長度；
+    否則正片會提早 fade 成黑畫面，等到較長 segment 結束才接片尾。
+    fixture 的影片長 100 秒；cuts 會向左補 0.15 秒，所以 98–120 的區間
+    在影片範圍內只能扣 2.15 秒。
+    """
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["cuts"] = [[98.0, 120.0]]
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+
+    assert plan["main_dur"] == pytest.approx(97.85)
+
+
 def test_prepare_assembly_reels_head_trim_also_applies(tmp_episode_full):
     """T21: Reels 分支也要套頭尾 trim。"""
     ep_yaml = tmp_episode_full / "episode.yaml"

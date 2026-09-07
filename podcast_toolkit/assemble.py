@@ -1381,8 +1381,13 @@ def prepare_assembly(
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
         if deletion_intervals:
-            # main_dur 用於 fade-out 計時，扣掉刪除區間總長（含頭尾 trim）
-            deleted_total = sum(b - a for a, b in deletion_intervals)
+            # main_dur 用於 fade-out / concat 計時，只能扣掉實際落在影片範圍內的區間。
+            # 外接 WAV／字幕時間軸可能比攝影機母帶長；若直接扣到 EOF 以外，fade 會提早，
+            # 正片末端便成為一段黑畫面／靜音，直到 ffmpeg segment 真正結束才接片尾。
+            deleted_total = sum(
+                max(0.0, min(b, main_dur_src) - max(a, 0.0))
+                for a, b in deletion_intervals
+            )
             main_dur = main_dur - deleted_total
 
     # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
