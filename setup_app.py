@@ -9,11 +9,22 @@
 import os
 import sys
 
+from py2app.build_app import py2app
 from setuptools import setup
+
+from podcast_toolkit.version import __version__
 
 # py2app 的 modulegraph 用遞迴遍歷 AST，遇到 pydantic/fastapi 這種大模組會爆預設遞迴上限
 # （RecursionError）。建置前拉高，是官方/社群公認的 workaround。
 sys.setrecursionlimit(10000)
+
+
+class PodcastAppBuild(py2app):
+    """隔離 CLI 套件中繼資料；App 的收集來源由 OPTIONS 明確管理。"""
+
+    def finalize_options(self):
+        self.distribution.install_requires = []
+        super().finalize_options()
 
 APP = ["podcast_toolkit/launcher.py"]
 DATA_FILES = [
@@ -49,6 +60,9 @@ DATA_FILES = [
 ]
 OPTIONS = {
     "argv_emulation": False,
+    # Python 3.14 隨附的 liblzma.5.dylib 不能由目前 Xcode strip 安全改寫；
+    # 強行剝除會破壞 __LINKEDIT，讓 py2app 與最終 App 簽章都失敗。
+    "strip": False,
     # app 圖示：銀麥 3D 合成在深藍 macOS squircle 底（assets/AppIcon.icns）。
     # 換圖示只需重打包一次即生效（py2app 會把它設成 CFBundleIconFile）。
     "iconfile": "assets/AppIcon.icns",
@@ -73,6 +87,9 @@ OPTIONS = {
         "numba", "llvmlite", "scipy", "sympy",
         "huggingface_hub", "transformers", "safetensors",
         "PyInstaller", "pytest",
+        # 主程式不使用 Pillow；誤收會與 Homebrew xz 各帶一份同名 liblzma，
+        # py2app 0.28.10 覆寫時不截短，產生無法簽章的 Mach-O。
+        "PIL",
     ],
     # uvicorn/starlette 大量動態 import，modulegraph 常漏 → 正式（非 alias）build 必補：
     "includes": [
@@ -89,9 +106,9 @@ OPTIONS = {
         "CFBundleIdentifier": "com.liweisia.podcast-toolkit",
         # CFBundleVersion 帶成每次都變的 build 識別碼（給 Finder / crash log 認版），
         # 由 build_app.sh export BUILD_ID 帶進來；直接跑 py2app（無 build_app.sh）退回版號。
-        # CFBundleShortVersionString 維持 marketing 版號不動（0.2.0）。
-        "CFBundleVersion": os.environ.get("BUILD_ID", "0.2.0"),
-        "CFBundleShortVersionString": "0.2.0",
+        # CFBundleShortVersionString 使用套件的唯一版本來源。
+        "CFBundleVersion": os.environ.get("BUILD_ID", __version__),
+        "CFBundleShortVersionString": __version__,
         "LSUIElement": False,  # 顯示在 Dock
         "NSHighResolutionCapable": True,
         # Finder/launchd 啟動時環境沒有 LANG/LC_ALL → Python 3.9 locale 退回
@@ -111,5 +128,5 @@ setup(
     app=APP,
     data_files=DATA_FILES,
     options={"py2app": OPTIONS},
-    setup_requires=["py2app"],
+    cmdclass={"py2app": PodcastAppBuild},
 )

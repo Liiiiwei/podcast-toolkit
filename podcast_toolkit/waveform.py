@@ -11,10 +11,11 @@
 """
 from __future__ import annotations
 
-import audioop
 import json
 import subprocess
 from pathlib import Path
+
+import numpy as np
 
 from podcast_toolkit import silencedetect
 from podcast_toolkit.assemble import ffmpeg_bin
@@ -32,6 +33,12 @@ _SNAP_THRESHOLD_DB = -30.0
 _CACHE_VERSION = 1
 
 
+def _max_abs_sample(chunk: bytes) -> int:
+    """回傳 s16le PCM 的最大絕對振幅，避開 Python 3.13 移除的 audioop。"""
+    samples = np.frombuffer(chunk, dtype="<i2").astype(np.int32)
+    return int(np.abs(samples).max()) if samples.size else 0
+
+
 def _src_signature(src: Path) -> tuple[int, int]:
     """來源檔簽章 (mtime 取整秒, size)——換片/重新匯出就會變 → 快取失效重算。"""
     st = src.stat()
@@ -41,7 +48,7 @@ def _src_signature(src: Path) -> tuple[int, int]:
 def compute_peaks(pcm: bytes, *, sr: int = _SR, bucket_ms: int = _BUCKET_MS) -> list[int]:
     """s16le 單聲道 PCM → 每桶峰值（0.._PEAK_MAX 整數）。純函式。
 
-    每桶取該桶內樣本絕對值最大者（audioop.max，C 速度），正規化到 0.._PEAK_MAX。
+    每桶取該桶內樣本絕對值最大者，正規化到 0.._PEAK_MAX。
     最後不足一桶的殘尾照收（成品時長多半非整桶）；空輸入 → 回空清單。
     """
     bucket_bytes = max(1, int(sr * bucket_ms / 1000)) * 2  # 2 bytes/sample（s16）
@@ -52,7 +59,7 @@ def compute_peaks(pcm: bytes, *, sr: int = _SR, bucket_ms: int = _BUCKET_MS) -> 
             chunk = chunk[:-1]
         if not chunk:
             break
-        amp = audioop.max(chunk, 2)        # 0..32768（絕對值最大樣本）
+        amp = _max_abs_sample(chunk)        # 0..32768（絕對值最大樣本）
         peaks.append(min(_PEAK_MAX, round(amp / 32768 * _PEAK_MAX)))
     return peaks
 

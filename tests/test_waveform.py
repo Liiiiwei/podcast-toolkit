@@ -45,6 +45,11 @@ def test_compute_peaks_empty_input():
     assert waveform.compute_peaks(b"") == []
 
 
+def test_max_abs_sample_handles_signed_int16_minimum():
+    """替代 audioop 的峰值計算要正確處理 -32768。"""
+    assert waveform._max_abs_sample(struct.pack("<hhh", 0, -32768, 123)) == 32768
+
+
 def test_compute_peaks_odd_trailing_byte_no_crash():
     # 尾端多半個樣本（奇數 byte）→ 不可讓 audioop 拋錯，殘半棄掉
     peaks = waveform.compute_peaks(_pcm([16384] * 160) + b"\x01")

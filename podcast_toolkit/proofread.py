@@ -3,14 +3,12 @@
 給定字幕卡,依四條規則(同音/近音錯字、專名詞庫、子句空格、去填充詞)逐句校對,
 回傳逐卡修正 {idx: 新文字};**只改文字,不動時間 / 卡數 / 順序**。
 
-Provider(鏡像 web.transcribe 的 PROVIDERS 抽象):
-- claude_code:shell 呼叫本地 ``claude -p``。用使用者已登入的 Claude Code,
-  **不需在工具裡設任何 API key、不外聯第三方 API**。Apple/一般機器皆可,前提是裝了 claude CLI。
-- gemini:google-genai SDK,需 GEMINI_API_KEY。給「沒有 Claude Code」的使用者沿用原本路線。
-- off:跳過(維持純手動)。
+Provider（鏡像 web.transcribe 的 PROVIDERS 抽象）：
+- local_llm：App 內建 Qwen3 4B 與 llama.cpp，完全離線、免帳號與金鑰。
+- claude_code：保留既有 ``claude -p`` 路徑供開發環境手動指定。
+- off：跳過，維持純手動。
 
-provider="auto"(預設)解析順序:claude CLI 在 → claude_code;否則有 gemini key → gemini;
-否則 None(跳過)。所以非 Claude Code 使用者完全不受影響。
+provider="auto"（預設）解析順序：內建本機模型 → Claude Code 相容路徑 → 跳過。
 """
 from __future__ import annotations
 
@@ -23,7 +21,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from podcast_toolkit import srt_io
+from podcast_toolkit import local_llm, srt_io
 from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.gemini_subtitle import format_glossary_lines
 
@@ -185,8 +183,75 @@ def _run_claude_code(cards, glossary, *, cfg, progress=None) -> dict:
     return out
 
 
-# 零雲端金鑰：Gemini 校對已移除，proofread 只走本地 claude -p（沒裝就跳過）。
-PROVIDERS = {"claude_code": _run_claude_code}
+def _build_local_prompt(cards: list[dict], glossary: list, *, context: str = "") -> str:
+    """本機小模型使用固定欄位陣列，避免動態 JSON 鍵名造成格式漂移。"""
+    gloss = format_glossary_lines(glossary)
+    glossary_text = "\n".join(gloss) if gloss else "（無）"
+    context_text = context.strip() or "（無）"
+    lines = "\n".join(f'{card["idx"]}\t{card["text"]}' for card in cards)
+    return (
+        "你是繁體中文 Podcast 字幕校對工具。只依規則修正，不要改寫。\n\n"
+        f"節目背景：{context_text}\n\n"
+        f"{PROOFREAD_RULES}\n\n"
+        f"# 詞庫\n{glossary_text}\n\n"
+        f"# 輸入（卡號、定位字元、原文）\n{lines}\n\n"
+        "# 輸出\n"
+        "只輸出 JSON 陣列，只列有修改的卡。每項固定為 "
+        '{"idx":1,"text":"修正後文字"}。沒有修改就輸出 []。'
+    )
+
+
+def _run_local_llm(cards, glossary, *, cfg, progress=None) -> dict:
+    """以單工分塊執行內建模型，避免同時載入多份權重。"""
+    pcfg = cfg.get("proofread") or {}
+    size = max(1, int(pcfg.get("local_chunk_size") or 20))
+    timeout = int(pcfg.get("timeout_sec") or 600)
+    context = pcfg.get("context") or ""
+    chunks = list(_chunks(cards, size))
+    if not chunks:
+        return {}
+
+    out: dict[int, str] = {}
+    failures: list[str] = []
+    for position, chunk in enumerate(chunks, start=1):
+        try:
+            raw = local_llm.complete_json(
+                _build_local_prompt(chunk, glossary, context=context),
+                timeout=timeout,
+                max_tokens=max(256, min(2048, len(chunk) * 80)),
+                context_size=int(pcfg.get("local_context_size") or 8192),
+                temperature=0.0,
+            )
+            items = raw.get("corrections", []) if isinstance(raw, dict) else raw
+            if not isinstance(items, list):
+                raise ProofreadError("本機模型校對輸出不是陣列")
+            for item in items:
+                if not isinstance(item, dict) or "idx" not in item or "text" not in item:
+                    continue
+                try:
+                    out[int(item["idx"])] = str(item["text"])
+                except (TypeError, ValueError):
+                    continue
+        except (local_llm.LocalLLMError, ProofreadError) as exc:
+            failures.append(str(exc))
+        if progress:
+            progress(position / len(chunks) * 100.0)
+
+    if failures and not out:
+        raise ProofreadError(f"本機模型校對全部 {len(chunks)} 塊都失敗：{failures[0]}")
+    if failures:
+        print(
+            f"⚠ 本機模型校對 {len(failures)}/{len(chunks)} 塊失敗，"
+            f"已套用其餘成功塊：{failures[0][:150]}",
+            file=sys.stderr,
+        )
+    return out
+
+
+PROVIDERS = {
+    "local_llm": _run_local_llm,
+    "claude_code": _run_claude_code,
+}
 
 
 def resolve_provider(cfg: dict) -> str | None:
@@ -197,7 +262,9 @@ def resolve_provider(cfg: dict) -> str | None:
         return None
     if p in PROVIDERS:
         return p
-    # auto:本地 Claude Code（claude -p）；沒裝就跳過校對（零雲端金鑰，不走 Gemini）
+    # auto：先用 App 內建模型；開發環境缺資產時才保留 Claude Code 相容路徑。
+    if local_llm.is_available():
+        return "local_llm"
     if shutil.which("claude"):
         return "claude_code"
     return None
@@ -294,7 +361,7 @@ def run(episode_dir, *, provider=None, model=None, force=False, progress=None) -
         return 1
 
     if prov is None:
-        print("校對 provider = off(無 claude CLI 也無 Gemini key),已跳過。", file=sys.stderr)
+        print("校對 provider = off（找不到可用的本機模型），已跳過。", file=sys.stderr)
         return 0
 
     if not applied and not reverted:

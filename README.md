@@ -29,10 +29,10 @@
 ```mermaid
 flowchart TD
     subgraph S0["① 一次性安裝（每台電腦只做一次）"]
-        I1["裝 Homebrew"] --> I2["git clone podcast-toolkit"] --> I3["./install.sh<br/>自動裝 ffmpeg · Breeze · Podcast.app"]
+        I1["裝 Homebrew"] --> I2["git clone podcast-toolkit"] --> I3["./install.sh<br/>安裝 CLI · ffmpeg · Breeze 環境"]
     end
 
-    I3 --> A0["開啟 Podcast.app<br/>瀏覽器自動彈出 Dashboard"]
+    I3 --> A0["開啟 JOIN Podcast Toolkit.app<br/>瀏覽器自動彈出 Dashboard"]
     A0 --> A1{"這集開過了嗎？"}
     A1 -- "新集" --> A2["新建集 / 開資料夾<br/>命名 YYYYMMDD 集名"]
     A2 --> B1["把素材放進 01_母帶/<br/>相機 mp4 ＋ 各軌 wav ＋ Stereo Mix.wav"]
@@ -67,7 +67,7 @@ flowchart TD
 
 **轉字幕與校對**
 - **一鍵 Breeze 轉字幕（本地、自動標講者）** — 按一顆就把分軌錄音整條龍跑完：各軌 mic 聽打 → 自動標誰在講（a/b/c）→ 匯入字幕卡 → 本地校對。免金鑰、聲音不上雲。
-- **AI 逐句字幕校對（本地零金鑰）** — 轉完自動用本地 Claude Code 依保守規則修同音近音錯字、台灣慣用字與代名詞，只改文字不動時間；沒裝也照跑不報錯。
+- **AI 逐句字幕校對（本地零金鑰）** — 轉完自動用 App 內建的 Qwen3 4B 與 llama.cpp，依保守規則修同音近音錯字、台灣慣用字與代名詞；只改文字不動時間，完全離線且不需安裝 Claude Code。
 - **瀏覽器字幕卡逐句校對** — 字幕攤成一張張卡直接改字，Enter 切句、Backspace 合併，可插卡／刪卡，存檔自動重編號，卡號（#idx）方便對照溝通。
 - **專有名詞詞庫（本集／跨集／全域三層合併）** — 先把人名品牌暱稱教給引擎，轉字幕當提詞、校對自動修正，減少一直校同一個錯字。
 
@@ -115,22 +115,22 @@ flowchart TD
 | | 方式 A：拖曳 DMG（給只想用的人） | 方式 B：`install.sh`（給要改程式的人） |
 |---|---|---|
 | 要動終端機嗎 | 不用 | 要 |
-| 裝什麼 | 一顆 4 G 的 `Podcast.app`（Python、ffmpeg、Breeze、2.9 G 模型全包在裡面） | clone 原始碼 + 系統層安裝 |
+| 裝什麼 | 一顆 4 G 的 `JOIN Podcast Toolkit.app`（Python、ffmpeg、Breeze、模型全包在裡面） | 原始碼 + CLI + 系統層安裝；App 需另外建置 |
 | 更新方式 | 換一顆新 DMG 重拖 | `git pull` |
 
 ### 方式 A：拖曳 DMG
 
-1. 打開 `Podcast-Toolkit-<版本>-<日期>-<commit>.dmg`。
-2. 把左邊的 **Podcast.app** 拖到右邊的 **Applications**。
+1. 打開 `JOIN-Podcast-Toolkit-<版本>-<日期>-<commit>.dmg`。
+2. 把左邊的 **JOIN Podcast Toolkit.app** 拖到右邊的 **Applications**。
 3. **第一次開啟要「按住 Control 點一下 → 開啟」**（不能雙擊）。這顆 app 是 ad-hoc 簽章、沒有 Apple 公證，直接雙擊會被 Gatekeeper 擋下說「無法打開」。
-   - 卡住的話在終端機跑：`xattr -dr com.apple.quarantine /Applications/Podcast.app`
+   - 卡住的話在終端機跑：`xattr -dr com.apple.quarantine "/Applications/JOIN Podcast Toolkit.app"`
    - DMG 裡的「安裝說明.txt」寫了同樣的步驟，並附這顆 DMG 的版本標記。
 
 > 這顆 app 自帶 Breeze 模型，**不需要另外下載 2.9 G**，也不吃系統的 Python／ffmpeg。
 
-### 方式 B：`install.sh`（原始碼安裝）
+### 方式 B：`install.sh`（原始碼與 CLI 安裝）
 
-先裝 Homebrew（一次性），再跑一支腳本，全部裝好（含 Breeze 轉字幕）。
+先裝 Homebrew（一次性），再跑一支腳本，安裝 CLI、ffmpeg 與 Breeze 開發環境。`install.sh` 不會建立或覆蓋 `/Applications` 裡的 App。
 
 **前置（一次性）：**
 ```bash
@@ -147,9 +147,9 @@ cd podcast-toolkit
 ./install.sh
 ```
 
-`install.sh` 一支跑完會自動：檢查 Python 3.9+、裝 ffmpeg、裝 toolkit 套件、建立 `podcast` 指令、在 `/Applications/` 生成可雙擊的 `Podcast.app`（本機生成、不被 Gatekeeper 攔），**並且把 Breeze 轉字幕後端也一起裝好**（`git clone` 公開 repo → 建專用 venv → 裝打過補丁的 whisper + jieba 詞典）。
+`install.sh` 一支跑完會自動：檢查 Python 3.9+、安裝 ffmpeg、安裝 toolkit 套件、建立 `podcast` 指令，並嘗試準備 Breeze 轉字幕後端（下載公開 repo、建立專用 venv、安裝相依套件與繁中詞典）。Breeze 安裝失敗不會阻擋核心安裝。
 
-> Breeze 首次「一鍵轉字幕」時才會自動下載 2.9G 模型到 `~/.cache/whisper`（之後不再下載）。
+> Breeze 首次「一鍵轉字幕」時才會自動下載約 2.9 G 模型到 `~/.cache/whisper`（之後不再下載）。正式 App 會把模型放在 App 內附的 sidecar，不使用這個開發環境快取。
 > Breeze 那段若因網路等因素失敗，install 不會中斷；排除後重跑 `./install.sh` 即可補上。
 
 **轉字幕引擎（本地、免金鑰）：**
@@ -175,7 +175,32 @@ cd podcast-toolkit
 - 想更快開？第一次開後，Dock 上會出現 Podcast 圖示，右鍵 →「在 Dock 中保留」。
 - 用完關掉瀏覽器分頁即可。
 
-> 進階者：終端機打 `podcast ui` 開同一個介面。搬動專案資料夾後重跑 `./install.sh` 即可修好。
+> 進階者：終端機打 `podcast ui` 開同一個介面。搬動專案資料夾後，在新位置重新執行 `./install.sh`，讓 CLI symlink 指向新路徑。
+
+### 在另一台電腦接續開發
+
+原始碼與程式修改都在 Git 分支，另一台電腦可直接取得相同版本：
+
+```bash
+git clone https://github.com/Liiiiwei/podcast-toolkit.git
+cd podcast-toolkit
+git switch vs/subtitle-polish-flow
+./install.sh
+```
+
+`install.sh` 會安裝開發用 CLI 與 Breeze 環境；大型模型不放進 Git。若要在另一台 Apple Silicon Mac 建立完整 App，需另外準備 Breeze 與本機語言模型 sidecar，再執行：
+
+```bash
+export BREEZE_STAGE="$HOME/.podcast-toolkit/breeze-stage"
+export LOCAL_LLM_STAGE="$HOME/.podcast-toolkit/local-llm-stage"
+python3 scripts/check_breeze_stage.py "$BREEZE_STAGE" \
+  --manifest scripts/breeze-stage-manifest.json
+python3 scripts/check_local_llm_stage.py "$LOCAL_LLM_STAGE" \
+  --manifest scripts/local-llm-stage-manifest.json
+./build_app.sh
+```
+
+建置前檢查會確認 `breeze-asr-25`、Qwen3 4B、llama.cpp 的必要執行檔、套件目錄、詞典、授權與模型雜湊都正確。完整 App 內含兩套模型，執行轉字幕、字幕校對與上架文案時都不需網路或 API 金鑰。
 
 ---
 
@@ -370,13 +395,13 @@ glossary:
 - `podcast suggest-cameras <集>` — 依講者 + `camera_rule` 推 A/B 切換點（web「依講者推 A/B」走這步）
 - `podcast resegment <集> [--force]` — 字幕重新斷句
 - `podcast check-seg <集>` — 斷句體檢：列出過長／掛尾連接詞／過短的卡號（只讀不改）
-- `podcast proofread <集>` — 本地校對（Claude Code；沒裝就跳過）
+- `podcast proofread <集>` — 使用內建 Qwen3 4B 本地校對，完全離線、不需 Claude Code
 - `podcast glossary-suggest <集>` / `podcast glossary-review <集>` — 掃全稿挑疑似錯字專名 → 終端逐條勾選入本集詞庫
 - `podcast diarize <集>` — 本地能量分講者：讀混音 `words.json` + 各軌 mic wav 重算講者標（零雲端）。**想改講者標只能走這條**，重跑 Breeze 沒有用（講者是靠能量貼的，不是 ASR 認的）
 - `podcast auto <集>` — 一鍵自動後製（校對 + 推鏡頭 + 去頭尾）
 - `podcast assemble <集> [--force]` — 合成 YT 完整版
 - `podcast edit <集>` / `podcast ui` — 開瀏覽器介面
-- `podcast publish-doc <集> [--ep N]` — 產 YouTube 上架文案：標題／說明欄／章節／重點／社群短文（章節時間對齊成品時間軸，本地 Claude Code 跑，介面上沒有這個功能）
+- `podcast publish-doc <集> [--ep N]` — 使用內建 Qwen3 4B 產 YouTube 上架文案：標題／說明欄／章節／重點／社群短文（章節時間對齊成品時間軸，完全離線；介面上沒有這個功能）
 
 Exit codes：0 成功、1 輸出已存在、3 檔案缺失、4 ffmpeg 失敗。
 

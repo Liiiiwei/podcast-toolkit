@@ -250,6 +250,7 @@ def load_state(ep: Episode) -> dict[str, Any]:
     audio_cands = _list_audio_candidates(ep)
     return {
         "name": ep.name,
+        "episode_dir": str(ep.dir),
         "crop_yt": ep.cfg.get("crop_yt"),
         "crop_reels": ep.cfg.get("crop_reels"),
         # 旋轉拉正（per cam 度數）/ 節目封面開關 / 正片倍速：前端編輯介面用

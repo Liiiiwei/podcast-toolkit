@@ -16,6 +16,7 @@ STATIC = Path(web_pkg.__file__).parent / "static"
 INDEX_HTML = (STATIC / "index.html").read_text(encoding="utf-8")
 APP_JS = (STATIC / "app.js").read_text(encoding="utf-8")
 APP_CSS = (STATIC / "app.css").read_text(encoding="utf-8")
+BUILD_SH = (Path(__file__).parents[1] / "build_app.sh").read_text(encoding="utf-8")
 
 # 現行輸出選單（YT 完整版／原速 MP3／5 分鐘預覽）
 OUTPUT_BUTTON_IDS = [
@@ -72,6 +73,36 @@ def test_save_does_not_auto_open_output_menu():
         "app.js 不應主動展開輸出下拉"
     )
     assert 'classList.add("pulse")' not in APP_JS, "存檔後不應高亮閃爍合成鈕"
+
+
+def test_subtitle_shift_uses_shared_save_recovery():
+    """字幕偏移也必須走共用存檔通道，避免 HTTP 409 時漏掉復原流程。"""
+    start = APP_JS.index("function setupSrtShift()")
+    end = APP_JS.index("async function loadFiles()", start)
+    block = APP_JS[start:end]
+    assert "await postSave({ subtitle_offset_sec: offset })" in block
+    assert 'fetch("/api/save"' not in block
+
+
+def test_shared_save_sends_episode_identity():
+    """共用存檔請求要帶目前集數識別，後端才能拒絕過期分頁。"""
+    start = APP_JS.index("function postSave(payload)")
+    end = APP_JS.index("function setSaveBtnLabel", start)
+    block = APP_JS[start:end]
+    assert "episode_dir: state.episodeDir" in block
+
+
+def test_build_marks_untracked_files_dirty():
+    """打包識別必須包含未追蹤檔案，避免 App 內容與 Git 版本不一致。"""
+    assert "git status --porcelain --untracked-files=normal" in BUILD_SH
+
+
+def test_transcribe_poll_ignores_status_from_another_episode():
+    """背景工作狀態帶錯集時，前端不可把舊集結果顯示在目前集。"""
+    start = APP_JS.index("async function _pollTranscribeOnce()")
+    end = APP_JS.index("async function finishTranscribe", start)
+    block = APP_JS[start:end]
+    assert "s.episode_dir !== state.episodeDir" in block
 
 
 # --- 預設值：defaults.yaml 與前端表單必須一致 ---

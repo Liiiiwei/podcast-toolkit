@@ -1,6 +1,6 @@
 """上架文案產生器。
 
-把一集的「成品時間軸」逐字稿餵給本地 Claude Code（``claude -p``），產出 YouTube
+把一集的「成品時間軸」逐字稿餵給 App 內建本機模型，產出 YouTube
 上架用的整份文案：影片標題（推薦＋備選）、說明欄、章節時間軸、本集重點、社群短文，
 再由本模組拼上確定性欄位（名詞對照、待補欄位、成品資訊），輸出成 03_成品/{name}_上架文案.txt。
 
@@ -10,9 +10,9 @@
     （收刪段 → ÷倍速 → +片頭偏移），與實際出片同一套換算，不會對不齊。
   * 名詞對照 ← episode.yaml glossary 的 canonical（避免文案打錯專名）。
   * 待補欄位（EP 編號 / 連結 / 主持人）＝上架前人工確認清單。
-- 編輯性（本地 Claude Code，鏡像 proofread 的 claude_code provider）：
+- 編輯性（Qwen3 4B＋llama.cpp，完全離線）：
   讀成品逐字稿 → 回 JSON（標題 / 說明欄 / 章節標題＋邊界 / 重點 / 社群短文）。
-  用使用者已登入的 Claude Code，**不需 API key、不外聯第三方**。沒裝 claude → 明確報錯。
+  不需安裝 Claude Code、不需 API 金鑰，也不會把內容送出電腦。
 """
 from __future__ import annotations
 
@@ -22,12 +22,12 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from podcast_toolkit import config, srt_io
+from podcast_toolkit import config, local_llm, srt_io
 from podcast_toolkit.episode import Episode
 
 
 class PublishDocError(RuntimeError):
-    """上架文案流程的可預期錯誤（缺 claude CLI / 模型回非 JSON / 逾時 / 缺成品）。"""
+    """上架文案流程的可預期錯誤（缺模型資產／輸出格式錯誤／逾時／缺成品）。"""
 
 
 # ---- 成品時間軸逐字稿 ---------------------------------------------------------
@@ -69,7 +69,7 @@ def _transcript_for_prompt(srt_text: str) -> str:
     return "\n".join(lines)
 
 
-# ---- Claude Code 產文案 -------------------------------------------------------
+# ---- 組合上架文案輸入 ---------------------------------------------------------
 
 def _show_context(ep: Episode) -> dict:
     """從 episode.yaml 的 publish 區塊（可選）帶入節目/主持人/來賓等固定資訊。
@@ -163,6 +163,48 @@ def _run_claude(prompt: str, *, model: str | None, timeout: int) -> dict:
     if env.get("is_error"):
         raise PublishDocError(f"claude 回報錯誤：{str(env.get('result', ''))[:300]}")
     return _extract_json_object(str(env.get("result", "")))
+
+
+_REQUIRED_FIELDS = {
+    "title_recommended",
+    "title_alternatives",
+    "description",
+    "chapters",
+    "highlights",
+    "social",
+    "hashtags",
+}
+
+
+def _validate_publish_data(data: object) -> dict:
+    """阻擋缺欄位或型別錯誤的模型輸出進入寫檔階段。"""
+    if not isinstance(data, dict):
+        raise PublishDocError("模型輸出不是 JSON 物件")
+    missing = sorted(_REQUIRED_FIELDS - set(data))
+    if missing:
+        raise PublishDocError(f"模型輸出缺少必要欄位：{'、'.join(missing)}")
+    list_fields = ("title_alternatives", "chapters", "highlights", "hashtags")
+    invalid = [name for name in list_fields if not isinstance(data.get(name), list)]
+    if invalid:
+        raise PublishDocError(f"模型輸出欄位型別錯誤：{'、'.join(invalid)}")
+    return data
+
+
+def _run_editor_model(prompt: str, *, model: str | None, timeout: int) -> dict:
+    """內建模型優先；缺資產時保留 Claude Code 舊版相容路徑。"""
+    if local_llm.is_available():
+        try:
+            data = local_llm.complete_json(
+                prompt,
+                timeout=timeout,
+                max_tokens=4096,
+                context_size=32768,
+                temperature=0.2,
+            )
+        except local_llm.LocalLLMError as exc:
+            raise PublishDocError(str(exc)) from exc
+        return _validate_publish_data(data)
+    return _validate_publish_data(_run_claude(prompt, model=model, timeout=timeout))
 
 
 def _extract_json_object(text: str) -> dict:
@@ -353,8 +395,8 @@ def generate(
     if ep_number:
         ctx["ep_number"] = ep_number
 
-    print("→ 呼叫本地 Claude Code 產文案（讀成品逐字稿）…")
-    data = _run_claude(build_prompt(transcript, ctx), model=model, timeout=timeout)
+    print("→ 呼叫本機模型產文案（完全離線，讀成品逐字稿）…")
+    data = _run_editor_model(build_prompt(transcript, ctx), model=model, timeout=timeout)
 
     chapters = _normalize_chapters(data.get("chapters") or [], total_dur)
     if not chapters:

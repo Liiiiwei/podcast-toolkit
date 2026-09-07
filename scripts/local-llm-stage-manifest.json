@@ -1,0 +1,37 @@
+{
+  "manifest_version": 1,
+  "sidecar_version": "qwen3-4b-q4-k-m-llama-cpp-0.4.0",
+  "architecture": "arm64",
+  "required": [
+    {
+      "path": "bin/llama-cli",
+      "type": "executable",
+      "sha256": "04d79af6c54eac7e500f159a4b189e149ba9db589c7e65050d6d1d8d29ec6ba8"
+    },
+    {
+      "path": "lib",
+      "type": "directory",
+      "sha256": null
+    },
+    {
+      "path": "libexec",
+      "type": "directory",
+      "sha256": null
+    },
+    {
+      "path": "models/Qwen3-4B-Q4_K_M.gguf",
+      "type": "file",
+      "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5"
+    },
+    {
+      "path": "licenses/Qwen3-LICENSE",
+      "type": "file",
+      "sha256": "5de36594c10839788a8c589443a8ef9d8b8d17c65a1b5807206ae037fc36c6bd"
+    },
+    {
+      "path": "licenses/llama.cpp-LICENSE",
+      "type": "file",
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+    }
+  ]
+}

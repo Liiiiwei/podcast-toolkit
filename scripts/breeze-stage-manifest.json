@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "sidecar_version": "breeze-asr-25",
+  "architecture": "arm64",
+  "required": [
+    {"path": "py-runtime/bin/python3.9", "type": "file", "sha256": null},
+    {"path": "site-packages", "type": "directory", "sha256": null},
+    {"path": "make_subtitle.py", "type": "file", "sha256": null},
+    {"path": "srt_segment.py", "type": "file", "sha256": null},
+    {"path": "rhythm_segment.py", "type": "file", "sha256": null},
+    {"path": "dict.txt.big", "type": "file", "sha256": null},
+    {"path": "cache/whisper/breeze-asr-25.pt", "type": "file", "sha256": null}
+  ]
+}

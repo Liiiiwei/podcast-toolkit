@@ -15,6 +15,7 @@ def test_load_state_returns_name_and_cards(tmp_episode_dir):
     ep = Episode(tmp_episode_dir)
     state = episode_io.load_state(ep)
     assert state["name"] == "測試集"
+    assert state["episode_dir"] == str(tmp_episode_dir.resolve())
     assert state["crop_yt"] is None
     assert state["crop_reels"] is None
     assert state["deletions"] == []
