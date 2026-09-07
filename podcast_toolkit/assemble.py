@@ -715,7 +715,10 @@ def build_audio_only(
     音訊一律單軌（cam A 原音或外接音檔），與鏡頭 A/B 切換無關 → 單機 / 雙機共用這條。
     input 約定：[0]=intro、[1]=主音訊來源、[2]=outro 音檔。removed_intervals 是源（cam A）
     時間軸的剪除區間（刪段 + 頭尾 trim + 去空拍）；外接音檔先 align 對到 cam A 軸再剪。
-    main_dur = 剪完的正片長度（原速），給 afade 收尾計時。
+    main_dur = 剪完的正片長度（原速）；保留參數以維持 builder 介面一致。
+
+    正片尾端不套 fade-out：最後一句可能一路講到剪輯邊界，強制淡出會吞掉尾音。
+    concat 會在正片完整結束後才接片尾；片尾自己的 fade-in 仍負責柔化轉場。
     """
     enc = cfg["encode"]
     sr = enc["audio_sample_rate"]
@@ -728,7 +731,7 @@ def build_audio_only(
         f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
         f"[1:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
-        f"{align_a}{select_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"{align_a}{select_a}afade=t=in:st=0:d=0.5[a1];"
         f"[2:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         # concat 後再 aresample 重新切幀：aselect/concat 產生的不規則幀會讓 libmp3lame 噴

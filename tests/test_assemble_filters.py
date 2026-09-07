@@ -55,6 +55,15 @@ def test_build_audio_only_concat_and_cut():
     assert "[0:v]" not in fc and "scale=" not in fc      # 沒有任何視訊處理
 
 
+def test_build_audio_only_preserves_main_audio_through_outro_transition():
+    """原速 MP3 必須完整播完正片，再接片尾；不能把最後半秒的尾音淡掉。"""
+    fc = assemble.build_audio_only(BASE_CFG, main_dur=80.0, removed_intervals=[])
+
+    main_chain = fc.split("[1:a]", 1)[1].split("[a1]", 1)[0]
+    assert "afade=t=out" not in main_chain
+    assert "afade=t=in:st=0:d=0.5" in main_chain
+
+
 def test_build_audio_only_no_cuts_no_aselect():
     """沒有刪除區間 → 不加 aselect（整段正片音）。"""
     fc = assemble.build_audio_only(BASE_CFG, main_dur=80.0, removed_intervals=[])
