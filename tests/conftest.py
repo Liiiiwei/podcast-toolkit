@@ -1,8 +1,28 @@
-"""pytest fixtures：建臨時 episode 資料夾。"""
+"""pytest fixtures：建臨時 episode 資料夾；外加編輯器前端模組清單（跨測試檔共用）。"""
 from pathlib import Path
 
 import pytest
 import yaml
+
+# ── 編輯器前端模組清單（app.js 是進入點，其餘是 Phase 3 之後陸續抽出的）─────
+# 為什麼放這裡：不只一個測試檔要對「串接後的全文」做靜態斷言（目前是
+# test_editor_ui_smoke.py 與 test_cam_modal_save_payload.py）。清單各留一份的話，
+# 下次再抽一個模組就會有某個檔忘了更新 —— 「程式碼只是搬家卻被判成被刪」正是這樣
+# 發生的（api.js 抽出當下就踩到一次）。一份清單，一個地方管。
+EDITOR_JS = ["app.js", "timeline.js", "api.js"]
+
+
+def editor_static_dir() -> Path:
+    """前端靜態檔目錄。走套件而不是相對路徑，跟既有測試檔的取法一致。"""
+    import podcast_toolkit.web as web_pkg
+
+    return Path(web_pkg.__file__).parent / "static"
+
+
+def editor_js_source() -> str:
+    """所有編輯器前端模組的串接原始碼，app.js 在最前（依 EDITOR_JS 順序）。"""
+    static = editor_static_dir()
+    return "\n".join((static / name).read_text(encoding="utf-8") for name in EDITOR_JS)
 
 
 @pytest.fixture(autouse=True)

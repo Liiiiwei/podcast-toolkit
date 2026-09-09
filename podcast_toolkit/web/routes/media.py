@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from podcast_toolkit import waveform
+from podcast_toolkit import srt_io, waveform
 from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.web import video
 from podcast_toolkit.web.episode_io import _list_episode_files
@@ -91,6 +91,30 @@ def register(app: FastAPI, ctx: RouteContext) -> None:
         except RuntimeError as e:
             raise HTTPException(status_code=500, detail=str(e))
         return JSONResponse(data)
+
+    @app.get("/api/subtitles")
+    def get_subtitles():
+        """時間軸字幕：讀這集的正典字幕 _final_v2.srt，回 {version, duration, subs}。
+
+        欄位刻意跟 static/sample-subtitles.json 一模一樣，讓影片模式原型的 demo 與真集
+        共用同一份前端程式碼。讀的是 _v2.srt（不是 active_srt），因為 apply-plan 寫回去的
+        也是它——兩邊同一個檔才不會「送出後讀回來的跟送出去的不一樣」。
+
+        duration 是最後一句的迄點，不是媒體長度（時間軸長度由 /api/waveform 決定）。
+        """
+        ep = ctx.require_ep()
+        v2 = ep.output_v2_srt()
+        if not v2.exists():
+            raise HTTPException(status_code=404, detail="找不到 _v2.srt，請先轉字幕")
+        cards = srt_io.parse(v2.read_text(encoding="utf-8"))
+        subs = [
+            {"start": c["start"], "end": c["end"], "text": c["text"]} for c in cards
+        ]
+        return JSONResponse({
+            "version": 1,
+            "duration": subs[-1]["end"] if subs else 0.0,
+            "subs": subs,
+        })
 
     @app.post("/api/upload")
     async def post_upload(file: UploadFile = File(...)):

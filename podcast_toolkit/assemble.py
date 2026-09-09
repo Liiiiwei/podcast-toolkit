@@ -10,7 +10,13 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.segment_plan import (
+    keep_intervals,
+    merge_intervals,
+    removed_with_trim,
+)
 
 
 def _has_subtitles_filter(ffmpeg_path: str) -> bool:
@@ -188,6 +194,14 @@ def cut_intervals_from_cfg(
     else:
         cuts = cfg.get("cuts")
         if cuts:
+            if cfg.get("deletions"):
+                # 兩個編輯器各存過一次就會並存。以 cuts 為準是對的（時間版是正典），
+                # 但不能默默吃掉另一半——講清楚哪一邊這次沒生效。
+                print(
+                    "⚠ episode.yaml 同時有 cuts（時間版刪段）與 deletions（字幕卡刪段）："
+                    "本次以 cuts 為準，deletions 不生效。請在其中一邊重新存檔以統一。",
+                    file=sys.stderr,
+                )
             intervals = []
             for c in cuts:
                 if isinstance(c, dict):
@@ -255,6 +269,7 @@ def _write_ass_from_srt(
     *,
     speaker_spans: list[tuple[float, float, str]] | None = None,
     style: dict | None = None,
+    cards_overlay: list[dict] | None = None,
 ) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
@@ -271,6 +286,9 @@ def _write_ass_from_srt(
 
     只有時間真的重疊的卡才分排，不做「延長前一句製造重疊」的前處理——
     Breeze 相鄰卡 gap 幾乎恆為 0，人為延長會讓每次換講者都疊（分開講≠同時講，使用者裁決）。
+
+    cards_overlay（標題卡）會以更高的 Layer 追加在字幕事件之後，整組用 inline
+    override tag 畫（見 title_cards 模組），所以 force_style 蓋不到它。
     """
     from podcast_toolkit import dual_line, srt_io
 
@@ -319,6 +337,13 @@ def _write_ass_from_srt(
         text = (e["text"] or "").replace("\r\n", "\n").replace("\n", "\\N")
         rows.append(
             f"Dialogue: 0,{_fmt(e['start'])},{_fmt(e['end'])},Default,,0,0,{margin_v},,{text}\n"
+        )
+    if cards_overlay:
+        rows.extend(
+            title_cards.ass_events(
+                cards_overlay, play_res_x, play_res_y,
+                font_name=(style or {}).get("font_name") or "Arial",
+            )
         )
     dst.write_text("".join(rows), encoding="utf-8")
 
@@ -1360,6 +1385,21 @@ def prepare_assembly(
 
     # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
     # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
+    # 標題卡：原型時間軸上做的大字報／下標條／引言框，跟字幕燒在同一個 ASS，
+    # 合成的濾鏡鏈完全不用動。時間軸跟字幕一致（兩者都在 select/setpts 之前燒，
+    # 每塊的 t 仍是原始時間軸），所以只要套用跟 SRT 同一個 srt_total_shift。
+    overlay_cards = title_cards.normalize(cfg.get("title_cards"))
+    if overlay_cards and abs(srt_total_shift) >= 0.001:
+        shifted_cards = []
+        for c in overlay_cards:
+            end = c["end"] + srt_total_shift
+            if end <= 0:
+                continue
+            shifted_cards.append(
+                {**c, "start": max(0.0, c["start"] + srt_total_shift), "end": end}
+            )
+        overlay_cards = shifted_cards
+
     srt_rel: str | None = None
     if burn_subs:
         if output_kind == "yt":
@@ -1372,6 +1412,7 @@ def prepare_assembly(
         _write_ass_from_srt(
             srt, ass_path, ass_res_w, ass_res_h,
             speaker_spans=dual_spans, style=sub_style,
+            cards_overlay=overlay_cards,
         )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
@@ -1426,14 +1467,10 @@ def prepare_assembly(
         deletion_intervals = []
         removed_intervals = _removed_intervals_from_segments(segments, main_dur_src)
     else:
-        # 單機：cut_intervals 直接當刪除區間 + 頭尾 trim
-        deletion_intervals = list(cut_intervals)
-        if head_trim > 0:
-            deletion_intervals.append((0.0, head_trim))
-        if tail_trim > 0:
-            deletion_intervals.append((main_dur - tail_trim, main_dur))
-        # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ 映射位移才不會重複扣
-        deletion_intervals = _merge_intervals(deletion_intervals)
+        # 單機：刪段 + 頭尾 trim，與雙機共用 removed_with_trim（trim 不再兩條路各自硬接）
+        deletion_intervals = removed_with_trim(
+            cut_intervals, main_dur, head_trim, tail_trim
+        )
         removed_intervals = deletion_intervals
 
         # 單鏡頭 YT 的快速刪段路徑：demuxer 對每個保留段做 -ss/-t，直接跳過長刪除段。
@@ -1452,6 +1489,8 @@ def prepare_assembly(
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
             filter_srt_by_intervals(srt, clean_srt, cut_intervals)
             srt = clean_srt
+            # 標題卡用跟字幕同一條判準（起點落在剪除區就丟），時間同樣不位移
+            overlay_cards = title_cards.drop_by_intervals(overlay_cards, cut_intervals)
             # 過濾後仍要轉成標明 PlayResX/Y 的 ASS 再燒；直接燒 SRT 會讓 libass 用預設
             # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
             # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
@@ -1459,6 +1498,7 @@ def prepare_assembly(
             _write_ass_from_srt(
                 clean_srt, clean_ass, ass_res_w, ass_res_h,
                 speaker_spans=dual_spans, style=sub_style,
+                cards_overlay=overlay_cards,
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
@@ -1495,17 +1535,14 @@ def prepare_assembly(
             )
 
         if deletion_intervals:
-            # main_dur 用於 fade-out / concat 計時，只能扣掉實際落在影片範圍內的區間。
-            # 外接 WAV／字幕時間軸可能比攝影機母帶長；若直接扣到 EOF 以外，fade 會提早，
-            # 正片末端便成為一段黑畫面／靜音，直到 ffmpeg segment 真正結束才接片尾。
-            if seek_segments:
-                main_dur = sum(e - s for s, e in seek_segments)
-            else:
-                deleted_total = sum(
-                    max(0.0, min(b, main_dur_src) - max(a, 0.0))
-                    for a, b in deletion_intervals
-                )
-                main_dur = main_dur - deleted_total
+            # main_dur 用於 fade-out / concat 計時。統一走「保留區間加總」一條公式，
+            # 與 multicam（1464）、seek 快速刪段路徑（1485）同一個 _kept_intervals，
+            # 不再一處相減、一處相加各自維護（前科：兩條公式會兜不攏）。
+            # _kept_intervals 以 main_dur_src（攝影機母帶源長）為上界夾住刪除段：外接
+            # WAV／字幕時間軸可能比母帶長，扣到 EOF 以外會讓 fade 提早、末端變黑畫面。
+            main_dur = sum(
+                b - a for a, b in _kept_intervals(deletion_intervals, main_dur_src)
+            )
 
     # 倍速：正片時間軸壓縮為 main_dur/factor，供四個 builder 的 fade 計時與 total_dur 用
     main_dur = main_dur / speed_factor
@@ -1804,20 +1841,9 @@ def prepare_assembly(
     }
 
 
-def _merge_intervals(intervals: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """把重疊／相鄰的區間併成不重疊的聯集（依 start 排序後掃描）。
-
-    必須在餵給 _original_to_mp4_time 前先併：該函式是「逐段加總被刪長度」算位移，
-    重疊區間會被各扣一次（母片 ffmpeg 的 select='not(A+B)' 是布林聯集只算一次，兩邊就會兜不攏）。
-    head_trim 區間常與開頭的 cut／silence 重疊，故 append 完頭尾 trim 必須再 merge。
-    """
-    out: list[tuple[float, float]] = []
-    for a, b in sorted(intervals):
-        if out and a <= out[-1][1] + 1e-9:
-            out[-1] = (out[-1][0], max(out[-1][1], b))
-        else:
-            out.append((a, b))
-    return out
+# 區間聯集併軌到 segment_plan（本檔曾有一份幾乎相同的複本，兩份的容差還不一致）。
+# 舊名保留：既有呼叫端與測試都用 assemble._merge_intervals。
+_merge_intervals = merge_intervals
 
 
 def _kept_intervals(
@@ -2015,15 +2041,13 @@ def extract_reels_clips(
 
     # 刪段時間版（cuts + 靜音剪段，與主合成同源；reels 母片已扣掉故 clip 換算需一致）
     silence_cuts = _silence_cuts_from_cfg(ep)
-    deletion_intervals = list(
-        cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts)
+    # head/tail trim 與主合成、雙機共用 removed_with_trim（三處不再各自硬接）
+    deletion_intervals = removed_with_trim(
+        cut_intervals_from_cfg(cfg, cards, extra_intervals=silence_cuts),
+        main_dur,
+        head_trim,
+        tail_trim,
     )
-    if head_trim > 0:
-        deletion_intervals.append((0.0, head_trim))
-    if tail_trim > 0:
-        deletion_intervals.append((main_dur - tail_trim, main_dur))
-    # 併重疊（head/tail trim 可能與 cut／silence 重疊）→ clip 換算位移才不會重複扣
-    deletion_intervals = _merge_intervals(deletion_intervals)
 
     if clip_names is not None:
         wanted = set(clip_names)

@@ -1,8 +1,12 @@
 """編輯器前端煙霧測試：鎖住 UI 的關鍵元素與行為，防止改版誤刪。
 
-本機沒有 node / 瀏覽器自動化，所以用「靜態字串斷言」代替 DOM 測試：
-讀 index.html / app.js / app.css 的原始碼，比對元素 id、屬性與 CSS 規則。
+「靜態字串斷言」版：讀 index.html / app.js / app.css 的原始碼，比對元素 id、屬性與 CSS 規則。
 測不到互動，但足以擋住「元素被誤刪」「前後端預設值漂移」這兩類回歸。
+真的會開瀏覽器點下去的門檻在 `tests/test_editor_browser_smoke.py`（Phase 3 拆檔的驗收門檻）。
+
+APP_JS 是**所有編輯器前端模組的串接**，不是單一檔案 —— 拆檔（Phase 3）會讓程式碼換檔，
+只讀 app.js 的話「東西只是搬家」會被誤判成「東西被刪了」。
+新增模組時加進 conftest.py 的 EDITOR_JS，漏加會被下面第一個測試擋下。
 
 Note: Reels 功能已從 UI 移除（6d02e7e）；旋轉控制項也已移除（保留後端 rotate 欄位）。
 """
@@ -12,11 +16,16 @@ from pathlib import Path
 import podcast_toolkit.web as web_pkg
 from podcast_toolkit import config
 
+from .conftest import EDITOR_JS, editor_js_source
+
 STATIC = Path(web_pkg.__file__).parent / "static"
 INDEX_HTML = (STATIC / "index.html").read_text(encoding="utf-8")
-APP_JS = (STATIC / "app.js").read_text(encoding="utf-8")
 APP_CSS = (STATIC / "app.css").read_text(encoding="utf-8")
 BUILD_SH = (Path(__file__).parents[1] / "build_app.sh").read_text(encoding="utf-8")
+
+# 下面的斷言一律對「所有編輯器模組串接後的全文」做，才不會把搬家誤判成刪除。
+# 模組清單在 conftest.py（不只這個檔要用，見該處註解）。
+APP_JS = editor_js_source()
 
 # 現行輸出選單（YT 完整版／原速 MP3／5 分鐘預覽）
 OUTPUT_BUTTON_IDS = [
@@ -46,6 +55,15 @@ def _css_rule(selector: str) -> str:
     m = re.search(r"^" + re.escape(selector) + r"\s*\{([^}]*)\}", APP_CSS, re.MULTILINE)
     assert m, f"app.css 找不到規則：{selector}"
     return m.group(1)
+
+
+def test_editor_js_list_covers_every_module_app_js_imports():
+    """EDITOR_JS 漏掉新抽出的模組，本檔所有斷言就會退回「只看 app.js」——
+    程式碼只是搬家卻被判成被刪，或反過來，該擋的刪除擋不住。
+    所以直接拿 app.js 自己的 import 當事實來源，漏登記就在這裡紅。"""
+    imported = set(re.findall(r'from\s+"\./([\w.-]+\.js)"', (STATIC / "app.js").read_text("utf-8")))
+    missing = sorted(imported - set(EDITOR_JS))
+    assert not missing, f"app.js 匯入了這些模組但沒登記進 EDITOR_JS：{missing}"
 
 
 def test_output_menu_buttons_all_present():
@@ -85,9 +103,14 @@ def test_subtitle_shift_uses_shared_save_recovery():
 
 
 def test_shared_save_sends_episode_identity():
-    """共用存檔請求要帶目前集數識別，後端才能拒絕過期分頁。"""
+    """共用存檔請求要帶目前集數識別，後端才能拒絕過期分頁。
+
+    postSave 已搬進 api.js（Phase 3 拆檔）；用「到下一個函式定義為止」界定區塊，
+    不再依賴它與 setSaveBtnLabel 在同一檔相鄰，避免模組串接順序改變就誤判。
+    """
     start = APP_JS.index("function postSave(payload)")
-    end = APP_JS.index("function setSaveBtnLabel", start)
+    nxt = re.search(r"\n(?:export )?function ", APP_JS[start + 1:])
+    end = start + 1 + nxt.start() if nxt else len(APP_JS)
     block = APP_JS[start:end]
     assert "episode_dir: state.episodeDir" in block
 

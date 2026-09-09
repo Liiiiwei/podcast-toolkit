@@ -229,6 +229,10 @@ def merge(defaults: dict, episode: dict, episode_glossary_sidecar: list = None) 
     cfg["deletions"] = list(episode.get("deletions") or [])
     # 時間版刪段（與字幕脫鉤）：[[start, end], ...] 秒；assemble.cut_intervals_from_cfg 優先吃它
     cfg["cuts"] = list(episode.get("cuts") or [])
+    # 標題卡（原型的大字報／下標條／引言框）：[{start, end, tpl, text, scale, x, y}, ...]
+    # defaults.yaml 沒有這個鍵，所以自動深合併吃不到它 —— 漏列會像 srt_path 一樣
+    # 「寫進 yaml 卻讀不回 cfg」，assemble 就永遠燒不出卡。
+    cfg["title_cards"] = list(episode.get("title_cards") or [])
     # 刪段往前後延伸吃掉間隙雜音的秒數（每邊上限，夾在鄰卡邊界內）。episode 覆寫；0=關
     cfg["cut_pad"] = float(episode.get("cut_pad", defaults.get("cut_pad", 0)) or 0)
     cfg["head_trim_sec"] = float(episode.get("head_trim_sec") or 0)
