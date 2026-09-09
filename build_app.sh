@@ -34,6 +34,26 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
+# 打包用的 python：必須是「裝了 py2app」的那支，而且要對應 app 目標的 3.9 runtime。
+# 背景：Homebrew 會把 `python3` 升級（實測已到 3.14），裸 python3 就抓不到 py2app 而中止。
+# 解析順序：$BUILD_PYTHON 覆寫 → python3.9 → 系統 /usr/bin/python3(3.9) → 裸 python3；
+# 逐一挑「import py2app 成功」的第一支。全都沒有就報清楚的錯，不要靜默用錯版本。
+PY=""
+for cand in "$BUILD_PYTHON" python3.9 /usr/bin/python3 python3; do
+    [[ -n "$cand" ]] || continue
+    command -v "$cand" >/dev/null 2>&1 || [[ -x "$cand" ]] || continue
+    if "$cand" -c "import py2app" >/dev/null 2>&1; then
+        PY="$cand"
+        break
+    fi
+done
+if [[ -z "$PY" ]]; then
+    echo "✗ 找不到裝有 py2app 的 python（試過 \$BUILD_PYTHON/python3.9//usr/bin/python3/python3）"
+    echo "  裝法：/usr/bin/python3 -m pip install py2app，或設 BUILD_PYTHON 指向對的直譯器"
+    exit 1
+fi
+echo "→ 打包 python：$("$PY" --version 2>&1)（$PY）"
+
 safe_discard() {
     local target="$1"
     [[ -e "$target" || -L "$target" ]] || return 0
@@ -52,6 +72,29 @@ safe_discard() {
         mv "$target" "$HOME/.Trash/$(basename "$target").$(date +%Y%m%dT%H%M%S)"
     fi
 }
+
+# 從「已注入 app 的 breeze 副本」裁掉實測不在 ASR 推論路徑上的死重量套件。
+# 只動 app 內副本、不碰無法重建的來源 stage（stage 仍是完整備份）。
+# 依據（2026-09-09 實測）：import trace + 完整轉錄實跑（word_timestamps，含 numba DTW timing）
+#   在 mlx/sympy/networkx 全被硬擋 ImportError 下仍成功、零洩漏；torch/include 為 C++ 標頭，
+#   執行期永不讀取。torchgen 被 torch 於 import 期硬相依（torch/utils/_python_dispatch.py），保留。
+prune_breeze_deadweight() {
+    local base="$APP/Contents/Resources/breeze/site-packages"
+    local rel target sz freed=0
+    for rel in mlx sympy networkx torch/include; do
+        target="$base/$rel"
+        [[ -e "$target" ]] || continue
+        sz=$(du -sk "$target" | cut -f1)
+        if command -v trash >/dev/null 2>&1; then
+            trash "$target"
+        else
+            mkdir -p "$HOME/.Trash"
+            mv "$target" "$HOME/.Trash/breeze-prune-$(basename "$rel").$(date +%Y%m%dT%H%M%S)"
+        fi
+        freed=$((freed + sz))
+    done
+    echo "  ✓ 裁死重量（省 $((freed / 1024))MB：mlx/sympy/networkx/torch-include）"
+}
 # sidecar 落腳處：環境變數優先（想暫時換一份時用），否則家目錄的固定家，
 # 最後才退回舊的 in-repo 路徑（向後相容，別台機器沿用舊佈局也還能打包）。
 STAGE="${BREEZE_STAGE:-}"
@@ -65,7 +108,7 @@ fi
 LOCAL_LLM_STAGE="${LOCAL_LLM_STAGE:-$HOME/.podcast-toolkit/local-llm-stage}"
 APP="dist/JOIN Podcast Toolkit.app"
 DMG_STAGE="_pkgbuild/dmg-staging"
-VER=$(python3 -c "from podcast_toolkit.version import __version__; print(__version__)" 2>/dev/null || echo "unknown")
+VER=$("$PY" -c "from podcast_toolkit.version import __version__; print(__version__)" 2>/dev/null || echo "unknown")
 # build 標記＝日期＋git short SHA（例 20260717-ddfd83d），讓每顆 DMG 檔名/掛載名/
 # 安裝說明都認得出是哪天、哪版程式碼打的（同一天多次、同一 commit 重打都不撞名）。
 # 非 git 環境或有未提交改動時退回 nogit / 加 -dirty 尾綴。
@@ -97,12 +140,12 @@ fi
 echo "  ✓ macOS arm64"
 
 echo "→ 檢查 Breeze sidecar（$STAGE）"
-python3 scripts/check_breeze_stage.py "$STAGE" \
+"$PY" scripts/check_breeze_stage.py "$STAGE" \
     --manifest scripts/breeze-stage-manifest.json
 echo "  ✓ sidecar 齊備（$(du -sh "$STAGE" | cut -f1)）"
 
 echo "→ 檢查本機模型 sidecar（$LOCAL_LLM_STAGE）"
-python3 scripts/check_local_llm_stage.py "$LOCAL_LLM_STAGE" \
+"$PY" scripts/check_local_llm_stage.py "$LOCAL_LLM_STAGE" \
     --manifest scripts/local-llm-stage-manifest.json
 echo "  ✓ 本機模型齊備（Qwen3 4B Q4_K_M）"
 
@@ -121,7 +164,7 @@ echo "  ✓ _build_info.py + static/build-info.json"
 echo "→ [1/6] py2app 打包精簡主 app"
 safe_discard build
 safe_discard "$APP"
-PYTHONPATH=. python3 setup_app.py py2app >/dev/null
+PYTHONPATH=. "$PY" setup_app.py py2app >/dev/null
 echo "  ✓ $APP（$(du -sh "$APP" | cut -f1)，尚未含 Breeze）"
 
 echo "→ [2/6] 注入 Breeze sidecar 到 Contents/Resources/breeze"
@@ -131,9 +174,13 @@ fi
 echo "  ✓ 注入完成（app 現為 $(du -sh "$APP" | cut -f1)）"
 
 echo "→ [3/6] 注入完全離線本機模型"
-python3 scripts/copy_local_llm_stage.py \
+"$PY" scripts/copy_local_llm_stage.py \
     "$LOCAL_LLM_STAGE" "$APP/Contents/Resources/local-llm"
 echo "  ✓ 本機模型注入完成（app 現為 $(du -sh "$APP" | cut -f1)）"
+
+echo "→ 裁掉 breeze 死重量套件（實測不在 ASR 推論路徑上；只動 app 副本不碰 stage）"
+prune_breeze_deadweight
+echo "  ✓ 裁掉後 app 為 $(du -sh "$APP" | cut -f1)"
 
 echo "→ [4/6] ad-hoc 簽章整個 bundle（含巢狀 python3.9 / torch .so / llama.cpp）"
 codesign --deep --force -s - "$APP"
@@ -194,10 +241,12 @@ ditto "$APP" "$DMG_STAGE/JOIN Podcast Toolkit.app"
 ln -s /Applications "$DMG_STAGE/Applications"
 echo "  ✓ staging 就緒"
 
-echo "→ [6/6] 產生壓縮 DMG（約 6G，UDZO，需數分鐘）"
+# ULFO(lzfse) 比舊 UDZO(zlib) 壓得更緊、解壓更快；需 macOS 10.11+（本 app 要求 11+，無虞）。
+# 模型檔（fp16 .pt / Q4 gguf）本就高熵壓不動，增益主要落在 Python/lib 那層。
+echo "→ [6/6] 產生壓縮 DMG（ULFO/lzfse，需數分鐘）"
 safe_discard "$DMG"
 hdiutil create -volname "JOIN Podcast Toolkit $BUILD_TAG" -srcfolder "$DMG_STAGE" \
-    -fs HFS+ -format UDZO -imagekey zlib-level=6 -ov "$DMG" >/dev/null
+    -fs HFS+ -format ULFO -ov "$DMG" >/dev/null
 echo "  ✓ $DMG（$(du -sh "$DMG" | cut -f1)）"
 
 echo "→ 清理 DMG staging（省 4G 暫存）"
