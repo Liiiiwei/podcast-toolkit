@@ -6,7 +6,7 @@
     {
       "path": "bin/llama-cli",
       "type": "executable",
-      "sha256": "04d79af6c54eac7e500f159a4b189e149ba9db589c7e65050d6d1d8d29ec6ba8"
+      "sha256": "76eae98242c4f95904200a8475976ae9e25316fc1ae14b1be733b8444d59983c"
     },
     {
       "path": "lib",
