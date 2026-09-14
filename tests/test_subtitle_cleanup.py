@@ -396,6 +396,7 @@ def test_reflow_runt_not_merged_across_clause_space():
 
 def test_reflow_joins_zero_gap_midword_across_speaker_single_char():
     """單字尾被誤標成別的講者（彼｜此，0 秒）→ 併回「彼此」、講者統一；merge_short 關也成立。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 0.4, "彼"), (0.4, 0.9, "此"))
     new, ns = reflow_by_phrases(cards, {1: "a", 2: "c"}, gap=0.3, max_w=16)
     assert [c["text"] for c in new] == ["彼此"]
@@ -404,6 +405,7 @@ def test_reflow_joins_zero_gap_midword_across_speaker_single_char():
 
 def test_reflow_joins_zero_gap_midword_across_speaker_multichar():
     """多字碎卡跨講者硬斷（然後國｜貿啊，0 秒）→ 生產預設 merge_short 併回整句。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 0.6, "然後國"), (0.6, 1.1, "貿啊"))
     new, ns = reflow_by_phrases(
         cards, {1: "a", 2: "c"}, gap=0.3, max_w=16, merge_short=True)
@@ -589,6 +591,7 @@ def test_dedup_single_track_no_merge():
 
 def test_heal_moves_forward_to_reunite_word():
     """詞頭在前卡尾、詞尾在後卡頭（耳｜機，0 秒）→ 前推一字補回「耳機」，切點插值、時間連續。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 1.0, "他戴著耳"), (1.0, 2.0, "機聽音樂"))
     out = heal_straddle(cards, gap=0.08, max_w=16)
     assert [c["text"] for c in out] == ["他戴著耳機", "聽音樂"]
@@ -598,6 +601,7 @@ def test_heal_moves_forward_to_reunite_word():
 
 def test_heal_moves_backward_when_nearer_boundary_is_left():
     """最近詞界在左側（超好吃的｜巧克力）→ 後拉一字把整個「巧克力」歸下一卡。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 1.0, "超好吃的巧"), (1.0, 2.0, "克力蛋糕吧"))
     out = heal_straddle(cards, gap=0.08, max_w=16)
     assert [c["text"] for c in out] == ["超好吃的", "巧克力蛋糕吧"]
@@ -621,6 +625,7 @@ def test_heal_noop_on_clean_boundary():
 
 def test_heal_respects_max_w_picks_other_direction():
     """前推會撐爆 max_w（前卡已 9 字）→ 改後拉，把「耳機」整個歸下一卡。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 1.0, "他戴著一個大大的耳"), (1.0, 2.0, "機聽音樂"))
     out = heal_straddle(cards, gap=0.08, max_w=9)
     assert [c["text"] for c in out] == ["他戴著一個大大的", "耳機聽音樂"]
@@ -645,6 +650,7 @@ def test_heal_noop_without_jieba(monkeypatch):
 
 def test_heal_preserves_continuity_and_count_on_multi():
     """多卡混合（一處該補、一處乾淨）→ 只動該補的那處，卡數不變、全序時間連續。"""
+    pytest.importorskip("jieba")
     cards = _cards((0.0, 1.0, "你好嗎"), (1.0, 2.0, "謝謝你"),
                    (2.0, 3.0, "他戴著耳"), (3.0, 4.0, "機聽音樂"))
     out = heal_straddle(cards, gap=0.08, max_w=16)

@@ -1484,6 +1484,10 @@ def prepare_assembly(
         ):
             seek_segments = _kept_intervals(deletion_intervals, main_dur_src)
 
+        # seek 路徑的標題卡要從「未被 cut-drop 的完整卡」重映射（與字幕 all_cards 同源），
+        # 先在下面 legacy 區塊改寫 overlay_cards 之前留一份原始清單。
+        overlay_cards_src = overlay_cards
+
         if burn_subs and cut_intervals:
             # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
             clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
@@ -1525,9 +1529,20 @@ def prepare_assembly(
                 ]
                 if dual_spans else None
             )
+            # 標題卡同軸：套跟字幕（build_sidecar_srt）完全一樣的 drop+remap 搬到緊密軸。
+            # 少了這段，seek 路徑會把 srt_rel 換成這份「沒有標題卡」的 ASS，靜默吃掉所有
+            # 標題卡（字幕/講者上色都搬了、只有卡沒搬）——seek 效能優化早於標題卡併入所遺。
+            compact_cards = []
+            for _c in overlay_cards_src:
+                _cs = map_src_to_output_time(_c["start"], removed_intervals, 1.0, 0.0)
+                _ce = map_src_to_output_time(_c["end"], removed_intervals, 1.0, 0.0)
+                if _ce - _cs <= 0.01:
+                    continue
+                compact_cards.append({**_c, "start": _cs, "end": _ce})
             _write_ass_from_srt(
                 compact_srt, compact_ass, ass_res_w, ass_res_h,
                 speaker_spans=compact_spans, style=sub_style,
+                cards_overlay=compact_cards,
             )
             srt_rel = (
                 str(compact_ass.relative_to(cwd))

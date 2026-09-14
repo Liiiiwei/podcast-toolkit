@@ -1,6 +1,8 @@
 """word_break：jieba 詞界評分斷句引擎（有/無 jieba 兩態）。"""
 from __future__ import annotations
 
+import pytest
+
 from podcast_toolkit import word_break
 
 
@@ -46,6 +48,7 @@ def test_no_dangling_conjunction_tail():
 
 def test_add_words_registers_custom_word():
     """glossary 詞（來賓藝名）進 jieba 後不可被視為詞中可切。"""
+    pytest.importorskip("jieba")
     word_break.add_words(["郝爾蒙斯"])
     pts = word_break.word_break_ok("我是郝爾蒙斯啦")
     assert pts is not None
@@ -85,6 +88,7 @@ def test_trad_fix_words_are_single_tokens():
     未補時 jieba 把「啟發」拆成 啟｜發（因 啟發 FREQ=None），會讓非詞界重罰失準、
     seg_check 誤報跨卡切詞。補丁後 啟發 自成一詞，邊界乾淨。
     """
+    pytest.importorskip("jieba")
     pts = word_break.word_break_ok("我覺得很有啟發")
     assert pts is not None
     # 「啟發」佔 index 5..7：邊界 5、7 在，內部 6 不在（沒被切在詞中間）
@@ -103,6 +107,7 @@ def test_domain_gap_word_kept_whole_in_context():
     垃圾 token「評要」（就是/所謂/的/球/評要/…），使 balanced_split 切在 球｜評、
     heal_straddle 又因 context 詞界看似乾淨而漏修（魁哥集 422/423 實例）。補進後恆整詞。
     """
+    pytest.importorskip("jieba")
     seg = word_break.word_break_ok("就是所謂的球評要測試一下")
     assert seg is not None
     # 「球評」佔 index 5..7：邊界 5、7 在，內部 6 不在（沒被切在詞中間）
@@ -128,6 +133,7 @@ def test_idiom_kept_whole_not_split_internally():
     「啟發人心」是使用者點名的碎卡案例（啟發｜人心 被切在兩張卡）。登記後 4 字整體成詞，
     balanced_split 不挑成語中間當切點，heal_straddle 也能把已切開的搬回同一卡。
     """
+    pytest.importorskip("jieba")
     for w in ["啟發人心"]:
         seg = word_break.word_break_ok("很" + w + "喔")
         assert seg is not None

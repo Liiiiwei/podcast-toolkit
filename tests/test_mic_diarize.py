@@ -1171,6 +1171,7 @@ def test_rap_block_reduplicated_la():
 
 def test_rap_block_jieba_de_dao():
     """jieba 擋：B="得到很多" → jieba 首詞「得到」長度 2，擋。"""
+    pytest.importorskip("jieba")
     chars_a = "做"
     chars_b = "得到很多"
     words = _make_rap_words(chars_a, chars_b)
@@ -1182,6 +1183,7 @@ def test_rap_block_jieba_de_dao():
 
 def test_rap_block_jieba_di_tu():
     """jieba 擋：B="地圖很清楚" → jieba 首詞「地圖」長度 2，擋。"""
+    pytest.importorskip("jieba")
     chars_a = "看"
     chars_b = "地圖很清楚"
     words = _make_rap_words(chars_a, chars_b)

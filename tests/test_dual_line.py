@@ -424,6 +424,51 @@ def test_prepare_assembly_dual_line_survives_seek_cut_inputs(tmp_episode_full):
     assert sorted(m for m in margins if m) == [SAMPLE_STACKED_MARGIN]
 
 
+def test_prepare_assembly_title_card_survives_seek_cut_inputs(tmp_episode_full):
+    """seek 快速刪段路徑也要把標題卡搬到緊密軸——這條路徑曾經靜默吃掉所有標題卡。
+
+    seek 效能優化（每段各自 -ss/-t、PTS 從 0）早於標題卡併入，當時只把字幕與講者
+    上色 remap 到緊密軸、漏了標題卡；srt_rel 於是換成這份「沒有卡」的 seeked ASS，
+    整集標題卡全部不見卻不報錯（假完成／兩套機制互打的典型 HIGH bug）。
+
+    這裡放一張 40~44 秒的卡、刪掉它前面的 [25,35]（10 秒，落在所有字幕卡之後、
+    卡之前）：卡要 (1) 出現在燒的 seeked ASS 裡、(2) 時間被 remap 成 30~34（往前
+    10 秒），證明它跟字幕同軸搬到緊密軸，不是原封不動、也不是被丟掉。
+    """
+    _set_cfg(
+        tmp_episode_full,
+        title_cards=[{"start": 40.0, "end": 44.0, "text": "重點標題來了", "tpl": "big"}],
+        cuts=[[25.0, 35.0]],
+        encode={"seek_cut_inputs": True},
+    )
+
+    plan = assemble.prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    cmd = plan["cmd"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # 確認真的走 seek 路徑，不是又退回 legacy
+    assert cmd.count("-ss") == 2
+    assert "_v2_seeked_assembled_yt" in fc
+    assert "select='not(" not in fc
+
+    burned = [p for p in (tmp_episode_full / "04_工作檔").glob("*.ass") if p.name in fc]
+    assert len(burned) == 1 and "seeked" in burned[0].name
+    text = burned[0].read_text(encoding="utf-8")
+    # 卡的文字事件要在（buggy 版本：一筆都沒有），且 remap 到緊密軸 40→~30
+    card_evs = [d for d in _dialogues(text) if "重點標題來了" in d["text"]]
+    assert card_evs, "seeked ASS 少了標題卡（seek 路徑靜默吃掉標題卡的回歸）"
+
+    def _sec(ts):  # "H:MM:SS.ss" → 秒
+        h, m, s = ts.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(s)
+
+    start = _sec(card_evs[0]["start"])
+    end = _sec(card_evs[0]["end"])
+    # 40→~30：往前挪掉刪段的 10 秒（含 cut_pad 0.15 微調，跟字幕同一套 removed_intervals）。
+    # 排除「原封不動＝40」（沒 remap，燒在錯的時間）與「被丟掉＝0 筆」兩種壞法。
+    assert 29.0 < start < 31.0, f"卡沒 remap 到緊密軸：{card_evs[0]['start']}"
+    assert abs((end - start) - 4.0) < 0.05  # 卡長 4 秒不變
+
+
 def test_prepare_assembly_dual_line_survives_subtitle_offset(tmp_episode_full):
     """字幕位移後講者標要跟著位移：兩邊同軸才對得上，否則講者全貼到同一個人身上。"""
     _write_overlap_v2(tmp_episode_full)

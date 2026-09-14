@@ -27,7 +27,6 @@ REACTION_WORDS = frozenset({
     "好", "對", "對啊", "對呀", "對對", "對對對", "嗯", "嗯嗯", "沒有",
     "真的", "真的嗎", "是喔", "是吧", "哇", "蛤", "喔", "哦", "哈哈",
 })
-FORCE_ATTACH_PREFIXES = ("的", "了", "著", "過", "事情", "概念")
 
 
 def _clean_text(text: str) -> str:

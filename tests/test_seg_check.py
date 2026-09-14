@@ -1,6 +1,8 @@
 """podcast check-seg：斷句體檢（純讀取）。"""
 from pathlib import Path
 
+import pytest
+
 from podcast_toolkit import seg_check, word_break
 from podcast_toolkit.episode import Episode
 
@@ -69,6 +71,7 @@ RCFG4 = {
 
 def test_scan_flags_word_straddling_cards():
     """「然後」被切成 然|後、卡間隔 0.1s → 記一味，回報跨界詞。"""
+    pytest.importorskip("jieba")
     cards = [(1, "我們先講到這裡然", 0.0, 2.0),
              (2, "後再來討論價格", 2.1, 4.0)]
     res = seg_check.scan(cards, RCFG4)
@@ -80,6 +83,7 @@ def test_scan_flags_word_straddling_cards():
 
 def test_scan_straddle_skips_big_gap():
     """卡間隔 > straddle_gap（真氣口）→ 不算跨卡切詞。"""
+    pytest.importorskip("jieba")
     cards = [(1, "我們先講到這裡然", 0.0, 2.0),
              (2, "後再來討論價格", 2.6, 4.0)]
     res = seg_check.scan(cards, RCFG4)
@@ -88,6 +92,7 @@ def test_scan_straddle_skips_big_gap():
 
 def test_scan_straddle_clean_boundary_not_flagged():
     """卡界剛好落在詞界 → 健康，不記味。"""
+    pytest.importorskip("jieba")
     cards = [(1, "我們今天請到一位來賓", 0.0, 2.0),
              (2, "他的公司做設計", 2.1, 4.0)]
     res = seg_check.scan(cards, RCFG4)
@@ -96,6 +101,7 @@ def test_scan_straddle_clean_boundary_not_flagged():
 
 def test_scan_straddle_strips_mic_label():
     """含講者 [MicN] 前綴要先剝掉再判詞界。"""
+    pytest.importorskip("jieba")
     cards = [(1, "[Mic1] 我們先講到這裡然", 0.0, 2.0),
              (2, "[Mic1] 後再來討論價格", 2.1, 4.0)]
     res = seg_check.scan(cards, RCFG4)
@@ -115,6 +121,7 @@ def test_scan_straddle_skipped_without_jieba(monkeypatch, capsys):
 
 def test_scan_untimed_cards_straddle_empty():
     """舊 2 欄格式（無時間）→ ④ 無從判 gap，回空清單、其餘三味照常。"""
+    pytest.importorskip("jieba")
     res = seg_check.scan([(1, "我們先講到這裡然"), (2, "後再來討論價格")], RCFG4)
     assert res["straddle"] == []
 
