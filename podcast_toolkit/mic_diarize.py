@@ -944,6 +944,7 @@ def write_outputs(
     回 (srt_path, speakers_json_path)。
     """
     from podcast_toolkit import cameras_io, srt_io
+    from podcast_toolkit.fsutil import atomic_write_text
 
     srt_path = ep.output_v2_srt()
     spk_path = ep.output_v2_speakers_json()
@@ -960,7 +961,7 @@ def write_outputs(
         for i, c in enumerate(cards)
     ]
     srt_text = srt_io.serialize(srt_cards)
-    srt_path.write_text(srt_text, encoding="utf-8")
+    atomic_write_text(srt_path, srt_text)
 
     # 寫 speakers.json：{1-based idx: speaker_key}
     mapping = {i + 1: c["speaker"] for i, c in enumerate(cards)}

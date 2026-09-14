@@ -19,6 +19,7 @@ from podcast_toolkit.assemble import (
     write_leveled_meta,
 )
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 
 
 # ffmpeg -progress 正常每秒都有輸出；超過這個秒數沒動靜視為卡死，強制終止
@@ -335,7 +336,7 @@ def _run_queue(plans: list[dict]) -> None:
             outputs = [str(plan["out"])]
             sidecar = plan.get("sidecar_srt")
             if sidecar:
-                sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
+                atomic_write_text(sidecar["path"], sidecar["content"])
                 outputs.append(str(sidecar["path"]))
             with _LOCK:
                 _STATE["output_files"].extend(outputs)

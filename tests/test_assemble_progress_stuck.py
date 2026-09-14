@@ -63,13 +63,15 @@ def _fake_ffmpeg_success_cmd() -> list[str]:
 def test_exception_after_success_surfaces_as_error_not_stuck(tmp_path):
     """核心回歸測試：ffmpeg 成功 + 輸出已 rename，但收尾（sidecar 寫檔）拋例外時，
     state 必須可見地變成 error（而不是靜默卡死在 running 永不改變）。"""
+    from podcast_toolkit import fsutil
+
     out = tmp_path / "out.mp4"
     tmp_out = tmp_path / "out.tmp.mp4"
     tmp_out.write_bytes(b"fake video bytes")  # 模擬 ffmpeg 已經寫好暫存檔
 
-    # sidecar 目標路徑的父目錄不存在 → write_text 會丟 FileNotFoundError
-    # （對應真實場景：外接硬碟斷線、權限被拒、磁碟已滿等 I/O 錯誤）
-    bad_sidecar_path = tmp_path / "missing_dir" / "out.srt"
+    # D3 改用 atomic_write_text 後，sidecar 父目錄不存在會被自動 mkdir 補上、不再是
+    # 有效的失敗觸發點 —— 改用 monkeypatch fsync 模擬磁碟滿／斷電等真實 I/O 錯誤。
+    bad_sidecar_path = tmp_path / "out.srt"
     plan = {
         "output_kind": "yt",
         "out": out,
@@ -82,9 +84,14 @@ def test_exception_after_success_surfaces_as_error_not_stuck(tmp_path):
     }
     aj._reset(state="running", queue=["yt"], current="yt", total=1)
 
-    t = threading.Thread(target=aj._run_queue, args=([plan],), daemon=True)
-    t.start()
-    t.join(timeout=5.0)
+    def _boom(_fd):
+        raise OSError(28, "No space left on device")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fsutil.os, "fsync", _boom)
+        t = threading.Thread(target=aj._run_queue, args=([plan],), daemon=True)
+        t.start()
+        t.join(timeout=5.0)
 
     assert not t.is_alive(), "coordinator thread 應該已經結束"
 
@@ -160,3 +167,56 @@ def test_ffmpeg_failure_preserves_output_and_surfaces_key_error_context(tmp_path
     error = aj.get_status()["error"]
     assert "Unable to re-open output file" in error
     assert str(failed) in error
+
+
+def test_sidecar_srt_write_interrupted_keeps_original_and_surfaces_error(tmp_path):
+    """D3：sidecar 字幕改用 atomic_write_text 後，寫到一半若 fsync 失敗（模擬當機/被 kill），
+    成品旁既有的 .srt 必須維持完整不變、不留 .tmp 半截殘檔；且收尾失敗仍要可見地變成 error
+    （沿用本檔上面 test_exception_after_success_surfaces_as_error_not_stuck 的收尾語意）。"""
+    from podcast_toolkit import fsutil
+
+    out = tmp_path / "out.mp4"
+    tmp_out = tmp_path / "out.tmp.mp4"
+    tmp_out.write_bytes(b"fake video bytes")
+
+    sidecar_path = tmp_path / "out.srt"
+    original_srt = "1\n00:00:00,000 --> 00:00:01,000\n原始字幕\n\n"
+    sidecar_path.write_text(original_srt, encoding="utf-8")
+
+    plan = {
+        "output_kind": "yt",
+        "out": out,
+        "tmp_out": tmp_out,
+        "cmd": _fake_ffmpeg_success_cmd(),
+        "cwd": None,
+        "total_dur": 1.0,
+        "prebake": [],
+        "sidecar_srt": {"path": sidecar_path, "content": "寫到一半就斷電的新內容"},
+    }
+    aj._reset(state="running", queue=["yt"], current="yt", total=1)
+
+    def _boom(_fd):
+        raise OSError(28, "No space left on device")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(fsutil.os, "fsync", _boom)
+        t = threading.Thread(target=aj._run_queue, args=([plan],), daemon=True)
+        t.start()
+        t.join(timeout=5.0)
+
+    assert not t.is_alive(), "coordinator thread 應該已經結束"
+
+    # 影片本體已經成功產出（rename 完成），這件事不受 sidecar 寫檔失敗影響
+    assert out.exists()
+    assert not tmp_out.exists()
+
+    # sidecar 原檔逐字不變，沒有被半截覆寫
+    assert sidecar_path.read_text(encoding="utf-8") == original_srt
+    # 目錄裡不留 sidecar 的 .tmp 殘檔（atomic_write_text 的暫存檔命名為 "{name}.tmp{pid}"）
+    tmp_residue = [p.name for p in tmp_path.iterdir() if p.name.startswith(sidecar_path.name + ".tmp")]
+    assert tmp_residue == []
+
+    st = aj.get_status()
+    assert st["state"] == "error", (
+        f"sidecar 寫檔失敗應該讓 state 可見地變成 error，實際 state={st['state']!r}"
+    )

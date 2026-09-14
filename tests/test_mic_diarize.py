@@ -651,6 +651,40 @@ def test_write_outputs_format(tmp_path):
             assert spk_map[i + 1] != spk_map[i], "換人卡在 speakers.json 應有不同 speaker"
 
 
+def test_write_outputs_interrupted_write_keeps_original_srt(tmp_path, monkeypatch):
+    """write_outputs 寫 _final_v2.srt 中途若 fsync 失敗（模擬當機/被 kill），
+    原檔要維持完整不變，且不留 .tmp 半截殘檔（D3：改用 atomic_write_text 後才有此保證）。"""
+    from podcast_toolkit import fsutil
+
+    ep = MagicMock()
+    out_dir = tmp_path / "03_成品"
+    out_dir.mkdir()
+    srt_path = out_dir / "test_final_v2.srt"
+    spk_path = out_dir / "test_final_v2.speakers.json"
+    ep.output_v2_srt.return_value = srt_path
+    ep.output_v2_speakers_json.return_value = spk_path
+
+    original_text = "1\n00:00:00,000 --> 00:00:01,000\n原始內容\n\n"
+    srt_path.write_text(original_text, encoding="utf-8")
+
+    cards = [
+        {"start": 0.0, "end": 2.0, "text": "新內容甲", "speaker": "a", "word_span": (0, 3)},
+    ]
+
+    def _boom(_fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(fsutil.os, "fsync", _boom)
+
+    with pytest.raises(OSError):
+        write_outputs(ep, cards, backup=False)
+
+    # 原檔逐字不變，沒有被半截覆寫
+    assert srt_path.read_text(encoding="utf-8") == original_text
+    # 目錄裡不留 .tmp 殘檔
+    assert [p.name for p in out_dir.iterdir()] == [srt_path.name]
+
+
 # ──────────────────────────────────────────────
 # §7.13 接線煙測（mock Episode）
 # ──────────────────────────────────────────────

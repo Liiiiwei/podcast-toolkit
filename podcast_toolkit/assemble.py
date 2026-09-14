@@ -12,6 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.segment_plan import (
     keep_intervals,
     merge_intervals,
@@ -2179,7 +2180,7 @@ def run(episode_dir: Path, dry_run: bool = False, force: bool = False,
     # sidecar 模式：影片成功後才把對齊好的字幕 .srt 落在成品旁
     sidecar = plan.get("sidecar_srt")
     if sidecar:
-        sidecar["path"].write_text(sidecar["content"], encoding="utf-8")
+        atomic_write_text(sidecar["path"], sidecar["content"])
         print(f"✅ 字幕：{sidecar['path']}")
 
     print(f"✅ 完成：{out}")

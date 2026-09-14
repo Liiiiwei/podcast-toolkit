@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 from podcast_toolkit import cameras_io, srt_io
 from podcast_toolkit.episode import Episode
+from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.whisper_guard import WhisperGuard, GuardConfig
 from podcast_toolkit.whisper_guard.vocab import filter_filler_words
 
@@ -191,9 +192,11 @@ def run(episode_dir: Path, force: bool = False, src: Optional[Path] = None) -> i
     old_cards = srt_io.parse(out.read_text(encoding="utf-8")) if out.exists() else []
 
     # 寫 SRT
-    with out.open("w", encoding="utf-8") as f:
-        for n, (st, en, txt, _, _) in enumerate(cards, 1):
-            f.write(f"{n}\n{srt_io.seconds_to_srt_ts(st)} --> {srt_io.seconds_to_srt_ts(en)}\n{txt}\n\n")
+    srt_out_text = "".join(
+        f"{n}\n{srt_io.seconds_to_srt_ts(st)} --> {srt_io.seconds_to_srt_ts(en)}\n{txt}\n\n"
+        for n, (st, en, txt, _, _) in enumerate(cards, 1)
+    )
+    atomic_write_text(out, srt_out_text)
 
     # 重建講者 sidecar；兩份缺一就無從對應，寧可原封不動也不要亂貼或刪掉使用者的標記
     if old_spk and old_cards:

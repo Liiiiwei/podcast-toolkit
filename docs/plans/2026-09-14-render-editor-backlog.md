@@ -21,6 +21,18 @@
 
 ## D1：Gemini 時間戳 mod60 反卷積錯誤
 
+### ✅ Batch-2 調查結論（2026-09-14，opus agent，未改任何程式碼）
+**本地路徑現況正確(c)；原「解析端 mod60」假設已否證。** `srt_io._ts2s`（`srt_io.py:43-68`）
+對時間碼是純加權求和（`h*3600+m*60+s+ms/1000`），**無 mod60、無反卷積邏輯**，分鐘進位在解析端
+根本不是一個動作；`post_clean_srt`（`gemini_subtitle.py:147`）不碰時間、`transcribe` 單檔一次
+上傳無分段。合成 SRT 跨 01:59→02:00、02:59→03:00 共四種 Gemini 格式全部連續正確（本地重現，未呼叫 API）。
+- **若使用者實測長音檔仍整段偏移** → 只可能是模型端(b)，需真 `GEMINI_API_KEY` 對 ≥10 分鐘音檔
+  實跑 `transcribe()` 比對真值才能重現（本環境無金鑰未做）。屆時正確修法是在 `post_clean_srt` 加
+  「單調性修復」層（偵測 start 相對前 cue 倒退且差 ≈60 倍數 → 補分鐘），**不是改解析端**。
+- 完整資料流與逐行證據：`/private/tmp/pt-batch2/d1-notes.md`。
+
+### 原始假設（已否證，存檔對照）
+
 ### 現況
 `gemini_subtitle.py` 轉錄長音檔時，模型輸出的時間戳在分鐘進位處有反卷積（deconvolution）
 錯誤——秒數 mod 60 還原成絕對時間時，跨分鐘的 cue 會算錯，導致該段之後字幕時間軸偏移。
@@ -64,7 +76,15 @@
 
 ## D3：非 atomic 的 SRT／speakers 寫入
 
-### 現況
+### ✅ Batch-2 已完成（2026-09-14）
+改 4 處持久 SRT/speakers 寫入為 `atomic_write_text`：`mic_diarize.py:964`、`resegment.py:199`、
+`assemble.py:2183`（sidecar）、`web/assemble_job.py:339`（sidecar）；speakers.json 本已走
+`cameras_io.save/save_transitions` 的 atomic 免改。新增 3 條中斷測試（monkeypatch fsync 失敗，
+斷言原檔逐字不變＋無 .tmp 殘留）並突變驗證。全 repo spot-check 確認無漏改的持久寫入點：
+`assemble.py:243/262/349/1513` 等中間 SRT 是餵 ffmpeg 的 ephemeral 工作檔（同一次 render 即用即棄、
+crash 就整段重跑），刻意不改。
+
+### 現況（原始 backlog）
 `fsutil.atomic_write_text`（`fsutil.py:14`）已存在，`ingest_breeze.py:118` 已改用。
 但仍有寫入點是**非 atomic** 的裸 `write_text`：
 - `mic_diarize.py:963` `srt_path.write_text(...)`（診斷輸出的 SRT）
@@ -128,7 +148,12 @@ CLAUDE.md 架構觸發條件明文：「下次要動編輯器大功能：先拆 
 
 ## D7：CI python-version matrix
 
-### 現況
+### ✅ Batch-2 已完成（2026-09-14）
+`.github/workflows/ci.yml` 的 test job matrix 改為 `["3.9", "3.12", "3.14"]`＋`fail-fast: false`
+（保留既有 3.12 不減覆蓋、涵蓋 3.9 交付基準與 3.14 本機版；關掉 fail-fast 讓三版各自回報）。
+3.14 若在 CI 也紅那兩條 dashboard 環境測試，正是本矩陣要曝的版本分歧訊號（見附錄 B）。
+
+### 現況（原始 backlog）
 專案 ruff target py39、使用者機器與交付基準跑 py39，但本機 `python3` 已是 3.14。
 本梯測試在 3.14 現出**兩處環境性紅**（見附錄 B）——py39 綠、3.14 紅，正是 matrix 該攔的。
 
@@ -174,3 +199,11 @@ encode 設定加 `archival` profile 選項；出片時可另存一份高位元�
   （chmod 000 在 bash 實測會擋，但 pytest 進程內 `list_episodes` 對 000 的 `recent` 資料夾
   未產生 warning）——py39 基準綠、3.14 紅。**這正是 D7（CI matrix）要攔的**；
   下一梯若動 dashboard，順帶查 `dashboard.list_episodes` 在 3.14 的權限錯誤→warning 路徑。
+
+## 附錄 C：本梯（Batch-2）執行結果（2026-09-14）
+
+1. **D1** — 調查後**未改碼**：解析端無 mod60 bug（現況正確 c），真實漂移若存在屬模型端(b)、需 API 才能重現。詳見 D1 段 ✅ 結論。
+2. **D3** — 4 處持久 SRT/speakers 寫入改 `atomic_write_text`＋3 條中斷測試＋突變驗證；speakers.json 本已 atomic。spot-check 確認無漏改（其餘 write_text 為 ephemeral 工作檔或非 SRT/speakers 資料）。
+3. **D7** — CI matrix 改 `3.9/3.12/3.14`＋`fail-fast: false`。
+4. **關卡**：全套 `pytest tests/` = **2 failed / 980 passed / 18 skipped / 1 xfailed**。2 紅為附錄 B 的既有 py3.14 環境紅（`test_dashboard_fault_tolerance`），與本梯零重疊、pristine HEAD 同樣紅 —— 非新紅，關卡通過。
+5. 附錄 B 的 2 條環境紅**仍在**（本梯未觸碰 dashboard）；D7 的 3.14 矩陣正是要在 CI 把它們曝出來。

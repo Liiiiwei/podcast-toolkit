@@ -70,6 +70,30 @@ def test_resegment_run_missing_main_srt_returns_3(tmp_episode_dir):
     assert rc == 3
 
 
+def test_resegment_run_interrupted_write_keeps_original_v2(tmp_episode_dir, monkeypatch):
+    """resegment.run 寫 _final_v2.srt 中途若 fsync 失敗（模擬當機/被 kill），
+    原本的 _v2.srt 要維持完整不變，且不留 .tmp 半截殘檔（D3：改用 atomic_write_text）。"""
+    from podcast_toolkit import fsutil
+
+    _write_main_srt(tmp_episode_dir)
+    v2 = tmp_episode_dir / "03_成品" / "測試集_final_v2.srt"
+    before = v2.read_text(encoding="utf-8")  # conftest 的 SAMPLE_SRT
+
+    def _boom(_fd):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(fsutil.os, "fsync", _boom)
+
+    with pytest.raises(OSError):
+        resegment.run(tmp_episode_dir, force=True)
+
+    # 原本的 v2 逐字不變，沒有被半截覆寫
+    assert v2.read_text(encoding="utf-8") == before
+    # 03_成品 目錄裡不留 .tmp 殘檔
+    tmp_residue = [p.name for p in v2.parent.iterdir() if ".tmp" in p.name]
+    assert tmp_residue == []
+
+
 # --- 測 POST /api/resegment ---
 
 
