@@ -276,13 +276,44 @@
         pointer-events: none;
         z-index: 4;
       }
+      /* 播放頭刮動把手：命中區加寬到 13px 方便抓取，但只放在波形軌內
+         （是 #vt-timeline 的子節點，隨波形軌的高度，不是跨三軌的播放頭本身）。
+         前科教訓：absolute 把手若整片蓋住標題卡／字幕軌，會吃掉底下按鈕的點擊
+         （2026-08-25 lessons-learned），所以刻意不做成跨三軌的寬把手。
+         z-index 高於 .vt-cut(2)／.vt-cut-h(3)／.vt-selection(3)，
+         讓播放頭疊在剪除段上時仍抓得到。 */
+      .vt-playhead-grip {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 13px;
+        margin-left: -6px;
+        z-index: 5;
+        cursor: ew-resize;
+        background: transparent;
+        touch-action: none;
+      }
+      .vt-playhead-grip:hover,
+      .vt-playhead-grip.is-scrubbing {
+        background: var(--accent-soft);
+      }
+      .vt-playhead-grip.is-scrubbing {
+        cursor: grabbing;
+      }
 
       /* ── 影片 + 樣式面板並排 ─────────────────────────────────────── */
       .vt-workspace {
         display: flex;
         gap: var(--space-lg);
         align-items: stretch;
-        flex-wrap: wrap;
+        /* nowrap 是關鍵：換行的 flex 列會把「交叉軸高度」算成內容高度，於是右欄 1676 句
+           的字幕清單把整列撐到 ~47000px、整個 min-height:0 收縮鏈全被廢掉，影片被
+           align-items:stretch 拉成滿版黑框、時間軸被推出畫面。改 nowrap 後本列是單行，
+           子項的高度改對齊「容器的有界高度」，右欄才拿得到有界高度、清單自己捲。
+           （視窗很窄時不再自動把右欄折到影片下方——本原型以桌面寬度為主，可接受。）
+           搭配 min-height:0 讓本列在 .vt-main 欄內縮到可用高度。 */
+        flex-wrap: nowrap;
+        min-height: 0;
       }
       /* 舞台改為定位容器，讓字幕預覽疊在影片上 */
       .vt-stage {
@@ -292,6 +323,10 @@
       }
       #vt-video {
         max-width: 100%;
+        /* 影片被 align-items:stretch 拉到右欄同高（非 16:9），object-fit:contain 讓畫面
+           在框內留邊而不變形；max-height:100% 保證影片不超出舞台、不壓到下方時間軸。 */
+        max-height: 100%;
+        object-fit: contain;
       }
       .vt-toast {
         position: absolute;
@@ -576,6 +611,44 @@
         flex: 1;
         min-width: 0;
         accent-color: var(--accent);
+      }
+      /* 對齊面板：五個數字欄位 + 儲存鈕 + 狀態列（沿用 vt-field 版面） */
+      .vt-num {
+        flex: 1;
+        min-width: 0;
+        background: var(--surface-raised);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-size: var(--text-sm);
+        font-family: var(--font-mono);
+        padding: 2px var(--space-sm);
+        min-height: 26px;
+        text-align: right;
+      }
+      .vt-num:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .vt-num:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .vt-align-status {
+        margin-left: auto;
+        max-width: 22ch;
+        font-size: var(--text-xs);
+        text-align: right;
+        color: var(--text-faint);
+      }
+      .vt-align-status.is-ok {
+        color: var(--success);
+      }
+      .vt-align-status.is-busy {
+        color: var(--text-dim);
+      }
+      .vt-align-status.is-err {
+        color: var(--danger);
       }
       .vt-color {
         width: 32px;
@@ -1460,6 +1533,98 @@
             </div>
           </div>
 
+          <!-- 對齊：影片／聲音／字幕時間對齊，與這集 episode.yaml 共用（GET /api/episode 讀、POST /api/save 寫） -->
+          <div class="vt-side-sec" data-sec="align">
+            <button
+              class="vt-side-head"
+              type="button"
+              aria-expanded="true"
+              aria-controls="vt-sec-align"
+            >
+              <span class="vt-side-caret">▾</span>
+              <span class="vt-side-title">對齊</span>
+              <span class="vt-side-note" id="vt-align-note"></span>
+            </button>
+            <div class="vt-side-body" id="vt-sec-align">
+              <p class="vt-tpl-hint" id="vt-align-hint">
+                影片／聲音／字幕時間對齊，與這集 episode.yaml 共用。
+              </p>
+              <div class="vt-field">
+                <span
+                  class="vt-field-label"
+                  title="外接音檔相對影片的同步偏移（秒）。此集無外接音檔時停用。"
+                  >聲音偏移</span
+                >
+                <input
+                  class="vt-num"
+                  type="number"
+                  id="vt-al-audio"
+                  step="0.01"
+                />
+                <span class="vt-field-val">秒</span>
+              </div>
+              <div class="vt-field">
+                <span
+                  class="vt-field-label"
+                  title="cam B 相對 cam A 的同步偏移（秒）"
+                  >鏡頭B偏移</span
+                >
+                <input
+                  class="vt-num"
+                  type="number"
+                  id="vt-al-camb"
+                  step="0.01"
+                />
+                <span class="vt-field-val">秒</span>
+              </div>
+              <div class="vt-field">
+                <span class="vt-field-label" title="片頭裁掉秒數（cam A 軸）"
+                  >片頭裁切</span
+                >
+                <input
+                  class="vt-num"
+                  type="number"
+                  id="vt-al-head"
+                  step="0.01"
+                  min="0"
+                />
+                <span class="vt-field-val">秒</span>
+              </div>
+              <div class="vt-field">
+                <span class="vt-field-label" title="片尾裁掉秒數（cam A 軸）"
+                  >片尾裁切</span
+                >
+                <input
+                  class="vt-num"
+                  type="number"
+                  id="vt-al-tail"
+                  step="0.01"
+                  min="0"
+                />
+                <span class="vt-field-val">秒</span>
+              </div>
+              <div class="vt-field">
+                <span
+                  class="vt-field-label"
+                  title="非破壞性字幕偏移（秒），正值＝字幕往後延；預覽字幕跟著移"
+                  >字幕偏移</span
+                >
+                <input class="vt-num" type="number" id="vt-al-sub" step="0.1" />
+                <span class="vt-field-val">秒</span>
+              </div>
+              <div class="vt-field">
+                <button class="vt-btn is-primary" type="button" id="vt-al-save">
+                  儲存對齊
+                </button>
+                <span
+                  class="vt-align-status"
+                  id="vt-al-status"
+                  role="status"
+                ></span>
+              </div>
+            </div>
+          </div>
+
           <!-- 字幕：逐句直式清單，改字／斷句／合併全在這裡做 -->
           <div class="vt-side-sec vt-side-grow" data-sec="subs">
             <button
@@ -1654,6 +1819,14 @@
               <div class="vt-sub-track" id="vt-sub-track"></div>
               <div class="vt-timeline" id="vt-timeline">
                 <canvas id="vt-waveform"></canvas>
+                <!-- 播放頭刮動把手：刻意只放在波形軌（見 CSS 註解），
+                     不像播放頭本身跨三軌，避免蓋住標題卡／字幕軌上的按鈕 -->
+                <div
+                  class="vt-playhead-grip"
+                  id="vt-playhead-grip"
+                  style="left: 0"
+                  title="拖曳刮動播放時間"
+                ></div>
               </div>
               <!-- 播放頭：跨越三軌 -->
               <div class="vt-playhead" id="vt-playhead" style="left: 0"></div>

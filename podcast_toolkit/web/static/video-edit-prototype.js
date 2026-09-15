@@ -52,6 +52,17 @@
       alignment: 2, // SSA v3：2=底部置中、10=畫面正中、6=頂部置中
       margin_v: 100,
     },
+    // ── 影片／聲音／字幕對齊（與這集 episode.yaml 共用；真模式才有值）─────
+    // 五個純量欄位直接 round-trip（GET /api/episode 讀、POST /api/save 寫）。
+    // 位移數學只作用在「字幕卡顯示時間」上，這五個純量本身不套任何 shift。
+    audioPath: "", // audio.path：外接音檔相對路徑（有值才代表用外接音軌）
+    audioSyncOffset: 0, // audio.sync_offset：外接音檔相對影片偏移（秒）
+    camSyncOffsetB: 0, // camera_sync_offset.b：cam B 相對 cam A（秒）
+    headTrimSec: 0, // head_trim_sec：片頭裁切（cam A 軸，秒，RAW）
+    tailTrimSec: 0, // tail_trim_sec：片尾裁切（cam A 軸，秒，RAW）
+    subtitleOffsetSec: 0, // subtitle_offset_sec：非破壞性字幕偏移（秒）
+    episodeDir: "", // 目前集路徑；存檔帶回讓後端確認目標集（多分頁防呆）
+    align: { state: "idle", err: "" }, // 對齊面板四態：idle/loading/error/success（demo→demo）
   };
   window.__vt = state; // 供 CDP 走查讀取（丟棄式原型，不影響行為）
 
@@ -664,6 +675,35 @@
   const MIN_CARD_DUR = 0.3; // 秒；再短就抓不到也讀不到，拖曳不讓它縮到這以下
   let cardSeq = 0;
 
+  // ── 標題卡自動車道（lane-packing）──────────────────────────────
+  // 時間重疊的卡不再疊在一起，改成往下長出新列；不重疊時收回單列。
+  // 零資料結構改動：車道只在畫面上算，不寫回 state.cards，每次 render 都重算。
+  const CARD_LANE_H = 36; // 車道高度（不含上下留白）
+  const CARD_LANE_PAD = 4; // 軌道上下留白，比照原本 .vt-card 的 top:4px/bottom:4px
+  const CARD_LANE_GAP = 3; // 車道之間的視覺間隙
+  // 只有 1 車道時，track 高度＝ 1*CARD_LANE_H + 2*CARD_LANE_PAD = 44px，
+  // 跟原本寫死的 .vt-sub-track { height:44px } 完全一致（不變）。
+
+  // 貪婪區間分割：依 start 排序的副本逐一分配，找第一條「上一張卡已播完」
+  // 的車道塞進去，找不到就開新車道。用小 epsilon 容忍浮點誤差。
+  function assignCardLanes(cards) {
+    const sorted = cards.slice().sort((a, b) => a.start - b.start);
+    const laneEnds = []; // 每個車道目前排到的結束時間
+    const laneOf = new Map(); // card.id → 車道序號
+    const EPS = 1e-6;
+    for (const c of sorted) {
+      let lane = laneEnds.findIndex((end) => c.start >= end - EPS);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(c.end);
+      } else {
+        laneEnds[lane] = c.end;
+      }
+      laneOf.set(c.id, lane);
+    }
+    return { laneOf, nLanes: laneEnds.length };
+  }
+
   function makeCard(start, end, text, tpl, src) {
     const last = state.lastCard;
     const key = tpl || last.tpl;
@@ -867,9 +907,16 @@
     track.querySelectorAll(".vt-card, .vt-sub-input").forEach((n) => {
       if (n.isConnected) n.remove();
     });
+    // 自動車道：每次重繪都重算，不重疊時自然收回單列
+    const { laneOf, nLanes } = assignCardLanes(state.cards);
+    const effLanes = Math.max(1, nLanes);
+    track.style.height = `${effLanes * CARD_LANE_H + 2 * CARD_LANE_PAD}px`;
     state.cards.forEach((c) => {
+      const lane = laneOf.get(c.id) || 0;
+      const top = lane * CARD_LANE_H + CARD_LANE_PAD;
+      const laneHeight = CARD_LANE_H - CARD_LANE_GAP;
       if (state.editingCard === c.id) {
-        renderCardInput(track, c);
+        renderCardInput(track, c, top, laneHeight);
         return;
       }
       const el = document.createElement("div");
@@ -881,6 +928,8 @@
         (cut === "cut" ? " is-cut" : cut === "partial" ? " is-partial" : "");
       el.style.left = `${pct(c.start)}%`;
       el.style.width = `${pct(Math.max(0.3, c.end - c.start))}%`;
+      el.style.top = `${top}px`;
+      el.style.height = `${laneHeight}px`;
       el.title = cardTitle(c);
       const badge = document.createElement("span");
       badge.className = "vt-card-badge";
@@ -930,13 +979,16 @@
     }
   }
 
-  function renderCardInput(track, c) {
+  function renderCardInput(track, c, top, height) {
     const inp = document.createElement("input");
     inp.className = "vt-sub-input";
     inp.type = "text";
     inp.value = c.text;
     inp.placeholder = "標題卡文字";
     inp.style.left = `${pct(c.start)}%`;
+    // 跟卡片本體同一套車道位置，不然編輯中的卡永遠貼在第一列
+    if (top != null) inp.style.top = `${top}px`;
+    if (height != null) inp.style.height = `${height}px`;
     const commit = () => {
       if (state.editingCard !== c.id) return;
       c.text = inp.value;
@@ -1763,7 +1815,11 @@
     const v = $("vt-video");
     const ph = $("vt-playhead");
     if (!v || !ph || !(state.duration > 0)) return;
-    ph.style.left = `${clamp((v.currentTime / state.duration) * 100, 0, 100)}%`;
+    const leftPct = clamp((v.currentTime / state.duration) * 100, 0, 100);
+    ph.style.left = `${leftPct}%`;
+    // 刮動把手跟播放頭同步移動，位置算法完全共用（都是同一個 leftPct）
+    const grip = $("vt-playhead-grip");
+    if (grip) grip.style.left = `${leftPct}%`;
     const scroll = $("vt-tl-scroll");
     const tl = $("vt-timeline");
     // 放大後播放頭跑出可視 → 自動捲動維持在中間附近
@@ -1877,10 +1933,46 @@
     );
   }
 
+  // ── 播放頭拖曳刮動（drag-to-scrub）───────────────────────────────
+  // 把手（#vt-playhead-grip）是 #vt-timeline 的子節點，換算時間直接沿用
+  // timeFromEvent（已經用 #vt-timeline 的 getBoundingClientRect 換算，
+  // 縮放/捲動後 rect 會反映實際版面，不用另外處理 zoom）。
+  // pointerdown 在把手上會 stopPropagation，不冒泡到 onTimelinePointerDown，
+  // 所以不會誤觸框選剪段；框選剪段本身完全沒被改動。
+  function bindPlayheadScrub() {
+    const grip = $("vt-playhead-grip");
+    if (!grip) return;
+    grip.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      // 沒有影片或長度未知（duration=0）→ 靜默不做事，不拋例外
+      if (!(state.duration > 0)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      grip.classList.add("is-scrubbing");
+      // 某些環境（自動化、觸控筆切換）setPointerCapture 會丟例外，
+      // 抓不到就算了，監聽掛在 window 上，拖出把手外一樣收得到。
+      try {
+        grip.setPointerCapture(e.pointerId);
+      } catch (_) {}
+      seekTo(timeFromEvent(e)); // 按下當下就先跳一次，不用等第一個 move
+      const move = (ev) => seekTo(timeFromEvent(ev));
+      const up = () => {
+        grip.classList.remove("is-scrubbing");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+  }
+
   let dragStartX = 0;
   function onTimelinePointerDown(e) {
     // 點在剪除段上 → 交給該段自己的 click 處理（取消），不啟動選區
     if (e.target.closest(".vt-cut")) return;
+    // 點在播放頭刮動把手上 → 交給 bindPlayheadScrub 處理（它會 stopPropagation，
+    // 正常不會冒泡到這裡；多一層防呆避免日後改動順序時誤觸框選）
+    if (e.target.closest(".vt-playhead-grip")) return;
     if (e.button != null && e.button !== 0) return;
     e.preventDefault();
     dragStartX = e.clientX;
@@ -1905,6 +1997,35 @@
 
   const r3 = (n) => Math.round(n * 1000) / 1000;
   const r4 = (n) => Math.round(n * 10000) / 10000;
+
+  // ── 對齊位移數學（與 app.js / api.js 對稱）───────────────────────────
+  // 顯示軸位移 totalShift：把磁碟 _v2.srt（外接音檔軸）的字幕時間搬到 cam A 軸，
+  // 讓播放預覽的字幕 highlight 對得上 video.currentTime。
+  //   totalShift = (有外接音檔 ? -audioSyncOffset : 0) + subtitleOffsetSec
+  //   載入：display = disk + totalShift（見 applyLoadShiftToSubs）
+  //   存檔：disk = display − totalShift（見 toDiskTime）
+  // 兩向保證對稱（存→重載不會越存越早）；demo 或零偏移時 = 0，行為不變。
+  function alignShift() {
+    const audioShift =
+      state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
+    return audioShift + (state.subtitleOffsetSec || 0);
+  }
+  // 時間軸還原：cam A 軸顯示時間 → 磁碟 _v2.srt 時間。必與 alignShift 對稱。
+  function toDiskTime(t) {
+    const off = alignShift();
+    return { start: r3(t.start - off), end: r3(t.end - off) };
+  }
+  // 把「剛從 /api/subtitles 載入的原始（磁碟軸）字幕」整批 +totalShift 移到 cam A 軸。
+  // 只在剛載入原始字幕後呼叫一次，避免重複位移。
+  function applyLoadShiftToSubs() {
+    const sh = alignShift();
+    if (!sh) return;
+    state.subs = state.subs.map((s) => ({
+      ...s,
+      start: r3(s.start + sh),
+      end: r3(s.end + sh),
+    }));
+  }
 
   // cuts 的補集＝真正要保留、按順序接起來的片段
   function keepSegments() {
@@ -1952,14 +2073,21 @@
       // coveredByCard：這句已經有標題卡在演，後端不要再燒一次。
       // 沒有這個欄位的話，後端只會看到「一句字幕」和「一張同文字的卡」，
       // 兩個都燒上去 —— 那是成品裡真的疊出兩行一樣的字，比預覽出錯嚴重。
-      subtitles: state.subs.map((x) =>
-        stamp({
+      // start/end 寫「磁碟 _v2.srt（外接音檔軸）」＝載入位移的逆運算 toDiskTime，
+      // 才能跟磁碟一致、避免每次「存→重載」都再被移一次 totalShift（症狀：字幕越存越早）。
+      // out*/dropped 仍以 cam A 軸（顯示軸）算 —— 那是衍生值、後端會依 cuts 重算。
+      subtitles: state.subs.map((x) => {
+        const disk = toDiskTime(x);
+        const s = stamp({
           start: r3(x.start),
           end: r3(x.end),
           text: x.text,
           coveredByCard: subCoveredByCard(x),
-        }),
-      ),
+        });
+        s.start = disk.start;
+        s.end = disk.end;
+        return s;
+      }),
       // fromSubtitle：這張卡從哪一句升格來的。血緣本來只活在記憶體裡，
       // 匯出再匯入就靠時間硬湊 —— 卡一旦被拖過長度就湊不回去，字幕會重新
       // 冒出來。寫進指令才活得過一次 round-trip。
@@ -2007,9 +2135,12 @@
       if (b <= a) throw new Error(`cuts[${i}] 迄點不大於起點`);
       return [a, b];
     });
+    // 指令裡的字幕 start/end 是磁碟軸（buildPlan 用 toDiskTime 寫下）；讀回來 +totalShift
+    // 移回 cam A 顯示軸，export→import 才是 identity，卡片 fromSubtitle 時間比對也才對得上。
+    const sh = alignShift();
     const subs = obj.subtitles.map((x, i) => ({
-      start: num(x.start, `subtitles[${i}].start`),
-      end: num(x.end, `subtitles[${i}].end`),
+      start: r3(num(x.start, `subtitles[${i}].start`) + sh),
+      end: r3(num(x.end, `subtitles[${i}].end`) + sh),
       text: String(x.text == null ? "" : x.text),
     }));
     const cards = obj.cards.map((c, i) => {
@@ -2503,6 +2634,7 @@
   function bindEvents() {
     const v = $("vt-video");
     $("vt-timeline").addEventListener("pointerdown", onTimelinePointerDown);
+    bindPlayheadScrub();
 
     $("vt-play").addEventListener("click", () => {
       if (v.paused) v.play();
@@ -2652,6 +2784,171 @@
     }
   }
 
+  // ── 對齊面板（與這集 episode.yaml 共用的五個欄位）─────────────────────
+  // 對齊載入：真模式向 /api/episode 取這集對齊欄位（與 app.js loadEpisodeState 同源，
+  // 但只取五個對齊純量 + audio.path + episode_dir）。四態：loading→success/error；demo 跳過。
+  async function loadEpisodeAlignment() {
+    if (DEMO) {
+      state.align = { state: "demo", err: "" };
+      return;
+    }
+    state.align = { state: "loading", err: "" };
+    try {
+      const r = await fetch("/api/episode", { cache: "no-store" });
+      if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
+      const d = await r.json();
+      const numOr = (v, dflt) => {
+        const n = +v;
+        return Number.isFinite(n) ? n : dflt;
+      };
+      const audio = d.audio && typeof d.audio === "object" ? d.audio : null;
+      state.audioPath = audio && audio.path ? String(audio.path) : "";
+      state.audioSyncOffset = audio ? numOr(audio.sync_offset, 0) : 0;
+      const cam =
+        d.camera_sync_offset && typeof d.camera_sync_offset === "object"
+          ? d.camera_sync_offset
+          : null;
+      state.camSyncOffsetB = cam ? numOr(cam.b, 0) : 0;
+      state.headTrimSec = numOr(d.head_trim_sec, 0);
+      state.tailTrimSec = numOr(d.tail_trim_sec, 0);
+      state.subtitleOffsetSec = numOr(d.subtitle_offset_sec, 0);
+      state.episodeDir = d.episode_dir ? String(d.episode_dir) : "";
+      state.align = { state: "success", err: "" };
+    } catch (err) {
+      state.align = { state: "error", err: err.message || String(err) };
+      showEmptyNote(`對齊設定載入失敗：${state.align.err}`);
+    }
+  }
+
+  // 局部存檔 payload：只帶五個對齊鍵（+ episode_dir 防呆）。後端 save_state 用 key-presence
+  // 語意：沒帶的鍵一律不動，所以 cards/cuts/splits 等其餘設定原封不動（比照 podcast 編輯器）。
+  function buildAlignPayload() {
+    const payload = {
+      head_trim_sec: state.headTrimSec, // RAW，cam A 軸
+      tail_trim_sec: state.tailTrimSec, // RAW
+      camera_sync_offset_b: state.camSyncOffsetB, // 扁平鍵（後端存成 {b: val}）
+      subtitle_offset_sec: state.subtitleOffsetSec,
+      episode_dir: state.episodeDir, // 多分頁防呆：後端確認目標集
+    };
+    // 有外接音檔才送 audio；沒有就完全不帶這個鍵（避免把不存在的 audio pop 掉，
+    // 也避免對「無音檔集」送 path:"" 造成語意混淆）。
+    if (state.audioPath) {
+      payload.audio = {
+        path: state.audioPath,
+        sync_offset: state.audioSyncOffset,
+      };
+    }
+    return payload;
+  }
+
+  // 存對齊：POST /api/save 局部存檔 → 重新載入 /api/episode + /api/subtitles 並重套 totalShift，
+  // 用「讀得回」證明寫入生效（round-trip）。async 期間鎖鈕；失敗顯示可見錯誤，不靜默。
+  async function saveAlignment() {
+    if (DEMO) return;
+    const btn = $("vt-al-save");
+    const status = $("vt-al-status");
+    if (btn) btn.disabled = true;
+    if (status) {
+      status.className = "vt-align-status is-busy";
+      status.textContent = "儲存中…";
+    }
+    try {
+      const r = await fetch("/api/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildAlignPayload()),
+      });
+      if (!r.ok) throw new Error(`/api/save HTTP ${r.status}`);
+      // 重載對齊 + 字幕，重套 totalShift → 畫面反映實際寫入磁碟的值
+      await loadEpisodeAlignment();
+      const subs = await loadSubs();
+      state.subs = Array.isArray(subs) ? subs : [];
+      applyLoadShiftToSubs();
+      syncAlignInputs();
+      renderLines();
+      render();
+      renderCardTrack();
+      if (status) {
+        status.className = "vt-align-status is-ok";
+        status.textContent = "已儲存";
+      }
+    } catch (err) {
+      if (status) {
+        status.className = "vt-align-status is-err";
+        status.textContent = `儲存失敗：${err.message || err}`;
+      }
+    } finally {
+      if (btn) btn.disabled = DEMO;
+    }
+  }
+
+  // 把 state 的五個對齊欄位灌回輸入框，並依四態設定停用狀態 / 提示文字。
+  function syncAlignInputs() {
+    const set = (id, v) => {
+      const el = $(id);
+      if (el) el.value = v;
+    };
+    set("vt-al-audio", state.audioSyncOffset);
+    set("vt-al-camb", state.camSyncOffsetB);
+    set("vt-al-head", state.headTrimSec);
+    set("vt-al-tail", state.tailTrimSec);
+    set("vt-al-sub", state.subtitleOffsetSec);
+    const hasAudio = !!state.audioPath;
+    // 沒外接音檔 → 聲音偏移無處可存，停用該欄（避免存了卻靜默無效）；demo 全欄停用
+    const audioInput = $("vt-al-audio");
+    if (audioInput) audioInput.disabled = DEMO || !hasAudio;
+    ["vt-al-camb", "vt-al-head", "vt-al-tail", "vt-al-sub"].forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = DEMO;
+    });
+    const saveBtn = $("vt-al-save");
+    if (saveBtn) saveBtn.disabled = DEMO;
+    const note = $("vt-align-note");
+    if (note) {
+      const map = {
+        loading: "載入中…",
+        error: "載入失敗",
+        success: hasAudio ? "有外接音檔" : "無外接音檔",
+        demo: "demo（唯讀）",
+        idle: "",
+      };
+      note.textContent = map[state.align.state] || "";
+    }
+    const hint = $("vt-align-hint");
+    if (hint) {
+      if (DEMO)
+        hint.textContent = "demo 模式沒有真集：對齊欄位唯讀，不會寫任何檔。";
+      else if (state.align.state === "error")
+        hint.textContent = `對齊設定載入失敗：${state.align.err}`;
+      else if (!hasAudio)
+        hint.textContent =
+          "影片／字幕時間對齊，與這集 episode.yaml 共用。此集無外接音檔，聲音偏移停用。";
+      else
+        hint.textContent =
+          "影片／聲音／字幕時間對齊，與這集 episode.yaml 共用。";
+    }
+  }
+
+  // 綁定五個數字欄位（change 寫回 state）與儲存鈕。這五個純量不套任何位移；
+  // 位移只在載入 / 存檔後重載時套到字幕顯示時間。
+  function bindAlignPanel() {
+    const numOf = (el) => {
+      const n = +el.value;
+      return Number.isFinite(n) ? n : 0;
+    };
+    const bind = (id, apply) => {
+      const el = $(id);
+      if (el) el.addEventListener("change", () => apply(numOf(el)));
+    };
+    bind("vt-al-audio", (v) => (state.audioSyncOffset = v));
+    bind("vt-al-camb", (v) => (state.camSyncOffsetB = v));
+    bind("vt-al-head", (v) => (state.headTrimSec = Math.max(0, v)));
+    bind("vt-al-tail", (v) => (state.tailTrimSec = Math.max(0, v)));
+    bind("vt-al-sub", (v) => (state.subtitleOffsetSec = v));
+    const btn = $("vt-al-save");
+    if (btn) btn.addEventListener("click", saveAlignment);
+  }
+
   async function init() {
     const badge = $("vt-mode-badge");
     badge.textContent = DEMO ? "原型 · demo" : "原型 · 真集";
@@ -2688,6 +2985,9 @@
       );
     }
 
+    // 對齊欄位先載入：alignShift() 依賴這些值，字幕的顯示位移要用到（demo → 全 0、no-op）
+    await loadEpisodeAlignment();
+
     const subs = await loadSubs();
     if (subs) {
       state.subs = subs;
@@ -2699,6 +2999,10 @@
           : "字幕載入失敗：真模式需要該集已轉好字幕（/api/subtitles 回 200，來源是 _final_v2.srt）。",
       );
     }
+    // 原始（磁碟／外接音檔軸）字幕 +totalShift → cam A 顯示軸，highlight 才對得上影片
+    applyLoadShiftToSubs();
+    bindAlignPanel(); // 綁定對齊面板五欄 + 儲存鈕
+    syncAlignInputs(); // 把載入到的對齊值灌進輸入框、依四態設定停用/提示
     bindStylePanel(); // 綁定字幕樣式面板（收在進階摺疊區）
     bindPlanDialog(); // 綁定「輸出剪輯指令」面板
     if (!DEMO) attachRenderWatch(); // 重整前若已在合成，接回去繼續顯示進度
@@ -2945,9 +3249,51 @@
           badge: n.querySelector(".vt-card-badge").textContent,
           left: n.style.left,
           width: n.style.width,
+          top: n.style.top, // 自動車道分配到的垂直位置（px）
+          height: n.style.height,
           selected: n.classList.contains("is-selected"),
         }),
       );
+    // 標題卡軌整體高度（px）：車道數變多時應該長高，只有 1 車道要等於原本的 44px
+    window.__vtCardTrackHeight = () => $("vt-card-track").offsetHeight;
+
+    // ── 對齊面板走查掛鉤 ──────────────────────────────────────────────
+    // 五個對齊欄位的 state 值 + 目前 totalShift + 四態 + DOM 輸入實況；round-trip 走查靠這些斷言
+    window.__vtAlign = () => ({
+      audioPath: state.audioPath,
+      audioSyncOffset: state.audioSyncOffset,
+      camSyncOffsetB: state.camSyncOffsetB,
+      headTrimSec: state.headTrimSec,
+      tailTrimSec: state.tailTrimSec,
+      subtitleOffsetSec: state.subtitleOffsetSec,
+      episodeDir: state.episodeDir,
+      totalShift: alignShift(),
+      state: state.align.state,
+      err: state.align.err,
+      inputs: {
+        audio: $("vt-al-audio").value,
+        camb: $("vt-al-camb").value,
+        head: $("vt-al-head").value,
+        tail: $("vt-al-tail").value,
+        sub: $("vt-al-sub").value,
+        audioDisabled: $("vt-al-audio").disabled,
+        saveDisabled: $("vt-al-save").disabled,
+      },
+      statusText: $("vt-al-status").textContent,
+      statusKind: $("vt-al-status").className,
+    });
+    // toDiskTime 的程式化入口（存檔逆運算走查用）
+    window.__vtToDisk = (t) => toDiskTime(t);
+    // 程式化設定對齊欄位（等同在輸入框打字 + change）；回傳新的 totalShift
+    window.__vtSetAlign = (patch) => {
+      if (patch && typeof patch === "object") {
+        Object.assign(state, patch);
+        syncAlignInputs();
+      }
+      return alignShift();
+    };
+    // 程式化按「儲存對齊」，回傳 promise（走查用 await）
+    window.__vtSaveAlign = () => saveAlignment();
   }
 
   bindEvents();
