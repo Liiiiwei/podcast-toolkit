@@ -100,6 +100,27 @@ def test_tail_trim_drops_ending():
     assert segs == [{"cam": "a", "start": 0.0, "end": 7.0}]
 
 
+def test_deletion_beyond_main_dur_creates_no_segment():
+    """外接字幕/音軌比母帶長時，刪除段可能整段落在 main_dur 之後（例：字幕軸 -sync 位移後
+    的刪段起點 > cam A 長度）。此時 tail_trim 收在 main_dur、下一個刪段又在 main_dur 之後，
+    keep_intervals 不夾住就會憑空生出一段 (main_dur, 刪段起點) 的保留段——影片已 EOF（trim
+    出 0 秒）但音訊還在（atrim 從較長的外接音軌取到全長）→ 出片尾端黑幀凍結。"""
+    segs = build_segment_plan(
+        cut_intervals=[(12.0, 13.0)], cam_transitions=[], main_dur=10.0, tail_trim_sec=3.0,
+    )
+    # 只應有一段 [0, 7]；不得出現任何 end > main_dur 或 start >= main_dur 的段
+    assert segs == [{"cam": "a", "start": 0.0, "end": 7.0}]
+    assert all(s["end"] <= 10.0 and s["start"] < 10.0 for s in segs)
+
+
+def test_deletion_straddling_main_dur_is_clamped():
+    """刪除段跨越片尾 (9, 11)：只砍到 main_dur，保留段收在 [0, 9]，不越界。"""
+    segs = build_segment_plan(
+        cut_intervals=[(9.0, 11.0)], cam_transitions=[], main_dur=10.0,
+    )
+    assert segs == [{"cam": "a", "start": 0.0, "end": 9.0}]
+
+
 def test_transition_inside_cut_is_dropped():
     """切換點落在刪除區間 (4,8) 內 → 丟掉；後面 carry 上一個 a。"""
     segs = build_segment_plan(

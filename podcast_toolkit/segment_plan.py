@@ -61,6 +61,15 @@ def keep_intervals(removed: list, main_dur: float) -> list[tuple[float, float]]:
     keep: list[tuple[float, float]] = []
     prev = 0.0
     for a, b in merge_intervals([(float(a), float(b)) for a, b in (removed or [])]):
+        # 刪除/trim 區間先夾在 [0, main_dur]：外接字幕/音軌比母帶長時，刪除段可能整段落在
+        # 片尾之後（字幕軸 -sync 位移後的刪段起點 > cam A 長度）。不夾住的話，tail_trim 收在
+        # main_dur、下一個刪段又在 main_dur 之後，下面的 gap 補洞會憑空生出 (main_dur, 刪段起點)
+        # 這段越界保留段——影片已 EOF（trim 出 0 秒）但音訊還在（atrim 從較長外接音軌取到全長）
+        # → 出片尾端黑幀凍結。與 assemble._kept_intervals 的 clamp 對齊（原本兩份補集實作分歧）。
+        a = max(0.0, min(a, main_dur))
+        b = max(0.0, min(b, main_dur))
+        if b <= a:
+            continue
         if a > prev:
             keep.append((prev, a))
         prev = max(prev, b)
