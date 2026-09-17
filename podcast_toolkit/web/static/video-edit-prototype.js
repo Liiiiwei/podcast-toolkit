@@ -472,11 +472,43 @@
   }
 
   // ── 字幕軌 ──────────────────────────────────────────────────────
+  // head_trim / tail_trim 不在 state.cuts 裡，但後端 segment_plan.removed_with_trim
+  // 會把 [0,head]、[dur-tail,dur] 一起併進「被移除區間」丟卡/丟字幕。前端據此讓時間軸
+  // 變灰、出片前攔截，跟後端一致（後端 drop 行為不改）。
+  function trimIntervals() {
+    const out = [];
+    const dur = state.duration || 0;
+    const h = state.headTrimSec || 0;
+    if (h > 0) out.push([0, dur > 0 ? Math.min(h, dur) : h]);
+    const t = state.tailTrimSec || 0;
+    if (t > 0 && dur > 0) out.push([Math.max(0, dur - t), dur]);
+    return out;
+  }
+  // state.cuts ∪ 片頭/片尾裁切，合併成不重疊、依起點排序的區間。
+  // 內層區間先 clone —— 合併會就地改端點，不能動到 state.cuts 的原陣列。
+  function removedIntervals() {
+    const all = state.cuts
+      .concat(trimIntervals())
+      .map(([s, e]) => [s, e])
+      .sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const [s, e] of all) {
+      const last = merged[merged.length - 1];
+      if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+      else merged.push([s, e]);
+    }
+    return merged;
+  }
+  // 卡片能否出現在成品，後端只看「起點落不落在被移除區間」（title_cards，二元，
+  // 跟字幕的部分覆蓋不同）。起點被移除＝整張不出現。
+  function cardDropped(c) {
+    return removedIntervals().some(([s, e]) => s <= c.start && c.start < e);
+  }
   // 一張字卡對剪除的關係：kept（完全保留）/ cut（完全落在剪除區）/ partial（跨邊界）
   function subStatus(sub) {
     let covered = 0;
     let overlap = false;
-    for (const [cs, ce] of state.cuts) {
+    for (const [cs, ce] of removedIntervals()) {
       const lo = Math.max(sub.start, cs);
       const hi = Math.min(sub.end, ce);
       if (hi > lo) {
@@ -841,7 +873,7 @@
 
   // ── 標題卡軌 ────────────────────────────────────────────────────
   function cardTitle(c) {
-    const st = subStatus(c);
+    const st = cardDropped(c) ? "cut" : subStatus(c);
     return (
       `${CARD_TEMPLATES[c.tpl].name}　${fmt(c.start)}–${fmt(c.end)}（長 ${(c.end - c.start).toFixed(1)} 秒）\n` +
       `${c.text || "（空白標題卡）"}\n` +
@@ -920,8 +952,9 @@
         return;
       }
       const el = document.createElement("div");
-      // 卡落在剪除區時要在軌上看得出來，不能等按下輸出才被 confirm 告知（比照字幕塊）
-      const cut = subStatus(c);
+      // 卡落在剪除區時要在軌上看得出來，不能等按下輸出才被 confirm 告知（比照字幕塊）。
+      // 片頭/片尾裁切區也算落區：起點被移除＝整張不出現，直接標 cut（不用等 confirm）。
+      const cut = cardDropped(c) ? "cut" : subStatus(c);
       el.className =
         "vt-card" +
         (state.selectedCard === c.id ? " is-selected" : "") +
@@ -2091,8 +2124,8 @@
       // fromSubtitle：這張卡從哪一句升格來的。血緣本來只活在記憶體裡，
       // 匯出再匯入就靠時間硬湊 —— 卡一旦被拖過長度就湊不回去，字幕會重新
       // 冒出來。寫進指令才活得過一次 round-trip。
-      cards: state.cards.map((c) =>
-        stamp({
+      cards: state.cards.map((c) => {
+        const o = stamp({
           start: r3(c.start),
           end: r3(c.end),
           tpl: c.tpl,
@@ -2103,8 +2136,13 @@
           fromSubtitle: c.src
             ? { start: r3(c.src.start), end: r3(c.src.end) }
             : null,
-        }),
-      ),
+        });
+        // 卡片 drop 判準與後端 title_cards 對齊：起點落在被移除區間（含片頭/片尾裁切）
+        // 即不出現在成品。stamp 的 !hit 是字幕用的「部分覆蓋」語意，對卡片會漏掉
+        // 「起點在裁切區、卻延伸到保留區」的卡 —— 那正是片頭卡靜默丟棄的來源。
+        o.dropped = cardDropped(c);
+        return o;
+      }),
       style: Object.assign({}, state.style),
     };
   }
@@ -3252,6 +3290,9 @@
           top: n.style.top, // 自動車道分配到的垂直位置（px）
           height: n.style.height,
           selected: n.classList.contains("is-selected"),
+          // 與 __vtLines 對稱：卡落剪除／裁切區會被灰掉，走查靠這兩個布林斷言
+          cut: n.classList.contains("is-cut"),
+          partial: n.classList.contains("is-partial"),
         }),
       );
     // 標題卡軌整體高度（px）：車道數變多時應該長高，只有 1 車道要等於原本的 44px

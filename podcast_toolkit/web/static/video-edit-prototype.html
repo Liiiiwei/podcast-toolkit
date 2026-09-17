@@ -384,12 +384,18 @@
         background: var(--surface);
         border: 1px solid var(--border);
         border-radius: var(--radius-md);
+        /* 固定區塊（標題卡／對齊）總高超過容器時，右欄整體捲動保底，
+           不讓內容溢出疊到下一區塊上 */
+        overflow-y: auto;
       }
       .vt-side-sec {
         display: flex;
         flex-direction: column;
         gap: var(--space-sm);
         min-height: 0;
+        /* 固定內容高、不被壓縮：垂直空間不足時各區塊照自身內容高堆疊，
+           唯一吸收剩餘/壓縮的是 .vt-side-grow（字幕清單自己捲） */
+        flex: 0 0 auto;
       }
       /* 字幕區吃掉剩餘高度，清單自己捲 —— 右欄整體不長高 */
       .vt-side-grow {
