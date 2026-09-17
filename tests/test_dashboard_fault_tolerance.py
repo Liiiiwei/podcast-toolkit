@@ -86,3 +86,30 @@ def test_stage_broken_on_bad_yaml(tmp_path: Path):
     ep.mkdir()
     (ep / "episode.yaml").write_text("a: [unclosed", encoding="utf-8")
     assert dashboard.episode_stage(ep) == "broken"
+
+
+@needs_nonroot
+def test_list_episodes_skips_app_bundle_in_downloads(tmp_path: Path):
+    """~/Downloads 內若放了本 app（.app bundle，內部不可讀），掃描要靜默跳過、
+    不噴 [Errno 13] 假警告。這是「別台 Mac dashboard 顯示 errno13」的回歸點：
+    使用者把 app 放在 Downloads，盲掃掃到 app 自己去 stat bundle 內 episode.yaml。"""
+    root = tmp_path / "Downloads"
+    root.mkdir()
+
+    good = _make_initialized_episode(root, "20260601 好集")
+
+    # 模擬 app bundle：目錄名 .app + 內部不可讀（如 translocation/系統保護）
+    app_bundle = root / "JOIN Podcast Toolkit.app"
+    app_bundle.mkdir()
+    os.chmod(app_bundle, 0o000)
+    try:
+        result = dashboard.list_episodes(roots=[str(root)], recent=[])
+    finally:
+        os.chmod(app_bundle, 0o755)
+
+    paths = {e["path"] for e in result["episodes"]}
+    assert str(good) in paths
+    assert str(app_bundle) not in paths
+    # 關鍵：app bundle 不該產生任何警告（它本來就不是集數，不是「讀不到的集數」）
+    assert not any(".app" in w for w in result["warnings"]), result["warnings"]
+    assert not any("Errno 13" in w for w in result["warnings"]), result["warnings"]

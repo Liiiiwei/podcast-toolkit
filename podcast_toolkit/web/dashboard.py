@@ -14,6 +14,12 @@ from podcast_toolkit.episode import Episode
 RECENT_KEY = "recent_episodes"
 RECENT_MAX = 20
 
+# macOS 套件（目錄型 bundle）：Finder 當單一檔案、內部受系統保護。永遠不是集數資料夾，
+# 掃描時必須跳過——否則使用者把本 app 放在 ~/Downloads 時，盲掃會掃到 app 自己，
+# 再去 stat bundle 內的 episode.yaml 被系統擋下 → [Errno 13]，害整排集數清單噴假警告
+# （「開了權限也一樣」正因為這不是 Downloads 授權問題，是根本不該碰 app 內部）。
+_BUNDLE_SUFFIXES = {".app", ".photoslibrary", ".bundle", ".framework", ".rtfd"}
+
 
 def episode_stage(ep_dir: Path) -> str:
     """回傳集數階段：broken / empty / needs_transcribe / needs_assemble / done。
@@ -126,6 +132,9 @@ def list_episodes(roots: list[str], recent: list[str]) -> dict:
             # 失敗不靜默：跳過的一律寫進 warnings 給前端顯示。
             try:
                 if not child.is_dir():
+                    continue
+                # macOS 套件（.app 等）不是集數資料夾，且探測其內部會 EACCES；直接跳過。
+                if child.suffix.lower() in _BUNDLE_SUFFIXES:
                     continue
                 if not (child / "episode.yaml").is_file():
                     continue
