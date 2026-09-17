@@ -167,6 +167,23 @@ safe_discard "$APP"
 PYTHONPATH=. "$PY" setup_app.py py2app >/dev/null
 echo "  ✓ $APP（$(du -sh "$APP" | cut -f1)，尚未含 Breeze）"
 
+# static 資產完整性關卡：比對 repo/static 與 bundle/static 的檔名清單，缺任一就讓打包紅。
+# 前科（2026-09-16）：setup_app.py 曾用逐檔白名單，漏掉 tokens.css/toast.*/video-edit-prototype.*
+# → 打包 exit 0、DMG 照出，但 dashboard 無 CSS 形同不可見。py2app 少收檔不報錯，只有這道
+# 對照關卡能當場擋下。現行 setup_app.py 已改 glob，這關卡是防「哪天又被改回白名單／漏檔」的保險。
+REPO_STATIC="podcast_toolkit/web/static"
+BUNDLE_STATIC="$APP/Contents/Resources/podcast_toolkit/web/static"
+missing=$(comm -23 \
+    <(find "$REPO_STATIC" -maxdepth 1 -type f -exec basename {} \; | sort) \
+    <(find "$BUNDLE_STATIC" -maxdepth 1 -type f -exec basename {} \; 2>/dev/null | sort))
+if [[ -n "$missing" ]]; then
+    echo "✗ bundle 缺少 static 檔（repo 有、bundle 無）——setup_app.py 的收檔規則漏了："
+    echo "$missing" | sed 's/^/    - /'
+    echo "  修：確認 setup_app.py 的 DATA_FILES 用 glob 整個 static 目錄，別逐檔白名單。"
+    exit 1
+fi
+echo "  ✓ static 資產完整（$(find "$REPO_STATIC" -maxdepth 1 -type f | wc -l | tr -d ' ') 檔全數進 bundle）"
+
 echo "→ [2/6] 注入 Breeze sidecar 到 Contents/Resources/breeze"
 if ! cp -cR "$STAGE" "$APP/Contents/Resources/breeze" 2>/dev/null; then
     ditto "$STAGE" "$APP/Contents/Resources/breeze"

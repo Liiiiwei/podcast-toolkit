@@ -6,6 +6,7 @@
 
 產物：dist/JOIN Podcast Toolkit.app
 """
+import glob
 import os
 import sys
 
@@ -28,18 +29,13 @@ class PodcastAppBuild(py2app):
 
 APP = ["podcast_toolkit/launcher.py"]
 DATA_FILES = [
-    ("podcast_toolkit/web/static", [
-        "podcast_toolkit/web/static/index.html",
-        "podcast_toolkit/web/static/app.css",
-        "podcast_toolkit/web/static/app.js",
-        "podcast_toolkit/web/static/icons.js",       # window.Icons；漏了它正式 build 會破圖
-        # build 識別碼（磁碟端）：由 build_app.sh 每次打包產生，前端從磁碟即時讀來比對
-        # 記憶體版本（/api/version），偵測「App 已更新但行程還是舊的」。漏了它前端探針失效。
-        "podcast_toolkit/web/static/build-info.json",
-        "podcast_toolkit/web/static/dashboard.html",
-        "podcast_toolkit/web/static/dashboard.css",
-        "podcast_toolkit/web/static/dashboard.js",
-    ]),
+    # 整個 static 目錄一律 glob 收進來，不再逐檔白名單。
+    # 前科：手列白名單長期漏檔（icons.js 破圖、tokens.css/toast.* 讓 dashboard 無樣式、
+    # video-edit-prototype.* 讓影片編輯器整個不進 bundle）——新增前端檔就漏一個。
+    # glob 保證磁碟上有的 static 檔都會進 App（含 build_app.sh 產生的 build-info.json）。
+    ("podcast_toolkit/web/static", sorted(
+        f for f in glob.glob("podcast_toolkit/web/static/*") if os.path.isfile(f)
+    )),
     # defaults.yaml + assets → Resources 根（bundle 內 toolkit_root() = Contents/Resources）。
     # 少了它們：開單集會 load_defaults 找不到 defaults.yaml→500、合成找不到 intro/outro/封面。
     ("", ["defaults.yaml"]),

@@ -1625,8 +1625,15 @@ def prepare_assembly(
         outro_dur = cfg["assets"]["outro_duration"]
         intro = ep.asset_path("intro")
         outro_audio = ep.asset_path("outro_audio")
+        # 外接 mix 音檔常比影片（cam A 源）長；removed_intervals 的尾段 trim 只到 main_dur_src，
+        # (main_dur_src, mix_EOF) 這段不在任何剪除區間 → 會漏進 mp3，害尾巴沒剪、片尾被往後推。
+        # 補一段「cam A 源長之後全剪」的尾夾（同 between(t,…) 源軸、與其他剪除區間同機制），
+        # 讓正片音在 main_dur_src 收尾、concat 立刻接片尾。影片路徑的串流在源 EOF 自然結束，不會漏。
+        audio_removed = list(removed_intervals or []) + [
+            (main_dur_src, main_dur_src + 24 * 3600)
+        ]
         fc = build_audio_only(
-            cfg, main_dur=main_dur, removed_intervals=removed_intervals,
+            cfg, main_dur=main_dur, removed_intervals=audio_removed,
             audio_sync_offset=audio_sync_offset,
         )
         cmd = [
