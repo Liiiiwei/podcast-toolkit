@@ -1,0 +1,435 @@
+{
+  "mode": "podcast",
+  "results": [
+    {
+      "name": "A0 卡片時間軸已渲染（#card-timeline-wrap 解除隱藏、有 .tl-block）",
+      "ok": true,
+      "got": true,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "A0b 頁面載入無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "A0c .tl-block 數量 > 0",
+      "ok": true,
+      "got": 11,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B0 初始 #tl-zoom-fit 文字為「適合」（zoom=1）",
+      "ok": true,
+      "got": "適合",
+      "want": "適合",
+      "status": "pass"
+    },
+    {
+      "name": "B0b 初始 #tl-zoom-out 已停用（已在 zoom 下限）",
+      "ok": true,
+      "got": true,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B1 #tl-zoom-in 中心點 elementFromPoint 命中自己（未被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "tl-zoom-in",
+        "cls": "tl-zoom-btn"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B2 zoom-in 一級後 #card-timeline 寬度比 ≈1.6（934.0px→1494.4px）",
+      "ok": true,
+      "got": 1.6,
+      "want": 1.6,
+      "status": "pass"
+    },
+    {
+      "name": "B3 參考塊(idx=2)像素位移比 ≈1.6（158.2px→252.8px）",
+      "ok": true,
+      "got": 1.5975,
+      "want": 1.6,
+      "status": "pass"
+    },
+    {
+      "name": "B4 zoom-in 後 #tl-zoom-fit 文字顯示倍率「1.6×」",
+      "ok": true,
+      "got": "1.6×",
+      "want": "1.6×",
+      "status": "pass"
+    },
+    {
+      "name": "B5 #tl-zoom-out 中心點 elementFromPoint 命中自己",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "tl-zoom-out",
+        "cls": "tl-zoom-btn"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B6 zoom-out 一級後寬度比 ≈0.6250（回到約原寬 934.0px vs 原 934.0px）",
+      "ok": true,
+      "got": 934,
+      "want": 934,
+      "status": "pass"
+    },
+    {
+      "name": "B7 zoom-out 後 #tl-zoom-fit 文字回到「適合」",
+      "ok": true,
+      "got": "適合",
+      "want": "適合",
+      "status": "pass"
+    },
+    {
+      "name": "B8 活性檢查：連續多次 zoom-in 後寬度持續增加（非死碼/固定值）",
+      "ok": true,
+      "got": 6121.1,
+      "want": ">2988.8",
+      "status": "pass"
+    },
+    {
+      "name": "B8b #tl-zoom-fit 中心點 elementFromPoint 命中自己（未被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "tl-zoom-fit",
+        "cls": "tl-zoom-btn tl-zoom-fit"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C0 seek 前提：video.readyState>=1 且 seekable.length>0",
+      "ok": true,
+      "got": {
+        "readyState": 4,
+        "seekableLen": 1,
+        "duration": 24
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C1 目標 .tl-block 中心點 elementFromPoint 命中該 block（未被把手/波形蓋掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "tl-block"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C2 點擊 .tl-block(idx=3) 後 video.currentTime 對到 block.dataset.start",
+      "ok": true,
+      "got": 7.35,
+      "want": 7.35,
+      "status": "pass"
+    },
+    {
+      "name": "C3 #tl-playhead style.left 對到 seek 後時間換算的百分比",
+      "ok": true,
+      "got": 30.456,
+      "want": 30.456,
+      "status": "pass"
+    },
+    {
+      "name": "C3b 第二個 .tl-block 中心點 elementFromPoint 命中該 block（未被波形/播放頭蓋掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "tl-block"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C4 活性檢查：seek 到不同 block 後播放頭 left 值也跟著變（非固定值）",
+      "ok": true,
+      "got": "0%",
+      "want": "≠30.4557%",
+      "status": "pass"
+    },
+    {
+      "name": "D1 #tl-waveform canvas 有實際畫（非零 alpha 像素數 > 0）",
+      "ok": true,
+      "got": {
+        "painted": true,
+        "nonZeroAlpha": 5586,
+        "w": 932,
+        "h": 46
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E-hooks #6：帶 ?pthook=1 時 6 個 __pt* hook 皆為 function（閘門開）",
+      "ok": true,
+      "got": {
+        "setVis": "function",
+        "cards": "function",
+        "height": "function",
+        "add": "function",
+        "select": "function",
+        "set": "function"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E0 #1 預設態：#tl-card-track 預設「關」（hidden=true、display:none、不佔高度）",
+      "ok": true,
+      "got": {
+        "hidden": true,
+        "offsetHeight": 0,
+        "display": "none"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E0-open #1：__ptSetCardTrackVisible(true) 後軌可見（hidden=false、44px、display≠none）",
+      "ok": true,
+      "got": {
+        "opened": true,
+        "track": {
+          "hidden": false,
+          "offsetHeight": 44,
+          "display": "block"
+        }
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E0b 開軌後仍 0 張標題卡",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "E1 加入 1 張不重疊卡後高度仍是 44px（1 車道）",
+      "ok": true,
+      "got": 44,
+      "want": 44,
+      "status": "pass"
+    },
+    {
+      "name": "E1b 卡1 left% 對到共用公式 (start-t0)/total（t0≠0 時的 timeToPct）",
+      "ok": true,
+      "got": 10.0,
+      "want": 10.0,
+      "status": "pass"
+    },
+    {
+      "name": "E1c 卡1 width% 對到共用公式 (end-start)/total（durToPct，不減 t0）",
+      "ok": true,
+      "got": 18.0,
+      "want": 18.0,
+      "status": "pass"
+    },
+    {
+      "name": "E2 加入第2張重疊卡後高度變 80px（assignCardLanes 分成 2 車道）",
+      "ok": true,
+      "got": 80,
+      "want": 80,
+      "status": "pass"
+    },
+    {
+      "name": "E2b __ptCards() 回報 2 張卡",
+      "ok": true,
+      "got": [
+        {
+          "id": "pt1",
+          "start": 2.682,
+          "end": 6.789600000000001,
+          "text": "卡1"
+        },
+        {
+          "id": "pt2",
+          "start": 4.7358,
+          "end": 8.8434,
+          "text": "卡2"
+        }
+      ],
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E3 突變測試：移開重疊卡後高度收斂回 44px（非固定值）",
+      "ok": true,
+      "got": 44,
+      "want": 44,
+      "status": "pass"
+    },
+    {
+      "name": "F0 卡1 DOM 元素存在",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 271.9375,
+        "cy": 714.875
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "F1 卡1 右把手(.vt-card-h.is-r)存在（寬度足夠渲染把手，>=24px 門檻）",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 271.9375,
+        "cy": 714.875
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "F1b 把手中心 elementFromPoint 命中把手本身（未被卡片本體蓋掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "vt-card-h is-r"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "F2 拖右把手後 start 不變（只動出點）",
+      "ok": true,
+      "got": 2.682,
+      "want": 2.682,
+      "status": "pass"
+    },
+    {
+      "name": "F2b 拖右把手後 end 變大（拖右延長出點）",
+      "ok": true,
+      "got": 8.255552890792291,
+      "want": ">6.789600000000001",
+      "status": "pass"
+    },
+    {
+      "name": "F3 拖卡片本體移動後時長不變",
+      "ok": true,
+      "got": 5.5736,
+      "want": 5.5736,
+      "status": "pass"
+    },
+    {
+      "name": "F3b 拖卡片本體移動後 start 前移（往右拖）",
+      "ok": true,
+      "got": 3.6593019271948606,
+      "want": ">2.682",
+      "status": "pass"
+    },
+    {
+      "name": "Z0 zoom=1 時 #card-timeline 與 #tl-card-track 左緣＋寬度已對齊（≤1px）",
+      "ok": true,
+      "got": {
+        "tracks": {
+          "left": 16,
+          "width": 934,
+          "right": 950
+        },
+        "tl": {
+          "left": 16,
+          "width": 934,
+          "right": 950
+        },
+        "card": {
+          "left": 16,
+          "width": 934,
+          "right": 950
+        }
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "Z1 #2：zoom-in 2 級後 #tl-tracks 寬度放大 ≈2.5600×（縮放施加在共用容器）",
+      "ok": true,
+      "got": 2.56,
+      "want": 2.56,
+      "status": "pass"
+    },
+    {
+      "name": "Z2 #2：zoom>1 下 #card-timeline 與 #tl-card-track 仍等寬且左緣對齊（≤1px，核心回歸點）",
+      "ok": true,
+      "got": {
+        "dLeft": 0,
+        "dWidth": 0.0
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "Z3 #2：標題卡軌寬度確實隨 zoom 變大（非固定值；舊 bug 會停在原寬）",
+      "ok": true,
+      "got": 2391.0,
+      "want": ">1868.0",
+      "status": "pass"
+    },
+    {
+      "name": "G0 D3：/api/save 送出的 payload 沒有任何標題卡欄位／文字外洩",
+      "ok": true,
+      "got": {
+        "nCalls": 1,
+        "leak": false
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "G1 D3：重新讀回磁碟 episode.yaml 沒有任何標題卡欄位／文字（存檔後未落地）",
+      "ok": true,
+      "got": {
+        "exists": true,
+        "leak": false
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "H0 #6：不帶 ?pthook=1 時 6 個 __pt* hook 全數 undefined（閘門有效，正常頁面不掛）",
+      "ok": true,
+      "got": {
+        "setVis": "undefined",
+        "cards": "undefined",
+        "height": "undefined",
+        "add": "undefined",
+        "select": "undefined",
+        "set": "undefined"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "H1 #1：正常頁面（無 flag）標題卡軌仍預設「關」（hidden=true、不佔高度）",
+      "ok": true,
+      "got": {
+        "hidden": true,
+        "offsetHeight": 0,
+        "display": "none"
+      },
+      "want": null,
+      "status": "pass"
+    }
+  ]
+}

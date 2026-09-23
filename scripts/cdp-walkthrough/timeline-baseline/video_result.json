@@ -1,0 +1,288 @@
+{
+  "mode": "video-edit-prototype",
+  "results": [
+    {
+      "name": "A0 demo 字幕軌已渲染（.vt-sub 存在、__vt.duration>0）",
+      "ok": true,
+      "got": true,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "A0b 頁面載入無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "A0c .vt-sub 數量 > 0",
+      "ok": true,
+      "got": 11,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B0 初始 #vt-zoom-out 已停用（已在 zoom 下限 ZOOM_MIN=1）",
+      "ok": true,
+      "got": true,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B0b 初始 #vt-zoom-in 未停用（尚未到 ZOOM_MAX）",
+      "ok": true,
+      "got": false,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B1 #vt-zoom-in 中心點 elementFromPoint 命中自己（未被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "vt-zoom-in",
+        "cls": "vt-btn"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B2 zoom-in 一級後 #vt-tracks 寬度比 ≈1.6（1312.0px→2099.2px）",
+      "ok": true,
+      "got": 1.6,
+      "want": 1.6,
+      "status": "pass"
+    },
+    {
+      "name": "B3 參考 .vt-sub(idx=2) 像素位移比 ≈1.6（233.0px→372.4px）",
+      "ok": true,
+      "got": 1.5984,
+      "want": 1.6,
+      "status": "pass"
+    },
+    {
+      "name": "B4 #vt-zoom-out 中心點 elementFromPoint 命中自己",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "vt-zoom-out",
+        "cls": "vt-btn"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B5 zoom-out 一級後寬度回到約原寬（1312.0px vs 原 1312.0px）",
+      "ok": true,
+      "got": 1312,
+      "want": 1312,
+      "status": "pass"
+    },
+    {
+      "name": "B6 zoom-out 後 #vt-zoom-out 重新停用（回到下限）",
+      "ok": true,
+      "got": true,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "B7 活性檢查：連續多次 zoom-in 後 #vt-tracks 寬度持續增加（非死碼/固定值）",
+      "ok": true,
+      "got": 8598.3,
+      "want": ">4198.4",
+      "status": "pass"
+    },
+    {
+      "name": "C0 刮動前提：#vt-video readyState>=1 且 seekable.length>0",
+      "ok": true,
+      "got": {
+        "readyState": 4,
+        "seekableLen": 1,
+        "duration": 24
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C1 #vt-playhead-grip 中心點 elementFromPoint 命中自己或其子節點（未被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": "vt-playhead-grip",
+        "cls": "vt-playhead-grip"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C2 拖曳播放頭把手到 70% 處後 currentTime 對到約 16.80s",
+      "ok": true,
+      "got": 16.8,
+      "want": 16.8,
+      "status": "pass"
+    },
+    {
+      "name": "C3 拖曳前後 currentTime 確實改變（非靜默失效）",
+      "ok": true,
+      "got": {
+        "before": 0,
+        "after": 16.8
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C3b #vt-playhead-grip 第二次刮動起點 elementFromPoint 命中把手（未被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": "vt-playhead-grip",
+        "cls": "vt-playhead-grip"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "C4 活性檢查：再拖到不同位置後 #vt-playhead left 與 currentTime 都跟著再變一次",
+      "ok": true,
+      "got": {
+        "left1": "70%",
+        "left2": "30%",
+        "t1": 16.8,
+        "t2": 7.2
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "D1 #vt-waveform canvas 有實際畫（非零 alpha 像素數 > 0）",
+      "ok": true,
+      "got": {
+        "painted": true,
+        "nonZeroAlpha": 43718,
+        "w": 1310,
+        "h": 62
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E0 初始標題卡軌高度 = 44px（0 張卡、effLanes 最少為 1）",
+      "ok": true,
+      "got": 44,
+      "want": 44,
+      "status": "pass"
+    },
+    {
+      "name": "E1 佈設 1 張標題卡（不重疊）後軌高度仍為 44px（1 車道）",
+      "ok": true,
+      "got": 44,
+      "want": 44,
+      "status": "pass"
+    },
+    {
+      "name": "E2 佈設第 2 張與第 1 張時間重疊後軌高度變 80px（2 車道：2*36+2*4）",
+      "ok": true,
+      "got": 80,
+      "want": 80,
+      "status": "pass"
+    },
+    {
+      "name": "E2b 兩張卡確實建立成功（__vtDropTpl 回傳非 null）",
+      "ok": true,
+      "got": {
+        "c1": {
+          "id": 1,
+          "start": 2,
+          "end": 5,
+          "tpl": "big",
+          "text": "",
+          "scale": 100,
+          "x": 0.5,
+          "y": 0.5,
+          "moved": false,
+          "src": null
+        },
+        "c2": {
+          "id": 2,
+          "start": 3,
+          "end": 6,
+          "tpl": "lower",
+          "text": "",
+          "scale": 100,
+          "x": 0.2,
+          "y": 0.84,
+          "moved": false,
+          "src": null
+        }
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "E3 活性檢查：把重疊卡挪開後軌高度收回 44px（非固定 80px）",
+      "ok": true,
+      "got": 44,
+      "want": 44,
+      "status": "pass"
+    },
+    {
+      "name": "F0 找到卡片右端點把手 .vt-card-h.is-r（renderCardTrack wpx>=24 有畫出來）",
+      "ok": true,
+      "got": {
+        "x": 436.078125,
+        "y": 1045.28125,
+        "w": 10,
+        "h": 31,
+        "cx": 441.078125,
+        "cy": 1060.78125
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "F1 端點把手中心點 elementFromPoint 命中該把手（未被卡片本體蓋掉）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "vt-card-h is-r"
+      },
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "F2 拖曳右端點把手後該卡的 end 有變（起點不變、訖點變長）",
+      "ok": true,
+      "got": {
+        "before": {
+          "id": 1,
+          "start": 1,
+          "end": 7,
+          "tpl": "big",
+          "text": "",
+          "scale": 100,
+          "x": 0.5,
+          "y": 0.5,
+          "moved": false,
+          "src": null
+        },
+        "after": {
+          "id": 1,
+          "start": 1,
+          "end": 8.097560975609756,
+          "tpl": "big",
+          "text": "",
+          "scale": 100,
+          "x": 0.5,
+          "y": 0.5,
+          "moved": false,
+          "src": null
+        }
+      },
+      "want": null,
+      "status": "pass"
+    }
+  ]
+}

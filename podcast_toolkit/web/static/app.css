@@ -3064,6 +3064,93 @@ dialog.modal::backdrop {
 .card-timeline-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--text-faint);
 }
+/* 多軌堆疊容器（T3/T4）：沿用影片模式 .vt-tracks 的結構語彙，也沿用它的「縮放共用容器」
+   做法——縮放時 _applyTlZoomWidth 把 inline width 設在本容器上（=zoom×100%），子軌
+   #card-timeline 與 #tl-card-track 都是 width:100% → 任一倍率下自動等寬對齊、播放頭/
+   波形/字幕塊幾何零回歸。之後每加一條軌，都是這個 flex-column 裡再加一個 100% 寬的子項。 */
+.tl-tracks {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+/* 標題卡軌：目前是空容器骨架（T4 才搬 renderCardTrack/bindCardTimeDrag/assignCardLanes 進來）。
+   podcast 預設 hidden（關）——影片模式的對應軌預設開，不受本檔影響。
+   [hidden] 明寫 display:none，確保關閉時完全不佔版面（非 visibility:hidden）。 */
+.tl-card-track {
+  position: relative;
+  width: 100%;
+  height: 44px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.tl-card-track[hidden] {
+  display: none;
+}
+/* T4：標題卡塊本體，class 名沿用 timeline-core.js renderCardTrackCore 寫死的
+   .vt-card* 命名（與影片模式共用同一份 JS，視覺各自對應自己的 CSS 變數，
+   互不影響——影片模式的 .vt-card 定義在 video-edit-prototype.html 內，是獨立檔）。
+   位置/寬高一律由 JS 寫 inline style（left/width/top/height），這裡只管配色。 */
+#tl-card-track .vt-card {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: 11px;
+  color: var(--text);
+  background: var(--accent-ring);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: grab;
+  box-sizing: border-box;
+}
+#tl-card-track .vt-card.is-selected {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-hover);
+}
+#tl-card-track .vt-card.is-dragging {
+  cursor: grabbing;
+  opacity: 0.85;
+}
+#tl-card-track .vt-card-h {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  z-index: 3;
+  cursor: ew-resize;
+  background: var(--accent);
+  opacity: 0.45;
+}
+#tl-card-track .vt-card-h.is-l {
+  left: 0;
+}
+#tl-card-track .vt-card-h.is-r {
+  right: 0;
+}
+#tl-card-track .vt-card:hover .vt-card-h,
+#tl-card-track .vt-card.is-selected .vt-card-h {
+  opacity: 0.85;
+}
+#tl-card-track .vt-card-badge {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  padding: 0 3px;
+}
+#tl-card-track .vt-card-txt {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .card-timeline {
   position: relative;
   width: 100%;

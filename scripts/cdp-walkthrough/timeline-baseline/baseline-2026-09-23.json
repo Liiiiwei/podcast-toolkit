@@ -1,0 +1,410 @@
+{
+  "captured_at": "2026-09-23",
+  "purpose": "docs/plans/2026-09-23-unified-timeline-core.md 動刀前 T0 基準線，之後每步重構重跑兩支 driver 比對防回歸",
+  "note": "2026-09-23 發現有並行 session 已在對 timeline.js/video-edit-prototype.* 動刀（working tree 出現未追蹤修改＋新檔 timeline-core.js）。為確保這份 baseline 量的是「動刀前」的 pristine 狀態，serve_podcast.py 與 range_server.py 已改成服務 `git archive HEAD` 產生的快照（/private/tmp/pt-timeline-baseline/head-snapshot/），不服務 live working tree。本檔數字＝對 git HEAD 版本量測的結果。",
+  "modes": {
+    "podcast": {
+      "driver": "drive_podcast.py",
+      "target": "http://127.0.0.1:8795/ 的 #card-timeline（timeline.js + app.js）",
+      "summary": {
+        "total": 19,
+        "pass": 19,
+        "fail": 0
+      },
+      "results": [
+        {
+          "name": "A0 卡片時間軸已渲染（#card-timeline-wrap 解除隱藏、有 .tl-block）",
+          "ok": true,
+          "got": true,
+          "want": null
+        },
+        {
+          "name": "A0b 頁面載入無 console 例外",
+          "ok": true,
+          "got": [],
+          "want": null
+        },
+        {
+          "name": "A0c .tl-block 數量 > 0",
+          "ok": true,
+          "got": 11,
+          "want": null
+        },
+        {
+          "name": "B0 初始 #tl-zoom-fit 文字為「適合」（zoom=1）",
+          "ok": true,
+          "got": "適合",
+          "want": "適合"
+        },
+        {
+          "name": "B0b 初始 #tl-zoom-out 已停用（已在 zoom 下限）",
+          "ok": true,
+          "got": true,
+          "want": null
+        },
+        {
+          "name": "B1 #tl-zoom-in 中心點 elementFromPoint 命中自己（未被疊層吃掉）",
+          "ok": true,
+          "got": {
+            "tag": "BUTTON",
+            "id": "tl-zoom-in",
+            "cls": "tl-zoom-btn"
+          },
+          "want": null
+        },
+        {
+          "name": "B2 zoom-in 一級後 #card-timeline 寬度比 ≈1.6（934.0px→1494.4px）",
+          "ok": true,
+          "got": 1.6,
+          "want": 1.6
+        },
+        {
+          "name": "B3 參考塊(idx=2)像素位移比 ≈1.6（158.2px→252.8px）",
+          "ok": true,
+          "got": 1.5975,
+          "want": 1.6
+        },
+        {
+          "name": "B4 zoom-in 後 #tl-zoom-fit 文字顯示倍率「1.6×」",
+          "ok": true,
+          "got": "1.6×",
+          "want": "1.6×"
+        },
+        {
+          "name": "B5 #tl-zoom-out 中心點 elementFromPoint 命中自己",
+          "ok": true,
+          "got": {
+            "tag": "BUTTON",
+            "id": "tl-zoom-out",
+            "cls": "tl-zoom-btn"
+          },
+          "want": null
+        },
+        {
+          "name": "B6 zoom-out 一級後寬度比 ≈0.6250（回到約原寬 934.0px vs 原 934.0px）",
+          "ok": true,
+          "got": 934,
+          "want": 934
+        },
+        {
+          "name": "B7 zoom-out 後 #tl-zoom-fit 文字回到「適合」",
+          "ok": true,
+          "got": "適合",
+          "want": "適合"
+        },
+        {
+          "name": "B8 突變測試：連續多次 zoom-in 後寬度持續增加（非死碼/固定值）",
+          "ok": true,
+          "got": 6121.1,
+          "want": ">2988.8"
+        },
+        {
+          "name": "C0 seek 前提：video.readyState>=1 且 seekable.length>0",
+          "ok": true,
+          "got": {
+            "readyState": 4,
+            "seekableLen": 1,
+            "duration": 24
+          },
+          "want": null
+        },
+        {
+          "name": "C1 目標 .tl-block 中心點 elementFromPoint 命中該 block（未被把手/波形蓋掉）",
+          "ok": true,
+          "got": {
+            "tag": "DIV",
+            "id": null,
+            "cls": "tl-block"
+          },
+          "want": null
+        },
+        {
+          "name": "C2 點擊 .tl-block(idx=3) 後 video.currentTime 對到 block.dataset.start",
+          "ok": true,
+          "got": 7.35,
+          "want": 7.35
+        },
+        {
+          "name": "C3 #tl-playhead style.left 對到 seek 後時間換算的百分比",
+          "ok": true,
+          "got": 30.456,
+          "want": 30.456
+        },
+        {
+          "name": "C4 突變測試：seek 到不同 block 後播放頭 left 值也跟著變（非固定值）",
+          "ok": true,
+          "got": "0%",
+          "want": "≠30.4557%"
+        },
+        {
+          "name": "D1 #tl-waveform canvas 有實際畫（非零 alpha 像素數 > 0）",
+          "ok": true,
+          "got": {
+            "painted": true,
+            "nonZeroAlpha": 5586,
+            "w": 932,
+            "h": 46
+          },
+          "want": null
+        }
+      ]
+    },
+    "video-edit-prototype": {
+      "driver": "drive_video_proto.py",
+      "target": "http://127.0.0.1:8796/video-edit-prototype.html?demo=1 的 #vt-tracks",
+      "summary": {
+        "total": 26,
+        "pass": 26,
+        "fail": 0
+      },
+      "results": [
+        {
+          "name": "A0 demo 字幕軌已渲染（.vt-sub 存在、__vt.duration>0）",
+          "ok": true,
+          "got": true,
+          "want": null
+        },
+        {
+          "name": "A0b 頁面載入無 console 例外",
+          "ok": true,
+          "got": [],
+          "want": null
+        },
+        {
+          "name": "A0c .vt-sub 數量 > 0",
+          "ok": true,
+          "got": 11,
+          "want": null
+        },
+        {
+          "name": "B0 初始 #vt-zoom-out 已停用（已在 zoom 下限 ZOOM_MIN=1）",
+          "ok": true,
+          "got": true,
+          "want": null
+        },
+        {
+          "name": "B0b 初始 #vt-zoom-in 未停用（尚未到 ZOOM_MAX）",
+          "ok": true,
+          "got": false,
+          "want": null
+        },
+        {
+          "name": "B1 #vt-zoom-in 中心點 elementFromPoint 命中自己（未被疊層吃掉）",
+          "ok": true,
+          "got": {
+            "tag": "BUTTON",
+            "id": "vt-zoom-in",
+            "cls": "vt-btn"
+          },
+          "want": null
+        },
+        {
+          "name": "B2 zoom-in 一級後 #vt-tracks 寬度比 ≈1.6（1312.0px→2099.2px）",
+          "ok": true,
+          "got": 1.6,
+          "want": 1.6
+        },
+        {
+          "name": "B3 參考 .vt-sub(idx=2) 像素位移比 ≈1.6（233.0px→372.4px）",
+          "ok": true,
+          "got": 1.5984,
+          "want": 1.6
+        },
+        {
+          "name": "B4 #vt-zoom-out 中心點 elementFromPoint 命中自己",
+          "ok": true,
+          "got": {
+            "tag": "BUTTON",
+            "id": "vt-zoom-out",
+            "cls": "vt-btn"
+          },
+          "want": null
+        },
+        {
+          "name": "B5 zoom-out 一級後寬度回到約原寬（1312.0px vs 原 1312.0px）",
+          "ok": true,
+          "got": 1312,
+          "want": 1312
+        },
+        {
+          "name": "B6 zoom-out 後 #vt-zoom-out 重新停用（回到下限）",
+          "ok": true,
+          "got": true,
+          "want": null
+        },
+        {
+          "name": "B7 突變測試：連續多次 zoom-in 後 #vt-tracks 寬度持續增加（非死碼/固定值）",
+          "ok": true,
+          "got": 8598.3,
+          "want": ">4198.4"
+        },
+        {
+          "name": "C0 刮動前提：#vt-video readyState>=1 且 seekable.length>0",
+          "ok": true,
+          "got": {
+            "readyState": 4,
+            "seekableLen": 1,
+            "duration": 24
+          },
+          "want": null
+        },
+        {
+          "name": "C1 #vt-playhead-grip 中心點 elementFromPoint 命中自己或其子節點（未被疊層吃掉）",
+          "ok": true,
+          "got": {
+            "tag": "DIV",
+            "id": "vt-playhead-grip",
+            "cls": "vt-playhead-grip"
+          },
+          "want": null
+        },
+        {
+          "name": "C2 拖曳播放頭把手到 70% 處後 currentTime 對到約 16.80s",
+          "ok": true,
+          "got": 16.8,
+          "want": 16.8
+        },
+        {
+          "name": "C3 拖曳前後 currentTime 確實改變（非靜默失效）",
+          "ok": true,
+          "got": {
+            "before": 0,
+            "after": 16.8
+          },
+          "want": null
+        },
+        {
+          "name": "C4 突變測試：再拖到不同位置後 #vt-playhead left 與 currentTime 都跟著再變一次",
+          "ok": true,
+          "got": {
+            "left1": "70%",
+            "left2": "30%",
+            "t1": 16.8,
+            "t2": 7.2
+          },
+          "want": null
+        },
+        {
+          "name": "D1 #vt-waveform canvas 有實際畫（非零 alpha 像素數 > 0）",
+          "ok": true,
+          "got": {
+            "painted": true,
+            "nonZeroAlpha": 44551,
+            "w": 1310,
+            "h": 62
+          },
+          "want": null
+        },
+        {
+          "name": "E0 初始標題卡軌高度 = 44px（0 張卡、effLanes 最少為 1）",
+          "ok": true,
+          "got": 44,
+          "want": 44
+        },
+        {
+          "name": "E1 佈設 1 張標題卡（不重疊）後軌高度仍為 44px（1 車道）",
+          "ok": true,
+          "got": 44,
+          "want": 44
+        },
+        {
+          "name": "E2 佈設第 2 張與第 1 張時間重疊後軌高度變 80px（2 車道：2*36+2*4）",
+          "ok": true,
+          "got": 80,
+          "want": 80
+        },
+        {
+          "name": "E2b 兩張卡確實建立成功（__vtDropTpl 回傳非 null）",
+          "ok": true,
+          "got": {
+            "c1": {
+              "id": 1,
+              "start": 2,
+              "end": 5,
+              "tpl": "big",
+              "text": "",
+              "scale": 100,
+              "x": 0.5,
+              "y": 0.5,
+              "moved": false,
+              "src": null
+            },
+            "c2": {
+              "id": 2,
+              "start": 3,
+              "end": 6,
+              "tpl": "lower",
+              "text": "",
+              "scale": 100,
+              "x": 0.2,
+              "y": 0.84,
+              "moved": false,
+              "src": null
+            }
+          },
+          "want": null
+        },
+        {
+          "name": "E3 突變測試：把重疊卡挪開後軌高度收回 44px（非固定 80px）",
+          "ok": true,
+          "got": 44,
+          "want": 44
+        },
+        {
+          "name": "F0 找到卡片右端點把手 .vt-card-h.is-r（renderCardTrack wpx>=24 有畫出來）",
+          "ok": true,
+          "got": {
+            "x": 436.078125,
+            "y": 1045.28125,
+            "w": 10,
+            "h": 31,
+            "cx": 441.078125,
+            "cy": 1060.78125
+          },
+          "want": null
+        },
+        {
+          "name": "F1 端點把手中心點 elementFromPoint 命中該把手（未被卡片本體蓋掉）",
+          "ok": true,
+          "got": {
+            "tag": "DIV",
+            "id": null,
+            "cls": "vt-card-h is-r"
+          },
+          "want": null
+        },
+        {
+          "name": "F2 拖曳右端點把手後該卡的 end 有變（起點不變、訖點變長）",
+          "ok": true,
+          "got": {
+            "before": {
+              "id": 1,
+              "start": 1,
+              "end": 7,
+              "tpl": "big",
+              "text": "",
+              "scale": 100,
+              "x": 0.5,
+              "y": 0.5,
+              "moved": false,
+              "src": null
+            },
+            "after": {
+              "id": 1,
+              "start": 1,
+              "end": 8.097560975609756,
+              "tpl": "big",
+              "text": "",
+              "scale": 100,
+              "x": 0.5,
+              "y": 0.5,
+              "moved": false,
+              "src": null
+            }
+          },
+          "want": null
+        }
+      ]
+    }
+  }
+}

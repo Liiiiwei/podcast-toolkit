@@ -5,6 +5,9 @@ import {
   TL_ZOOM_STEP,
   drawTlWaveform,
   renderCardTimeline,
+  renderPodcastCardTrack,
+  selectTitleCard,
+  setCardTrackVisible,
   setTlZoom,
   syncTimelineBlock,
   updateTimelinePlayhead,
@@ -60,6 +63,10 @@ export const state = {
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
   tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
+  // 標題卡軌（T4，docs/plans/2026-09-23-unified-timeline-core.md）：純原型展示用，
+  // 只活在記憶體、session 內、換集即清。D3：不進 buildSavePayload 白名單、
+  // 不寫 episode.yaml——api.js 的存檔物件是手寫 key-by-key，這裡加欄位不會被帶進去。
+  titleCards: [],
   waveform: null, // 時間軸波形資料 {peaks, silences, duration,...}；後端 /api/waveform 算好，背景載入
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
@@ -2819,6 +2826,46 @@ async function load() {
   setupExternalAudio();
   setupCamBOverlay();
   resumeTranscribeIfRunning();
+
+  // ── CDP 走查掛鉤（T4 標題卡軌，丟棄式測試用，不影響一般使用行為）──────────
+  // podcast 走查（drive_podcast.py）過去沒有任何 window.__ hook，全靠真實
+  // DOM/CSS/事件斷言；標題卡沒有真正的資料來源（不像字幕來自 /api/subtitles），
+  // 所以比照影片模式 __vt* 的既有慣例，開放這組最小掛鉤讓走查能程式化造卡驗證。
+  // D3：這裡只動 state.titleCards（記憶體），不觸碰存檔路徑。
+  // 閘門（#6）：這些 hook 只在 URL 帶 ?pthook=1 時掛載——正常發佈/使用的 app.js 不掛，
+  // window.__pt* 一律 undefined；走查頁以 ?pthook=1 載入才拿得到。避免產品碼長期外掛
+  // 測試專用全域符號。
+  if (new URLSearchParams(location.search).get("pthook") === "1") {
+    let _ptCardSeq = 0;
+    window.__ptCards = () => state.titleCards.map((c) => Object.assign({}, c));
+    window.__ptCardTrackHeight = () => {
+      const t = $("#tl-card-track");
+      return t ? t.offsetHeight : null;
+    };
+    // 走查以此開/關標題卡軌（取代先前 render 強制開啟；#1 已改為預設關）。
+    window.__ptSetCardTrackVisible = (show) => {
+      setCardTrackVisible(!!show);
+      const t = $("#tl-card-track");
+      return t ? !t.hidden : null;
+    };
+    window.__ptAddCard = (start, end, text) => {
+      const c = { id: "pt" + ++_ptCardSeq, start, end, text: text || "" };
+      state.titleCards.push(c);
+      renderPodcastCardTrack();
+      return Object.assign({}, c);
+    };
+    window.__ptSelectCard = (id) => {
+      selectTitleCard(id);
+      return id;
+    };
+    window.__ptSetCard = (id, patch) => {
+      const c = state.titleCards.find((x) => x.id === id);
+      if (!c) return null;
+      Object.assign(c, patch || {});
+      renderPodcastCardTrack();
+      return Object.assign({}, c);
+    };
+  }
 }
 
 // === 錯字表 ===
