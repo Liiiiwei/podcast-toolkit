@@ -263,6 +263,9 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # 時間版刪段（B1）：save_state 寫得進、這裡也要讀得回，否則前端看不到也砍不掉
         # 已存的 cuts（它們在合成時仍會生效 → 看不到又移不掉）。
         "cuts": list(ep.cfg.get("cuts") or []),
+        # 刪段每側延伸秒數：前端預覽跳段與批刪秒數要跟 assemble 同一個數值，
+        # 否則預覽每段都比成品短 cut_pad 秒／側（唯讀，前端不寫回）。
+        "cut_pad": float(ep.cfg.get("cut_pad") or 0),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
         # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。

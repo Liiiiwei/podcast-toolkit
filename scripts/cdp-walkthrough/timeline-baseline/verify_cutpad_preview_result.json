@@ -1,0 +1,329 @@
+{
+  "results": [
+    {
+      "name": "A0 開得起來：卡片已渲染",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "A1 來源已同步：JS 是併軌版、舊的 mergeDeletionIntervals 已移除、/api/episode 下放 cut_pad=0.4",
+      "ok": true,
+      "got": {
+        "core": true,
+        "app": true,
+        "old_gone": true,
+        "cut_pad": 0.4
+      },
+      "want": {
+        "core": true,
+        "app": true,
+        "old_gone": true,
+        "cut_pad": 0.4
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A2 影片可 seek（readyState>=1 且 seekable.length>0）",
+      "ok": true,
+      "got": {
+        "ready": 4,
+        "seekable": 1,
+        "dur": 24
+      },
+      "want": "ready>=1, seekable>0",
+      "status": "pass"
+    },
+    {
+      "name": "A3a 卡 #4 的刪除鈕找得到",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "A3b 該座標最上層就是刪除鈕（沒被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "path",
+        "id": null,
+        "cls": {}
+      },
+      "want": "card-del / 其 svg 子節點",
+      "status": "pass"
+    },
+    {
+      "name": "A3c 紅卡 = {4}",
+      "ok": true,
+      "got": [
+        "4"
+      ],
+      "want": [
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "A4a 區間左緣外（8.30）不跳——pad 沒有無限外擴",
+      "ok": true,
+      "got": {
+        "before": 8.3,
+        "after": 8.300572,
+        "fired": true
+      },
+      "want": {
+        "after": 8.3,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A4b 舊規則不會跳的 8.50（落在 pad 延伸出來的左段）→ 跳到 10.05",
+      "ok": true,
+      "got": {
+        "before": 8.5,
+        "after": 10.05,
+        "fired": true
+      },
+      "want": {
+        "after": 10.05,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A4c 舊規則停在原地的 9.85（落在 pad 延伸出來的右段）→ 跳到 10.05",
+      "ok": true,
+      "got": {
+        "before": 9.85,
+        "after": 10.05,
+        "fired": true
+      },
+      "want": {
+        "after": 10.05,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A4d 保留卡 #5 內（10.20）不跳",
+      "ok": true,
+      "got": {
+        "before": 10.2,
+        "after": 10.200267,
+        "fired": true
+      },
+      "want": {
+        "after": 10.2,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A5a 存檔完成（按鈕回報已儲存 + yaml mtime 前進 + 無錯誤 toast）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "A5b yaml 寫入磁碟軸 cuts",
+      "ok": true,
+      "got": [
+        [
+          7.35,
+          8.25
+        ]
+      ],
+      "want": [
+        [
+          7.35,
+          8.25
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "A5c 存檔沒有吃掉 cut_pad（前端唯讀，round-trip 不掉值）",
+      "ok": true,
+      "got": 0.4,
+      "want": 0.4,
+      "status": "pass"
+    },
+    {
+      "name": "A6 後端 cut_intervals_from_cfg 的區間 +1.5 = 瀏覽器量到的跳段邊界（預覽＝成品）",
+      "ok": true,
+      "got": [
+        [
+          6.949999999999999,
+          8.55
+        ]
+      ],
+      "want": [
+        [
+          6.949999999999999,
+          8.55
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "B0 cut_pad=0 的集開得起來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "B1 影片可 seek",
+      "ok": true,
+      "got": {
+        "ready": 4,
+        "seekable": 1,
+        "dur": 24
+      },
+      "want": "seekable>0",
+      "status": "pass"
+    },
+    {
+      "name": "B2 cuts 換回紅卡 {4}",
+      "ok": true,
+      "got": [
+        "4"
+      ],
+      "want": [
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "B3a 8.50 不再跳（pad=0 → 左緣退回 8.85）",
+      "ok": true,
+      "got": {
+        "before": 8.5,
+        "after": 8.500418,
+        "fired": true
+      },
+      "want": {
+        "after": 8.5,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "B3b 9.00 跳到卡尾 9.75（不是 10.05）",
+      "ok": true,
+      "got": {
+        "before": 9,
+        "after": 9.75,
+        "fired": true
+      },
+      "want": {
+        "after": 9.75,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "C0 帶 foreign cut 的集開得起來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "C1 影片可 seek",
+      "ok": true,
+      "got": {
+        "ready": 4,
+        "seekable": 1,
+        "dur": 24
+      },
+      "want": "seekable>0",
+      "status": "pass"
+    },
+    {
+      "name": "C2 沒有任何紅卡（foreign cut 不擴寬成整張卡）",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "C3a 9.85 落在 foreign cut 內 → 跳到 10.05（舊版完全不跳）",
+      "ok": true,
+      "got": {
+        "before": 9.85,
+        "after": 10.05,
+        "fired": true
+      },
+      "want": {
+        "after": 10.05,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "C3b 保留卡 #4 內（9.60）不跳",
+      "ok": true,
+      "got": {
+        "before": 9.6,
+        "after": 9.601278,
+        "fired": true
+      },
+      "want": {
+        "after": 9.6,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "C4 後端算出的區間末端 +1.5 = 瀏覽器量到的跳段落點",
+      "ok": true,
+      "got": [
+        [
+          8.25,
+          8.55
+        ]
+      ],
+      "want": [
+        [
+          8.25,
+          8.55
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "D 全程無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    }
+  ],
+  "failed": [],
+  "yaml_final": {
+    "date": 20260601,
+    "name": "時間軸基準集",
+    "main_video": "01_母帶/{name}.mp4",
+    "main_srt": "03_成品/{name}_final.srt",
+    "fixes": [],
+    "card_fixes": [],
+    "force_break": [],
+    "force_join": [],
+    "subtitle_offset_sec": 1.5,
+    "watermark": {
+      "enabled": true
+    },
+    "layout_mode": "podcast",
+    "cuts": [
+      [
+        8.3,
+        8.45
+      ]
+    ],
+    "cut_pad": 0.4
+  }
+}

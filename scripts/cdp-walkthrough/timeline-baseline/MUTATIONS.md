@@ -171,3 +171,57 @@ W2 前 podcast 預覽只算字級，顏色／描邊／粗體／底色塊／垂�
 
 沙盒集在 `/private/tmp/pt-timeline-baseline/`；不在那台機器就先跑同目錄的
 `build_sandbox_episode.py` 重建（走查會自己把 `episode.yaml` 改成需要的起點）。
+
+---
+
+## #13～#18 前端／後端刪段合併規則併軌（預覽跳段吃 `cut_pad`）
+
+受測走查：`verify_cutpad_preview.py`（26 項斷言，同一個帶 `subtitle_offset_sec: 1.5` 的沙盒集，
+`cut_pad` 在三個階段之間切換，走查自己改 `episode.yaml` 並重啟伺服器——
+`Episode.cfg` 只在建構時讀一次，不重啟就量到舊值）。突變由 `run_cutpad_mutations.py`
+逐一套用、跑完整支走查、`try/finally` 還原，最後再跑一次證明回到全綠。
+
+三個階段（都用**真 seek＋真 play** 量瀏覽器實際跳到哪，不讀任何內部變數）：
+
+| 階段 | 設定 | 期待的顯示軸跳段區間 |
+|---|---|---|
+| A | `cut_pad=0.4`＋UI 真點刪除鈕刪卡 #4 | `[8.45, 10.05]`（併軌前的舊規則是 `[8.85, 9.75]`） |
+| B | `cut_pad=0`＋同一刪卡 | 退回 `[8.85, 9.75]` |
+| C | `cut_pad=0.4`＋只有 foreign cut（顯示軸 9.8–9.95） | `[9.75, 10.05]` |
+
+| # | 突變點（產品碼） | 改成 | 預期變紅 | 實際 |
+|---|---|---|---|---|
+| 13 | `app.js: state.cutPad = Number(data.cut_pad) \|\| 0;` | `state.cutPad = 0;`（等於併軌前的無 pad 行為） | A4b、A4c、C3a | 23/26，如預期 |
+| 14 | `app.js: const raw = [...state.foreignCuts];` | `const raw = [];`（影片模式剪的段預覽不跳） | C3a | 25/26，只有 C3a 紅 |
+| 15 | `timeline-core.js:722 Math.max(s - pad, leftLimit, 0)` | `Math.max(s, leftLimit, 0)`（左側不延伸） | A4b | 25/26，只有 A4b 紅 |
+| 16 | `timeline-core.js:723 Math.min(e + pad, rightLimit)` | `Math.min(e, rightLimit)`（右側不延伸） | A4b、A4c、C3a | 23/26，如預期 |
+| 17 | 同上一行 | `Math.max(e + pad, rightLimit)`（右界不夾在保留卡起點，pad 直接咬進下一張卡的語音） | A4b、A4c、C3a | 23/26，如預期 |
+| 18 | `episode_io.py:268` 的 `"cut_pad": float(...)` 整行 | 刪掉（後端不下放，前端永遠拿不到值） | A1 | 1/2，A1 紅後走查依設計中止 |
+
+六個突變全部如預期變紅，還原後回歸 **26/26 通過**。完整輸出見 `cutpad_mutations_result.json`。
+
+三個值得記的點：
+
+- **#14 是最乾淨的單點突變**（25/26，只紅 C3a）—— 證明「foreign cut 也要進預覽跳段」
+  這條有自己的斷言在守，不是靠刪卡那幾筆連坐測到的。
+- **#16、#17 會連紅三筆是實測結果不是判定放寬**：A4b／A4c／C3a 量的都是「跳完之後停在哪」，
+  右界一旦算錯，三個落點會一起往前縮（#16）或一起往後衝（#17）。expect 清單照實測列，
+  不是照「這個突變理論上該影響誰」列。
+- **#18 靠的是指紋斷言 A1**：走查開場就驗 `/api/episode` 回的 `cut_pad=0.4`，
+  對不上直接中止（2026-08-25 教訓「測試站台是副本時會測到舊版」的防呆），
+  所以它紅在 1/2 而不是跑完 26 項。
+
+跑法（走查會自行起／收 `serve_podcast.py` 與改還原 `episode.yaml`，headless Chrome 要自己先開）：
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --remote-debugging-port=9331 \
+  --user-data-dir=/private/tmp/pt-chrome-cutpad \
+  --autoplay-policy=no-user-gesture-required --mute-audio about:blank &
+/usr/bin/python3 -u verify_cutpad_preview.py     # 單跑走查：26/26
+/usr/bin/python3 -u run_cutpad_mutations.py      # 六個突變 + 還原回歸
+```
+
+`--autoplay-policy=no-user-gesture-required` 是必要的：這支走查靠真的 `v.play()` 觸發
+`autoSkipDeletedSegments`，被自動播放政策擋下時 probe 會回 `fired:false`，該筆量測直接判無效
+（不會靜默當成「沒跳」而誤判成綠）。

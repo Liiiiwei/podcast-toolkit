@@ -17,6 +17,7 @@ import {
 import {
   buildSubtitleCss,
   cutsToCardSelection,
+  padAndMergeCuts,
   subtitleAlignmentBucket,
 } from "./timeline-core.js";
 
@@ -54,6 +55,9 @@ export const state = {
   // 但必須原樣 round-trip 回 episode.yaml，並在統計列露出來——否則它就是
   // 「看不到、移不掉、卻會生效」的幽靈刪段（B1 要根治的正是這個）。
   foreignCuts: [],
+  // episode.yaml 的 cut_pad（每側延伸秒數）。預覽跳段與批刪秒數都吃它，
+  // 才會跟 assemble 出的成品同一條界線；唯讀，前端不寫回。
+  cutPad: 0,
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
   reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；session 內、不寫檔、不進 undo、換集即清
@@ -2438,12 +2442,12 @@ function renderSusToolbar() {
     if (!validIds.has(idx)) state.susChecked.delete(idx);
   }
   const checkedCount = state.susChecked.size;
-  // 已勾數 + 大約移除秒數預覽（實際因 cut_pad 略大，標「約」）
+  // 已勾數 + 移除秒數預覽（已含 cut_pad 延伸；標「約」是因為它算的是增量）
   const checkedEl = $("#sus-checked-count");
   if (checkedCount > 0) {
     const secs = checkedDeletionSeconds();
     checkedEl.textContent = `已勾 ${checkedCount}·約 ${secs.toFixed(1)} 秒`;
-    checkedEl.title = "實際輸出因每側 cut_pad（0.15 秒）會略長於此預估值";
+    checkedEl.title = "已含每側 cut_pad 延伸；與既有刪段相鄰時成品會再少一點";
   } else {
     checkedEl.textContent = "已勾 0";
     checkedEl.title = "";
@@ -2596,6 +2600,8 @@ async function loadEpisodeState() {
   state.cardTimings = new Map();
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
+  // 刪段每側延伸秒數（唯讀）：預覽跳段與批刪秒數都要跟 assemble 用同一個值
+  state.cutPad = Number(data.cut_pad) || 0;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
   state.tailTrimSec = Number(data.tail_trim_sec) || 0;
   // 記住載入值，供 unsavedCount() 偵測是否有未存的 trim 變更
@@ -3194,64 +3200,31 @@ function autoPauseAtTailTrim() {
 }
 
 // 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
-// 連續被刪的卡併成整段（中間沒保留卡就跨停頓一起併），跟後端輸出一致 → 預覽不會播出碎片。
-// 防 Whisper word-timestamp 把相鄰 cue end/start 排成重疊：刪除區間 end 不得吃進下一張未刪除卡，
-// 否則播放會跳過明明沒被刪的卡（issue: 00:38-00:48 卡無故被預覽跳過）。
+// 合併／延伸規則整包交給 timeline-core 的 padAndMergeCuts（＝後端 _pad_and_merge_cuts
+// 的移植版，差分測試逐位元比對）。前端不再自帶第二套規則：那套沒有 pad，預覽每段都比
+// 成品短 cut_pad 秒／側，使用者看到的跳段時機跟輸出對不上。
+// foreignCuts（影片模式在句中／跨停頓剪的段）一併算進來——合成照剪，預覽當然也要跳。
 function deletionIntervals() {
   const cards = expandedCards();
-  const raw = [];
-  const kept = [];
-  for (const r of cards) {
-    if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
-    else kept.push([r.start, r.end]);
-  }
-  return mergeDeletionIntervals(raw, kept);
+  const raw = [...state.foreignCuts];
+  for (const r of cards) if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
+  return padAndMergeCuts(raw, cards, state.cutPad);
 }
 
-// 純函式：把 raw 刪除區間依「保留卡」邊界合併，回排序好、夾過界的整段。
-// 從 deletionIntervals 抽出來，讓批刪秒數預覽（checkedDeletionSeconds）共用同一套合併規則。
-// 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
-// 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
-function mergeDeletionIntervals(rawIntervals, keptIntervals) {
-  const raw = [...rawIntervals].sort((a, b) => a[0] - b[0]);
-  const kept = keptIntervals;
-  const merged = [];
-  for (const [s, e] of raw) {
-    const last = merged[merged.length - 1];
-    if (last) {
-      const pe = last[1];
-      const gapHasKept = kept.some(
-        ([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6,
-      );
-      if (s <= pe + 0.05 || !gapHasKept) {
-        last[1] = Math.max(pe, e);
-        continue;
-      }
-    }
-    merged.push([s, e]);
-  }
-  // 夾到下一張保留卡起點（不吃進保留語音；處理 word_timestamp overlap）
-  const keepStarts = kept.map(([s]) => s).sort((a, b) => a - b);
-  for (const seg of merged) {
-    const nextKeep = keepStarts.find((s) => s > seg[0] + 1e-6);
-    if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
-  }
-  return merged.filter((seg) => seg[1] > seg[0] + 0.01);
-}
-
-// 已勾紅卡批刪後「大約移除幾秒」— 給 toolbar 預覽 + 刪除前二次確認用。
-// 用 mergeDeletionIntervals 跟實際刪除同套合併規則：已刪卡不算 raw 也不擋合併，
-// 連續勾選跨停頓會併成整段。實際輸出因 cut_pad（每側 0.15s）會略大於此值，故標「約」。
+// 已勾紅卡批刪後「移除幾秒」— 給 toolbar 預覽 + 刪除前二次確認用。
+// 與實際刪除同一套規則（含 cut_pad 延伸）：已刪卡不算 raw、也不列入保留卡擋合併，
+// 連續勾選跨停頓會併成整段。仍標「約」的唯一原因：這算的是增量，勾的段若與既有刪段
+// 相鄰，成品合併後的總長會再少一點點。
 function checkedDeletionSeconds() {
   const raw = [];
-  const kept = [];
+  const cards = [];
   for (const r of expandedCards()) {
     if (state.deletions.has(r.key)) continue; // 已刪：移出計算
+    cards.push(r);
     if (state.susChecked.has(r.key)) raw.push([r.start, r.end]);
-    else kept.push([r.start, r.end]);
   }
   let total = 0;
-  for (const [s, e] of mergeDeletionIntervals(raw, kept)) total += e - s;
+  for (const [s, e] of padAndMergeCuts(raw, cards, state.cutPad)) total += e - s;
   return total;
 }
 

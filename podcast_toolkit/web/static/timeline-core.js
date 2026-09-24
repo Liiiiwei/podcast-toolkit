@@ -665,3 +665,72 @@ export function cutsToCardSelection(cuts, rows, tol = 0.02) {
   foreign.sort((a, b) => a[0] - b[0]);
   return { keys, foreign };
 }
+
+/**
+ * 刪除區間的「延伸 + 合併」——與後端 `assemble._pad_and_merge_cuts` 同一套規則。
+ *
+ * 這是逐行對照的移植版（差分測試 tests/test_cut_merge_frontend_parity.py 逐位元比對），
+ * 存在的理由是：預覽跳段與最終輸出必須是**同一個演算法**。之前前端另寫了一套
+ * （無 pad、合併門檻 0.05、只夾下一張保留卡起點），預覽每段都比輸出短 cut_pad 秒／側，
+ * 使用者看到的跳段時機跟成品對不上。
+ *
+ * 規則（與後端逐條相同）：
+ * - `pad <= 0` → 原樣返回（不合併），維持後端的向後相容分支。
+ * - 正規化：修反置 (start>end)、丟零長度。
+ * - 保留卡 = 未被任一刪段「整段涵蓋」的卡；部分被切的卡仍算保留。
+ * - 先併「中間沒有保留卡語音」的相鄰刪段（連刪跨停頓也併）。
+ * - 每段往兩側最多吃 pad 秒，但夾在鄰近保留卡的語音邊界內；某側沒有鄰卡則該側不外吃。
+ * - 延伸後重疊/相鄰再合併一次。
+ *
+ * @param {Array<[number, number]>} intervals 刪除區間（與 cards 同一條時間軸）
+ * @param {Array<{start:number, end:number}>} cards 全部字幕卡（用來算保留卡邊界）
+ * @param {number} pad 每側最多吃掉的雜音秒數（episode.yaml 的 cut_pad）
+ * @returns {Array<[number, number]>} 排序好的區間
+ */
+export function padAndMergeCuts(intervals, cards, pad) {
+  const byStart = (a, b) => a[0] - b[0] || a[1] - b[1];
+  const src = (intervals || []).map(([s, e]) => [Number(s), Number(e)]).sort(byStart);
+  if (!(pad > 0) || !src.length) return src;
+
+  // 正規化：修反置、丟零長度（手動 cuts 打錯時的防呆）
+  const norm = src
+    .filter(([a, b]) => a !== b)
+    .map(([a, b]) => [Math.min(a, b), Math.max(a, b)])
+    .sort(byStart);
+  if (!norm.length) return [];
+
+  const kept = (cards || [])
+    .map((c) => [Number(c.start), Number(c.end)])
+    .filter(([cs, ce]) => !norm.some(([s, e]) => s - 1e-6 <= cs && ce <= e + 1e-6));
+
+  // 先併「相鄰刪段之間沒有保留卡語音」的區間（flush-adjacent 的連續字幕也擋得下）
+  const pre = [[...norm[0]]];
+  for (const [s, e] of norm.slice(1)) {
+    const pe = pre[pre.length - 1][1];
+    const gapHasKept = kept.some(([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6);
+    if (s <= pe + 1e-6 || !gapHasKept) pre[pre.length - 1][1] = Math.max(pe, e);
+    else pre.push([s, e]);
+  }
+
+  // 各段往前後延伸 pad，夾在保留卡語音邊界內
+  const out = [];
+  for (const [s, e] of pre) {
+    const lefts = kept.filter(([cs]) => cs < s - 1e-6).map(([, ce]) => Math.min(ce, s));
+    const rights = kept.filter(([, ce]) => ce > e + 1e-6).map(([cs]) => Math.max(cs, e));
+    const leftLimit = lefts.length ? Math.max(...lefts) : s;
+    const rightLimit = rights.length ? Math.min(...rights) : e;
+    const ns = Math.max(s - pad, leftLimit, 0);
+    const ne = Math.min(e + pad, rightLimit);
+    out.push([ns, Math.max(ne, ns)]);
+  }
+
+  // 延伸後若重疊/相鄰 → 合併
+  out.sort(byStart);
+  const merged = [out[0]];
+  for (const [s, e] of out.slice(1)) {
+    const last = merged[merged.length - 1];
+    if (s <= last[1] + 1e-6) last[1] = Math.max(last[1], e);
+    else merged.push([s, e]);
+  }
+  return merged;
+}

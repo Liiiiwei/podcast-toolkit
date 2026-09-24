@@ -189,3 +189,52 @@ podcast 時間軸從單軌 `#card-timeline` 改成多軌堆疊容器（沿用影
 3. `api.js: toDiskTime(t)`（:42）仍是「無 `audioPath` 守衛、取 2 位小數」的既有版本。
    本梯只讓 cuts 走新的 `cutToDiskTime`（3 位小數，對齊 SRT 毫秒精度），沒動它的呼叫者 ——
    改它會牽動字幕時間寫回，屬另一件事。
+
+---
+
+## B2 專梯：前端／後端刪段合併規則併軌（2026-09-24 完成，＝上梯附錄第 1 項）
+
+### 勘查結論：「刪段的合併規則現在有幾個地方在管？」
+
+兩個，規則不一致，所以預覽跟成品對不起來：
+
+| # | 位置 | 規則 |
+|---|---|---|
+| 1 | `assemble.py: _pad_and_merge_cuts`（正典） | 每側最多外吃 `cut_pad` 秒、左右各自 cap 不互相挪用、夾在鄰近保留卡的語音邊界內、門檻 `1e-6`、會正規化反置／零長度區間 |
+| 2 | `app.js: mergeDeletionIntervals`（前端獨有） | 完全不吃 pad、門檻 `0.05`、只把右界夾到「下一張保留卡起點」 |
+
+結果：預覽跳段每段比成品**短 `cut_pad` 秒／側**（預設 0.15），而且 foreign cuts 根本沒進預覽。
+
+### 執行項
+
+| 項 | 內容 | 證據 |
+|---|---|---|
+| B2-1 | `timeline-core.js` 新增 `padAndMergeCuts(intervals, cards, pad)`，逐條對齊 `_pad_and_merge_cuts`（含 `pad <= 0` 原樣返回的向後相容分支） | `tests/test_cut_merge_frontend_parity.py` 5 測（jsc 實跑真的 JS，與 Python 版逐位元比對） |
+| B2-2 | 後端 `episode_io.py:268` 唯讀下放 `cut_pad`（前端不寫回 → 不動 `config.merge` 白名單） | 走查 A1 指紋、A5c round-trip |
+| B2-3 | `app.js` 刪掉 `mergeDeletionIntervals`，改呼叫共用核心；`state.cutPad` 從 `/api/episode` 讀入 | 走查 A4a–d、B3a/b |
+| B2-4 | `foreignCuts` 併入預覽跳段來源 | 走查 C3a（突變 #14 單點紅） |
+
+驗收數字：`verify_cutpad_preview.py` **26/26 通過**（三階段各自改 `episode.yaml` 並重啟伺服器，
+全程用真 seek＋真 play 量瀏覽器實際跳到哪，不讀內部變數）；六個突變（`run_cutpad_mutations.py`）
+**全部如預期變紅**、還原後回歸 26/26（明細見 `scripts/cdp-walkthrough/timeline-baseline/MUTATIONS.md` #13～#18）。
+
+走查 A6／C4 直接把「後端 `cut_intervals_from_cfg` 算出的磁碟軸區間 + `subtitle_offset_sec`」
+對照「瀏覽器量到的跳段落點」—— 軸換算錯 1.5 秒也會紅。
+
+### 使用者可感知的行為變更（三項，刻意的）
+
+1. **預覽跳段的邊界變寬**：現在每側多跳掉最多 `cut_pad` 秒（預設 0.15），與成品一致。
+   併軌前預覽比成品保守，會讓人以為「剪太少」，實際出片才發現多剪了。
+2. **移除前端獨有的「右界夾到下一張保留卡起點」clamp**：改用正典的「夾在鄰近保留卡語音邊界內」。
+   兩者在多數情況一致，差別出現在刪段後面緊接著另一個刪段時。
+3. **影片模式剪的段（foreign cuts）現在預覽也會跳**。併軌前它們只在出片時生效，
+   預覽照播 —— 這正是上梯 B1-5「不靜默」想解決的那類落差的下半段。
+
+### 不在本梯（附錄，留給下一梯）
+
+1. **落在保留卡內部的 foreign cut，預覽仍會播過去**：`app.js: nextKeepTime`（:3235-3243）
+   的第一個迴圈是「t 落在未刪的保留卡內就直接回 t」，保留卡守門優先於 cut 區間。
+   刪卡產生的 cuts 一定與卡界對齊所以不受影響；只有影片模式在卡**內部**剪的段會撞到。
+   這是 `nextKeepTime` 自己的第三套機制，要修得先決定「卡」與「時間段」誰是預覽的正典 —— 另一件事。
+2. （續上梯）`new:` 開頭的新增卡不進 cuts。
+3. （續上梯）`api.js: toDiskTime(t)`（:42）仍是無 `audioPath` 守衛、2 位小數的既有版本。
