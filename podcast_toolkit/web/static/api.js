@@ -143,6 +143,22 @@ export function buildSavePayload({ withSpeed = false } = {}) {
       start_card: c.start_card,
       end_card: c.end_card,
     })),
+    // 標題卡（B2）：純文字卡只送 {id,start,end,text}，tpl 由後端補預設。
+    // 時間採「逐字原樣」round-trip（不走 toDiskTime）——標題卡是顯示層時間、非磁碟 _v2.srt 卡，
+    //   若也做 offset 位移，載入時已加 totalShift、存檔又減一次基準不同會漂；原樣存讀保證精準往返。
+    // plan_io（/api/apply-plan）定位卡的 scale/x/y/tpl 於載入時已保留在 state，這裡原樣透傳，
+    //   避免本存檔鏈把後端既有定位卡清成純文字卡（後端 save_state 對帶入的合法值會保留）。
+    // 純文字卡本身沒有 scale/x/y → 自然只送 4 欄，不會誤帶定位資訊。
+    title_cards: state.titleCards
+      .filter((c) => c && c.end > c.start && String(c.text || "").trim())
+      .map((c) => {
+        const out = { id: c.id, start: c.start, end: c.end, text: c.text };
+        if (c.tpl != null) out.tpl = c.tpl;
+        for (const k of ["scale", "x", "y"]) {
+          if (c[k] != null) out[k] = c[k];
+        }
+        return out;
+      }),
   };
   // 倍速只在「合成設定 modal」→「開始合成」時送（withSpeed=true）；改字卡的主存檔不送。
   // 否則 state.speed.enabled 一旦 stale 成 false，改個字卡存檔就無聲無息把 episode.yaml 的

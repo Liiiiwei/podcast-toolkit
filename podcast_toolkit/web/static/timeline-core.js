@@ -417,3 +417,41 @@ export function bindCardTimeDragCore(
     window.addEventListener("pointerup", up);
   });
 }
+
+// === 播放頭刮動（drag-to-scrub，B3b/梯次 B）===
+// 改寫自 video-edit-prototype.js:1833-1858 bindPlayheadScrub —— 把「換算時間」與「seek」
+// 兩個與模式相關的行為參數化成 callback，本函式只管拖曳序列（down→多次 move→up）本身。
+// 純函式：不 import 任何 app.js/v-e-p.js 符號，grip 元素、時間換算、seek、可否刮動判斷
+// 全由呼叫端注入，與剪除語意（cuts/deletions）零耦合——只設播放時間，不動任何刪段狀態。
+// 失敗路徑不靜默成「假成功」：canScrub 回 false（無影片/duration 未知）時直接 return 不啟動
+// 拖曳，不拋例外也不假裝有 seek；seek callback 自己負責 clamp 與更新播放頭。
+export function bindPlayheadScrubCore(
+  grip,
+  { timeFromEvent, seek, canScrub = null, onStart = null, onEnd = null },
+) {
+  if (!grip) return;
+  grip.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    // 無影片 / duration 未知 → 不啟動刮動（明確 guard，不是靜默 fallback 成成功）
+    if (canScrub && !canScrub()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    grip.classList.add("is-scrubbing");
+    // 某些環境（自動化、觸控筆切換）setPointerCapture 會丟例外，抓不到就算了——
+    // 監聽掛在 window 上，拖出把手外一樣收得到。
+    try {
+      grip.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    if (onStart) onStart();
+    seek(timeFromEvent(e)); // 按下當下就先跳一次，不用等第一個 move
+    const move = (ev) => seek(timeFromEvent(ev));
+    const up = () => {
+      grip.classList.remove("is-scrubbing");
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      if (onEnd) onEnd();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+}

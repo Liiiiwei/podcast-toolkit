@@ -63,6 +63,10 @@ SAMPLES = {
     "tail_trim_sec": 2.5,
     "crop_yt": {"x": 0.1, "y": 0.0, "width": 0.8, "height": 1.0},
     "crop_reels": {"x": 0.3, "y": 0.0, "width": 0.4, "height": 1.0},
+    # B4：版面模式（defaults 有此鍵但走 deny-list 明確驗證，非 dict → 驗全等）
+    "layout_mode": "video",
+    # B2：純文字標題卡（episode-only 鍵，config.merge 原樣透傳 → 驗全等）
+    "title_cards": [{"id": "tc1", "start": 3.0, "end": 6.0, "text": "開場卡", "tpl": "big"}],
 }
 
 DEFAULTS_REAL = config.load_defaults()

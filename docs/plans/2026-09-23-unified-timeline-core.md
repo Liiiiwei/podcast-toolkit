@@ -80,3 +80,24 @@ podcast 時間軸從單軌 `#card-timeline` 改成多軌堆疊容器（沿用影
 - **突變測試**：每支走查配一次「把受測那行改回舊行為，確認會紅」，證明真的在測東西。
 - 改動者不驗收：完成後派 fresh-context agent 對兩模式時間軸做走查 read-back。
 - 每個 T 的 baseline 對比要綠、突變要紅，才算該步完成。
+
+## 梯次 B 執行拆解（2026-09-23 敲定：最小版，使用者選「最小」）
+
+三路 Explore 勘查後校正的地面事實：後端 `cut_intervals_from_cfg`(assemble.py:171) 已把
+`deletions`→`cuts` 自動遷移，podcast/video 兩模式其實已共用同一聚合入口；標題卡其實已能經
+`/api/apply-plan`→plan_io 存檔(但不在 round-trip 測試覆蓋內)；`mode` 旗標全 repo 不存在，且
+`state.mode` 已被轉錄模式佔用(app.js:4958)。故最小版**不動出片管線、不引入第三套剪段機制**。
+
+| 項 | 內容 | 風險 | 派給 | 驗收條件 |
+|---|---|---|---|---|
+| B4 | `layoutMode: podcast\|video` 新鍵（避開 `state.mode`），控標題卡軌在 podcast 正常 UI 顯不顯 | 中 | BE | round-trip：寫入→重載→讀回；`test_config_roundtrip` 綠 |
+| B2 | 標題卡 podcast 真存檔（純文字卡 `id/start/end/text`＋tpl 預設；buildSavePayload→save_state；補 `_WRITER_SOURCES`＋SAMPLES） | 中 | BE＋FE-2 | round-trip；CDP 存檔後重載標題卡還在 |
+| B3a | scrub 播放頭下放（`bindPlayheadScrubCore`，與剪除零耦合） | 低 | FE-1 | CDP 完整拖曳序列＋`seekable.length>0`＋突變測試 |
+| B3b | 字幕塊整段平移下放（改 timing 非 cuts） | 低 | FE-1 | CDP 完整拖曳＋鄰句夾制斷言＋突變測試 |
+| B3c | 框選 marquee 下放，**終點換算成涵蓋卡 idx 併入既有 `deletions`**（不碰 cuts、不動 proofread、零後端改動） | 中 | FE-2 | CDP 框選後對應卡進 deletions＋突變測試 |
+| ~~B1~~ | 剪除語意結構性併軌 / 單雙機渲染收斂 | 高 | **最小版不做** | 兩模式已共用 `cut_intervals_from_cfg`，維持現狀；真正單一 source 另開專梯 |
+
+**波次（app.js 禁並行改，×108 返工放大器）：**
+- Wave 1（可並發）：BE（純 Python：episode_io/config/templates/defaults/routes/episodes/test_config_roundtrip）‖ FE-1（純 timeline-core.js/timeline.js，不碰 app.js）
+- Wave 2：FE-2（app.js＋timeline.js：B2 送存、B4 顯示切換、B3c marquee），依賴 BE 契約＋FE-1 基座
+- Wave 3：fresh-context CDP 走查驗收（兩模式），改動者不驗收；每支走查配突變測試

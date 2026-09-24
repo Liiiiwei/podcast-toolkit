@@ -63,10 +63,14 @@ export const state = {
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
   tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
-  // 標題卡軌（T4，docs/plans/2026-09-23-unified-timeline-core.md）：純原型展示用，
-  // 只活在記憶體、session 內、換集即清。D3：不進 buildSavePayload 白名單、
-  // 不寫 episode.yaml——api.js 的存檔物件是手寫 key-by-key，這裡加欄位不會被帶進去。
+  // 標題卡軌（T4→B2，docs/plans/2026-09-23-unified-timeline-core.md）：
+  //   B2 起真存檔——buildSavePayload 送 title_cards（純文字卡只帶 id/start/end/text，
+  //   後端補 tpl 預設），loadEpisodeState 從 data.title_cards 讀回。
+  //   時間逐字往返、不走 toDiskTime；plan_io 定位卡的 scale/x/y/tpl 載入時原樣保留、存檔原樣透傳。
   titleCards: [],
+  // 版面模式（B4）：後端 layout_mode（"podcast" | "video"）。控標題卡軌在 podcast 正常 UI 顯不顯。
+  // podcast → 隱藏標題卡軌；video → 顯示。透過既有 setCardTrackVisible 這唯一控制點切換，不另造機制。
+  layoutMode: "podcast",
   waveform: null, // 時間軸波形資料 {peaks, silences, duration,...}；後端 /api/waveform 算好，背景載入
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
@@ -2317,6 +2321,12 @@ function renderCards() {
   renderCamRuler();
   renderSpeakerRuler();
   renderCardTimeline();
+  // B4：依 layoutMode 切標題卡軌顯示——podcast 隱藏、video 顯示。透過既有唯一控制點
+  //   setCardTrackVisible，不另造第三套顯示機制（CLAUDE.md 硬禁）。放在 renderCardTimeline
+  //   之後：無卡路徑它已強制隱藏、此處略過；有卡路徑它建好 track DOM 但不強制顯隱，交這裡定調。
+  if (state.cards.length && !state.needsTranscribe) {
+    setCardTrackVisible(state.layoutMode === "video");
+  }
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
@@ -2528,6 +2538,30 @@ async function loadEpisodeState() {
           end_card: Number(c.end_card),
         }))
     : [];
+  // 標題卡（B2）：來自 episode.yaml title_cards。時間逐字讀回（不加 totalShift）——與存檔端
+  //   對稱，保證 round-trip 精準。plan_io 定位卡的 scale/x/y/tpl 一併保留在 state，
+  //   下次存檔由 buildSavePayload 原樣透傳，避免純文字存檔鏈清掉後端既有定位卡。
+  //   id 缺漏時補一個（後端純 yaml 可能沒帶 id）；渲染/選取要靠它。
+  state.titleCards = Array.isArray(data.title_cards)
+    ? data.title_cards
+        .filter((c) => c && Number(c.end) > Number(c.start))
+        .map((c, i) => {
+          const out = {
+            id: c.id != null ? String(c.id) : `tc${i}`,
+            start: Number(c.start),
+            end: Number(c.end),
+            text: String(c.text || ""),
+          };
+          if (c.tpl != null) out.tpl = c.tpl;
+          for (const k of ["scale", "x", "y"]) {
+            if (c[k] != null) out[k] = Number(c[k]);
+          }
+          return out;
+        })
+    : [];
+  // 版面模式（B4）：後端 layout_mode 決定標題卡軌在 podcast 正常 UI 顯不顯。
+  //   實際的 setCardTrackVisible 呼叫在下方渲染完時間軸後，才有 track DOM 可切。
+  state.layoutMode = data.layout_mode === "video" ? "video" : "podcast";
   // 雙鏡頭 mapping：API 回傳 key 是字串（JSON 不支援 int key），這裡轉回 Number
   state.cameras = data.cameras || {};
   state.camerasMapping = new Map(

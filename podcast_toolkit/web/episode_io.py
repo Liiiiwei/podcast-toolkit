@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from podcast_toolkit import cameras_io, srt_io
+from podcast_toolkit import cameras_io, srt_io, title_cards
 from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.episode import Episode
@@ -267,6 +267,10 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
         "subtitle_offset_sec": float(ep.cfg.get("subtitle_offset_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
+        # 版面模式（B4）：podcast|video，控前端標題卡軌顯不顯；壞值已在 config.merge 夾成 podcast。
+        "layout_mode": ep.cfg.get("layout_mode") or "podcast",
+        # 標題卡（B2）：save_state 寫得進、這裡也要讀得回，否則前端存了看不到、重載就消失。
+        "title_cards": list(ep.cfg.get("title_cards") or []),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
         "has_main_video": has_main_video,
@@ -503,6 +507,52 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             data["reels_clips"] = clips_out
         else:
             data.pop("reels_clips", None)
+
+    # 版面模式（B4）：podcast|video。用 key-presence 區分「沒動 UI」vs「明確設定」。
+    # 只接受合法值；壞值不靜默 —— pop 掉整個 key 回退 defaults(podcast)，不把亂值寫進 yaml。
+    if "layout_mode" in payload:
+        lm = payload.get("layout_mode")
+        if lm in ("podcast", "video"):
+            data["layout_mode"] = lm
+        else:
+            data.pop("layout_mode", None)
+
+    # 標題卡（B2）：純文字卡最小欄位 {id, start, end, text}＋tpl 預設。
+    # 壞卡（缺時間/end<=start/無文字）直接丟，不靜默寫入殘卡；空 → 移除 key（比照 reels_clips）。
+    # scale/x/y 這次不做，但若 payload 帶了合法數值就一併保留，避免 plan_io 定位卡被本鏈清掉。
+    if "title_cards" in payload:
+        cards_out: list[dict[str, Any]] = []
+        for i, c in enumerate(payload.get("title_cards") or []):
+            if not isinstance(c, dict):
+                continue
+            try:
+                s, e = float(c.get("start")), float(c.get("end"))
+            except (TypeError, ValueError):
+                continue
+            if not (e > s >= 0):
+                continue
+            text = str(c.get("text") or "").strip()
+            if not text:
+                continue
+            tpl = str(c.get("tpl") or title_cards.DEFAULT_TPL)
+            entry: dict[str, Any] = {
+                "id": str(c.get("id") or f"tc{i + 1}"),
+                "start": round(s, 3),
+                "end": round(e, 3),
+                "text": text,
+                "tpl": tpl,
+            }
+            for pos_key in ("scale", "x", "y"):
+                if pos_key in c:
+                    try:
+                        entry[pos_key] = float(c.get(pos_key))
+                    except (TypeError, ValueError):
+                        pass
+            cards_out.append(entry)
+        if cards_out:
+            data["title_cards"] = cards_out
+        else:
+            data.pop("title_cards", None)
 
     # cam A 路徑：前端「最終合成總覽」可換 cam A。同步寫 cameras.a + main_video（保留舊欄位讓 fallback 路徑也對）。
     if "cam_a_path" in payload:
