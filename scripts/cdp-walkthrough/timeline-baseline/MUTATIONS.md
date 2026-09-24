@@ -159,8 +159,15 @@ W2 前 podcast 預覽只算字級，顏色／描邊／粗體／底色塊／垂�
   `[[2.7,3.9],[7.35,8.25]]` 立刻對不上。這是 `subtitle_offset_sec: 1.5` 這個沙盒設定
   唯一的存在理由 —— 偏移為 0 的集，軸換算寫錯也測不出來。
 
-跑法（會自行起／收 `serve_podcast.py`，需先有 headless Chrome CDP :9331）：
+跑法（走查會自行起／收 `serve_podcast.py`，但 headless Chrome 要自己先開）：
 
 ```bash
-/usr/bin/python3 -u run_b1_mutations.py
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --remote-debugging-port=9331 \
+  --user-data-dir=/private/tmp/pt-chrome-b1 about:blank &
+/usr/bin/python3 -u verify_b1_cuts.py      # 單跑走查：22/22
+/usr/bin/python3 -u run_b1_mutations.py    # 六個突變 + 還原回歸
 ```
+
+沙盒集在 `/private/tmp/pt-timeline-baseline/`；不在那台機器就先跑同目錄的
+`build_sandbox_episode.py` 重建（走查會自己把 `episode.yaml` 改成需要的起點）。
