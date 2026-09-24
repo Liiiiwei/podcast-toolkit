@@ -63,3 +63,31 @@
 影片模式對應的縮放本來就施加在共用容器 `#vt-tracks`（B2/B7 已測），非本次修法標的；
 其走查內原名「突變測試」的 B7/C4/E3 均為活性檢查，已正名。影片模式真突變不在本梯範圍
 （本梯只碰 podcast 的 #1/#2 產品碼）。
+
+---
+
+## #3 影片模式 baseline：addCut 重疊合併判斷（W2/W3 前的煙霧測試基準）
+
+- 受測斷言：`verify_video_baseline.py` 的 V4.5/V4.6（重疊段合併成 `cuts==[[2,8]]`、`cutCount==1`）。
+- 突變點（產品碼）：`video-edit-prototype.js` 的 `addCut(a,b)` 內、重疊合併分支條件
+  `if (cur[0] <= last[1])` → 暫時改 `if (false)`（還原舊 bug＝重疊段不合併）。
+- 突變後 RED 輸出（節錄）：
+  ```
+  [FAIL] MUT1-RED 重疊本應合併成 cutCount==1（突變後預期會錯）  got=2 want=1
+  ```
+  還原後重跑 → `cuts==[[2,8]]`、`cutCount==1` 恢復綠燈。
+
+## #4 影片模式 baseline：applyStyle 的 bold→fontWeight 綁定
+
+- 受測斷言：`verify_video_baseline.py` 的 V5.5（點擊粗體「關」→ 預覽 `fontWeight==400`）。
+- 突變點（產品碼）：`video-edit-prototype.js` 的 `applyStyle()` 內
+  `el.style.fontWeight = st.bold ? "700" : "400";` → 暫時改成固定 `"700"`（還原舊 bug＝
+  fontWeight 不跟隨 `state.style.bold`）。
+- 突變後 RED 輸出（節錄）：
+  ```
+  [FAIL] MUT2-RED bold=0 應反映 fontWeight==400（突變後預期會錯，仍卡在 700）  got='700' want='400'
+  ```
+  還原後重跑 → `fontWeight` 恢復 `"400"`，綠燈。
+
+以上兩個真突變的完整 RED/GREEN 週期已內建於 `verify_video_baseline.py` 本身（每次執行都會
+自動改檔→重載→驗紅→還原→重載→驗綠，try/finally 保證還原），不需要手動操作即可重現。

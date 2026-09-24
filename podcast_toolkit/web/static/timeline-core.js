@@ -455,3 +455,46 @@ export function bindPlayheadScrubCore(
     window.addEventListener("pointerup", up);
   });
 }
+
+// === 字幕樣式：純字串運算（收斂前第一梯）===
+// 改寫自 video-edit-prototype.js:1498-1532 hexToAss/fontStack/buildOutlineShadow。
+// 目前只有影片模式在用（podcast 側 app.js/timeline.js 無同名/同形函式），
+// 先搬進共用核心證明收斂路徑可行；純字串/數值運算，不碰 DOM、不吃外部可變狀態。
+// positionPreview（同段原函式）會直接寫 DOM 元素 style，本梯刻意不收，見任務回報。
+
+/** hex #RRGGBB → ASS &H00BBGGRR（讓面板數值看起來跟後端同格式）。 */
+export function hexToAss(hex) {
+  const h = (hex || "#000000").replace("#", "");
+  const r = h.slice(0, 2);
+  const g = h.slice(2, 4);
+  const b = h.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
+}
+
+/** 字型排前，後面墊 CJK fallback，無該字型時仍看得到字。 */
+export function fontStack(name) {
+  const cjk =
+    '"Noto Sans TC", "PingFang TC", "Hiragino Sans GB", "Microsoft JhengHei", sans-serif';
+  return `"${name}", ${cjk}`;
+}
+
+/** 用多向 text-shadow 疊出 ASS 描邊 + 陰影。 */
+export function buildOutlineShadow(color, outlinePx, shadowPx) {
+  const parts = [];
+  if (outlinePx > 0) {
+    const n = 12;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      parts.push(
+        `${(Math.cos(a) * outlinePx).toFixed(2)}px ${(Math.sin(a) * outlinePx).toFixed(2)}px 0 ${color}`,
+      );
+    }
+  }
+  if (shadowPx > 0) {
+    // ASS 陰影固定黑、往右下（此為字幕內容陰影，非 UI chrome）
+    parts.push(
+      `${shadowPx.toFixed(2)}px ${shadowPx.toFixed(2)}px ${(shadowPx * 1.2).toFixed(2)}px rgba(0,0,0,0.9)`,
+    );
+  }
+  return parts.length ? parts.join(", ") : "none";
+}

@@ -1,0 +1,428 @@
+{
+  "mode": "video-edit-prototype-baseline",
+  "results": [
+    {
+      "name": "V1.1 頁面標題",
+      "ok": true,
+      "got": "影片模式 · 時間軸線性剪輯（原型）",
+      "want": "影片模式 · 時間軸線性剪輯（原型）",
+      "status": "pass"
+    },
+    {
+      "name": "V1.2 模式徽章文字（demo 模式含「· demo」後綴屬正常）",
+      "ok": true,
+      "got": "原型 · demo",
+      "want": "以「原型」開頭",
+      "status": "pass"
+    },
+    {
+      "name": "V1.3 進階面板標題",
+      "ok": true,
+      "got": "進階：字幕樣式",
+      "want": "進階：字幕樣式",
+      "status": "pass"
+    },
+    {
+      "name": "V1.4 CDP 測試掛鉤皆為函式（typeof 先查再用）",
+      "ok": true,
+      "got": {
+        "stats": "function",
+        "addCut": "function",
+        "style": "function",
+        "preview": "function",
+        "setStyle": "function"
+      },
+      "want": {
+        "stats": "function",
+        "addCut": "function",
+        "style": "function",
+        "preview": "function",
+        "setStyle": "function"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V1.5 demo 影片已載入（duration>0）",
+      "ok": true,
+      "got": 24,
+      "want": ">0",
+      "status": "pass"
+    },
+    {
+      "name": "V1.6 頁面載入無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "V2.1 波形 canvas 有畫出非透明像素",
+      "ok": true,
+      "got": 44551,
+      "want": ">0",
+      "status": "pass"
+    },
+    {
+      "name": "V2.2 zoom-in 按鈕未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "vt-zoom-in",
+        "cls": "vt-btn"
+      },
+      "want": {
+        "id": "vt-zoom-in"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V2.3 zoom-in 一次：#vt-tracks 寬度放大 ≈1.6×",
+      "ok": true,
+      "got": 1.6,
+      "want": 1.6,
+      "status": "pass"
+    },
+    {
+      "name": "V2.4 zoom-in 兩次：#vt-tracks 寬度放大 ≈2.56×（1.6²）",
+      "ok": true,
+      "got": 2.56,
+      "want": 2.56,
+      "status": "pass"
+    },
+    {
+      "name": "V2.5 已放大後 zoom-out 按鈕可用（未 disabled）",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "V2.6 zoom-out 按鈕未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "vt-zoom-out",
+        "cls": "vt-btn"
+      },
+      "want": {
+        "id": "vt-zoom-out"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V2.7 zoom-out 兩次後寬度回到 1×（往返一致，非死碼）",
+      "ok": true,
+      "got": 1.0,
+      "want": 1.0,
+      "status": "pass"
+    },
+    {
+      "name": "V3.1 seek 前置條件：readyState>=1 且 seekable.length>0（Range 伺服器必要條件）",
+      "ok": true,
+      "got": {
+        "readyState": 4,
+        "seekableLen": 1
+      },
+      "want": {
+        "readyState": ">=1",
+        "seekableLen": ">0"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V3.2 播放頭把手未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": "vt-playhead-grip",
+        "cls": "vt-playhead-grip"
+      },
+      "want": {
+        "id": "vt-playhead-grip"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V3.3 拖到 70% 位置：currentTime ≈ 70% duration",
+      "ok": true,
+      "got": 16.8,
+      "want": 16.8,
+      "status": "pass"
+    },
+    {
+      "name": "V3.4 再拖到 30% 位置：currentTime ≈ 30% duration",
+      "ok": true,
+      "got": 7.2,
+      "want": 7.2,
+      "status": "pass"
+    },
+    {
+      "name": "V3.5 兩次拖曳的 currentTime 確實不同（非死碼／固定值）",
+      "ok": true,
+      "got": {
+        "ct1": 16.8,
+        "ct2": 7.2
+      },
+      "want": "ct1 != ct2",
+      "status": "pass"
+    },
+    {
+      "name": "V4.1 初始 cutCount==0",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "V4.2 __vtAddCut(2,5) 成功且 cutCount==1",
+      "ok": true,
+      "got": {
+        "ok": true,
+        "cutCount": 1
+      },
+      "want": {
+        "ok": true,
+        "cutCount": 1
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V4.3 DOM .vt-cut 節點數 == 1",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "V4.4 剪除段標籤文字正確",
+      "ok": true,
+      "got": "✕ 3.0s",
+      "want": "✕ 3.0s",
+      "status": "pass"
+    },
+    {
+      "name": "V4.5 重疊段 __vtAddCut(4,8) 後合併成 [[2,8]]（cutCount 仍為 1）",
+      "ok": true,
+      "got": {
+        "ok": true,
+        "cuts": [
+          [
+            2,
+            8
+          ]
+        ],
+        "cutCount": 1
+      },
+      "want": {
+        "ok": true,
+        "cuts": [
+          [
+            2,
+            8
+          ]
+        ],
+        "cutCount": 1
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V4.6 合併後 DOM .vt-cut 節點數仍為 1",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "V4.7 右端把手未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "vt-cut-h is-r"
+      },
+      "want": "class 含 vt-cut-h",
+      "status": "pass"
+    },
+    {
+      "name": "V4.8 拖右端把手後，剪除段終點確實隨拖曳變化（非固定值）",
+      "ok": true,
+      "got": [
+        [
+          2,
+          9.199999553401296
+        ]
+      ],
+      "want": "end != 8（預期≈9.2）",
+      "status": "pass"
+    },
+    {
+      "name": "V4.9 點擊落點命中剪除段本體（非把手，elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "DIV",
+        "id": null,
+        "cls": "vt-cut"
+      },
+      "want": "class 含 vt-cut 不含 vt-cut-h",
+      "status": "pass"
+    },
+    {
+      "name": "V4.10 點擊剪除段本體 → removeCutAt 生效，cutCount 回到 0",
+      "ok": true,
+      "got": {
+        "cutCount": 0,
+        "dom": 0
+      },
+      "want": {
+        "cutCount": 0,
+        "dom": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT1 真突變成立：改回舊行為→cutCount 錯誤變 2（RED），還原→恢復 1（GREEN）",
+      "ok": true,
+      "got": {
+        "red": [
+          [
+            2,
+            5
+          ],
+          [
+            4,
+            8
+          ]
+        ],
+        "green": [
+          [
+            2,
+            8
+          ]
+        ]
+      },
+      "want": {
+        "red_cuts": "[[2,5],[4,8]]（未合併）",
+        "green_cuts": "[[2,8]]（合併）"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.1 預設樣式 bold==1 且預覽 fontWeight==700（前置態）",
+      "ok": true,
+      "got": {
+        "bold": 1,
+        "fontWeight": "700"
+      },
+      "want": {
+        "bold": 1,
+        "fontWeight": "700"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.2 進階面板 summary 未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "SUMMARY",
+        "id": null,
+        "cls": null
+      },
+      "want": {
+        "tag": "SUMMARY"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.3 點擊 summary 後面板展開（details.open==true）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "V5.4「關」按鈕未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": null,
+        "cls": null
+      },
+      "want": {
+        "tag": "BUTTON"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.5 點擊粗體「關」→ state.style.bold==0 且預覽 fontWeight==400",
+      "ok": true,
+      "got": {
+        "bold": 0,
+        "fontWeight": "400"
+      },
+      "want": {
+        "bold": 0,
+        "fontWeight": "400"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.6「正中」對齊按鈕未被遮擋（elementFromPoint）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": null,
+        "cls": null
+      },
+      "want": {
+        "tag": "BUTTON"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.7 點擊「正中」→ state.style.alignment==10 且預覽 wrap.style.top==='50%'（直接 DOM 檢查）",
+      "ok": true,
+      "got": {
+        "alignment": 10,
+        "top": "50%"
+      },
+      "want": {
+        "alignment": 10,
+        "top": "50%"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.8 拖字級滑桿：數值標籤與 input.value 同步、且偏離預設 60（真拖曳生效）",
+      "ok": true,
+      "got": {
+        "input": 102,
+        "label": "102"
+      },
+      "want": {
+        "input": "≈100（!=60）",
+        "label": "同 input"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V5.9 拖字級滑桿後預覽字級 px 值有變化（非死碼）",
+      "ok": true,
+      "got": "108.2px",
+      "want": "!= 33.8px",
+      "status": "pass"
+    },
+    {
+      "name": "MUT2 真突變成立：改回舊行為→fontWeight 錯誤卡在 700（RED），還原→恢復 400（GREEN）",
+      "ok": true,
+      "got": {
+        "red": "700",
+        "green": "400"
+      },
+      "want": {
+        "red_fontWeight": "700（未跟隨 bold=0）",
+        "green_fontWeight": "400"
+      },
+      "status": "pass"
+    }
+  ]
+}

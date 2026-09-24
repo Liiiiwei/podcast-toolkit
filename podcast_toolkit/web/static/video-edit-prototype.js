@@ -17,6 +17,9 @@ import {
   assignCardLanes,
   renderCardTrackCore,
   bindCardTimeDragCore,
+  hexToAss,
+  fontStack,
+  buildOutlineShadow,
 } from "./timeline-core.js";
 
 (() => {
@@ -1494,43 +1497,8 @@ import {
   }
 
   // ── 字幕樣式：即時預覽 ──────────────────────────────────────────
-  // hex #RRGGBB → ASS &H00BBGGRR（讓面板數值看起來跟後端同格式）
-  function hexToAss(hex) {
-    const h = (hex || "#000000").replace("#", "");
-    const r = h.slice(0, 2);
-    const g = h.slice(2, 4);
-    const b = h.slice(4, 6);
-    return `&H00${b}${g}${r}`.toUpperCase();
-  }
-
-  function fontStack(name) {
-    // demo：選到的字型排最前，後面墊 CJK fallback，無該字型時仍看得到字
-    const cjk =
-      '"Noto Sans TC", "PingFang TC", "Hiragino Sans GB", "Microsoft JhengHei", sans-serif';
-    return `"${name}", ${cjk}`;
-  }
-
-  // 用多向 text-shadow 疊出 ASS 描邊 + 陰影
-  function buildOutlineShadow(color, outlinePx, shadowPx) {
-    const parts = [];
-    if (outlinePx > 0) {
-      const n = 12;
-      for (let k = 0; k < n; k++) {
-        const a = (k / n) * Math.PI * 2;
-        parts.push(
-          `${(Math.cos(a) * outlinePx).toFixed(2)}px ${(Math.sin(a) * outlinePx).toFixed(2)}px 0 ${color}`,
-        );
-      }
-    }
-    if (shadowPx > 0) {
-      // ASS 陰影固定黑、往右下（此為字幕內容陰影，非 UI chrome）
-      parts.push(
-        `${shadowPx.toFixed(2)}px ${shadowPx.toFixed(2)}px ${(shadowPx * 1.2).toFixed(2)}px rgba(0,0,0,0.9)`,
-      );
-    }
-    return parts.length ? parts.join(", ") : "none";
-  }
-
+  // hexToAss/fontStack/buildOutlineShadow 已收斂進 timeline-core.js（純字串運算，見該檔
+  // 「字幕樣式」段）；positionPreview 會直接寫 DOM 元素 style，非純函式，留在本檔。
   function positionPreview(wrap, alignment, marginPx) {
     wrap.style.top = "auto";
     wrap.style.bottom = "auto";
