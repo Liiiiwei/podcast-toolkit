@@ -30,6 +30,8 @@ import cdp_common as C
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent.parent
 PROD_JS = REPO_ROOT / "podcast_toolkit" / "web" / "static" / "video-edit-prototype.js"
+# W2 後：字幕樣式的 ASS→CSS 換算搬到共用核心，MUT2 的突變點也跟著搬過去
+CORE_JS = REPO_ROOT / "podcast_toolkit" / "web" / "static" / "timeline-core.js"
 
 CDP_PORT = int(os.environ.get("CDP_PORT", "9522"))
 DEMO_PORT = int(os.environ.get("DEMO_PORT", "8796"))
@@ -404,12 +406,12 @@ async def main():
             preview2["fontSize"], f"!= {preview0['fontSize']}")
 
     # ── 真突變 #2：applyStyle 的 bold→fontWeight 綁定（產品碼一行）──
-    logp("\n--- MUT2 真突變：applyStyle 的 bold→fontWeight 綁定 ---")
+    logp("\n--- MUT2 真突變：buildSubtitleCss 的 bold→fontWeight 綁定（共用核心）---")
     mut2_evidence = {"red": None, "green": None}
-    OLD2 = 'el.style.fontWeight = st.bold ? "700" : "400";'
-    NEW2 = 'el.style.fontWeight = "700";'
+    OLD2 = 'fontWeight: Number(st.bold) ? "700" : "400",'
+    NEW2 = 'fontWeight: "700",'
     try:
-        patch_file(PROD_JS, OLD2, NEW2)
+        patch_file(CORE_JS, OLD2, NEW2)
         await reload(page, URL, settle=1.5)
         await wait_for(page, "typeof window.__vtSetStyle === 'function'", timeout=15)
         p_red = await C.js(page, "window.__vtSetStyle({bold: 0})")
@@ -418,7 +420,7 @@ async def main():
                                     preview_red["fontWeight"], "400")
         mut2_evidence["red"] = preview_red["fontWeight"]
     finally:
-        patch_file(PROD_JS, NEW2, OLD2)
+        patch_file(CORE_JS, NEW2, OLD2)
 
     await reload(page, URL, settle=1.5)
     await wait_for(page, "typeof window.__vtSetStyle === 'function'", timeout=15)
@@ -429,7 +431,7 @@ async def main():
     mut2_evidence["green"] = preview_green["fontWeight"]
 
     C.check(
-        "MUT2 真突變成立：改回舊行為→fontWeight 錯誤卡在 700（RED），還原→恢復 400（GREEN）",
+        "MUT2 真突變成立（突變點在共用核心 timeline-core.js）：改回舊行為→fontWeight 錯誤卡在 700（RED），還原→恢復 400（GREEN）",
         (red2_ok is False) and (green2_ok is True),
         mut2_evidence,
         {"red_fontWeight": "700（未跟隨 bold=0）", "green_fontWeight": "400"},

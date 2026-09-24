@@ -13,6 +13,12 @@ import {
   updateTimelinePlayhead,
 } from "./timeline.js";
 
+// 字幕樣式 ASS → CSS 的單一換算來源（與影片模式共用，見 timeline-core.js「字幕樣式」段）
+import {
+  buildSubtitleCss,
+  subtitleAlignmentBucket,
+} from "./timeline-core.js";
+
 // 後端傳輸層（同為循環 import，規則見 api.js 檔頭）
 import { apiGetEpisode, buildSavePayload, postSave } from "./api.js";
 
@@ -545,36 +551,70 @@ function renderTrimControls() {
   }
 }
 
-// 算 caption preview 字體 px：對齊 ffmpeg ASS 輸出（font_size / output_height）
-// 預覽字幕應該 ∝ 影片框實際高度 × crop 高度比 × (字級 / 輸出高度)
-// 這樣不管瀏覽器 zoom 多少、視窗縮多大，字幕跟畫面的比例都跟最終輸出一致
-function computeCaptionFontPx() {
+// 目前分頁（YT / Reels）該套哪份字幕樣式。Reels 缺欄位時回退 YT，與後端同規則。
+function captionPreviewStyle() {
+  return state.activeVersion === "reels"
+    ? state.subtitleStyleReels || state.subtitleStyleYt
+    : state.subtitleStyleYt;
+}
+
+// 算 caption preview 的縮放比：對齊 ffmpeg ASS 輸出（預覽渲染高 / 輸出高）。
+// 樣式數值（字級、描邊、陰影、margin_v）全是相對輸出解析度的 px，
+// 乘上這個比例後，不管瀏覽器 zoom 多少、視窗縮多大，字幕跟畫面的比例都等同最終輸出。
+function computeCaptionScale() {
   const wrap = document.querySelector(".video-wrap");
   if (!wrap) return null;
   const wrapHeight = wrap.clientHeight;
   if (!wrapHeight) return null;
-  const isReels = state.activeVersion === "reels";
-  const style = isReels
-    ? state.subtitleStyleReels || state.subtitleStyleYt
-    : state.subtitleStyleYt;
-  const res = isReels ? state.outputResReels : state.outputResYt;
-  // 缺資料就維持原 clamp 預設（loadEpisodeState 完成前）
-  if (!style || !res) return null;
-  const fontSize = Number(style.font_size);
+  const res =
+    state.activeVersion === "reels" ? state.outputResReels : state.outputResYt;
+  // 缺資料就維持 app.css 的保底樣式（loadEpisodeState 完成前）
+  if (!res) return null;
   const outH = Number(res.h);
-  if (!fontSize || !outH) return null;
+  if (!outH) return null;
   const c = getActiveCrop();
   // 有 crop：用 crop 區的渲染高（= wrap高 × crop.height）
   // 無 crop：用整個 wrap 高（= 整個源 frame，YT 直接代表 1080 輸出）
   const baseHeight = c ? wrapHeight * c.height : wrapHeight;
-  return baseHeight * (fontSize / outH);
+  return baseHeight / outH;
 }
 
-function applyCaptionFontSize() {
+// 套在 overlay 本體上的（可繼承或影響整塊）
+const CAPTION_BOX_CSS_KEYS = [
+  "fontFamily",
+  "fontSize",
+  "fontWeight",
+  "color",
+  "textShadow",
+];
+// 套在每一行上的：底色塊要貼著字，鋪滿整條 overlay 就不是成品的樣子了；
+// color 也重覆套一次，否則 app.css 的 .caption-line.speaker-* 規則會壓過繼承值。
+const CAPTION_LINE_CSS_KEYS = ["background", "padding", "borderRadius", "color"];
+
+// 最近一次算出來的 CSS：renderCaption 每幀都跑，新建的行直接沿用這份，
+// 不用每幀重算一次十二向描邊字串。
+let _captionCss = null;
+
+function applyCaptionLineStyle(line) {
+  for (const k of CAPTION_LINE_CSS_KEYS) {
+    line.style[k] = _captionCss ? _captionCss[k] : "";
+  }
+}
+
+// 把 episode.yaml 的字幕樣式換算成預覽 CSS（與影片模式同一份 buildSubtitleCss）。
+// 這裡以前只設 fontSize，顏色/描邊/粗體/底色塊寫死在 app.css → 預覽 ≠ 成品。
+function applyCaptionStyle() {
   const overlay = document.querySelector("#caption-overlay");
   if (!overlay) return;
-  const px = computeCaptionFontPx();
-  overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
+  const scale = computeCaptionScale();
+  const style = captionPreviewStyle();
+  _captionCss = scale == null || !style ? null : buildSubtitleCss(style, scale);
+  for (const k of CAPTION_BOX_CSS_KEYS) {
+    overlay.style[k] = _captionCss ? _captionCss[k] : "";
+  }
+  overlay
+    .querySelectorAll(".caption-line")
+    .forEach((line) => applyCaptionLineStyle(line));
 }
 
 // === 字幕字級調整（crop 比例旁）：依目前分頁調 YT / Reels 各自的 subtitle_style.font_size ===
@@ -603,7 +643,7 @@ function nudgeCaptionSize(delta) {
   if (next === cur) return;
   style.font_size = next;
   state.outputDirty = true; // 進「未儲存」計數，按「完成並儲存」才落地
-  applyCaptionFontSize();
+  applyCaptionStyle();
   renderCaptionSizeControl();
   renderTopbar();
 }
@@ -625,16 +665,46 @@ function applyRotationPreview() {
   if (vb) vb.style.transform = b ? `rotate(${b}deg)` : "";
 }
 
+// 把字幕塊放到裁切框（或整個影片框）內的垂直位置。
+// 注意：libass 燒在最終 output frame 上，margin_v 是 output px；
+// 預覽裁切框 = output frame，故偏移量 = margin_v/output_h × frameH。
+// bucket 語意與影片模式共用（timeline-core.js subtitleAlignmentBucket）。
+function placeCaptionOverlay(overlay, bucket, frameY, frameH, marginFrac) {
+  if (bucket === "top") {
+    overlay.style.bottom = "";
+    overlay.style.transform = "";
+    overlay.style.top = `${((frameY + frameH * marginFrac) * 100).toFixed(2)}%`;
+    return;
+  }
+  if (bucket === "middle") {
+    overlay.style.bottom = "";
+    overlay.style.top =
+      `${((frameY + frameH * (0.5 + marginFrac)) * 100).toFixed(2)}%`;
+    overlay.style.transform = "translateY(-50%)";
+    return;
+  }
+  overlay.style.top = "";
+  overlay.style.transform = "";
+  overlay.style.bottom =
+    `${((1 - frameY - frameH + frameH * marginFrac) * 100).toFixed(2)}%`;
+}
+
 function renderCropInfo() {
   applyRotationPreview();
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
-  // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
-  // margin_v 正值=從中心向下偏移（output px），預覽要同步換算成裁切框內比例
-  const isReels = state.activeVersion === "reels";
-  const reelsMarginV = Number(state.subtitleStyleReels?.margin_v ?? 0);
-  const reelsOutH = Number(state.outputResReels?.h ?? 1920) || 1920;
-  const reelsMarginFrac = reelsMarginV / reelsOutH;
+  // 字幕垂直落點一律看 subtitle_style.alignment（SSA v3：6=頂、10=正中、其餘=底），
+  // 與最終燒錄用的同一個欄位 —— 以前這裡寫死「Reels 置中、YT 置底」，
+  // 改了 yaml 也不會反映在預覽上。margin_v 同樣是 output px，換算成裁切框內比例。
+  const capStyle = captionPreviewStyle();
+  const capBucket = subtitleAlignmentBucket(capStyle?.alignment);
+  const capOutH =
+    Number(
+      (state.activeVersion === "reels"
+        ? state.outputResReels?.h
+        : state.outputResYt?.h) ?? 0,
+    ) || (state.activeVersion === "reels" ? 1920 : 1080);
+  const capMarginFrac = Number(capStyle?.margin_v ?? 0) / capOutH;
   // 只有雙機集才顯示鏡頭徽章；單機集 cam B 一直沒值就略過徽章
   const hasCamB = !!(state.cameras && state.cameras.b);
   let camBadge = "";
@@ -652,16 +722,8 @@ function renderCropInfo() {
     // 字幕回到整個影片區
     overlay.style.left = "";
     overlay.style.right = "";
-    if (isReels) {
-      overlay.style.bottom = "";
-      overlay.style.top = `${(50 + reelsMarginFrac * 100).toFixed(2)}%`;
-      overlay.style.transform = "translateY(-50%)";
-    } else {
-      overlay.style.top = "";
-      overlay.style.transform = "";
-      overlay.style.bottom = "";
-    }
-    applyCaptionFontSize();
+    placeCaptionOverlay(overlay, capBucket, 0, 1, capMarginFrac);
+    applyCaptionStyle();
     return;
   }
   const ratio = getActiveCropRatio() ? `${getActiveCropRatio()}` : "自訂";
@@ -678,23 +740,9 @@ function renderCropInfo() {
   const padX = 0.06;
   overlay.style.left = `${((c.x + c.width * padX) * 100).toFixed(2)}%`;
   overlay.style.right = `${((1 - c.x - c.width + c.width * padX) * 100).toFixed(2)}%`;
-  if (isReels) {
-    // Reels：放在裁切框垂直中央 + margin_v 換算成裁切框內比例向下偏移
-    // 注意：libass 燒在最終 output frame 上，margin_v 是 output px；
-    // 預覽裁切框 = output frame，故偏移量 = margin_v/output_h × c.height
-    const cy = (c.y + c.height * (0.5 + reelsMarginFrac)) * 100;
-    overlay.style.bottom = "";
-    overlay.style.top = `${cy.toFixed(2)}%`;
-    overlay.style.transform = "translateY(-50%)";
-  } else {
-    // YT：距框底 8% 裁切高度
-    const padBottom = 0.08;
-    overlay.style.top = "";
-    overlay.style.transform = "";
-    overlay.style.bottom = `${((1 - c.y - c.height + c.height * padBottom) * 100).toFixed(2)}%`;
-  }
+  placeCaptionOverlay(overlay, capBucket, c.y, c.height, capMarginFrac);
   // 字幕大小對齊 ffmpeg ASS 實際輸出（font_size / output_height × 渲染高）
-  applyCaptionFontSize();
+  applyCaptionStyle();
 }
 
 // 回傳 expandedCards() 中包住 t 的那筆 — 切過的卡會在這裡命中對應 sub-card，
@@ -1678,6 +1726,15 @@ function renderSpeakerRuler() {
   ruler.hidden = false;
 }
 
+// 一行字幕的 DOM：每幀都可能重建，樣式直接沿用上次算好的那份（見 applyCaptionStyle）
+function captionLineEl(text) {
+  const line = document.createElement("div");
+  line.className = "caption-line";
+  line.textContent = text;
+  applyCaptionLineStyle(line);
+  return line;
+}
+
 function renderCaption() {
   const overlay = $("#caption-overlay");
   const t = $("#video").currentTime;
@@ -1692,7 +1749,10 @@ function renderCaption() {
       overlay.classList.remove("multi-speaker");
       return;
     }
-    overlay.textContent = r.text;
+    // 單行也包成 .caption-line：border_style=3 的不透明底色塊要貼著字，
+    // 套在整條 overlay 上會鋪成一條橫槓，跟成品不一樣。
+    const only = captionLineEl(r.text);
+    overlay.replaceChildren(only);
     overlay.classList.remove("multi-speaker");
     return;
   }
@@ -1714,10 +1774,8 @@ function renderCaption() {
   overlay.innerHTML = "";
   for (const r of rows) {
     const sp = computeEffectiveSpeaker(r.key);
-    const line = document.createElement("div");
-    line.className = "caption-line";
+    const line = captionLineEl(r.text);
     if (sp) line.classList.add(`speaker-${sp}`);
-    line.textContent = r.text;
     overlay.appendChild(line);
   }
   overlay.classList.toggle("multi-speaker", rows.length > 1);
@@ -7995,6 +8053,6 @@ if (window.Icons) window.Icons.inject();
 (() => {
   const wrap = document.querySelector(".video-wrap");
   if (!wrap || typeof ResizeObserver === "undefined") return;
-  const ro = new ResizeObserver(() => applyCaptionFontSize());
+  const ro = new ResizeObserver(() => applyCaptionStyle());
   ro.observe(wrap);
 })();

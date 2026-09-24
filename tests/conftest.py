@@ -9,7 +9,7 @@ import yaml
 # test_editor_ui_smoke.py 與 test_cam_modal_save_payload.py）。清單各留一份的話，
 # 下次再抽一個模組就會有某個檔忘了更新 —— 「程式碼只是搬家卻被判成被刪」正是這樣
 # 發生的（api.js 抽出當下就踩到一次）。一份清單，一個地方管。
-EDITOR_JS = ["app.js", "timeline.js", "api.js"]
+EDITOR_JS = ["app.js", "timeline.js", "api.js", "timeline-core.js"]
 
 
 def editor_static_dir() -> Path:

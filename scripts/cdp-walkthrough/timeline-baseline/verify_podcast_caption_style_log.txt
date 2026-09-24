@@ -1,0 +1,43 @@
+======================================================================
+podcast 字幕樣式走查（W2）  URL=http://127.0.0.1:8795/?pthook=1  CDP=9522
+======================================================================
+
+--- P1 變體 A：底部置中 · 描邊（border_style=1）· 非預設顏色與粗細 ---
+
+--- MUT1 真突變：applyCaptionStyle 只留字級（產品碼一行）---
+
+--- P2 變體 B：頂部置中（alignment=6）· 不透明底色塊（border_style=3） ---
+
+--- MUT2 真突變：落點改回寫死 bucket（產品碼一行）---
+
+--- P3 變體 C：畫面正中央（alignment=10）· margin_v 正值往下偏移 ---
+PASS	P1.0 podcast 編輯器已載入且 overlay 已套上 inline 樣式
+PASS	P1.1 版本指紋：app.js 是 W2 後的版本（三個新符號都在）
+PASS	P1.2 seek 前提：#video readyState>=1 且 seekable.length>0
+PASS	P1.3 seek 到第一句後 overlay 長出 .caption-line（有字可量）
+PASS	P1.4 字級＝font_size×(預覽高/輸出高)：72×(525/1080)≈35.0px
+PASS	P1.5 文字顏色吃到 primary_colour（&H0000FFFF → 黃）
+PASS	P1.6 字幕行本身的顏色同樣是 primary_colour（app.css 的 speaker 白色沒壓過去）
+PASS	P1.7 描邊顏色吃到 outline_colour，且是 12 向描邊（shadow=0 → 無額外投影）
+PASS	P1.8 bold=0 → fontWeight 400（預設 1，證明真的讀 yaml）
+PASS	P1.9 border_style=1 → 行無底色塊（背景透明）
+PASS	P1.10 底距＝margin_v/輸出高＝200/1080≈18.52%（以前寫死 8%）
+PASS	P1.11 底部對齊時不設 top／transform（落點只由 bottom 決定）
+PASS	P1.12a 點「出片設定」摘要列 → 面板展開（字級控制才摸得到）
+PASS	P1.12b 字級「＋」按鈕未被疊層遮擋（elementFromPoint 最上層是它）
+PASS	P1.13 點「＋」→ 數值標籤 +2（74），且預覽字級同步放大（非死碼）
+PASS	P1.14 整段互動無 console 例外
+PASS	MUT1 真突變成立：改回「只設字級」→ 顏色錯成白（RED），還原→恢復黃（GREEN）
+PASS	P2.0 變體 B 載入完成
+PASS	P2.1 alignment=6 → 字幕置頂，top＝margin_v/輸出高≈5.56%
+PASS	P2.2 置頂時不設 bottom／transform
+PASS	P2.3 border_style=3 → 行帶不透明底色塊（底色＝outline_colour 藍）
+PASS	P2.4 底色塊模式取消描邊（textShadow: none）
+PASS	P2.5 底色塊貼著字：行有內距（非 0），而不是鋪滿整條 overlay
+PASS	P2.6 bold=1 → fontWeight 700
+PASS	MUT2 真突變成立：落點改回寫死 → 置頂失效落回底部（RED），還原→恢復置頂（GREEN）
+PASS	P3.0 變體 C 載入完成
+PASS	P3.1 alignment=10 → 正中央＋margin_v 下移，top≈60.00%
+PASS	P3.2 正中央用 translateY(-50%) 把字幕本身置中（非只設 top）
+PASS	P3.3 顏色吃到 primary_colour（&H0000FF00 → 綠）
+PASS	P3.4 shadow=1 → 描邊之外另有右下投影（rgba(0, 0, 0, 0.9)）

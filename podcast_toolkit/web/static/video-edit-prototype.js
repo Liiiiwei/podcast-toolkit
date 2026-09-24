@@ -18,8 +18,8 @@ import {
   renderCardTrackCore,
   bindCardTimeDragCore,
   hexToAss,
-  fontStack,
-  buildOutlineShadow,
+  buildSubtitleCss,
+  subtitlePositionCss,
 } from "./timeline-core.js";
 
 (() => {
@@ -1497,20 +1497,10 @@ import {
   }
 
   // ── 字幕樣式：即時預覽 ──────────────────────────────────────────
-  // hexToAss/fontStack/buildOutlineShadow 已收斂進 timeline-core.js（純字串運算，見該檔
-  // 「字幕樣式」段）；positionPreview 會直接寫 DOM 元素 style，非純函式，留在本檔。
+  // 換算（ASS → CSS）全部在 timeline-core.js 的「字幕樣式」段，podcast 模式吃同一份；
+  // 本檔只負責把算出來的 CSS 指派到 DOM 上。
   function positionPreview(wrap, alignment, marginPx) {
-    wrap.style.top = "auto";
-    wrap.style.bottom = "auto";
-    wrap.style.transform = "none";
-    if (alignment === 6) {
-      wrap.style.top = `${marginPx}px`; // 頂部置中
-    } else if (alignment === 10) {
-      wrap.style.top = "50%"; // 畫面正中（marginV 正值向下偏移）
-      wrap.style.transform = `translateY(calc(-50% + ${marginPx}px))`;
-    } else {
-      wrap.style.bottom = `${marginPx}px`; // 底部置中（預設）
-    }
+    Object.assign(wrap.style, subtitlePositionCss(alignment, marginPx));
   }
 
   // 把面板控制項的顯示值同步成 state（供程式化改值後刷新 UI）
@@ -1596,28 +1586,7 @@ import {
     // ASS 字級是相對 1080p；預覽依實際影片高度等比縮放
     const vh = v && v.clientHeight ? v.clientHeight : 360;
     const scale = vh / 1080;
-    const px = Math.max(9, st.font_size * scale);
-    el.style.fontFamily = fontStack(st.font_name);
-    el.style.fontSize = `${px.toFixed(1)}px`;
-    el.style.fontWeight = st.bold ? "700" : "400";
-    el.style.color = st.primary_colour_hex;
-    const outlinePx = st.outline * scale * 1.2; // 略放大讓小預覽看得見描邊
-    if (st.border_style === 3) {
-      // 不透明底色塊：底色用描邊色，取消描邊
-      el.style.background = st.outline_colour_hex;
-      el.style.padding = `${(px * 0.1).toFixed(1)}px ${(px * 0.32).toFixed(1)}px`;
-      el.style.borderRadius = "2px";
-      el.style.textShadow = "none";
-    } else {
-      el.style.background = "transparent";
-      el.style.padding = "0";
-      el.style.borderRadius = "0";
-      el.style.textShadow = buildOutlineShadow(
-        st.outline_colour_hex,
-        outlinePx,
-        st.shadow * scale * 1.2,
-      );
-    }
+    Object.assign(el.style, buildSubtitleCss(st, scale));
     positionPreview(wrap, st.alignment, st.margin_v * scale);
     updateSubPreview();
   }

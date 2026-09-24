@@ -408,11 +408,11 @@
       "name": "V5.9 拖字級滑桿後預覽字級 px 值有變化（非死碼）",
       "ok": true,
       "got": "108.2px",
-      "want": "!= 33.8px",
+      "want": "!= 44.2px",
       "status": "pass"
     },
     {
-      "name": "MUT2 真突變成立：改回舊行為→fontWeight 錯誤卡在 700（RED），還原→恢復 400（GREEN）",
+      "name": "MUT2 真突變成立（突變點在共用核心 timeline-core.js）：改回舊行為→fontWeight 錯誤卡在 700（RED），還原→恢復 400（GREEN）",
       "ok": true,
       "got": {
         "red": "700",

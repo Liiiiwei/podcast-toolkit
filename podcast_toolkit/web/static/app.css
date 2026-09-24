@@ -557,11 +557,18 @@ h2 {
 .video-wrap #video-camb.active {
   visibility: visible;
 }
+/* 字型/字級/顏色/描邊由 JS 依 episode.yaml 的 subtitle_style 算出來套成 inline style
+   （app.js applyCaptionStyle → timeline-core.js buildSubtitleCss，與影片模式同一份）。
+   這裡的值只是「樣式還沒載進來」時的保底外觀，載到就會被 inline 蓋掉。
+   flex 直欄置中：讓每一行縮到字寬，border_style=3 的底色塊才會貼著字而不是鋪滿整條。 */
 #caption-overlay {
   position: absolute;
   left: 6%;
   right: 6%;
   bottom: 8%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   text-align: center;
   color: #fff;
   font-size: clamp(14px, 2.2vw, 22px);
@@ -581,9 +588,9 @@ h2 {
   display: block;
   margin: 2px 0;
 }
-/* 字幕文字一律白色（與燒進成品的 ASS Default 白色一致）。
-   speaker class 仍保留供版面/排序用，只是不再依講者染色；
-   講者區分改看 speaker-ruler 與 card 左邊框，不佔用字幕本身。 */
+/* 字幕文字不依講者染色（與燒進成品的 ASS Default 一致）。
+   speaker class 仍保留供版面/排序用；講者區分改看 speaker-ruler 與 card 左邊框。
+   實際顏色同樣由 applyCaptionStyle 套成 inline（primary_colour），這裡是保底。 */
 #caption-overlay .caption-line.speaker-a,
 #caption-overlay .caption-line.speaker-b,
 #caption-overlay .caption-line.speaker-c {

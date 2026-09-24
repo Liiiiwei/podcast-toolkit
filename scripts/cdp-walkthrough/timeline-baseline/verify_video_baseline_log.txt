@@ -14,4 +14,4 @@
 
 --- V5 字幕樣式面板 ---
 
---- MUT2 真突變：applyStyle 的 bold→fontWeight 綁定 ---
+--- MUT2 真突變：buildSubtitleCss 的 bold→fontWeight 綁定（共用核心）---

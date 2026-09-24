@@ -456,11 +456,12 @@ export function bindPlayheadScrubCore(
   });
 }
 
-// === 字幕樣式：純字串運算（收斂前第一梯）===
-// 改寫自 video-edit-prototype.js:1498-1532 hexToAss/fontStack/buildOutlineShadow。
-// 目前只有影片模式在用（podcast 側 app.js/timeline.js 無同名/同形函式），
-// 先搬進共用核心證明收斂路徑可行；純字串/數值運算，不碰 DOM、不吃外部可變狀態。
-// positionPreview（同段原函式）會直接寫 DOM 元素 style，本梯刻意不收，見任務回報。
+// === 字幕樣式：ASS → CSS 的單一換算來源（W2）===
+// 原本有兩套在管「字幕樣式長怎樣」：影片原型 applyStyle() 做完整換算（顏色/描邊/
+// 粗體/底色塊），podcast 側只算字級、其餘寫死在 app.css → 預覽 ≠ 成品。
+// 本段把換算收成一份純函式（不碰 DOM、不吃外部可變狀態），兩邊都改吃它。
+// 兩邊的 style 物件欄位不同：影片面板存 hex（color picker 的值），
+// episode.yaml 存 ASS &H00BBGGRR — 故 buildSubtitleCss 兩種都收。
 
 /** hex #RRGGBB → ASS &H00BBGGRR（讓面板數值看起來跟後端同格式）。 */
 export function hexToAss(hex) {
@@ -497,4 +498,89 @@ export function buildOutlineShadow(color, outlinePx, shadowPx) {
     );
   }
   return parts.length ? parts.join(", ") : "none";
+}
+
+/** ASS &H00BBGGRR（或 &HBBGGRR）→ hex #RRGGBB；解析不出來就回 fallback。 */
+export function assToHex(ass, fallback = "#ffffff") {
+  const m = String(ass || "").match(/^&H([0-9a-fA-F]{2})?([0-9a-fA-F]{6})$/);
+  if (!m) return fallback;
+  const bgr = m[2];
+  const b = bgr.slice(0, 2);
+  const g = bgr.slice(2, 4);
+  const r = bgr.slice(4, 6);
+  return `#${r}${g}${b}`.toLowerCase();
+}
+
+/** style 物件取色：影片面板存 *_hex，episode.yaml 存 ASS 字串，兩種都接。 */
+function styleColour(style, hexKey, assKey, fallback) {
+  const hex = style && style[hexKey];
+  if (typeof hex === "string" && hex) return hex;
+  return assToHex(style && style[assKey], fallback);
+}
+
+/**
+ * ASS 字幕樣式 → 預覽用 CSS 屬性表（純運算）。
+ * scale = 預覽高 / 輸出高，讓預覽的字跟畫面比例等同最終燒錄結果。
+ * 回傳的 key 就是 element.style 的 key，呼叫端逐一指派即可。
+ */
+export function buildSubtitleCss(style, scale) {
+  const st = style || {};
+  const px = Math.max(9, (Number(st.font_size) || 0) * scale);
+  const primary = styleColour(st, "primary_colour_hex", "primary_colour", "#ffffff");
+  const outlineCol = styleColour(st, "outline_colour_hex", "outline_colour", "#000000");
+  const css = {
+    fontFamily: fontStack(st.font_name),
+    fontSize: `${px.toFixed(1)}px`,
+    fontWeight: Number(st.bold) ? "700" : "400",
+    color: primary,
+  };
+  if (Number(st.border_style) === 3) {
+    // 不透明底色塊：底色用描邊色，取消描邊
+    css.background = outlineCol;
+    css.padding = `${(px * 0.1).toFixed(1)}px ${(px * 0.32).toFixed(1)}px`;
+    css.borderRadius = "2px";
+    css.textShadow = "none";
+  } else {
+    css.background = "transparent";
+    css.padding = "0";
+    css.borderRadius = "0";
+    // 略放大讓小預覽看得見描邊（與影片原型既有係數一致）
+    css.textShadow = buildOutlineShadow(
+      outlineCol,
+      (Number(st.outline) || 0) * scale * 1.2,
+      (Number(st.shadow) || 0) * scale * 1.2,
+    );
+  }
+  return css;
+}
+
+/**
+ * SSA v3 alignment → 垂直落點分類。
+ * 6=頂部置中、10=畫面正中央，其餘（含預設 2 與沒填）都是底部置中。
+ * ⚠️ v3 不是 numpad：5 在 v3 是左上角，不要當成「正中央」。
+ */
+export function subtitleAlignmentBucket(alignment) {
+  const a = Number(alignment);
+  if (a === 6) return "top";
+  if (a === 10) return "middle";
+  return "bottom";
+}
+
+/**
+ * px 座標系的字幕定位（影片原型用：預覽容器相對 video 元素絕對定位）。
+ * marginPx 為已乘過 scale 的邊距；alignment=10 時正值代表從中心往下偏移。
+ */
+export function subtitlePositionCss(alignment, marginPx) {
+  const bucket = subtitleAlignmentBucket(alignment);
+  if (bucket === "top") {
+    return { top: `${marginPx}px`, bottom: "auto", transform: "none" };
+  }
+  if (bucket === "middle") {
+    return {
+      top: "50%",
+      bottom: "auto",
+      transform: `translateY(calc(-50% + ${marginPx}px))`,
+    };
+  }
+  return { top: "auto", bottom: `${marginPx}px`, transform: "none" };
 }

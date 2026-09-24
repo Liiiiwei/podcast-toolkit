@@ -80,9 +80,10 @@
 ## #4 影片模式 baseline：applyStyle 的 bold→fontWeight 綁定
 
 - 受測斷言：`verify_video_baseline.py` 的 V5.5（點擊粗體「關」→ 預覽 `fontWeight==400`）。
-- 突變點（產品碼）：`video-edit-prototype.js` 的 `applyStyle()` 內
-  `el.style.fontWeight = st.bold ? "700" : "400";` → 暫時改成固定 `"700"`（還原舊 bug＝
-  fontWeight 不跟隨 `state.style.bold`）。
+- 突變點（產品碼）：**W2 後已搬到共用核心** `timeline-core.js` 的 `buildSubtitleCss()` 內
+  `fontWeight: Number(st.bold) ? "700" : "400",` → 暫時改成固定 `"700"`（還原舊 bug＝
+  fontWeight 不跟隨 `state.style.bold`）。突變點跟著受測邏輯一起搬，才能證明影片模式
+  現在真的是吃共用核心那份換算，而不是自己留了一份。
 - 突變後 RED 輸出（節錄）：
   ```
   [FAIL] MUT2-RED bold=0 應反映 fontWeight==400（突變後預期會錯，仍卡在 700）  got='700' want='400'
@@ -91,3 +92,42 @@
 
 以上兩個真突變的完整 RED/GREEN 週期已內建於 `verify_video_baseline.py` 本身（每次執行都會
 自動改檔→重載→驗紅→還原→重載→驗綠，try/finally 保證還原），不需要手動操作即可重現。
+
+---
+
+## #5 podcast 字幕預覽真的吃 episode.yaml 的 subtitle_style（W2 併軌）
+
+W2 前 podcast 預覽只算字級，顏色／描邊／粗體／底色塊／垂直落點全寫死在 `app.css` 與
+`renderCropInfo()`（「Reels 置中、YT 置底 8%」）—— 改了 `subtitle_style` 預覽不會動，
+預覽 ≠ 成品。W2 把換算收斂成共用核心的 `buildSubtitleCss()` 一份，podcast 也吃它。
+
+- 受測斷言：`verify_podcast_caption_style.py` 的 P1.5 / P1.6（文字與行級顏色＝`primary_colour`）。
+- 突變點（產品碼）：`app.js` 的 `applyCaptionStyle()` 內
+  `_captionCss = scale == null || !style ? null : buildSubtitleCss(style, scale);`
+  → 暫時只保留 `fontSize` 一個鍵（還原舊行為＝只算字級，其餘交給 app.css 寫死）。
+- 突變後 RED 輸出：
+  ```
+  [FAIL] MUT1-RED 文字顏色應為 primary_colour（突變後預期退回 app.css 白）
+         got='rgb(255, 255, 255)' want='rgb(255, 255, 0)'
+  ```
+  還原後 → `rgb(255, 255, 0)`（yaml 設的黃）恢復，綠燈。RED 值正好是 `app.css` 的保底白，
+  等於量到「舊行為長什麼樣」。
+
+## #6 podcast 字幕垂直落點由 alignment/margin_v 決定（不再寫死）
+
+- 受測斷言：`verify_podcast_caption_style.py` 的 P2.1 / P2.2（`alignment=6` → `top≈5.56%`、
+  `bottom` 空）。
+- 突變點（產品碼）：`app.js` 的 `renderCropInfo()` 內
+  `const capBucket = subtitleAlignmentBucket(capStyle?.alignment);`
+  → 暫時改回寫死 `state.activeVersion === "reels" ? "middle" : "bottom"`（還原舊 bug）。
+- 突變後 RED 輸出：
+  ```
+  [FAIL] MUT2-RED alignment=6 應置頂（top 有值、bottom 空）
+         got={'top': False, 'bottom': '5.56%'} want={'top': True, 'bottom': ''}
+  ```
+  還原後 → `top='5.56%'`、`bottom=''`，綠燈。
+
+#5/#6 的 RED/GREEN 週期同樣內建於 `verify_podcast_caption_style.py`（改檔→重載→驗紅→
+還原→重載→驗綠，try/finally 保證還原）。該走查另外自管 `serve_podcast.py` 子行程：
+樣式變體要改 `episode.yaml`，而 `Episode.cfg` 只在建構時讀一次，所以每個變體重啟一次伺服器，
+跑完把沙盒 `episode.yaml` 還原成原樣。
