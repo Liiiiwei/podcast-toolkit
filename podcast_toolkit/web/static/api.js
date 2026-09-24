@@ -159,6 +159,9 @@ export function buildSavePayload({ withSpeed = false } = {}) {
         }
         return out;
       }),
+    // 版面模式（B4）：控標題卡軌顯隱。後端存檔鍵 layout_mode（"podcast"|"video"，
+    //   壞值回退 podcast）。比照 title_cards 隨主存檔往返，round-trip 由 load_state 讀回。
+    layout_mode: state.layoutMode === "video" ? "video" : "podcast",
   };
   // 倍速只在「合成設定 modal」→「開始合成」時送（withSpeed=true）；改字卡的主存檔不送。
   // 否則 state.speed.enabled 一旦 stale 成 false，改個字卡存檔就無聲無息把 episode.yaml 的

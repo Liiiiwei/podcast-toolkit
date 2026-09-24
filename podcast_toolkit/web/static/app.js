@@ -2562,6 +2562,10 @@ async function loadEpisodeState() {
   // 版面模式（B4）：後端 layout_mode 決定標題卡軌在 podcast 正常 UI 顯不顯。
   //   實際的 setCardTrackVisible 呼叫在下方渲染完時間軸後，才有 track DOM 可切。
   state.layoutMode = data.layout_mode === "video" ? "video" : "podcast";
+  // 開關初始態同步 state.layoutMode：syncOutputControls 在上方（layoutMode 設定前）已跑過，
+  //   這裡是 layoutMode 唯一的載入賦值點，故在此把 checkbox 勾選態對齊，換集才不會殘留舊集值。
+  const _ctrkEl = document.querySelector("#cardtrack-toggle");
+  if (_ctrkEl) _ctrkEl.checked = state.layoutMode === "video";
   // 雙鏡頭 mapping：API 回傳 key 是字串（JSON 不支援 int key），這裡轉回 Number
   state.cameras = data.cameras || {};
   state.camerasMapping = new Map(
@@ -7752,6 +7756,18 @@ function syncOverlayControls() {
 }
 
 function setupOutputControls() {
+  // 標題卡軌顯隱開關（B4）：勾選→layout_mode=video 顯示標題卡軌，取消→podcast 隱藏。
+  //   透過唯一控制點 setCardTrackVisible 切軌，狀態進 outputDirty 未存計數、隨主存檔透傳。
+  //   不另造顯示機制（CLAUDE.md 硬禁），也不動後端。
+  const ctrk = document.querySelector("#cardtrack-toggle");
+  if (ctrk)
+    ctrk.addEventListener("change", () => {
+      state.layoutMode = ctrk.checked ? "video" : "podcast";
+      setCardTrackVisible(ctrk.checked);
+      state.outputDirty = true; // 進「未儲存」計數，按「完成並儲存」才落地
+      renderTopbar();
+    });
+
   // 節目封面開關（已移入合成設定 modal 的「輸出選項」）
   const cover = document.querySelector("#cover-toggle");
   if (cover)
