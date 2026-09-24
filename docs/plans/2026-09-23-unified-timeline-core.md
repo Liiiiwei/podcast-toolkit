@@ -101,3 +101,91 @@ podcast 時間軸從單軌 `#card-timeline` 改成多軌堆疊容器（沿用影
 - Wave 1（可並發）：BE（純 Python：episode_io/config/templates/defaults/routes/episodes/test_config_roundtrip）‖ FE-1（純 timeline-core.js/timeline.js，不碰 app.js）
 - Wave 2：FE-2（app.js＋timeline.js：B2 送存、B4 顯示切換、B3c marquee），依賴 BE 契約＋FE-1 基座
 - Wave 3：fresh-context CDP 走查驗收（兩模式），改動者不驗收；每支走查配突變測試
+
+## B1 專梯：剪除語意單一 source of truth（2026-09-24 開工）
+
+### 勘查結論：「刪段這件事現在有幾個地方在管？」
+
+| # | 位置 | 管什麼 | 狀態 |
+|---|---|---|---|
+| 1 | `episode.yaml: deletions`（卡 idx list） | podcast 編輯器的持久化格式 | **並存中** |
+| 2 | `episode.yaml: cuts`（`[[start,end]]` 秒） | 影片模式／`/api/apply-plan` 的持久化格式 | **並存中** |
+| 3 | `assemble.cut_intervals_from_cfg`(assemble.py:171) | 唯一聚合入口（cuts 優先、deletions 自動換算、並存印警告） | 已單一 ✅ |
+| 4 | `assemble._pad_and_merge_cuts`(assemble.py:107) | 後端合併：連刪跨停頓併、夾保留卡語音邊界、每側 cut_pad | 唯一 ✅ |
+| 5 | `app.js mergeDeletionIntervals`(app.js:3181) | 前端預覽跳段的**另一套**合併：連刪跨停頓併、夾下一張保留卡起點、**無 pad** | 與 #4 平行 |
+| 6 | `video-edit-prototype.js state.cuts` + 自家 merge(:208) | 影片原型的剪除 state | 獨立 |
+| 7 | `episode_io.save_state`(:453-474) | 兩條寫入路徑並列（deletions 翻譯 composite id／cuts 正規化） | **並存中** |
+| 8 | `episode_io.load_state`(:261-264) | 兩個鍵都回前端 | **並存中** |
+| 9 | `config.merge`(:230-232) | 兩鍵都透傳 | **並存中** |
+| 10 | `plan_io.apply_plan`(:197-200) | 只寫 cuts，不碰既有 deletions | **會製造並存** |
+
+**真正的病灶**：不是後端（#3 已單一），是**儲存層兩個鍵並存 + podcast 前端完全忽略收到的 `cuts`**
+（`app.js` 對 `data.cuts` 零引用，只讀 `data.deletions`）。後果：影片模式存過 cuts 的集，
+在 podcast 編輯器裡**看不到那些刪段、也移不掉**，但出片時它們生效且把整份 `deletions` 踢掉
+（只有 stderr 一行警告，使用者在 UI 看不到）。這正是「兩套機制互打」的典型。
+
+### 決策（對齊 cameras 的既有前例）
+
+鏡頭切換點已經做過同一件事：**時間版為真相（`_v2_cameras.json`）、前端維持「卡 key」介面**
+（`episode_io.py:286` 的 `transitions_to_card_mapping`）。刪段照抄這個形狀：
+
+- **持久化只留 `cuts`（時間版、`_v2.srt` 磁碟軸）**；`deletions` 降級成唯讀舊格式，
+  任何一次存檔就完成遷移（cuts 有值時後端強制移除 `deletions`，不留並存可能）。
+- podcast 前端**維持 `state.deletions`（Set<卡 key>）當操作介面**不改 UI 語意，
+  只在載入／存檔的邊界做時間↔卡 key 換算（純函式放進 `timeline-core.js`，可單測）。
+- 換算不回卡的 cut（影片模式的任意區間、跨非連續卡）→ 進 `state.foreignCuts`
+  **原樣 round-trip 保存**（絕不因為卡層 UI 表達不了就擴寬或吞掉），並在 UI **可見**標示。
+
+### 等價性保證（為什麼輸出不會變）
+
+`cut_intervals_from_cfg` 走舊路時做的就是 `_from_idx(deletions)` =
+「每張被刪卡的 `(start, end)`」；前端換算寫出的 `cuts` 逐筆等於同一組區間 →
+後端拿到的 `intervals` 逐位元相同，之後的 `_pad_and_merge_cuts` 完全一致。
+卡 key→cuts **逐卡一段、刻意不預先合併**，連 `cut_pad=0`（後端該分支不合併）都逐位元相同；
+要不要把連刪跨停頓併起來，仍由後端 `_pad_and_merge_cuts` 單一決定。
+反方向（cuts→卡 key）則要求 cut 的外緣對齊、且涵蓋的卡彼此連續，否則判 foreign
+——跨真停頓的整段 cut 若換成卡 key 會讓停頓復活，不等價。
+
+### 執行項
+
+| 項 | 內容 | 驗收條件 |
+|---|---|---|
+| B1-1 | `timeline-core.js` 加純函式 `cardKeysToCuts` / `cutsToCardSelection` | jsc 實跑單測（含 foreign 保真、flush 合併） |
+| B1-2 | `app.js` 載入吃 `data.cuts`（cuts 優先、與後端同序）、存檔送 `cuts` + `deletions: []` | CDP：刪卡→存檔→yaml 只有 cuts；重載紅卡一致 |
+| B1-3 | `episode_io.save_state`：cuts 非空 → 強制移除 `deletions` 並印可見訊息 | pytest round-trip |
+| B1-4 | `plan_io.apply_plan`：寫 cuts 時一併移除 `deletions` | pytest |
+| B1-5 | foreign cuts 在 podcast UI 可見（統計列 + 載入提示），不靜默 | CDP 斷言文字 |
+| B1-6 | JS↔Python 差分測試：同一組卡/刪段，前端換算出的 cuts 餵 `cut_intervals_from_cfg` 與舊 deletions 路徑結果相同 | pytest（jsc 實跑） |
+
+**不在本梯**：`app.js mergeDeletionIntervals`（#5）與後端 `_pad_and_merge_cuts`（#4）的合併規則併軌
+（預覽跳段目前不吃 `cut_pad`，差 0.15s/側）。它需要把 pad 演算法搬進 JS 並把 `cut_pad` 下放前端，
+與本梯的儲存層併軌正交；列為附錄留給下一梯。
+
+### 完成狀態（2026-09-24 收工）
+
+| 項 | 狀態 | 證據 |
+|---|---|---|
+| B1-1 | ✅ | `tests/test_cuts_frontend_mapping.py` 7 測（jsc 實跑真的 `timeline-core.js`，含 foreign 保真、跨停頓不併卡、round-trip） |
+| B1-2 | ✅ | `verify_b1_cuts.py` 測項 2c／3b／3c／4b（真點刪除鈕＋`elementFromPoint` 疊層驗證→存檔→yaml 只剩 cuts→重載紅卡一致） |
+| B1-3 | ✅ | `tests/test_episode_io.py` 新增 cuts 非空強制移除 `deletions` 的 round-trip 與可見訊息斷言 |
+| B1-4 | ✅ | `tests/test_plan_io.py` 新增 `apply_plan` 寫 cuts 時一併移除 `deletions` |
+| B1-5 | ✅ | `verify_b1_cuts.py` 測項 5b（統計列出現「影片模式剪段 1 段（0.4s，本頁不可編輯）」）、5c（不被擴寬）、6d（原樣 round-trip 回 yaml） |
+| B1-6 | ✅ | `tests/test_cuts_frontend_mapping.py::test_frontend_cuts_equal_legacy_deletions_path`（`cut_pad` 參數化：前端換算出的 cuts 餵 `cut_intervals_from_cfg` 與舊 deletions 路徑逐位元相同） |
+
+驗收數字：`verify_b1_cuts.py` **22/22 通過**；六個突變（`run_b1_mutations.py`）**全部如預期變紅**、
+還原後回歸 22/22（明細見 `scripts/cdp-walkthrough/timeline-baseline/MUTATIONS.md` #7～#12）；
+`pytest -q` **1020 passed, 1 xfailed**。
+
+過程中修掉一個原本會靜默出錯的產品碼缺陷：`api.js: _cutOffset()` 缺了 `applyState` 那邊有的
+`state.audioPath` 守衛 —— 集有 `audio_sync_offset` 但沒掛外接音檔時，兩邊位移不對稱，
+載入時整批 cuts 會偏掉 sync_offset 秒、全部掉進 foreign（畫面上刪段憑空消失、卻照剪）。已補上守衛。
+
+**不在本梯（附錄，留給下一梯）**：
+
+1. `app.js mergeDeletionIntervals`（勘查表 #5）與後端 `_pad_and_merge_cuts`（#4）的合併規則併軌
+   —— 預覽跳段不吃 `cut_pad`，差 0.15s/側。
+2. `new:` 開頭的新增卡不進 cuts：新卡在磁碟 `_v2.srt` 上還沒有對應時間段，存檔時先寫 srt 再算 cuts
+   才有意義；目前新卡被刪不會寫成剪段（影響面極小，但是已知落差）。
+3. `api.js: toDiskTime(t)`（:42）仍是「無 `audioPath` 守衛、取 2 位小數」的既有版本。
+   本梯只讓 cuts 走新的 `cutToDiskTime`（3 位小數，對齊 SRT 毫秒精度），沒動它的呼叫者 ——
+   改它會牽動字幕時間寫回，屬另一件事。

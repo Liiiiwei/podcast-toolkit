@@ -9,7 +9,10 @@
 // 循環 import（同 timeline.js）：本檔匯入 app.js 的 state，app.js 也匯入本檔。
 // 安全條件是**匯入的符號只在函式執行時用，不在模組頂層求值時用** —— 否則 app.js
 // 還沒評估完就會踩到 TDZ。本檔只匯入 state，且只在函式體內讀，符合條件。
-import { state } from "./app.js";
+import { expandedCards, state } from "./app.js";
+
+// 卡 key ↔ 時間區間的單一換算來源（與影片模式共用，見 timeline-core.js）
+import { cardKeysToCuts } from "./timeline-core.js";
 
 // 取集狀態。只負責傳輸與狀態碼分類，回傳原始 JSON（snake_case 欄位）。
 // cache:"no-store"：保險再加一層，避免瀏覽器吃舊 cache → 存檔後重載拿到存檔前資料
@@ -42,6 +45,29 @@ function toDiskTime(t) {
     start: Math.round((t.start + off) * 100) / 100,
     end: Math.round((t.end + off) * 100) / 100,
   };
+}
+
+// 刪段（cuts）專用的軸換算。與 toDiskTime 同一個 off 算式，但取小數 3 位不是 2 位：
+// _v2.srt 的時間本來就是毫秒精度，取 3 位才能跟後端 _from_idx(deletions) 算出的
+// 區間逐位元對齊（取 2 位會差幾毫秒 → 「改存檔格式不改出片」這個保證就破了）。
+// off 必須是 applyState 那個 totalShift 的精確反向（display = disk + totalShift），
+// 所以照抄它的 audioPath 守衛：沒有外接音檔時 sync_offset 不參與位移，
+// 這裡也不能減回去，否則整批 cuts 會偏掉 sync_offset 秒、載入時全部對不回卡。
+function _cutOffset() {
+  const audioShift =
+    state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
+  return -(audioShift + (state.subtitleOffsetSec || 0));
+}
+const _ms = (v) => Math.round(v * 1000) / 1000;
+
+export function cutToDiskTime([s, e]) {
+  const off = _cutOffset();
+  return [_ms(s + off), _ms(e + off)];
+}
+
+export function cutFromDiskTime([s, e]) {
+  const off = _cutOffset();
+  return [_ms(s - off), _ms(e - off)];
 }
 
 // 所有 /api/save 共用的序列化通道：主儲存鈕、cam modal 儲存、一鍵對齊 auto-save
@@ -103,8 +129,26 @@ export function buildSavePayload({ withSpeed = false } = {}) {
       enabled: state.silenceTrim.enabled,
       min_silence: state.silenceTrim.minSilence,
     },
-    // deletions / cameras_mapping key 可能是 int（未切卡）或 "<idx>:<part>"（子卡）→ 不能用 int sort
-    deletions: [...state.deletions],
+    // ── 刪段（B1 單一 source of truth）──
+    // 磁碟上只留時間版 cuts：後端 cut_intervals_from_cfg 本來就 cuts 優先，
+    // 兩種格式並存時 deletions 會整份靜默失效（影片模式存過的集就是這樣）。
+    // 這裡把 UI 的卡 key 選取換成「每張被刪卡一段」的區間——刻意不預先合併，
+    // 才跟後端舊路徑 _from_idx(deletions) 的輸出逐位元相同（cut_pad=0 時不合併）。
+    // deletions 一律送空：告訴後端「這次存檔帶了刪段，結果沒有 idx 版」→ 完成遷移。
+    // 排除 new: 開頭的鍵（剛加的新字卡）——舊路徑 _translate 本來就解不掉它、等於沒刪，
+    // 改走 cuts 會突然真的剪掉那段聲音；行為差異不在本梯範圍，維持原樣。
+    // state.foreignCuts 是載入時換不回卡 key 的段（影片模式在句中／跨停頓剪的）：
+    // 本編輯器不動它，但一定要原樣送回去，否則存一次檔就把別人剪的段吃掉。
+    cuts: [
+      ...cardKeysToCuts(
+        [...state.deletions].filter((k) => !String(k).startsWith("new:")),
+        expandedCards(),
+      ),
+      ...(state.foreignCuts || []),
+    ]
+      .map(cutToDiskTime)
+      .sort((a, b) => a[0] - b[0]),
+    deletions: [],
     head_trim_sec: state.headTrimSec,
     tail_trim_sec: state.tailTrimSec,
     cards: [...state.textOverrides.entries()].map(([idx, text]) => ({

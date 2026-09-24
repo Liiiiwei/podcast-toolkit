@@ -584,3 +584,84 @@ export function subtitlePositionCss(alignment, marginPx) {
   }
   return { top: "auto", bottom: `${marginPx}px`, transform: "none" };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 剪除語意的邊界換算（B1 專梯）
+//
+// 持久化只留一份真相：episode.yaml 的 `cuts`（時間版區間，_v2.srt 磁碟軸）。
+// podcast 編輯器內部仍用 `state.deletions`（Set<卡 key>）當操作介面，只在
+// 「載入／存檔」這兩個邊界用下面兩個純函式換算——形狀對齊鏡頭切換點的既有前例
+// （時間版為真相、前端維持卡 key 介面，見 episode_io.transitions_to_card_mapping）。
+//
+// 呼叫端負責時間軸對齊：傳進來的 rows 與 cuts 必須在**同一條軸**上
+// （app.js 內部是 cam A 軸、磁碟是外接音檔軸，差一個 audioSyncOffset）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 兩個時間是否在容差內相等。 */
+function _near(a, b, tol) {
+  return Math.abs(a - b) <= tol;
+}
+
+/**
+ * 卡 key 集合 → 時間版 cuts（逐卡一段、依 start 排序）。
+ *
+ * **刻意不預先合併**（連續卡也不併）：舊 deletions 路徑在後端就是
+ * `_from_idx()` 逐卡吐區間，這裡逐位元照做，`cut_intervals_from_cfg` 拿到的
+ * `intervals` 才會與舊路完全相同——包含 `cut_pad=0`（後端不合併）那條分支。
+ * 要不要把連刪跨停頓併成整段，仍由後端 `_pad_and_merge_cuts` 單一決定。
+ *
+ * @param {Set|Array} keys 被刪的卡 key（int 或 "idx:part"）
+ * @param {Array<{key:*, start:number, end:number}>} rows 展開後的卡（expandedCards()）
+ * @returns {Array<[number, number]>}
+ */
+export function cardKeysToCuts(keys, rows) {
+  const set = keys instanceof Set ? keys : new Set(keys || []);
+  return (rows || [])
+    .filter((r) => set.has(r.key))
+    .map((r) => [Number(r.start), Number(r.end)])
+    .sort((a, b) => a[0] - b[0]);
+}
+
+/**
+ * 時間版 cuts → { keys, foreign }。
+ *
+ * 一段 cut 只有在「恰好等於一串連續卡的外緣」時才換算成卡 key；否則原樣留在 foreign
+ * （影片模式切出來的任意區間、或跨了非連續卡的段落）。foreign 由呼叫端原樣送回存檔，
+ * **絕不擴寬成整張卡、也絕不丟掉**——卡層 UI 表達不了不代表可以竄改資料。
+ *
+ * @returns {{keys: Array, foreign: Array<[number, number]>}}
+ */
+export function cutsToCardSelection(cuts, rows, tol = 0.02) {
+  const all = (rows || [])
+    .map((r) => ({ key: r.key, start: Number(r.start), end: Number(r.end) }))
+    .sort((a, b) => a.start - b.start);
+  const keys = [];
+  const foreign = [];
+  for (const c of cuts || []) {
+    const s = Number(Array.isArray(c) ? c[0] : c.start);
+    const e = Number(Array.isArray(c) ? c[1] : c.end);
+    if (!(e > s)) continue; // 零長度／反置：丟掉（後端存檔端也會丟）
+    const covered = all.filter((r) => r.start >= s - tol && r.end <= e + tol);
+    let aligned = covered.length > 0;
+    if (aligned) {
+      // 外緣要對齊，中間不能有真停頓（否則換算回來會把停頓還原、與原 cut 不等價）
+      if (!_near(covered[0].start, s, tol) || !_near(covered[covered.length - 1].end, e, tol)) {
+        aligned = false;
+      } else {
+        for (let i = 1; i < covered.length; i++) {
+          if (covered[i].start > covered[i - 1].end + tol) {
+            aligned = false;
+            break;
+          }
+        }
+      }
+    }
+    if (aligned) {
+      for (const r of covered) keys.push(r.key);
+    } else {
+      foreign.push([s, e]);
+    }
+  }
+  foreign.sort((a, b) => a[0] - b[0]);
+  return { keys, foreign };
+}

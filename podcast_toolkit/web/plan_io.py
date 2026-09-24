@@ -16,6 +16,7 @@ YT（橫）與 Reels（直）都放得到相對位置一樣的地方。
 from __future__ import annotations
 
 import json
+import sys
 from typing import Any
 
 import yaml
@@ -196,6 +197,15 @@ def apply_plan(ep: Episode, plan: dict[str, Any]) -> dict[str, Any]:
     data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
     if plan["cuts"]:
         data["cuts"] = [list(c) for c in plan["cuts"]]
+        # B1 單一 source of truth：cuts 是正典，不留舊 idx 版 deletions 跟它並存
+        # （並存時 assemble 只吃 cuts，deletions 會整份靜默失效）。不靜默：丟了就講。
+        if data.get("deletions"):
+            print(
+                f"⚠ 套用剪輯指令：本集原有 deletions（{len(data['deletions'])} 張卡）"
+                "已被移除，改以時間版 cuts 為準。",
+                file=sys.stderr,
+            )
+            data.pop("deletions", None)
     else:
         data.pop("cuts", None)
     if plan["cards"]:

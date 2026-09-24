@@ -137,6 +137,38 @@ def test_empty_cuts_clears_the_key(tmp_episode_dir: Path):
     assert "cuts" not in data
 
 
+def test_apply_plan_drops_legacy_deletions(tmp_episode_dir: Path, capsys):
+    """B1 單一 source of truth：套用剪輯指令寫入 cuts 時，舊 idx 版 deletions 必須一起走。
+    留著的話 assemble 只吃 cuts，那份 deletions 變成「看不到、移不掉、又不生效」的幽靈。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["deletions"] = [1, 3]
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                         encoding="utf-8")
+
+    plan_io.apply_plan(Episode(tmp_episode_dir), plan_io.parse_plan(_plan()))
+
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert after["cuts"]                      # 指令的 cuts 有寫進去
+    assert "deletions" not in after           # 舊格式一次遷移掉
+    assert "deletions" in capsys.readouterr().err   # 不准靜默
+
+
+def test_apply_plan_without_cuts_keeps_deletions(tmp_episode_dir: Path):
+    """反向護欄：指令沒有剪除時不碰 deletions —— 只有「真的寫了 cuts」才構成遷移條件。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["deletions"] = [2]
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                         encoding="utf-8")
+
+    plan_io.apply_plan(Episode(tmp_episode_dir), plan_io.parse_plan(_plan(cuts=[])))
+
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "cuts" not in after
+    assert after["deletions"] == [2]
+
+
 def test_apply_plan_keeps_untouched_yaml_keys(tmp_episode_dir: Path):
     """yaml 裡沒被指令碰到的欄位（fixes、手寫的 subtitle_style 鍵）不能被洗掉。"""
     yaml_path = tmp_episode_dir / "episode.yaml"

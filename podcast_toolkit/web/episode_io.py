@@ -1,6 +1,7 @@
 """把 Episode 物件 + _v2.srt 組成前端要的 JSON state，並負責寫回。"""
 from __future__ import annotations
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -770,7 +771,22 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             new_deletions.append(nid)
     if new_deletions:
         data["deletions"] = new_deletions
-    else:
+    elif "deletions" in payload:
+        # 只有「這次存檔真的帶了 deletions 且結果為空」才算使用者清空。
+        # 局部存檔（例如影片模式只送 cuts）不碰既有值——該不該遷移交給下面的 B1 關卡，
+        # 那條路徑會印訊息；這裡靜默 pop 等於把刪段抹掉還不吭聲。
+        data.pop("deletions", None)
+
+    # B1 單一 source of truth：時間版 cuts 是正典，同一份 yaml 不留兩套刪段格式。
+    # 有 cuts 就一律清掉舊 idx 版 deletions（存一次檔 = 完成遷移），避免「兩個編輯器
+    # 各存過一次」產生並存 —— 那種狀態下 assemble 只吃 cuts，deletions 整份靜默失效。
+    # 不靜默：真的丟掉東西時印一行，說清楚哪一半沒了。
+    if data.get("cuts") and data.get("deletions"):
+        print(
+            f"⚠ 本集同時有 cuts（時間版刪段）與 deletions（{len(data['deletions'])} 張卡）："
+            "cuts 是正典，已移除 deletions（它在合成時本來就不生效）。",
+            file=sys.stderr,
+        )
         data.pop("deletions", None)
 
     # yaml 在 SRT 寫完 + deletions 翻完後才落地，避免中途崩潰留下不一致狀態

@@ -1409,3 +1409,62 @@ def test_load_state_audio_tracks_empty_when_no_audio(tmp_episode_dir):
     state = episode_io.load_state(Episode(tmp_episode_dir))
     assert state["audio_tracks"] == []
     assert state["audio_candidates"] == []
+
+
+def test_save_state_with_cuts_drops_legacy_deletions(tmp_episode_dir, capsys):
+    """B1 單一 source of truth：cuts 非空時，同一份 yaml 不得同時留著舊 idx 版 deletions。
+    並存的後果不是「兩份都生效」而是「deletions 整份靜默失效」（assemble 只吃 cuts），
+    所以存檔時一次遷移掉，並且不准靜默 —— 真的丟東西要印得出來。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [2, 4]  # 舊格式殘留（例如 podcast 編輯器存過）
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"cuts": [[10.0, 15.0]], "cards": []}
+    )
+
+    out = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert out["cuts"] == [[10.0, 15.0]]
+    assert "deletions" not in out
+    assert "deletions" in capsys.readouterr().err  # 失敗路徑不准靜默
+
+
+def test_save_state_cuts_only_payload_still_drops_stale_deletions(tmp_episode_dir):
+    """就算這次存檔的 payload 完全沒提 deletions（影片模式只送 cuts），
+    yaml 裡既有的 deletions 一樣要被遷移掉 —— 否則「看不到、移不掉、又不生效」。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [1]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": [[1.0, 2.0]]})
+
+    assert "deletions" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+
+def test_save_state_without_cuts_keeps_deletions_working(tmp_episode_dir, capsys):
+    """反向護欄：沒有 cuts 的集（純 podcast 舊流程）行為完全不變，
+    deletions 照寫照留，也不該印任何遷移訊息。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"deletions": [2, 4], "cards": []}
+    )
+    out = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert out["deletions"] == [2, 4]
+    assert "cuts" not in out
+    assert "已移除 deletions" not in capsys.readouterr().err
+
+
+def test_save_state_empty_cuts_does_not_drop_deletions(tmp_episode_dir):
+    """cuts 傳空（使用者把時間版刪段全清掉）→ 不可順手把 deletions 也吞掉。
+    只有「cuts 真的有值」才構成遷移條件。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [3]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": []})
+
+    out = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "cuts" not in out
+    assert out["deletions"] == [3]

@@ -16,11 +16,17 @@ import {
 // 字幕樣式 ASS → CSS 的單一換算來源（與影片模式共用，見 timeline-core.js「字幕樣式」段）
 import {
   buildSubtitleCss,
+  cutsToCardSelection,
   subtitleAlignmentBucket,
 } from "./timeline-core.js";
 
 // 後端傳輸層（同為循環 import，規則見 api.js 檔頭）
-import { apiGetEpisode, buildSavePayload, postSave } from "./api.js";
+import {
+  apiGetEpisode,
+  buildSavePayload,
+  cutFromDiskTime,
+  postSave,
+} from "./api.js";
 
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 export const state = {
@@ -44,6 +50,10 @@ export const state = {
   // 旋轉拉正：per cam 度數（綁源攝影機，YT/Reels 共用）；正值順時針，搭配 crop 把黑角裁掉
   rotate: { a: 0, b: 0 },
   deletions: new Set(),
+  // 換不回卡 key 的時間版刪段（影片模式在句中／跨停頓剪的段）。podcast UI 不編輯它，
+  // 但必須原樣 round-trip 回 episode.yaml，並在統計列露出來——否則它就是
+  // 「看不到、移不掉、卻會生效」的幽靈刪段（B1 要根治的正是這個）。
+  foreignCuts: [],
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
   reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；session 內、不寫檔、不進 undo、換集即清
@@ -482,6 +492,13 @@ function renderTopbar() {
   const head = state.headTrimSec || 0;
   const tail = state.tailTrimSec || 0;
   let line = `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
+  // B1：對不上任何一張卡的時間版刪段（多半是在影片模式裡句中／跨停頓剪的）。
+  // 本編輯器改不動它們，但它們出片時照剪 —— 不顯示就等於「看不到卻會生效」。
+  const foreign = (state.foreignCuts || []).length;
+  if (foreign > 0) {
+    const secs = (state.foreignCuts || []).reduce((a, [s0, e0]) => a + (e0 - s0), 0);
+    line += ` · 影片模式剪段 ${foreign} 段（${secs.toFixed(1)}s，本頁不可編輯）`;
+  }
   if (split > 0) line += ` · 已切 ${split}`;
   if (merged > 0) line += ` · 已併 ${merged}`;
   if (head > 0 || tail > 0) {
@@ -2719,6 +2736,21 @@ async function loadEpisodeState() {
         end: (c.end || 0) + totalShift,
       }))
       .filter((c) => c.end > 0);
+  }
+  // ── 刪段（B1 單一 source of truth）──
+  // 磁碟正典是時間版 cuts，優先序跟後端 cut_intervals_from_cfg 一致（cuts → deletions）。
+  // 不跟著它，畫面上的紅卡就會跟「合成真的剪掉的段」不一致：影片模式存過 cuts 的集，
+  // 舊版 podcast 前端完全不讀 cuts，於是那些刪段看不到、移不掉，出片卻照剪。
+  // 放在 totalShift 之後：cuts 是磁碟軸，這裡要換算到 cam A 顯示軸才對得上卡片時間。
+  state.foreignCuts = [];
+  if (Array.isArray(data.cuts) && data.cuts.length) {
+    const display = data.cuts
+      .map((c) => (Array.isArray(c) ? [Number(c[0]), Number(c[1])] : [Number(c.start), Number(c.end)]))
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+      .map(cutFromDiskTime);
+    const sel = cutsToCardSelection(display, expandedCards());
+    state.deletions = new Set(sel.keys);
+    state.foreignCuts = sel.foreign; // 換不回卡的原樣留著，存檔時原封送回
   }
   // 字幕偏移：有字幕才顯示「偏移」入口（控制項收進 popover）；input 顯示目前已存的絕對偏移值
   const srtShiftToggle = $("#srt-shift-toggle");

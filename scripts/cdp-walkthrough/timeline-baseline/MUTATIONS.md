@@ -131,3 +131,36 @@ W2 前 podcast 預覽只算字級，顏色／描邊／粗體／底色塊／垂�
 還原→重載→驗綠，try/finally 保證還原）。該走查另外自管 `serve_podcast.py` 子行程：
 樣式變體要改 `episode.yaml`，而 `Episode.cfg` 只在建構時讀一次，所以每個變體重啟一次伺服器，
 跑完把沙盒 `episode.yaml` 還原成原樣。
+
+---
+
+## #7～#12 B1：剪除語意單一 source of truth（時間版 cuts 為正典）
+
+受測走查：`verify_b1_cuts.py`（22 項斷言，沙盒集刻意帶 `subtitle_offset_sec: 1.5`，
+讓「顯示軸 ↔ 磁碟軸」的換算真的被走到）。突變由 `run_b1_mutations.py` 逐一套用、
+跑完整支走查、`try/finally` 還原，最後再跑一次證明回到全綠。
+
+| # | 突變點（產品碼） | 改成 | 預期變紅 | 實際 |
+|---|---|---|---|---|
+| 7 | `timeline-core.js: cardKeysToCuts` 的 `.filter((r) => set.has(r.key))` | `false && …`（存檔不再把刪卡寫成時間段） | 3b | 15/22，3b/4b/4c/5c/6b/6d/7 紅 |
+| 8 | `timeline-core.js: cutsToCardSelection` 的 `covered` 判準 | 改成「只要相交就算涵蓋」且跳過外緣對齊檢查（把對不齊的 cut 擴寬成整張卡） | 5b、5c | 17/22，5b/5c/6b/6d/7 紅 |
+| 9 | `app.js` 載入端 `if (Array.isArray(data.cuts) && data.cuts.length)` | `if (false && …)`（回到只認 `deletions` 的舊行為） | 4b | 15/22，4b/4c/5b/5c/6b/6d/7 紅 |
+| 10 | `app.js: renderTopbar()` 的 `if (foreign > 0)` | `if (false)`（換不回卡的剪段不顯示＝靜默生效） | 5b | 21/22，只有 5b 紅 |
+| 11 | `api.js: cutToDiskTime` 的 `[_ms(s + off), _ms(e + off)]` | `[_ms(s), _ms(e)]`（存檔寫成顯示軸、沒減回偏移） | 3b | 14/22，3b/4b/4c/5b/5c/6b/6d/7 紅 |
+| 12 | `api.js: cutFromDiskTime` 的 `[_ms(s - off), _ms(e - off)]` | `[_ms(s), _ms(e)]`（載入不加回偏移、對不回卡） | 4b | 15/22，4b/4c/5b/5c/6b/6d/7 紅 |
+
+六個突變全部如預期變紅，還原後回歸 **22/22 通過**。完整輸出見 `b1_mutations_result.json`。
+
+兩個值得記的點：
+
+- **#10 是最乾淨的單點突變**（21/22，只紅 5b）—— 證明「foreign cut 要看得見」這條
+  不是靠其他斷言連坐測到的，它有自己的斷言在守。
+- **#11 只差 1.5 秒也會紅**：偏移少減一次，yaml 的 cuts 整批變成顯示軸，3b 的期待值
+  `[[2.7,3.9],[7.35,8.25]]` 立刻對不上。這是 `subtitle_offset_sec: 1.5` 這個沙盒設定
+  唯一的存在理由 —— 偏移為 0 的集，軸換算寫錯也測不出來。
+
+跑法（會自行起／收 `serve_podcast.py`，需先有 headless Chrome CDP :9331）：
+
+```bash
+/usr/bin/python3 -u run_b1_mutations.py
+```
