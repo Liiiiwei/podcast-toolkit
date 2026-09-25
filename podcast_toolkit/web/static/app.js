@@ -3426,18 +3426,17 @@ function checkedDeletionSeconds() {
 
 // 把 t 算到下一個 keep 區間的起點：在 deleted 區間內 → 跳到區間末端；
 // 不在則回 t 本身。用於 play / timeupdate 時把預覽對齊到最終輸出時間軸。
-// 守門：若 t 正落在某張保留卡的 [start, end) 內，一律不跳 — 處理 Whisper
-// word_timestamp 把保留卡起點推到刪除卡之前的 overlap 情境（issue: 00:38-00:48 卡被跳）。
-// 守門只保護「刪卡產生的 cuts」：那種 cut 一定與卡界對齊，撞到保留卡就是 overlap 誤傷。
-// foreign cut（影片模式在句中／卡內部剪的段）不在保護範圍 — 它本來就是刻意剪在卡內部，
-// 成品一定沒有那段，守門若照蓋過去，預覽就會播出成品已經剪掉的內容。
+//
+// 這裡刻意**沒有**第二層守門。2026-09-25 之前有一段「t 落在未刪保留卡內就一律不跳」的
+// 守衛，用來擋 Whisper 逐字時間戳把保留卡起點推到被刪卡之前的 overlap 誤傷
+// （issue: 00:38-00:48 卡被跳）。同日 padAndMergeCuts（前後端同一套、差分測試逐位元比對）
+// 改成把「刪卡產生的」區間本身夾在保留卡語音之外，誤傷在源頭就不存在了 —— 突變「整個守衛
+// 拿掉」從此 0 紅，守衛只剩一種還摸得到的情境：保留卡**整個包住**被刪卡（夾制只讓位給
+// 落在區間內的卡界，包住的情況兩個條件都不成立）。而在那個情境裡守衛是**有害的**：
+// 合成端沒有對應守衛、照剪，守衛卻讓預覽照播，使用者看到的跟成品對不上
+// （實測見 verify_nextkeeptime_verdict.py：後端剪 7.35-8.25，守衛讓預覽播過去）。
+// 一個行為只留一個地方管 —— 夾制是正典，這裡只做區間查表。
 function nextKeepTime(t) {
-  const inForeignCut = state.foreignCuts.some(([s, e]) => t >= s && t < e);
-  if (!inForeignCut) {
-    for (const r of expandedCards()) {
-      if (!state.deletions.has(r.key) && t >= r.start && t < r.end) return t;
-    }
-  }
   for (const [s, e] of deletionIntervals()) {
     if (t >= s && t < e) return e;
   }

@@ -455,3 +455,53 @@ inset:auto 16px auto auto; z-index:10000`，個別 `.toast` 是 `pointer-events:
 CDP_PORT=9522 /usr/bin/python3 -u verify_offset_badinput.py   # 42/42
 /usr/bin/python3 -m pytest -q                                  # 1053 passed, 1 xfailed
 ```
+
+---
+
+## 2026-09-25 `nextKeepTime` 保留卡守衛裁決（`verify_nextkeeptime_verdict.py`，13/13）
+
+**裁決：守衛拿掉。** 不是因為它摸不到，是因為它唯一還摸得到的情境裡它是**有害的**。
+
+事情的順序是這樣：2026-09-25 前後端把「刪卡產生的」剪除區間夾在保留卡語音之外之後，
+「整個守衛拿掉」這個突變從此 0 紅（B3／B4a／B4b／A5a 全綠）。0 紅只說明「摸不到」，
+不等於「拿掉是對的」—— 所以先去找它**唯一還摸得到**的形狀，再據以裁決：
+
+`padAndMergeCuts` 的夾制只讓位給「卡界落在區間內」的保留卡（尾在裡面 → 左緣讓位；
+頭在裡面 → 右緣讓位）。若保留卡**整個包住**被刪卡（`cs <= s && ce >= e`），兩個條件
+都不成立 → 不夾；pad 也被 `leftLimit`／`rightLimit` 夾死不外擴 → 剪除區間原封不動地
+躺在保留卡的語音裡。逐字時間戳把長卡起點往前推時，這個形狀真的會出現。
+
+而在那個形狀裡：**合成端（`assemble.cut_intervals_from_cfg`）沒有對應守衛、照剪**，
+守衛卻讓預覽照播那一段 —— 預覽與成品對不上，正是守衛當初要解決的那類問題本身。
+一個行為只留一個地方管：夾制是正典（前後端同一套、有差分測試逐位元比對），
+`nextKeepTime` 只做區間查表。
+
+場景（沙盒 `_v2.srt` 改一行 + yaml 刪一張卡）：卡 #4 = 磁碟 7.350–8.250（刪掉）；
+卡 #5 起點從 8.550 往前挪到 **7.200** → `[7.200, 10.150]` 整個包住卡 #4。
+`subtitle_offset_sec=1.5`、`cut_pad=0.4`。後端剪除區間 = `[[7.35, 8.25]]`（N1 實測），
+完全落在卡 #5 的語音裡（N2 實測，顯示軸 8.70 ≤ 8.85 且 11.65 ≥ 9.75）。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| MUT-G | `app.js: nextKeepTime`：把 2026-09-25 之前的保留卡守衛（含 `inForeignCut` 例外）原樣貼回去 | 顯示 9.30 停在原地（後端剪掉、預覽照播＝對不上） | ✅ RED after=9.303、GREEN after=9.750 |
+
+三件值得記的事：
+
+- **「突變 0 紅」的正確處置是去找可達情境，不是直接刪、也不是直接留**。這次的結論剛好
+  也是刪，但理由換了一個：從「它沒用」換成「它在僅存的情境裡會讓預覽說謊」——
+  後者才禁得起下一次回頭看。
+- **既有走查的「來源指紋」會跟著裁決翻面**：`verify_b3_guard_and_shift.py:A1` 原本斷言
+  「app 有 `inForeignCut`」，裁決後改成斷言「舊守衛那行不在、`nextKeepTime` 還在」——
+  指紋是防「來源未同步」的，方向要跟現行正典一致，否則下次會把對的碼判成沒同步。
+- **回歸證明夾制獨力守得住**：`A5a`（卡內 foreign cut → 要跳）、`A5d`／`B4b`（保留卡
+  語音 → 不跳）三條在守衛拿掉後仍全綠 —— 「跳」與「不跳」兩個方向都有斷言，
+  才排除得掉「拿掉守衛後變成整段亂跳」。
+
+跑法：
+
+```bash
+CDP_PORT=9522 /usr/bin/python3 -u verify_nextkeeptime_verdict.py   # 13/13
+/usr/bin/python3 -u verify_b3_guard_and_shift.py                   # 27/27（回歸，CDP :9331）
+/usr/bin/python3 -m pytest -q tests/test_cut_merge_frontend_parity.py  # 5 passed
+/usr/bin/python3 -m pytest -q                                      # 1053 passed, 1 xfailed
+```

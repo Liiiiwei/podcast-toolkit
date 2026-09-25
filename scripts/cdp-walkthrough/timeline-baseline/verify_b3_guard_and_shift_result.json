@@ -8,7 +8,7 @@
       "status": "pass"
     },
     {
-      "name": "A1 來源已同步：core 有 alignShift、app 有 inForeignCut、api 走 _diskOffset、影片模式也接上，且 /api/episode 下放 cut_pad=0.4",
+      "name": "A1 來源已同步：core 有 alignShift、app 的 nextKeepTime 只做區間查表（保留卡守衛已拿掉）、api 走 _diskOffset、影片模式也接上，且 /api/episode 下放 cut_pad=0.4",
       "ok": true,
       "got": {
         "core_shift": true,
@@ -62,7 +62,7 @@
       "status": "pass"
     },
     {
-      "name": "A5a 保留卡 #4 內、落在 foreign cut 的 9.20 → 跳到 9.4（B3-1 之前停在原地）",
+      "name": "A5a 保留卡 #4 內、落在 foreign cut 的 9.20 → 跳到 9.4（B3-1 之前停在原地；現在由區間查表獨力守住）",
       "ok": true,
       "got": {
         "before": 9.2,
@@ -80,7 +80,7 @@
       "ok": true,
       "got": {
         "before": 9,
-        "after": 9.0002,
+        "after": 9.000264,
         "fired": true
       },
       "want": {
@@ -94,7 +94,7 @@
       "ok": true,
       "got": {
         "before": 9.5,
-        "after": 9.500996,
+        "after": 9.501118,
         "fired": true
       },
       "want": {
@@ -108,7 +108,7 @@
       "ok": true,
       "got": {
         "before": 8.3,
-        "after": 8.300303,
+        "after": 8.300293,
         "fired": true
       },
       "want": {
@@ -165,24 +165,24 @@
     },
     {
       "name": "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.0",
-      "ok": false,
+      "ok": true,
       "got": {
         "before": 8.5,
-        "after": 9.75,
+        "after": 9,
         "fired": true
       },
       "want": {
         "after": 9.0,
         "fired": true
       },
-      "status": "fail"
+      "status": "pass"
     },
     {
       "name": "B4b 保留卡 #5 語音裡的 9.30 → 不跳（夾制之後它已不在剪除區間內；守衛退居第二層防線，改守衛不會讓這條紅，能讓它紅的是夾制 —— 見 B5）",
       "ok": true,
       "got": {
         "before": 9.3,
-        "after": 9.300237,
+        "after": 9.300293,
         "fired": true
       },
       "want": {
@@ -321,9 +321,7 @@
       "status": "pass"
     }
   ],
-  "failed": [
-    "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.0"
-  ],
+  "failed": [],
   "b5_backend_bites_into_kept_card_sec": 0.0,
   "srt_card4_after_save": "00:00:07,247 --> 00:00:08,247"
 }

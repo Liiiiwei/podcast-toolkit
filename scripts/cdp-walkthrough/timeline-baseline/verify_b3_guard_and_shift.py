@@ -9,6 +9,9 @@
   A. B3-1：cut_pad=0.4，一段 foreign cut 塞在保留卡 #4 肚子裡（磁碟 7.6–7.9）。
      併軌前 `nextKeepTime` 的第一個迴圈是「t 落在未刪的保留卡內就直接回 t」，保留卡
      守門優先於 cut 區間 → 預覽整段播過去；改成看來源後必須跳到 cut 末端。
+     2026-09-25 裁決後那個迴圈（含 foreign cut 例外）整個拿掉 —— 夾制才是正典，
+     `nextKeepTime` 只做區間查表，A 階段的三條落點斷言由區間查表獨力守住
+     （裁決證據見 verify_nextkeeptime_verdict.py）。
 
   B. 重疊卡夾制：把 _v2.srt 的卡 #5 起點挪到磁碟 7.5（與被刪的卡 #4 7.35–8.25 重疊，
      逐字時間戳常見的狀況）。沒有夾制時「由卡換算出來的 cut」會吃掉保留卡 #5 的頭
@@ -215,7 +218,11 @@ async def fingerprint(page):
       const ep = await (await fetch('/api/episode', {cache:'no-store'})).json();
       return {
         core_shift: core.includes('export function alignShift'),
-        app_b31: app.includes('inForeignCut') && app.includes('alignShift(state)'),
+        // 2026-09-25：指紋從「有 inForeignCut」翻面成「保留卡守衛已拿掉」——
+        // nextKeepTime 只剩區間查表，舊守衛那行再出現就是回退。
+        app_b31: !app.includes('!state.deletions.has(r.key) && t >= r.start')
+          && app.includes('function nextKeepTime(t)')
+          && app.includes('alignShift(state)'),
         api_b32: api.includes('_diskOffset') && api.includes('alignShift'),
         vproto: vproto.includes('alignShift'),
         cut_pad: ep.cut_pad,
@@ -382,7 +389,8 @@ async def main():
         and close(fp.get("cut_pad"), PAD, 1e-6)
     )
     C.check(
-        "A1 來源已同步：core 有 alignShift、app 有 inForeignCut、api 走 _diskOffset、"
+        "A1 來源已同步：core 有 alignShift、app 的 nextKeepTime 只做區間查表"
+        "（保留卡守衛已拿掉）、api 走 _diskOffset、"
         "影片模式也接上，且 /api/episode 下放 cut_pad=0.4",
         ok_fp,
         fp,
@@ -417,7 +425,11 @@ async def main():
     )
 
     await check_probe(
-        page, f"A5a 保留卡 #4 內、落在 foreign cut 的 9.20 → 跳到 {A_HI}（B3-1 之前停在原地）", 9.20, A_HI
+        page,
+        f"A5a 保留卡 #4 內、落在 foreign cut 的 9.20 → 跳到 {A_HI}"
+        "（B3-1 之前停在原地；現在由區間查表獨力守住）",
+        9.20,
+        A_HI,
     )
     await check_probe(page, "A5b 同一張卡、cut 之前的 9.00 → 不跳", 9.00, 9.00)
     await check_probe(page, "A5c 同一張卡、cut 之後的 9.50 → 不跳", 9.50, 9.50)
@@ -457,8 +469,9 @@ async def main():
     await check_probe(pageB, f"B4a 沒有任何保留卡語音的 8.50 → 跳到 {B_HI}", 8.50, B_HI)
     await check_probe(
         pageB,
-        "B4b 保留卡 #5 語音裡的 9.30 → 不跳（夾制之後它已不在剪除區間內；"
-        "守衛退居第二層防線，改守衛不會讓這條紅，能讓它紅的是夾制 —— 見 B5）",
+        "B4b 保留卡 #5 語音裡的 9.30 → 不跳（夾制之後它已不在剪除區間內。"
+        "2026-09-25 前這裡還有第二層保留卡守衛，改守衛不會讓這條紅；守衛拿掉後"
+        "由夾制獨力守住 —— 能讓它紅的只有 B5 那個夾制）",
         9.30,
         9.30,
     )

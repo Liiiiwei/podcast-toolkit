@@ -1,0 +1,174 @@
+[
+  {
+    "name": "V0.0 頁面載入、卡片渲染完成",
+    "ok": true,
+    "got": true,
+    "want": true,
+    "status": "pass"
+  },
+  {
+    "name": "V0.1 原始碼指紋：nextKeepTime 還在、舊守衛已不在",
+    "ok": true,
+    "got": {
+      "guard_gone": true,
+      "has_fn": true
+    },
+    "want": {
+      "guard_gone": true,
+      "has_fn": true
+    },
+    "status": "pass"
+  },
+  {
+    "name": "V0.2 影片可 seek（readyState>=1 且 seekable>0，否則量到的是不可 seek 環境）",
+    "ok": true,
+    "got": {
+      "ready": 4,
+      "seekable": 1,
+      "dur": 24
+    },
+    "want": {
+      "ready": ">=1",
+      "seekable": ">0"
+    },
+    "status": "pass"
+  },
+  {
+    "name": "V0.3 場景就緒：11 張卡、只有卡 #4 標記刪除",
+    "ok": true,
+    "got": {
+      "n": 11,
+      "del": [
+        "4"
+      ]
+    },
+    "want": {
+      "n": 11,
+      "del": [
+        "4"
+      ]
+    },
+    "status": "pass"
+  },
+  {
+    "name": "N1 後端剪除區間 = [[7.35, 8.25]]（保留卡整個包住 → 夾制兩個條件都不成立、不讓位；pad 被卡 #5 的語音邊界夾死兩側）",
+    "ok": true,
+    "got": [
+      [
+        7.35,
+        8.25
+      ]
+    ],
+    "want": [
+      [
+        7.35,
+        8.25
+      ]
+    ],
+    "status": "pass"
+  },
+  {
+    "name": "N2 保留卡 #5 的語音整個包住那段剪除區間（顯示軸 8.70 <= 8.85 且 11.65 >= 9.75）—— 舊守衛唯一還摸得到的情境",
+    "ok": true,
+    "got": {
+      "raw": "#5\n0:08.70\n0:11.65",
+      "parsed": [
+        8.7,
+        11.65
+      ]
+    },
+    "want": {
+      "start": "<= 8.85",
+      "end": ">= 9.75"
+    },
+    "status": "pass"
+  },
+  {
+    "name": "N3 顯示 9.3（在保留卡 #5 語音裡、也在剪除區間裡）→ 跳到 9.75（舊守衛在的話會停在原地，與後端真的剪掉對不上）",
+    "ok": true,
+    "got": {
+      "before": 9.3,
+      "after": 9.75,
+      "fired": true
+    },
+    "want": {
+      "after": 9.75,
+      "fired": true
+    },
+    "status": "pass"
+  },
+  {
+    "name": "N4 剛進區間的顯示 8.9 → 跳到 9.75",
+    "ok": true,
+    "got": {
+      "before": 8.9,
+      "after": 9.75,
+      "fired": true
+    },
+    "want": {
+      "after": 9.75,
+      "fired": true
+    },
+    "status": "pass"
+  },
+  {
+    "name": "N5 卡 #5 語音裡、剪除區間外的顯示 10.0 → 不跳（拿掉守衛沒有變成整段亂跳）",
+    "ok": true,
+    "got": {
+      "before": 10,
+      "after": 10.000358,
+      "fired": true
+    },
+    "want": {
+      "after": 10.0,
+      "fired": true
+    },
+    "status": "pass"
+  },
+  {
+    "name": "N6 console 無未捕捉例外",
+    "ok": true,
+    "got": [],
+    "want": [],
+    "status": "pass"
+  },
+  {
+    "name": "MUT-G-RED 守衛加回去 → 預覽停在原地（後端剪掉、預覽照播＝對不上）",
+    "ok": true,
+    "got": {
+      "before": 9.3,
+      "after": 9.303186,
+      "fired": true
+    },
+    "want": {
+      "after": 9.3
+    },
+    "status": "pass"
+  },
+  {
+    "name": "MUT-G-GREEN 還原後 → 預覽跳到區間末端（與後端一致）",
+    "ok": true,
+    "got": {
+      "before": 9.3,
+      "after": 9.75,
+      "fired": true
+    },
+    "want": {
+      "after": 9.75
+    },
+    "status": "pass"
+  },
+  {
+    "name": "MUT-G 真突變成立：守衛在這個情境不是保險而是製造分歧 —— 拿掉是對的，而且 N3 真的在測這件事",
+    "ok": true,
+    "got": {
+      "red": 9.303186,
+      "green": 9.75
+    },
+    "want": {
+      "red": 9.3,
+      "green": 9.75
+    },
+    "status": "pass"
+  }
+]
