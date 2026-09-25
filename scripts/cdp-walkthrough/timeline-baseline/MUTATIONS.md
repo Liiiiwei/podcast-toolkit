@@ -505,3 +505,45 @@ CDP_PORT=9522 /usr/bin/python3 -u verify_nextkeeptime_verdict.py   # 13/13
 /usr/bin/python3 -m pytest -q tests/test_cut_merge_frontend_parity.py  # 5 passed
 /usr/bin/python3 -m pytest -q                                      # 1053 passed, 1 xfailed
 ```
+
+---
+
+## 2026-09-25 toast 覆蓋層吞點擊（`verify_toast_no_block.py`，54/54）
+
+受測的修法有**三個獨立部件**，所以突變逐一關，不是只有「全開 vs 全關」——
+只關全部的話，任何一個部件是死碼都看不出來（2026-08-08 教訓）。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| MUT-A | `toast.css: .toast`：`flex-direction: row-reverse` → `row`（✕ 回到右端） | ✕ 壓住 `#drawer-toggle` 中心 | ✅ `['drawer-toggle<toast-close>']` |
+| MUT-B | `toast.css: .toast`：`pointer-events: none` → `auto`（本體回來吃點擊） | 本體壓住底下元素中心 | ✅ `['drawer-toggle<toast-body>']` |
+| MUT-C | `toast.css: #toast-container`：`inset: auto 16px 16px auto` → 右上 | ✕ 幾何落回 topbar 範圍內 | ✅ `True`（中心被擋 `[]` —— 見下方說明） |
+| MUT-ALL | 三者全部還原成舊行為 | `save-btn` 中心被擋（原缺陷） | ✅ `['cam-btn<toast-body>', 'output-menu-btn<toast-body>', 'cancel-btn<toast-body>', 'save-btn<toast-body>']` |
+| MUT-GREEN | 三者全部還原回新行為 | 不紅 | ✅ `[]` |
+
+三件值得記的事：
+
+- **MUT-C 單獨關掉時「中心被擋」是空的**，因為本體已不吃點擊、✕ 又在左端，光搬位置
+  湊不出受害者。這時若硬要一個「blocked 非空」的斷言，就得放寬其他部件 —— 那等於
+  突變之間互相污染。改成量**幾何事實**（✕ 的 rect 與 `.topbar` 的 rect 是否相交），
+  部件之間才真正獨立。**突變的斷言不一定要跟主判準同一個指標**，只要它能證明
+  「這半在做事」。
+- **判準從「中心點」改成「中心＋四角五點」之後，門檻必須跟著重定**：五點取樣抓到
+  `trim-suggest-btn` 等元素有一個角被 ✕ 壓到。✕ 是 23×20px 的實體，任何位置都可能與
+  底下元素的邊緣相交 —— 這是結構性下限，不是回歸。所以門檻定為「中心一律可點」＋
+  「邊角被壓的一律來自 `<toast-close>` 而非 `<toast-body>`、且不得是 topbar 七顆之一」，
+  並且每次都把邊角清單印出來（2026-08-08「重定門檻要先證明下限、不能偷偷放寬」）。
+- **`showModal()` 的 inert 會讓「✕ 可點」這條期待永遠紅**：modal 開著時
+  `elementFromPoint(任意點)` 一律回該 `<dialog>`，連 (20,20) 也是。這是瀏覽器語意
+  不是覆蓋層問題（模擬舊版同樣如此，截圖也證明 toast 繪製在 backdrop 之上）。
+  斷言改成「modal 開著時 toast 仍在視窗內且 `visibility:visible`／`opacity:1`」。
+
+跑法：
+
+```bash
+CDP_PORT=9341 /usr/bin/python3 -u verify_toast_no_block.py   # 54/54（含突變五段，自動還原 CSS）
+```
+
+突變段直接改 `podcast_toolkit/web/static/toast.css` 再改回來，`patch_file()` 以
+「命中數必須恰好 1」守門，`finally` 區塊在中途炸掉時也會還原 —— 跑完務必
+`git diff --stat podcast_toolkit/web/static/toast.css` 確認乾淨。

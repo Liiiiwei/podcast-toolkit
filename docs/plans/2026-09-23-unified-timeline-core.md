@@ -372,15 +372,7 @@ MUT-B（守衛拿掉＋builder 移出 try → 按鈕卡死零 toast）。詳見 
 
 ### 留給下一梯（附錄）
 
-1. **toast 會蓋住 topbar 右側按鈕**（本梯量到，未修）：`#toast-container` 固定在右上
-   （`top:16px; inset:auto 16px auto auto; z-index:10000`），個別 `.toast` 為了點擊關閉
-   而開 `pointer-events:auto`。實測 `#cam-btn` 在 x1029-1103 / y14-46，中心 (1066,30)
-   正落在 toast 覆蓋範圍 —— toast 還在的那 4~8 秒（warn 4s／error 8s）
-   `elementFromPoint` 回的是 toast，點擊被吃掉、鏡頭視窗打不開，使用者感受是「按了沒反應」。
-   與 2026-08-25「絕對定位的把手整片蓋住流內按鈕」同型。
-   可能修法：toast 容器下移到不與 topbar 重疊的 y、或改成左下／底部中央、
-   或只讓 toast 的關閉鈕吃點擊而本體 `pointer-events:none`。三者都會動到全站 toast，
-   要一起決定。走查端目前以 `clear_toasts` 閃避。
+1. ~~**toast 會蓋住 topbar 右側按鈕**~~ → **已修（2026-09-25）**，詳見下方「附錄第 1 項」。
 2. ~~**`nextKeepTime` 的保留卡守衛已不可達**~~ → **已裁決（2026-09-25）：拿掉**。
    詳見下方「附錄第 3 項」。
 
@@ -411,3 +403,59 @@ N3/N4 預覽跳到區間末端、N5 區間外不跳）；突變 MUT-G（把舊�
 **順帶更新**：`verify_b3_guard_and_shift.py:A1` 的來源指紋從「app 有 `inForeignCut`」
 翻面成「舊守衛那行不在、`nextKeepTime` 還在」—— 指紋要跟現行正典同向，
 否則下次會把對的碼判成「來源未同步」。
+
+---
+
+## 附錄第 1 項：toast 覆蓋層吞點擊（2026-09-25 完成）
+
+**缺陷**：`#toast-container` 固定右上（`top:16px`），個別 `.toast` 為了「點擊關閉」開
+`pointer-events:auto`。toast 在的那 4~8 秒（warn 4s／error 8s），topbar 右側操作列的
+`elementFromPoint` 回的是 toast，點擊被吃掉且畫面零表現 —— 使用者感受是「按了沒反應」。
+與 2026-08-25「絕對定位的把手整片蓋住流內按鈕」同型。
+
+**開工第一問「幾個地方在管」= 1**（`toast.css` 單一來源，`index.html` 與 `dashboard.html`
+共用），所以直接改，不必先併軌。
+
+**為什麼不是「搬個位置就好」**：四個候選位置各自實測一輪，每個都有受害者 ——
+
+| 候選位置 | 實測被擋的元素 |
+|---|---|
+| 右上（原樣） | `cam-btn`、`output-menu-btn`、`cancel-btn`、`save-btn`；窄螢幕 topbar 換行後左側四顆一起擋，七顆全滅 |
+| topbar 下緣 | `srt-shift-toggle` 等三顆 |
+| 右下 | `drawer-toggle` |
+| 底部置中 | `trim-*`／`crop-*` 一整排 |
+
+覆蓋層只要吃點擊，換位置就只是換一批受害者。
+
+**修法是三件事，缺一不可**：
+
+1. 容器搬右下（`inset: auto 16px 16px auto`）—— 離開 topbar 操作列。
+2. `.toast` 本體 `pointer-events: none` —— 覆蓋層本體不再吞任何點擊，只有 ✕ 吃。
+3. ✕ 排到 toast 左端（`flex-direction: row-reverse`）＋容器固定寬
+   （`width: min(400px, calc(100vw - 32px))`）—— 只做 1+2 的話，唯一吃點擊的 ✕（23×20px）
+   正好壓住右下角的 `#drawer-toggle`；寬度隨訊息長短浮動還會讓 ✕ 的 x 座標不可預測。
+   DOM 順序仍是「訊息在前、✕ 在後」，螢幕閱讀器先讀訊息。
+
+**門檻的事實基礎（為什麼是「中心可點」而不是「零像素重疊」）**：✕ 是可見可點的實體，
+必然佔據約 23×20px 的平面，無論擺哪都可能與底下某元素的邊緣相交；能做到零重疊的唯一
+方法是拿掉 ✕（則 error toast 的 8 秒無法手動關）。所以門檻定為
+**「所有可點元素的中心點都命中自己」＋「邊角被壓的一律來自 ✕ 而非本體、且不得是 topbar 操作列成員」**，
+後者每次跑都把清單印出來（目前只有 900 寬的 `trim-suggest-btn`、620 寬的一顆 `.btn`，
+各一個角）。
+
+**modal 疊層不是缺陷**：`#toast-container` 用 Popover API 進 top-layer，截圖實測
+toast 繪製在 dialog backdrop 之上（背景被壓暗、toast 沒有）。modal 期間按不到 ✕ 是
+`showModal()` 讓 dialog 以外整份文件 inert 的瀏覽器語意（模擬舊版同樣如此，非本次回歸），
+toast 照樣自動消失。走查改成斷言「modal 開著時 toast 仍可見」而非「✕ 可點」。
+
+**證據**：`scripts/cdp-walkthrough/timeline-baseline/verify_toast_no_block.py` **54/54 通過**
+（1400×1600／900×800／620×800 三種寬度 × 短／中／長三種訊息 × warn／error 兩種樣式，
+中心被擋一律為 0；✕ 三種訊息長度量到同一個 x；真滑鼠點 ✕ 後 toast 消失；warn 4 秒自動消失；
+dashboard 同樣零被擋；無 console 錯誤）。突變**逐一關掉三個部件**（明細見 MUTATIONS.md）：
+MUT-A 只還原 ✕ 位置 → `drawer-toggle<toast-close>` 變紅；MUT-B 只還原本體 `pointer-events`
+→ `drawer-toggle<toast-body>` 變紅；MUT-C 只還原容器位置 → ✕ 幾何落回 topbar 範圍內；
+MUT-ALL 三者全還原 → `cam-btn`／`output-menu-btn`／`cancel-btn`／`save-btn` 四顆中心被擋
+（重現原缺陷）；MUT-GREEN 還原後回到零被擋。
+
+**走查端的 `clear_toasts` 閃避**保留不動 —— 它讓其他走查不受 toast 殘留干擾，
+與本項修法正交。
