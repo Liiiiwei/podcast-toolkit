@@ -30,6 +30,10 @@ import {
   postSave,
 } from "./api.js";
 
+// 快捷鍵清單的單一資料來源：modal 總覽與 ⏱ 工具列提示列都從這裡渲染
+// （這兩處原本各抄一份，已經漂移過——詳見 shortcuts.js 檔頭）
+import { renderShortcutsModal, timeToolbarHintHtml } from "./shortcuts.js";
+
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 export const state = {
   name: "",
@@ -394,11 +398,17 @@ document.addEventListener("keydown", (e) => {
     jumpToPrevReview();
   } else if (key === "?") {
     e.preventDefault();
-    showModal("shortcuts-modal");
+    openShortcuts();
   }
 });
 
 export const $ = (sel) => document.querySelector(sel);
+
+// 開快捷鍵總覽：先由 shortcuts.js 把清單渲染進 <dl>，再開 modal
+function openShortcuts() {
+  renderShortcutsModal();
+  showModal("shortcuts-modal");
+}
 
 // 秒 → "m:ss.d"（trim 拖把 tooltip 用，0.1s 精度跟 trim 值一致）
 function fmtTimeD(sec) {
@@ -1535,9 +1545,7 @@ function buildTimeToolbar(target) {
   // E2：快捷鍵提示列 —— 微調快捷鍵早就存在但介面零提示等於不存在，讓它們現形
   const hints = document.createElement("div");
   hints.className = "te-hints";
-  hints.innerHTML =
-    "<kbd>←→</kbd> 起點｜<kbd>⌥←→</kbd> 訖點｜<kbd>Shift</kbd> ×5｜<kbd>⌘</kbd> ×10｜" +
-    "<kbd>[</kbd> <kbd>]</kbd> 設為播放位置｜<kbd>P</kbd> 循環";
+  hints.innerHTML = timeToolbarHintHtml();
   bar.append(hints);
   repaint();
   _timeEditCtl = { target, repaint };
@@ -1985,6 +1993,19 @@ function reviewReasonLabel(r) {
 // 「待複查卡」= resegment 旗標（半句 / 幻覺）或空拍卡。導覽 / 篩選共用這個判斷。
 function cardNeedsReview(c) {
   return !!(c.needs_review || c.suspicious_pause);
+}
+
+// 鏡頭 A/B 鈕的 tooltip：真實狀態是「生效鏡頭 eff」×「有無 explicit 標記」四格。
+// 舊版 A/B 各寫一組三元、判準是 mapping 存不存在而非它的值，於是 explicit 標 b
+// 的卡上 A 鈕會寫成「目前鏡頭（已 explicit 標記）」——兩句都錯。
+// 同一件事只在這裡產生一次，兩顆鈕共用。
+function camBtnTitle(which, eff, mapped) {
+  const up = which.toUpperCase();
+  if (eff === which) {
+    const how = mapped === which ? "已 explicit 標記" : "沿用前一張";
+    return `鏡頭 ${up}：目前鏡頭（${how}）`;
+  }
+  return `鏡頭 ${up}：切到 ${up} 鏡頭`;
 }
 
 function renderCards() {
@@ -2497,9 +2518,7 @@ function renderCards() {
       aBtn.type = "button";
       aBtn.className = "cam-btn cam-a-btn" + (eff === "a" ? " active" : "");
       aBtn.textContent = "A";
-      aBtn.title = state.camerasMapping.get(key)
-        ? "鏡頭 A：目前鏡頭（已 explicit 標記）"
-        : "鏡頭 A：目前鏡頭（沿用前一張）";
+      aBtn.title = camBtnTitle("a", eff, state.camerasMapping.get(key));
       aBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         // 已經 explicit 標 a → 不入 stack 也不重畫
@@ -2518,9 +2537,7 @@ function renderCards() {
       bBtn.type = "button";
       bBtn.className = "cam-btn cam-b-btn" + (eff === "b" ? " active" : "");
       bBtn.textContent = "B";
-      bBtn.title = state.camerasMapping.get(key)
-        ? "鏡頭 B：切到 B 鏡頭（已 explicit 標記）"
-        : "鏡頭 B：切到 B 鏡頭";
+      bBtn.title = camBtnTitle("b", eff, state.camerasMapping.get(key));
       bBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (state.camerasMapping.get(key) === "b") return;
@@ -6458,10 +6475,10 @@ function openSettings() {
 
 $("#settings-btn").addEventListener("click", openSettings);
 
-// 鍵盤快捷鍵總覽：topbar 的 ? 按鈕與快捷鍵 ? 共用同一個 modal
-$("#shortcuts-btn").addEventListener("click", () =>
-  showModal("shortcuts-modal"),
-);
+// 鍵盤快捷鍵總覽：topbar 的 ? 按鈕與快捷鍵 ? 共用同一個 modal。
+// 每次開都重渲染一次——清單來自 shortcuts.js 的資料表，渲染失敗會當場看得到
+// （modal 內留可見錯誤文字），不會變成一個空白 modal。
+$("#shortcuts-btn").addEventListener("click", openShortcuts);
 $("#shortcuts-close").addEventListener("click", () =>
   hideModal("shortcuts-modal"),
 );

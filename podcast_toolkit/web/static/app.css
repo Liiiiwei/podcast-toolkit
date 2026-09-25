@@ -1819,6 +1819,10 @@ dialog.modal::backdrop {
   color: var(--text);
   font-size: var(--text-sm);
 }
+/* 資料表渲染不出東西時的可見錯誤（失敗路徑不准靜默：空白 modal 看不出壞了） */
+.shortcuts-list .shortcuts-error {
+  color: var(--danger);
+}
 .shortcuts-list kbd {
   font-family: var(--font-mono);
   font-size: var(--text-xs);
@@ -2681,8 +2685,14 @@ dialog.modal::backdrop {
 .card {
   display: grid;
   /* 時間欄 66px：容得下 "119:59.99"（fmtTimeCard 的 0.01s 精度，11px mono 約 59px）
-     末欄 auto：操作區（×／調時間／看過）直排，寬度隨最寬的鈕 */
-  grid-template-columns: 18px 66px 1fr auto;
+     末欄 --card-actions-w 固定寬：操作區（×／調時間／看過）直排。
+     不能用 auto —— 每張 .card 都是獨立 grid container，auto 末欄的寬度由「這張卡
+     有哪幾顆鈕」決定，實測 28px（× ＋ ⏱）／46px（＋「看過」）／56px（「已看過」）
+     三種，文字欄右緣跟著差 18px 與 10px；後者更糟：點一下「看過」整張卡的字就往右
+     彈 10px。固定寬取三者最大值再留 2px 餘裕，並讓看過鈕吃滿整欄（見
+     .card-review-seen），兩種文字狀態都不再改變版面。 */
+  --card-actions-w: 58px;
+  grid-template-columns: 18px 66px 1fr var(--card-actions-w);
   gap: 10px;
   align-items: start;
   background: var(--surface-raised);
@@ -2864,6 +2874,9 @@ dialog.modal::backdrop {
   font-size: 11px;
   line-height: 1.6;
 }
+.te-hints .te-hint-error {
+  color: var(--danger);
+}
 .te-hints kbd {
   padding: 0 4px;
   border: 0.5px solid var(--border-strong);
@@ -2998,6 +3011,12 @@ dialog.modal::backdrop {
 .card-review-seen {
   display: inline-flex;
   align-items: center;
+  /* 吃滿操作欄並置中：「看過」46px／「已看過」56px 的自然寬差會讓固定欄內的
+     鈕左右跳，也讓 hover 目標飄。固定成整欄寬後兩態同寬。 */
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: center;
+  overflow: hidden;
   gap: 3px;
   padding: 1px 5px;
   white-space: nowrap;
@@ -3492,9 +3511,12 @@ dialog.modal::backdrop {
 }
 
 /* === 雙鏡頭 A/B toggle（僅雙機集顯示）=== */
-/* 雙機集才會帶 card-has-cam，多開一欄放 A/B 膠囊；單機集格線維持原本 4 欄 */
+/* 雙機集才會帶 card-has-cam，多開一欄放 A/B 膠囊；單機集格線維持原本 4 欄。
+   末欄同樣吃 --card-actions-w 固定寬（理由見 .card 的註解）——這條規則會整條蓋掉
+   .card 的 grid-template-columns，寫成 auto 的話雙機集就繞過了固定寬，右緣參差
+   會原封不動地回來。 */
 .card.card-has-cam {
-  grid-template-columns: 18px 66px 1fr auto auto;
+  grid-template-columns: 18px 66px 1fr auto var(--card-actions-w);
 }
 /* A 鏡頭：用低調的深藍左邊框，讓整集還是維持暗色基調 */
 .card.cam-a {

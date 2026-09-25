@@ -547,3 +547,44 @@ CDP_PORT=9341 /usr/bin/python3 -u verify_toast_no_block.py   # 54/54（含突變
 突變段直接改 `podcast_toolkit/web/static/toast.css` 再改回來，`patch_file()` 以
 「命中數必須恰好 1」守門，`finally` 區塊在中途炸掉時也會還原 —— 跑完務必
 `git diff --stat podcast_toolkit/web/static/toast.css` 確認乾淨。
+
+---
+
+## 2026-09-25 編輯器三顆小缺陷（`verify_editor_small_defects.py`，26/26）
+
+三顆缺陷（F1 快捷鍵清單併軌／F2 鏡頭 A/B 鈕 tooltip 四態／F3 卡片操作欄固定寬）
+彼此獨立，所以突變逐一關。F3 實作後才發現它自己又有**兩個獨立部件**
+（`.card` 與 `.card.card-has-cam` 各宣告一次 `grid-template-columns`，CSS 是整條覆蓋
+不是逐欄合併），於是突變從三項變四項——只關 `.card` 那半的話，雙機集那半是死碼
+也驗不出來。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| MUT-F1 | `shortcuts.js:65,67`：把 `P` 那條的 `hint`／`desc` 改字（模擬「兩處手抄各自漂移」） | modal 與 ⏱ 提示列**同時**變（同一份資料兩個消費端） | ✅ `modalHasLoop=False`、`hintEqFrozen=False` 兩條一起紅 |
+| MUT-F2 | `app.js`：`aBtn.title = camBtnTitle(...)` 還原成舊三元（只看 mapping 存不存在） | 繼承態與 explicit 態的 title 說謊 | ✅ card2 B／card3 A／card4 A 三處退回舊字串 |
+| MUT-F3A | `app.css:2695 .card`：`var(--card-actions-w)` → `auto` | 單機集文字欄右緣參差回來 | ✅ `spread=18`、`actWs=[28,46]` |
+| MUT-F3B | `app.css:3519 .card.card-has-cam`：末欄 `var(--card-actions-w)` → `auto` | **雙機集**右緣參差回來（單機集不受影響） | ✅ 雙機集 `spread>0`、`actWs` 回到多種 |
+| MUT-GREEN | 四者全部還原 | 不紅 | ✅ 26/26 |
+
+三件值得記的事：
+
+- **F1 的主判準不是「modal 與資料表相符」而是「提示列 HTML 逐字等於併軌前的字面字串」**
+  （`FROZEN_HINT` 常數）。併軌型重構若拿「兩邊自己比自己」當判準，一起錯掉就一起綠；
+  把重構前的舊輸出凍結成常數，才真的在測「行為沒變」。
+- **F2 的四態是純點擊造出來的，沒有新增測試 hook**：點第 1 卡 B → 第 2 卡靠
+  carry-forward 繼承 b；點第 3 卡 A → 第 4 卡繼承 a。判準是 `eff === which`
+  （生效鏡頭，含繼承）而不是 mapping 存不存在——舊碼錯的正是這一點。
+- **`Episode` 的 cfg 只在 `serve_podcast.py` 建構時讀一次**，所以「加 `cameras.b` 變雙機集」
+  必須自管伺服器並重啟（走查因此分兩輪）；srt 每次請求重讀，所以「造待複查卡」
+  改檔即可免重啟。這個差別決定走查要不要拆輪，開工前先確認哪些設定是啟動時快照。
+
+跑法：
+
+```bash
+CDP_PORT=9522 /usr/bin/python3 -u verify_editor_small_defects.py   # 26/26（含突變五段，自動還原）
+/usr/bin/python3 -m pytest -q                                     # 1053 passed, 1 xfailed
+```
+
+突變段直接改 `podcast_toolkit/web/static/{app.js,app.css,shortcuts.js}` 再改回來，
+`patch_file()` 以「命中數必須恰好 1」守門，`finally` 區塊比對開場快照還原 ——
+跑完務必 `git diff --stat podcast_toolkit/web/static/` 確認只剩本梯的正式改動。

@@ -1511,33 +1511,11 @@
     <dialog class="modal" id="shortcuts-modal">
       <div class="modal-head">鍵盤快捷鍵</div>
       <div class="modal-body">
-        <dl class="shortcuts-list">
-          <dt><kbd>Space</kbd></dt>
-          <dd>播放 / 暫停</dd>
-          <dt><kbd>↑</kbd> / <kbd>↓</kbd></dt>
-          <dd>跳到上一張 / 下一張字幕卡</dd>
-          <dt><kbd>P</kbd></dt>
-          <dd>試聽目前所在字幕卡（播到卡尾自動停）</dd>
-          <dt><kbd>J</kbd> / <kbd>K</kbd></dt>
-          <dd>跳下一張 / 上一張待複查卡</dd>
-          <dt><kbd>Enter</kbd></dt>
-          <dd>在游標處把字幕卡切成兩句</dd>
-          <dt><kbd>Backspace</kbd></dt>
-          <dd>子卡開頭按 → 合併回上一段</dd>
-          <dt><kbd>←</kbd> / <kbd>→</kbd></dt>
-          <dd>
-            ⏱ 時間微調工具列開著時：起點 ±0.1s（<kbd>⇧</kbd> 0.5s、<kbd>⌘</kbd>
-            1.0s；加 <kbd>⌥</kbd> 改調終點）
-          </dd>
-          <dt><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></dt>
-          <dd>復原 / 重做</dd>
-          <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + 滾輪</dt>
-          <dd>時間軸縮放（放大 / 縮小）</dd>
-          <dt>點字幕時間</dt>
-          <dd>影片跳到該句開頭</dd>
-          <dt><kbd>?</kbd></dt>
-          <dd>開啟這份快捷鍵清單</dd>
-        </dl>
+        <!-- 內容由 static/shortcuts.js 的 SHORTCUTS 資料表渲染（openShortcuts() 每次開啟時重畫）。
+             這裡刻意留空：清單以前在這份 HTML 與 app.js 的提示列各抄一份，已經漂移過
+             （[ / ] 打點、工具列開著時 P＝切換循環只進了提示列）。渲染失敗會在這裡寫出
+             可見錯誤文字，不會留一個空白 modal。 -->
+        <dl class="shortcuts-list"></dl>
       </div>
       <div class="modal-actions">
         <button id="shortcuts-close" type="button" class="btn btn-primary">
