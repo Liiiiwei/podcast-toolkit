@@ -12,7 +12,7 @@
 import { expandedCards, state } from "./app.js";
 
 // 卡 key ↔ 時間區間的單一換算來源（與影片模式共用，見 timeline-core.js）
-import { cardKeysToCuts } from "./timeline-core.js";
+import { alignShift, cardKeysToCuts } from "./timeline-core.js";
 
 // 取集狀態。只負責傳輸與狀態碼分類，回傳原始 JSON（snake_case 欄位）。
 // cache:"no-store"：保險再加一層，避免瀏覽器吃舊 cache → 存檔後重載拿到存檔前資料
@@ -34,39 +34,33 @@ function serializeCropForSave(base, b) {
   return b ? { ...base, b: { ...b } } : { ...base };
 }
 
-// 時間軸還原：把畫面上的時間還原成磁碟 _v2.srt 的時間。必須跟 loadEpisodeState 的位移對稱：
-//   載入：display = disk − audioSyncOffset + subtitleOffsetSec
-//   存檔：disk = display + audioSyncOffset − subtitleOffsetSec
+// 時間軸還原：把畫面上的時間還原成磁碟 _v2.srt 的時間，必須是 loadEpisodeState 位移的精確反向
+//   載入：display = disk + alignShift(state)
+//   存檔：disk = display − alignShift(state)
 // 非破壞性字幕偏移是「顯示/合成層」的位移，不該被存進卡片磁碟時間；少減回去 → 拖一張卡存一次就漂一個偏移量。
-// 沒外接音檔且偏移=0 → 原值回傳（no-op）。
-function toDiskTime(t) {
-  const off = (state.audioSyncOffset || 0) - (state.subtitleOffsetSec || 0);
-  return {
-    start: Math.round((t.start + off) * 100) / 100,
-    end: Math.round((t.end + off) * 100) / 100,
-  };
+// 位移算式與 audioPath 守衛只有一份，在 timeline-core.js: alignShift（B3 併軌）。
+// 併軌前這裡是另抄的一份且漏了守衛：yaml 留著 audio_sync_offset 但沒接外接音檔時，
+// 載入不位移、存檔卻減回去 → 卡時間每存一次漂 sync_offset 秒。
+// 位移=0 → 原值回傳（no-op，只剩毫秒取整）。
+function _diskOffset() {
+  return -alignShift(state);
 }
-
-// 刪段（cuts）專用的軸換算。與 toDiskTime 同一個 off 算式，但取小數 3 位不是 2 位：
-// _v2.srt 的時間本來就是毫秒精度，取 3 位才能跟後端 _from_idx(deletions) 算出的
+// 取小數 3 位：_v2.srt 的時間本來就是毫秒精度，3 位才能跟後端 _from_idx(deletions) 算出的
 // 區間逐位元對齊（取 2 位會差幾毫秒 → 「改存檔格式不改出片」這個保證就破了）。
-// off 必須是 applyState 那個 totalShift 的精確反向（display = disk + totalShift），
-// 所以照抄它的 audioPath 守衛：沒有外接音檔時 sync_offset 不參與位移，
-// 這裡也不能減回去，否則整批 cuts 會偏掉 sync_offset 秒、載入時全部對不回卡。
-function _cutOffset() {
-  const audioShift =
-    state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
-  return -(audioShift + (state.subtitleOffsetSec || 0));
-}
 const _ms = (v) => Math.round(v * 1000) / 1000;
 
+function toDiskTime(t) {
+  const off = _diskOffset();
+  return { start: _ms(t.start + off), end: _ms(t.end + off) };
+}
+
 export function cutToDiskTime([s, e]) {
-  const off = _cutOffset();
+  const off = _diskOffset();
   return [_ms(s + off), _ms(e + off)];
 }
 
 export function cutFromDiskTime([s, e]) {
-  const off = _cutOffset();
+  const off = _diskOffset();
   return [_ms(s - off), _ms(e - off)];
 }
 
@@ -137,6 +131,10 @@ export function buildSavePayload({ withSpeed = false } = {}) {
     // deletions 一律送空：告訴後端「這次存檔帶了刪段，結果沒有 idx 版」→ 完成遷移。
     // 排除 new: 開頭的鍵（剛加的新字卡）——舊路徑 _translate 本來就解不掉它、等於沒刪，
     // 改走 cuts 會突然真的剪掉那段聲音；行為差異不在本梯範圍，維持原樣。
+    // B3-3 重查結論：這個 filter 是**防禦性**的，實際永遠過濾不到東西 —— 新增卡在三個上游
+    // 入口都被擋掉（renderCards 的 newCard continue、marquee 的 startsWith 過濾、載入時
+    // newCards 先清空）。前提由 tests/test_new_card_keys_never_deleted.py 釘住：哪天被改破，
+    // 那支測試先紅，這裡才是真的最後一道關。
     // state.foreignCuts 是載入時換不回卡 key 的段（影片模式在句中／跨停頓剪的）：
     // 本編輯器不動它，但一定要原樣送回去，否則存一次檔就把別人剪的段吃掉。
     cuts: [

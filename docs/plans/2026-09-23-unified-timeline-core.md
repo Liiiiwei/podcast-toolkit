@@ -236,5 +236,77 @@ podcast 時間軸從單軌 `#card-timeline` 改成多軌堆疊容器（沿用影
    的第一個迴圈是「t 落在未刪的保留卡內就直接回 t」，保留卡守門優先於 cut 區間。
    刪卡產生的 cuts 一定與卡界對齊所以不受影響；只有影片模式在卡**內部**剪的段會撞到。
    這是 `nextKeepTime` 自己的第三套機制，要修得先決定「卡」與「時間段」誰是預覽的正典 —— 另一件事。
+   → **已在 B3-1 處理**（判定不必拆守門，讓守門看來源即可）。
 2. （續上梯）`new:` 開頭的新增卡不進 cuts。
+   → **記錄更正**：這一項從頭到尾就不是落差。`api.js:138` 的 `new:` 過濾器**永遠過濾不到東西**，
+   它是防禦性過濾而非缺失的功能（理由見下方 B3 的判定 3）。B3-3 改成補測試釘住前提。
 3. （續上梯）`api.js: toDiskTime(t)`（:42）仍是無 `audioPath` 守衛、2 位小數的既有版本。
+   → **已在 B3-2 處理**（併進 `timeline-core.js: alignShift`，並改 3 位小數）。
+
+---
+
+## B3 專梯：預覽守門的來源判定＋軸位移併軌（2026-09-25 開工，＝上梯附錄三項）
+
+### 勘查結論：「這三件事現在各有幾個地方在管？」
+
+| 題目 | 幾個地方在管 | 證據 |
+|---|---|---|
+| 「這個時間點該不該跳過」 | **3** — ①`padAndMergeCuts`（正典，含 pad/夾界/合併）②`nextKeepTime` 第一個迴圈的保留卡守門（卡界優先，蓋過 ①）③無 | `app.js:3235-3243` |
+| 「顯示軸 ↔ 磁碟軸的位移」 | **3 份抄寫** — ①`app.js:2734-2736`（載入，有 audioPath 守衛）②`api.js:_cutOffset`（有守衛、3 位小數）＋`api.js:toDiskTime`（**無守衛、2 位小數**）③`video-edit-prototype.js:alignShift`（有守衛、3 位小數） | 三處算式逐字重複 |
+| 「`new:` 開頭的新增卡會不會進 cuts」 | **不會** — 追完所有寫入 `state.deletions` 的路徑，新增卡全部走不到 | 見 B3-3 |
+
+### 三項各自的判定
+
+1. **附錄第 1 項是真落差，但不是「卡 vs 時間段誰是正典」那麼大**。守門存在的理由寫在原註解裡：
+   Whisper word_timestamp 會把保留卡的起點推到前一張刪除卡的結束之前，那時 `t` 同時落在
+   保留卡與刪除區間內，不守門就會把使用者還看得到的卡跳掉。但這個理由**只對「刪卡產生的 cuts」成立** ——
+   foreign cut 是影片模式刻意在卡**內部**剪掉的段，成品一定沒有它，預覽卻照播。
+   所以修法是讓守門**看來源**（foreign cut 不受守門保護），不是拆掉守門。
+2. **`toDiskTime` 缺 audioPath 守衛是真 bug**：yaml 留著 `audio_sync_offset` 但沒接外接音檔時，
+   載入不位移（有守衛）、存檔卻減回去（無守衛）→ 拖一張卡存一次就漂 `sync_offset` 秒。
+   且 `_cutOffset()` 與它化簡後完全同值（`-(audioShift + subtitleOffsetSec)`），本來就該是同一個函式。
+3. **附錄第 2 項不是落差，是防禦性過濾**：`api.js:138` 的 `new:` 過濾永遠過濾不到東西。
+   正確處置是補測試釘住前提＋更正記錄，不是補功能。
+
+### 執行項
+
+| 項 | 內容 | 驗收 |
+|---|---|---|
+| B3-1 | `nextKeepTime` 守門加來源判定：`t` 落在 foreign cut 內就不受保留卡守門保護 | CDP：卡內部 foreign cut 播到會跳；卡界對齊的刪卡仍照舊；原 overlap 守門場景不回歸 |
+| B3-2 | `timeline-core.js` 新增 `alignShift(st)`；`app.js` 載入、`api.js` 兩處、`video-edit-prototype.js` 全部改用它。`toDiskTime` 一併改 3 位小數 | jsc 單元：三處化簡後同值；pytest round-trip：有 `audio_sync_offset` 無音檔時卡時間不漂 |
+| B3-3 | 補測試釘住「`new:` key 不可能進 `state.deletions`」；更正附錄記錄 | 測試紅→綠（突變：把新增卡也丟進 deletions 的路徑打開要紅） |
+
+### 完成狀態（2026-09-25）
+
+| 項 | 內容 | 證據 |
+|---|---|---|
+| B3-1 | `nextKeepTime` 的保留卡守門改為看來源：`t` 落在 `state.foreignCuts` 內時不受守門保護 | 走查 A5a（卡界對齊的刪卡照舊跳）、B4a/B4b（overlap 守門場景不回歸）；突變 #19／#20 各自單點紅 |
+| B3-2 | `timeline-core.js` 新增 `alignShift(st)`；`app.js` 載入端、`api.js` 存檔端兩處、`video-edit-prototype.js` 全部改呼叫它，`toDiskTime` 一併改 3 位小數 | `tests/test_align_shift_frontend_parity.py` 3 測（jsc 實跑 JS 對照後端 `srt_total_shift`，含 10 組 cfg）；走查 C1–C8 端到端 round-trip（顯示值＋磁碟 SRT 毫秒）；突變 #21／#22／#23 |
+| B3-3 | `tests/test_new_card_keys_never_deleted.py` 釘住「`new:` 鍵不可能進 `state.deletions`」：13 個寫入點逐條記理由＋三道結構性防線＋存檔端防禦 filter | 6 測綠；五個突變（`run_b3_3_mutations.py`）**各自單點紅**，明細見下 |
+
+驗收數字：`verify_b3_guard_and_shift.py` **27/27 通過**（三階段各自改 `episode.yaml`／`_v2.srt`
+並重啟伺服器，全程用真 seek＋真 play 量瀏覽器實際跳到哪）；五個突變（`run_b3_mutations.py`）
+**全部如預期變紅**、還原後回歸 27/27（明細見
+`scripts/cdp-walkthrough/timeline-baseline/MUTATIONS.md` #19～#23）。
+
+B3-3 的突變對照（`b3_3_mutations_result.json`）：
+
+| 突變 | 打開的路徑 | 實際變紅 |
+|---|---|---|
+| N1 | 框選不再排除 `new:` 鍵 | `test_marquee_filters_new_card_keys` |
+| N2 | `renderCards` 的新增卡分支不再 `continue` | `test_render_cards_skips_new_cards_before_delete_toggle` |
+| N3 | 載入順序顛倒（先反推選取才清 `newCards`） | `test_new_cards_cleared_before_cut_derived_selection` |
+| N4 | 多一個沒審過的 `state.deletions` 寫入點 | `test_all_deletion_write_sites_are_reviewed` |
+| N5 | 拿掉存檔端防禦 filter | `test_api_new_key_filter_is_still_the_last_line_of_defence` |
+
+### 留給下一梯（B3 附錄）
+
+1. **後端會剪掉保留卡的頭，預覽刻意不跳 —— 兩邊仍不一致（走查 B5 已把差量釘成 0.75 秒）**。
+   當刪除卡與下一張保留卡的語音在 word_timestamp 上重疊時：後端 `cut_intervals_from_cfg`
+   照 `cut_pad` 往右夾，會吃進保留卡開頭的語音；前端守門則刻意不跳（不然使用者看得到的卡會被跳掉）。
+   要讓兩邊一致必須**前後端同時**把「刪卡產生的 cut」夾在保留卡語音之外 —— 那會改動已交付集的出片邊界，
+   屬於需要使用者決定的範圍，不自行擴充。走查 B5 已把這個差量寫成斷言：任一邊漂掉就紅，不會靜默擴大。
+2. **`expandedCards()` 會吐出 `new:` 列，不變式靠載入順序維持**：`app.js:2599` 清空
+   `state.newCards` 發生在 `:2755` 由 cuts 反推選取之前，所以 `sel.keys` 不可能含 `new:` 鍵。
+   這是結構上偏脆的一環（順序一換就破），已由 `test_new_cards_cleared_before_cut_derived_selection`
+   釘住；若哪天要重排載入流程，先看那支測試的失敗訊息。

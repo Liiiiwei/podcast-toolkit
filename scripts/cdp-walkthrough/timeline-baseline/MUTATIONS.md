@@ -225,3 +225,95 @@ W2 前 podcast 預覽只算字級，顏色／描邊／粗體／底色塊／垂�
 `--autoplay-policy=no-user-gesture-required` 是必要的：這支走查靠真的 `v.play()` 觸發
 `autoSkipDeletedSegments`，被自動播放政策擋下時 probe 會回 `fired:false`，該筆量測直接判無效
 （不會靜默當成「沒跳」而誤判成綠）。
+
+---
+
+## #19～#23 預覽守門看來源＋軸位移 `alignShift` 併軌（附錄 B3）
+
+受測走查：`verify_b3_guard_and_shift.py`（27 項斷言，同一個沙盒集，三個階段之間走查自己改
+`episode.yaml`／`_v2.srt` 並重啟伺服器，`try/finally` 還原）。突變由 `run_b3_mutations.py`
+逐一套用、跑完整支走查、還原，最後再跑一次證明回到全綠。
+
+三個階段（A／B 用**真 seek＋真 play** 量播放頭實際停在哪；C 用**真點 ⏱ 鈕、真點「起點 −0.1s」、
+真按儲存**，再回頭讀 `_v2.srt` 的毫秒整數）：
+
+| 階段 | 設定 | 要證明的事 |
+|---|---|---|
+| A | `cut_pad=0.4`＋foreign cut 塞在保留卡 #4 肚子裡（顯示軸 9.1–9.4） | 落在 cut 裡的 9.20 會跳到 9.40（B3-1 之前保留卡守門優先，整段播過去） |
+| B | 刪卡 #4，且 `_v2.srt` 卡 #5 起點被挪到磁碟 7.5 與它重疊 | 守門仍護住保留卡 #5 的語音（9.30 不跳）—— 守門只放行 foreign cut，不是整個拿掉 |
+| C | `subtitle_offset_sec=0.123` ＋ yaml 留著 `audio.sync_offset=2.0` 但沒接音檔、`cut_pad=0` | 卡面顯示 `0:07.47`、微調後存檔寫成 `00:00:07,247`、重載讀回 `0:07.37` |
+
+| # | 突變點（產品碼） | 改成 | 預期變紅 | 實際 |
+|---|---|---|---|---|
+| 19 | `app.js: nextKeepTime` 的 `if (!inForeignCut) { …保留卡迴圈… }` | 去掉 `if`，保留卡迴圈無條件跑（＝B3-1 之前的卡優先守門） | A5a | 26/27，只有 A5a 紅 |
+| 20 | 同上一段 | 整個保留卡迴圈刪掉（守門全拿掉） | B4b | 26/27，只有 B4b 紅 |
+| 21 | `api.js: _diskOffset` 的 `return -alignShift(state);` | 另抄一份**沒有 `audioPath` 守衛**的位移算式（＝併軌前的既有版本） | C6、C8 | 25/27，如預期 |
+| 22 | `api.js: const _ms = (v) => Math.round(v * 1000) / 1000;` | `Math.round(v * 100) / 100`（退回 2 位小數） | C6 | 26/27，只有 C6 紅 |
+| 23 | `timeline-core.js: alignShift` 的 `s.audioPath && s.audioSyncOffset` | `s.audioSyncOffset`（守衛掉，載入端與存檔端**同時**掉） | C2、C3b、C4、C8 | 23/27，如預期 |
+
+五個突變全部如預期變紅，還原後回歸 **27/27 通過**。完整輸出見
+`verify_b3_guard_and_shift_result.json`。
+
+四個值得記的點：
+
+- **#19 與 #20 互為對照，證明守門是「換判準」不是「拿掉」**：#19 只紅 A5a（foreign cut 播過去）、
+  #20 只紅 B4b（overlap 誤傷保留卡語音）。兩筆各有專屬斷言在守，任一方向做過頭都會紅。
+- **#23 紅在顯示、不紅在 SRT —— 這是併軌換來的對稱性，也是「SRT round-trip 抓不到」的證據**：
+  載入與存檔共用同一個 `alignShift` 之後，守衛一起掉只會讓**顯示時間**整體平移，
+  存回磁碟的毫秒（`00:00:07,250`，只差 #22 的取整）幾乎照樣對得回來。
+  所以 C 階段必須**同時**有「顯示數字斷言（C2/C3b/C4）」與「毫秒斷言（C6）」，缺一個就有一半的
+  退化測不到。#21 之所以要另抄一份無守衛的算式而不是直接刪守衛，就是為了重現併軌**前**的
+  非對稱 bug（載入不位移、存檔卻減回去）。
+- **C1 是「這個測試不是空轉」的自檢**：先斷言 `/api/episode` 真的下放 `audio.sync_offset=2.0`
+  且沒有 `path`，守衛才確實被行使過。少了這筆，`audio` 節點哪天被後端吃掉，
+  C2／C6 會因為位移恆等於 0 而全部照綠。
+- **A1 指紋斷言擋的是「來源未同步」不是突變**：`inForeignCut`、`_diskOffset` 這些字串在
+  #19～#22 裡刻意保留（`void inForeignCut;`），否則走查會在 A1 就中止、看不到後面的紅。
+  指紋的職責是 2026-08-25 那條教訓（測到副本舊版），不是替突變把關。
+
+跑法（走查會自行起／收 `serve_podcast.py` 並還原 `episode.yaml` 與 `_v2.srt`，
+headless Chrome 要自己先開）：
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new --remote-debugging-port=9331 \
+  --user-data-dir=/private/tmp/pt-chrome-b3 \
+  --autoplay-policy=no-user-gesture-required --mute-audio about:blank &
+/usr/bin/python3 -u verify_b3_guard_and_shift.py   # 單跑走查：27/27
+/usr/bin/python3 -u run_b3_mutations.py            # 五個突變 + 還原回歸
+```
+
+C 階段開 ⏱ 工具列會觸發 `startTimeLoop()`（自動 `v.play()` 循環試聽），走查在點完之後
+立刻 `v.pause()` —— `onTimeLoopTick` 在暫停時會提早返回，暫停掉才量得到乾淨的輸入框值。
+
+---
+
+## #24 `new:` 卡不可能進 `state.deletions`（B3-3，突變驅動的是 pytest 不是走查）
+
+受測對象不是瀏覽器行為而是**原始碼層的不變式**：
+`tests/test_new_card_keys_never_deleted.py`（6 測）。它的職責是「前提被改破就紅」，
+所以突變也不是改回舊 bug，而是**把「新增卡也會進 deletions」的路徑打開**。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| N1 | `timeline.js`：框選 filter 拿掉 `!String(r.key).startsWith("new:")` | `test_marquee_filters_new_card_keys` | ✅ 單點紅 |
+| N2 | `app.js`：`if (r.newCard)` 分支拿掉 `continue`（往下走到刪除鈕） | `test_render_cards_skips_new_cards_before_delete_toggle` | ✅ 單點紅 |
+| N3 | `app.js`：`state.newCards = [];` 搬到「由 cuts 反推選取」之後 | `test_new_cards_cleared_before_cut_derived_selection` | ✅ 單點紅 |
+| N4 | `app.js`：多一個沒審過的 `state.deletions.add(r.key)` 寫入點 | `test_all_deletion_write_sites_are_reviewed` | ✅ 單點紅 |
+| N5 | `api.js`：拿掉存檔端的 `new:` 防禦 filter | `test_api_new_key_filter_is_still_the_last_line_of_defence` | ✅ 單點紅 |
+
+值得記的兩點：
+
+- **這支測試刻意是原始碼層的變更偵測，不是行為測試**。要證明的是「某件事永遠不發生」，
+  行為測試最多只能證明「我試過的那幾條路沒發生」。保證來自三個結構性事實
+  （renderCards 的 `continue`、marquee 的 filter、載入時先清 `newCards`），
+  所以測的就是那三件事本身，以及「寫入點清單有沒有多出沒審過的第四條路」。
+- **N4 是這組裡最重要的一個**：前三個突變證明三道防線各自有人看著，
+  N4 證明「有人新開一條沒防線的路」也會被抓到 —— 少了 N4，這支測試只能防退化、不能防新增。
+
+跑法（在 repo 根目錄，會自行備份／還原三支 JS 到 `/private/tmp/b3-3-mutate-bak`）：
+
+```bash
+/usr/bin/python3 -m pytest -q tests/test_new_card_keys_never_deleted.py   # 6 passed
+python3 -u scripts/cdp-walkthrough/timeline-baseline/run_b3_3_mutations.py
+```

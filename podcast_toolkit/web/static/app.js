@@ -15,6 +15,7 @@ import {
 
 // 字幕樣式 ASS → CSS 的單一換算來源（與影片模式共用，見 timeline-core.js「字幕樣式」段）
 import {
+  alignShift,
   buildSubtitleCss,
   cutsToCardSelection,
   padAndMergeCuts,
@@ -2727,13 +2728,9 @@ async function loadEpisodeState() {
     h: 1920,
   };
   state.subtitleOffsetSec = Number(data.subtitle_offset_sec || 0);
-  // 字幕時間軸總位移（與合成端 prepare_assembly 同邏輯，預覽才會跟輸出一致）：
-  //   -audioSyncOffset：外接音檔比 cam A 慢 sync_offset 秒 → 字幕往前推對齊
-  //   +subtitleOffsetSec：使用者設的非破壞性偏移（正值=字幕往後延）
+  // 字幕時間軸總位移（算式與守衛在 timeline-core.js: alignShift，存檔端 api.js 共用同一份）。
   // 只動「顯示用」的 state.cards，不改磁碟 _v2.srt。
-  const audioShift =
-    state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
-  const totalShift = audioShift + (state.subtitleOffsetSec || 0);
+  const totalShift = alignShift(state);
   if (Math.abs(totalShift) > 1e-6) {
     state.cards = state.cards
       .map((c) => ({
@@ -3232,9 +3229,15 @@ function checkedDeletionSeconds() {
 // 不在則回 t 本身。用於 play / timeupdate 時把預覽對齊到最終輸出時間軸。
 // 守門：若 t 正落在某張保留卡的 [start, end) 內，一律不跳 — 處理 Whisper
 // word_timestamp 把保留卡起點推到刪除卡之前的 overlap 情境（issue: 00:38-00:48 卡被跳）。
+// 守門只保護「刪卡產生的 cuts」：那種 cut 一定與卡界對齊，撞到保留卡就是 overlap 誤傷。
+// foreign cut（影片模式在句中／卡內部剪的段）不在保護範圍 — 它本來就是刻意剪在卡內部，
+// 成品一定沒有那段，守門若照蓋過去，預覽就會播出成品已經剪掉的內容。
 function nextKeepTime(t) {
-  for (const r of expandedCards()) {
-    if (!state.deletions.has(r.key) && t >= r.start && t < r.end) return t;
+  const inForeignCut = state.foreignCuts.some(([s, e]) => t >= s && t < e);
+  if (!inForeignCut) {
+    for (const r of expandedCards()) {
+      if (!state.deletions.has(r.key) && t >= r.start && t < r.end) return t;
+    }
   }
   for (const [s, e] of deletionIntervals()) {
     if (t >= s && t < e) return e;

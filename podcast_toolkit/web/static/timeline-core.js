@@ -734,3 +734,25 @@ export function padAndMergeCuts(intervals, cards, pad) {
   }
   return merged;
 }
+
+/**
+ * 顯示軸 ↔ 磁碟軸的總位移（B3）。與合成端 prepare_assembly 同一條算式：
+ *   顯示（cam A 軸） = 磁碟（_v2.srt 軸） + alignShift
+ *   -audioSyncOffset：外接音檔比 cam A 慢 sync_offset 秒 → 字幕往前推才對齊畫面
+ *   +subtitleOffsetSec：使用者設的非破壞性偏移（正值＝字幕往後延）
+ *
+ * `audioPath` 守衛不可省：episode.yaml 可能留著舊的 `audio.sync_offset` 但這集沒接外接音檔，
+ * 此時 sync_offset 不參與位移。載入端有守衛、存檔端沒有的話，拖一張卡存一次就漂 sync_offset 秒
+ * （載入不加、存檔卻減回去），而且每次存檔再漂一次、修不回來。
+ *
+ * 併軌前這條算式在 app.js（載入）、api.js（存檔，兩份且其中一份漏守衛）、
+ * video-edit-prototype.js（影片模式）共抄了三份 —— 全部改成呼叫本函式。
+ *
+ * @param {{audioPath?: string, audioSyncOffset?: number, subtitleOffsetSec?: number}} st
+ * @returns {number} 位移秒數（display = disk + 回傳值）
+ */
+export function alignShift(st) {
+  const s = st || {};
+  const audioShift = s.audioPath && s.audioSyncOffset ? -s.audioSyncOffset : 0;
+  return audioShift + (s.subtitleOffsetSec || 0);
+}

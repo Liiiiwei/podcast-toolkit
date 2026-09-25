@@ -1,0 +1,327 @@
+{
+  "results": [
+    {
+      "name": "A0 開得起來：卡片已渲染",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "A1 來源已同步：core 有 alignShift、app 有 inForeignCut、api 走 _diskOffset、影片模式也接上，且 /api/episode 下放 cut_pad=0.4",
+      "ok": true,
+      "got": {
+        "core_shift": true,
+        "app_b31": true,
+        "api_b32": true,
+        "vproto": true,
+        "cut_pad": 0.4
+      },
+      "want": {
+        "core_shift": true,
+        "app_b31": true,
+        "api_b32": true,
+        "vproto": true,
+        "cut_pad": 0.4
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A2 影片可 seek（readyState>=1 且 seekable.length>0）",
+      "ok": true,
+      "got": {
+        "ready": 4,
+        "seekable": 1,
+        "dur": 24
+      },
+      "want": "ready>=1, seekable>0",
+      "status": "pass"
+    },
+    {
+      "name": "A3 沒有紅卡（卡內 foreign cut 不擴寬成整張卡）",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "A4 後端 cut_intervals_from_cfg 的區間 +1.5 = [9.1, 9.4]（pad 被卡 #4 自己的語音邊界夾死）",
+      "ok": true,
+      "got": [
+        [
+          7.6,
+          7.9
+        ]
+      ],
+      "want": [
+        [
+          7.6,
+          7.9
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "A5a 保留卡 #4 內、落在 foreign cut 的 9.20 → 跳到 9.4（B3-1 之前停在原地）",
+      "ok": true,
+      "got": {
+        "before": 9.2,
+        "after": 9.4,
+        "fired": true
+      },
+      "want": {
+        "after": 9.4,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A5b 同一張卡、cut 之前的 9.00 → 不跳",
+      "ok": true,
+      "got": {
+        "before": 9,
+        "after": 9.000216,
+        "fired": true
+      },
+      "want": {
+        "after": 9.0,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A5c 同一張卡、cut 之後的 9.50 → 不跳",
+      "ok": true,
+      "got": {
+        "before": 9.5,
+        "after": 9.501239,
+        "fired": true
+      },
+      "want": {
+        "after": 9.5,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "A5d 卡間隙的 8.30 → 不跳（守門沒有變成整段亂跳）",
+      "ok": true,
+      "got": {
+        "before": 8.3,
+        "after": 8.300291,
+        "fired": true
+      },
+      "want": {
+        "after": 8.3,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "B0 卡 #5 頭與刪卡 #4 重疊的集開得起來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "B1 影片可 seek",
+      "ok": true,
+      "got": {
+        "ready": 4,
+        "seekable": 1,
+        "dur": 24
+      },
+      "want": "seekable>0",
+      "status": "pass"
+    },
+    {
+      "name": "B2 cuts 換回紅卡 {4}（重疊不影響卡層換算）",
+      "ok": true,
+      "got": [
+        "4"
+      ],
+      "want": [
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "B3 後端區間 +1.5 = [8.45, 9.75]",
+      "ok": true,
+      "got": [
+        [
+          6.949999999999999,
+          8.25
+        ]
+      ],
+      "want": [
+        [
+          6.949999999999999,
+          8.25
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.75",
+      "ok": true,
+      "got": {
+        "before": 8.5,
+        "after": 9.75,
+        "fired": true
+      },
+      "want": {
+        "after": 9.75,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "B4b 落在剪除區間內、但同時落在保留卡 #5 語音裡的 9.30 → 不跳（守衛護住保留卡；拿掉守衛就會跳到 9.75）",
+      "ok": true,
+      "got": {
+        "before": 9.3,
+        "after": 9.300215,
+        "fired": true
+      },
+      "want": {
+        "after": 9.3,
+        "fired": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "B5 已知落差（待裁決）：後端剪除區間侵入保留卡 #5 的語音 0.75s，預覽刻意不跳過這段",
+      "ok": true,
+      "got": 0.75,
+      "want": 0.75,
+      "status": "pass"
+    },
+    {
+      "name": "C0 帶 subtitle_offset_sec=0.123 的集開得起來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "C1 /api/episode 真的下放 audio.sync_offset=2.0 且沒有 path（守衛有被實際行使，不是空轉的測試）",
+      "ok": true,
+      "got": {
+        "offset": 0.123,
+        "audio": {
+          "sync_offset": 2
+        }
+      },
+      "want": {
+        "offset": 0.123,
+        "audio": {
+          "sync_offset": 2.0,
+          "path": null
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "name": "C2 卡 #4 卡面顯示 0:07.47 / 0:08.37（載入端守衛：沒守衛會減掉 sync_offset 變 0:05.47）",
+      "ok": true,
+      "got": "#4\n0:07.47\n0:08.37",
+      "want": "#4 / 0:07.47 / 0:08.37",
+      "status": "pass"
+    },
+    {
+      "name": "C3a ⏱ 鈕點得到，且該座標最上層就是它（沒被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": null,
+        "cls": "card-time-edit-btn"
+      },
+      "want": "card-time-edit-btn",
+      "status": "pass"
+    },
+    {
+      "name": "C3b ⏱ 工具列兩個輸入框也讀 0:07.47 / 0:08.37",
+      "ok": true,
+      "got": [
+        "0:07.47",
+        "0:08.37"
+      ],
+      "want": [
+        "0:07.47",
+        "0:08.37"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "C4 真點「起點 −0.1s」→ 輸入框變 0:07.37（setCardTime 取整到 0.01s）",
+      "ok": true,
+      "got": {
+        "clicked": true,
+        "top": {
+          "tag": "BUTTON",
+          "id": null,
+          "cls": "te-btn"
+        },
+        "inputs": [
+          "0:07.37",
+          "0:08.37"
+        ]
+      },
+      "want": [
+        "0:07.37",
+        "0:08.37"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "C5 存檔完成（按鈕回報已儲存 + yaml mtime 前進 + 無錯誤 toast）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "C6 _v2.srt 卡 #4 寫成 00:00:07,247 --> 00:00:08,247（存檔端守衛掉 → 09,247；取整退回 2 位小數 → 07,250）",
+      "ok": true,
+      "got": "00:00:07,247 --> 00:00:08,247",
+      "want": "00:00:07,247 --> 00:00:08,247",
+      "status": "pass"
+    },
+    {
+      "name": "C7 存檔沒有吃掉 subtitle_offset_sec / audio.sync_offset（round-trip 不掉值）",
+      "ok": true,
+      "got": {
+        "subtitle_offset_sec": 0.123,
+        "audio": {
+          "sync_offset": 2.0
+        }
+      },
+      "want": {
+        "subtitle_offset_sec": 0.123,
+        "audio": {
+          "sync_offset": 2.0
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "name": "C8 重載後卡 #4 讀回 0:07.37 / 0:08.37（寫得進也讀得回，軸沒有漂）",
+      "ok": true,
+      "got": "#4\n0:07.37\n0:08.37",
+      "want": "#4 / 0:07.37 / 0:08.37",
+      "status": "pass"
+    },
+    {
+      "name": "D 全程無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    }
+  ],
+  "failed": [],
+  "b5_backend_bites_into_kept_card_sec": 0.75,
+  "srt_card4_after_save": "00:00:07,247 --> 00:00:08,247"
+}

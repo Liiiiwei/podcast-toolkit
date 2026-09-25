@@ -11,6 +11,7 @@
  *   ?demo=1 → bundled sample-waveform.json ＋ sample-video.mp4，不需 server/開集即可整頁渲染。
  */
 import {
+  alignShift as alignShiftCore,
   applyTimelineZoom,
   positionPlayhead,
   drawWaveformCore,
@@ -1826,17 +1827,14 @@ import {
   const r3 = (n) => Math.round(n * 1000) / 1000;
   const r4 = (n) => Math.round(n * 10000) / 10000;
 
-  // ── 對齊位移數學（與 app.js / api.js 對稱）───────────────────────────
+  // ── 對齊位移數學（B3 併軌：算式與 audioPath 守衛只有 timeline-core.js: alignShift 一份）──
   // 顯示軸位移 totalShift：把磁碟 _v2.srt（外接音檔軸）的字幕時間搬到 cam A 軸，
   // 讓播放預覽的字幕 highlight 對得上 video.currentTime。
-  //   totalShift = (有外接音檔 ? -audioSyncOffset : 0) + subtitleOffsetSec
   //   載入：display = disk + totalShift（見 applyLoadShiftToSubs）
   //   存檔：disk = display − totalShift（見 toDiskTime）
-  // 兩向保證對稱（存→重載不會越存越早）；demo 或零偏移時 = 0，行為不變。
+  // 本檔這層只做「綁定本模組的 state」，不重寫算式。
   function alignShift() {
-    const audioShift =
-      state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
-    return audioShift + (state.subtitleOffsetSec || 0);
+    return alignShiftCore(state);
   }
   // 時間軸還原：cam A 軸顯示時間 → 磁碟 _v2.srt 時間。必與 alignShift 對稱。
   function toDiskTime(t) {
