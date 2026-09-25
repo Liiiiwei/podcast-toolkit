@@ -347,3 +347,39 @@ B3-3 的突變對照（`b3_3_mutations_result.json`）：
    card-derived cut 不可能覆蓋保留卡語音、foreign cut 又本來就跳過守門 —— 突變 M2
    （整個守門拿掉）現在 **0 紅**。要嘛拿掉這個冗餘機制（「同一件事兩個地方在管」的味道），
    要嘛留著當第二層並補一個真能讓它紅的情境。本梯不動它是範圍紀律，不是忘了。
+
+---
+
+## 附錄第 2 項：偏移欄位的 NaN 靜默清零（2026-09-25 完成）
+
+**開工第一問「幾個地方在管」= 3**：字幕偏移 `#srt-shift-input`、cam B 同步
+`#cam-sync-offset-b`、音檔同步 `#audio-sync-offset`，三處各自 `Number(el.value || 0)`。
+
+**落差**：三個都是 `<input type="number">`，使用者打出 `1e`／`--` 這種非數字時，
+**`el.value` 回空字串**，與「真的清空」無法分辨 → 既有偏移被**靜默清成 0**，
+而 `save_state` 對 0 值會 `pop` 掉整個鍵（`camera_sync_offset` 整組消失）。
+原本寫在旁邊的 `Number.isFinite` 警示分支永遠等不到 NaN —— 是死碼。
+唯一分得出來的是 `validity.badInput`。
+
+**修法**：三處併成單一讀值器 `app.js: readOffsetInput()`，回 `{ok, value, reason}`；
+呼叫端非法就 toast ＋早退，不准 fallback 成 0。`_camModalSavePayload()` 一併移進
+`try` 內 —— 它在 try 外 throw 會變成未捕捉例外，按鈕永遠停在「儲存中…」的靜默失敗。
+
+**證據**：`scripts/cdp-walkthrough/timeline-baseline/verify_offset_badinput.py` 42/42
+（四態俱全：error／success／empty／loading 收尾）、全測試 1053 passed、
+突變 MUT-A（拿掉 badInput 守衛 → 字幕偏移**與** cam 偏移同時紅，兼作「併軌成立」的證據）、
+MUT-B（守衛拿掉＋builder 移出 try → 按鈕卡死零 toast）。詳見 MUTATIONS.md 同日條目。
+
+### 留給下一梯（附錄）
+
+1. **toast 會蓋住 topbar 右側按鈕**（本梯量到，未修）：`#toast-container` 固定在右上
+   （`top:16px; inset:auto 16px auto auto; z-index:10000`），個別 `.toast` 為了點擊關閉
+   而開 `pointer-events:auto`。實測 `#cam-btn` 在 x1029-1103 / y14-46，中心 (1066,30)
+   正落在 toast 覆蓋範圍 —— toast 還在的那 4~8 秒（warn 4s／error 8s）
+   `elementFromPoint` 回的是 toast，點擊被吃掉、鏡頭視窗打不開，使用者感受是「按了沒反應」。
+   與 2026-08-25「絕對定位的把手整片蓋住流內按鈕」同型。
+   可能修法：toast 容器下移到不與 topbar 重疊的 y、或改成左下／底部中央、
+   或只讓 toast 的關閉鈕吃點擊而本體 `pointer-events:none`。三者都會動到全站 toast，
+   要一起決定。走查端目前以 `clear_toasts` 閃避。
+2. **`nextKeepTime` 的保留卡守衛已不可達**（上梯留下，仍未裁決）：突變 M2 現在 0 紅。
+   拿掉冗餘機制，或留著當第二層並補一個真能讓它紅的情境。

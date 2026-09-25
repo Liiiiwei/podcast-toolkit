@@ -403,3 +403,55 @@ UI 改動的證據只能是瀏覽器實測數字，所以走查全程量 `#capti
 CDP_PORT=9522 /usr/bin/python3 -u verify_caption_style_panel.py   # 36/36
 /usr/bin/python3 -m pytest -q                                      # 1053 passed, 1 xfailed
 ```
+
+---
+
+## 2026-09-25 偏移欄位 NaN 靜默清零（`verify_offset_badinput.py`，42/42）
+
+三處偏移欄位（字幕偏移 `#srt-shift-input`、cam B 同步 `#cam-sync-offset-b`、音檔同步
+`#audio-sync-offset`）都是 `<input type="number">`。使用者打出 `1e`／`--` 這種非數字時，
+**`el.value` 回的是空字串**，與「真的把欄位清空」完全無法分辨 —— 舊碼 `Number(value || 0)`
+於是把既有偏移**靜默清成 0**（`save_state` 對 0 值會 `pop` 掉整個鍵），而原本那行
+`Number.isFinite` 警示永遠等不到 NaN，是死碼。唯一分得出來的是 `validity.badInput`。
+
+修法：三處併成**單一讀值器** `app.js: readOffsetInput()`（回 `{ok, value, reason}`），
+呼叫端非法就顯示 toast 並早退，不准 fallback 成 0。
+
+- **T1.3 與 T3.0 並列是整份走查的核心證據**：`1e` 與真清空兩者 `el.value` 同為 `""`，
+  只有 `badInput` 一個 true 一個 false —— 「為什麼非得看 validity」這件事因此是可量測事實。
+- **T6.4 是防迴歸斷言**：第一版守衛寫成 `!el.validity.valid`，那會把 `stepMismatch`
+  一起算成非法 —— step=0.01 的欄位手打 `0.425` 本來收得下，新守衛卻擋掉，是新的退步。
+  判準改成只看 `Number.isFinite`，並補這條斷言釘住「step 不整除的合法值仍存得進去」。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| MUT-A | `app.js: readOffsetInput`：拿掉 badInput 守衛三行（退回「空字串當 0」） | 字幕偏移**與** cam 偏移同時被清零、兩條 toast 都消失 | ✅ 4 紅（sub=None、cam=None、toast 0/0；還原後 1.5／0.42／1/1） |
+| MUT-B | `app.js: #cam-save`：拿掉兩道早退守衛，且 `_camModalSavePayload()` 移出 `try` | 例外沒人接 → 按鈕卡在「儲存中…」且零 toast | ✅ 3 紅（disabled=True／text='儲存中…'／toasts=0） |
+
+三件值得記的事：
+
+- **MUT-A 同時是「併軌成立」的證據**：同一個突變點讓字幕偏移與 cam 偏移**一起**紅，
+  代表三處真的共用一個讀值器、沒有第二套機制躲在旁邊（專案 CLAUDE.md 開工第一問）。
+- **CDP 打真鍵盤時 `keyDown` 不可以帶 `text`**：`keyDown` 與 `char` 都帶 `text` 會各插入
+  一次字元（"2.5" 變成 "22.55"），連帶讓 step=0.1 的欄位產生 stepMismatch —— 本梯 11 項紅
+  是這一個根因。正確順序：`keyDown`（不帶 text）→ `char`（帶 `text`/`unmodifiedText`）→ `keyUp`。
+  另：真 `badInput` 只能用真鍵盤事件打出來，程式化賦值造不出來。
+- **toast 壽命會吃掉斷言**：warn 4000ms／error 8000ms 自動消失，而 `wait_yaml_change`
+  最長等 15 秒 —— 必須「點擊後 0.6s 先讀 toast，再去等 yaml」，否則讀到 0 個是假紅。
+
+### 順手量到、不在本梯範圍的 UX 缺陷（已寫進計畫檔附錄）
+
+**toast 會蓋住 topbar 右側按鈕**：`#toast-container` 是 `position:fixed; top:16px;
+inset:auto 16px auto auto; z-index:10000`，個別 `.toast` 是 `pointer-events:auto`
+（為了點擊關閉）。實測 `#cam-btn` 在 x1029-1103 / y14-46，中心 (1066,30) 正落在 toast
+覆蓋範圍內 —— toast 還在的那 4~8 秒，`elementFromPoint(1066,30)` 回的是 toast 而不是按鈕，
+點擊被吃掉、鏡頭視窗打不開。使用者的感受會是「按了沒反應」，與 2026-08-25 那條
+「絕對定位的把手整片蓋住流內按鈕」同型。走查端先 `clear_toasts` 閃避（`open_cam_modal`
+第一行，註解已寫明是取樣干擾不是受測行為）。
+
+跑法：
+
+```bash
+CDP_PORT=9522 /usr/bin/python3 -u verify_offset_badinput.py   # 42/42
+/usr/bin/python3 -m pytest -q                                  # 1053 passed, 1 xfailed
+```

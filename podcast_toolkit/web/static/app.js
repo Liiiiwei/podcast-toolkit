@@ -3033,16 +3033,40 @@ function setupSusToolbar() {
   $("#review-next").addEventListener("click", jumpToNextReview);
 }
 
+// 偏移秒數輸入框的唯一讀值器（字幕偏移 / cam B 同步 / 音檔同步共用）。
+//
+// type=number 在使用者打出非數字（例如 "1e"、"--"）時，el.value 回的是**空字串**，
+// 與「真的把欄位清空」完全無法分辨——於是 Number(value || 0) 會把既有偏移靜默清成 0，
+// 而 Number.isFinite 那道警示永遠等不到 NaN（死碼）。validity.badInput 才分得出來。
+// 回傳 {ok:false, reason} 時，呼叫端必須顯示錯誤並中止，不准 fallback 成 0。
+function readOffsetInput(el) {
+  if (!el) return { ok: false, reason: "找不到輸入框" };
+  if (el.validity && el.validity.badInput) {
+    return { ok: false, reason: "看起來不是數字（既有偏移沒有被改動）" };
+  }
+  const raw = String(el.value == null ? "" : el.value).trim();
+  if (raw === "") return { ok: true, value: 0, empty: true };
+  const n = Number(raw);
+  // 刻意只看 isFinite，不看 validity.valid：valid 會連 stepMismatch 一起算進去，
+  // 而 step 只是箭頭的跳動量——在 step=0.01 的欄位手打 0.425 本來就該收，擋掉是新的退步。
+  // 對 type=number 來說這一條實務上進不來（非數字都被上面的 badInput 攔掉了），
+  // 留著是為了這個讀值器日後被接到別種輸入框時仍然正確。
+  if (!Number.isFinite(n)) {
+    return { ok: false, reason: "數值不合法（既有偏移沒有被改動）" };
+  }
+  return { ok: true, value: n, empty: false };
+}
+
 function setupSrtShift() {
   $("#srt-shift-btn").addEventListener("click", async () => {
     const input = $("#srt-shift-input");
     // 絕對值語意：input 即「目前偏移」。空白 / 0 = 清除偏移（回原時間）。非破壞性：只存 yaml。
-    const raw = input.value.trim();
-    const offset = raw === "" ? 0 : Number(raw);
-    if (!Number.isFinite(offset)) {
-      showToast("偏移秒數必須是數字（可正可負，0 = 清除）", "warn");
+    const read = readOffsetInput(input);
+    if (!read.ok) {
+      showToast(`偏移秒數必須是數字（可正可負，0 = 清除）：${read.reason}`, "warn");
       return;
     }
+    const offset = read.value;
     if (offset === (state.subtitleOffsetSec || 0)) {
       return; // 沒變更，免存
     }
@@ -6977,16 +7001,19 @@ function _camModalSavePayload() {
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
   const srtPath = $("#srt-select").value || "";
-  const offset = Number($("#cam-sync-offset-b").value || 0);
-  const audioOffset = Number($("#audio-sync-offset").value || 0);
+  // 非法值丟例外而不是靜默回 0——兩個呼叫端（#cam-save / #align-all）都有 try/catch 顯示 toast
+  const camRead = readOffsetInput($("#cam-sync-offset-b"));
+  if (!camRead.ok) throw new Error(`Cam B 同步偏移${camRead.reason}`);
+  const audioRead = readOffsetInput($("#audio-sync-offset"));
+  if (!audioRead.ok) throw new Error(`音檔同步偏移${audioRead.reason}`);
   return {
     ...buildSavePayload(),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
-    camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
+    camera_sync_offset_b: camRead.value,
     audio: {
       path: audioPath,
-      sync_offset: Number.isFinite(audioOffset) ? audioOffset : 0,
+      sync_offset: audioRead.value,
     },
     srt_path: srtPath,
   };
@@ -7214,26 +7241,26 @@ $("#manual-align-apply").addEventListener("click", () => {
 });
 
 $("#cam-save").addEventListener("click", async () => {
-  const offsetRaw = $("#cam-sync-offset-b").value;
-  const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
-  if (!Number.isFinite(offset)) {
-    showToast("同步偏移要是數字", "warn");
+  const camRead = readOffsetInput($("#cam-sync-offset-b"));
+  if (!camRead.ok) {
+    showToast(`同步偏移要是數字：${camRead.reason}`, "warn");
     return;
   }
-  const audioOffsetRaw = $("#audio-sync-offset").value;
-  const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
-  if (!Number.isFinite(audioOffset)) {
-    showToast("音檔同步偏移要是數字", "warn");
+  const audioRead = readOffsetInput($("#audio-sync-offset"));
+  if (!audioRead.ok) {
+    showToast(`音檔同步偏移要是數字：${audioRead.reason}`, "warn");
     return;
   }
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
   // 與 #align-all 共用同一個 payload builder（含 srt_path）：先前 cam-save 內聯自建 payload
-  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。offset/audioOffset
-  // 已於上方驗證為數字，builder 重讀同一組 DOM 值不會踩到它內部的靜默歸零。
-  const payload = _camModalSavePayload();
+  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。builder 重讀
+  // 同一組 DOM 值時走同一個 readOffsetInput，非法值會丟例外（不再有靜默歸零那條路）。
   try {
+    // builder 也會丟例外（非法偏移），所以放進 try——放外面會變成未捕捉例外，
+    // 按鈕永遠停在「儲存中…」而且沒有任何錯誤表現（靜默失敗）。
+    const payload = _camModalSavePayload();
     await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
     await loadEpisodeState();

@@ -1,0 +1,569 @@
+{
+  "mode": "offset-badinput",
+  "results": [
+    {
+      "name": "V0.0 編輯器已載入且字幕偏移入口已顯示（有字幕卡）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "V0.1 原始碼指紋：readOffsetInput 存在且被 5 處呼叫（定義 1 ＋ 呼叫 5）",
+      "ok": true,
+      "got": {
+        "reader": true,
+        "uses": 6,
+        "badInput": true
+      },
+      "want": {
+        "reader": true,
+        "uses": 6,
+        "badInput": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V0.2 三個偏移欄位都在且都是 type=number（badInput 只有 number 會有）",
+      "ok": true,
+      "got": {
+        "srt-shift-input": "number",
+        "cam-sync-offset-b": "number",
+        "audio-sync-offset": "number"
+      },
+      "want": {
+        "srt-shift-input": "number",
+        "cam-sync-offset-b": "number",
+        "audio-sync-offset": "number"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V0.3 磁碟基準：subtitle_offset_sec=1.5、camera_sync_offset.b=0.42",
+      "ok": true,
+      "got": {
+        "sub": 1.5,
+        "cam": 0.42
+      },
+      "want": {
+        "sub": 1.5,
+        "cam": 0.42
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.0 「偏移」鈕未被疊層遮擋（elementFromPoint 最上層落在按鈕內）",
+      "ok": true,
+      "got": {
+        "tag": "SPAN",
+        "id": null,
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.1 真點擊 → 浮層展開且 aria-expanded=true",
+      "ok": true,
+      "got": {
+        "open": true,
+        "aria": "true"
+      },
+      "want": {
+        "open": true,
+        "aria": "true"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.2 既有偏移已回填欄位（1.5）",
+      "ok": true,
+      "got": "1.5",
+      "want": "1.5",
+      "status": "pass"
+    },
+    {
+      "name": "T1.3 真鍵盤打 '1e' → el.value 是空字串、badInput=true（這正是舊碼分不出「非數字」與「清空」的原因）",
+      "ok": true,
+      "got": {
+        "value": "",
+        "badInput": true
+      },
+      "want": {
+        "value": "",
+        "badInput": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.4 「套用偏移」鈕未被疊層遮擋",
+      "ok": true,
+      "got": {
+        "tag": "SPAN",
+        "id": null,
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.5 非數字 → 跳 warn toast（失敗路徑有可見表現，不是靜默）",
+      "ok": true,
+      "got": {
+        "count": 1,
+        "items": [
+          {
+            "kind": "warn",
+            "text": "偏移秒數必須是數字（可正可負，0 = 清除）：看起來不是數字（既有偏移沒有被改動）"
+          }
+        ]
+      },
+      "want": {
+        "count": 1,
+        "kind": "warn",
+        "text": "含「偏移秒數必須是數字」"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.6 磁碟 episode.yaml 一個位元組都沒動，subtitle_offset_sec 仍 1.5（舊碼會清成 0 → 鍵被 pop）",
+      "ok": true,
+      "got": {
+        "yamlChanged": false,
+        "sub": 1.5
+      },
+      "want": {
+        "yamlChanged": false,
+        "sub": 1.5
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.7 被擋下時按鈕沒有卡在 disabled（早退在 disabled 之前）",
+      "ok": true,
+      "got": {
+        "disabled": false
+      },
+      "want": {
+        "disabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.0 重打合法值 → badInput 清掉（error 態可恢復，不是單向門）",
+      "ok": true,
+      "got": {
+        "value": "2.5",
+        "badInput": false
+      },
+      "want": {
+        "value": "2.5",
+        "badInput": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.1 點套用 → 磁碟 episode.yaml 真的被改寫",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "T2.2 subtitle_offset_sec 讀回 2.5（round-trip：寫入→重載→讀回）",
+      "ok": true,
+      "got": 2.5,
+      "want": 2.5,
+      "status": "pass"
+    },
+    {
+      "name": "T2.3 成功時不跳 toast（toast 只用在失敗路徑）",
+      "ok": true,
+      "got": {
+        "count": 0,
+        "items": []
+      },
+      "want": {
+        "count": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.4 存檔結束後按鈕解除 disabled（loading 態有收尾）",
+      "ok": true,
+      "got": {
+        "disabled": false
+      },
+      "want": {
+        "disabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.5 重載後欄位回填新值 2.5（使用者看得到的那一份也對）",
+      "ok": true,
+      "got": "2.5",
+      "want": "2.5",
+      "status": "pass"
+    },
+    {
+      "name": "T3.0 真清空 → el.value 也是空字串，但 badInput=false（與 T1.3 完全同值，只有 badInput 分得出來——這是併軌的量測證據）",
+      "ok": true,
+      "got": {
+        "value": "",
+        "badInput": false
+      },
+      "want": {
+        "value": "",
+        "badInput": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T3.1 清空後套用 → yaml 被改寫，且 subtitle_offset_sec 鍵被移除（0＝清除偏移）",
+      "ok": true,
+      "got": {
+        "yamlChanged": true,
+        "sub": null
+      },
+      "want": {
+        "yamlChanged": true,
+        "sub": null
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T3.2 清除偏移不跳 toast（這是正常操作，不是錯誤）",
+      "ok": true,
+      "got": {
+        "count": 0,
+        "items": []
+      },
+      "want": {
+        "count": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T3.3 打回 1.5 套用 → yaml 讀回 1.5（error→empty→success 三態可互相往返）",
+      "ok": true,
+      "got": {
+        "yamlChanged": true,
+        "sub": 1.5
+      },
+      "want": {
+        "yamlChanged": true,
+        "sub": 1.5
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.0 「鏡頭」鈕未被疊層遮擋",
+      "ok": true,
+      "got": {
+        "tag": "SPAN",
+        "id": null,
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.1 modal 開啟且 cam B 同步偏移回填 0.42",
+      "ok": true,
+      "got": {
+        "open": true,
+        "camVal": "0.42"
+      },
+      "want": {
+        "open": true,
+        "camVal": "0.42"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.2 cam 欄位真鍵盤打 '1e' → value=''、badInput=true",
+      "ok": true,
+      "got": {
+        "value": "",
+        "badInput": true
+      },
+      "want": {
+        "value": "",
+        "badInput": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.3 cam modal 的「儲存」鈕未被疊層遮擋",
+      "ok": true,
+      "got": {
+        "tag": "BUTTON",
+        "id": "cam-save",
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.4 非數字 → 跳 warn toast",
+      "ok": true,
+      "got": {
+        "count": 1,
+        "items": [
+          {
+            "kind": "warn",
+            "text": "同步偏移要是數字：看起來不是數字（既有偏移沒有被改動）"
+          }
+        ]
+      },
+      "want": {
+        "count": 1,
+        "kind": "warn",
+        "text": "含「同步偏移要是數字」"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.5 yaml 一個位元組都沒動，camera_sync_offset.b 仍 0.42（舊碼會清成 0 → 整個 camera_sync_offset 被 pop → 雙機失步）",
+      "ok": true,
+      "got": {
+        "yamlChanged": false,
+        "cam": 0.42
+      },
+      "want": {
+        "yamlChanged": false,
+        "cam": 0.42
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.6 被擋下時 modal 仍開著、按鈕回「儲存」且未卡在 disabled",
+      "ok": true,
+      "got": {
+        "open": true,
+        "btnDisabled": false,
+        "btnText": "儲存"
+      },
+      "want": {
+        "open": true,
+        "btnDisabled": false,
+        "btnText": "儲存"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.0 音檔欄位真鍵盤打 '1e' → value=''、badInput=true",
+      "ok": true,
+      "got": {
+        "value": "",
+        "badInput": true
+      },
+      "want": {
+        "value": "",
+        "badInput": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.1 音檔欄位非數字 → 跳 warn toast 且訊息指名是音檔那一欄",
+      "ok": true,
+      "got": {
+        "count": 1,
+        "items": [
+          {
+            "kind": "warn",
+            "text": "音檔同步偏移要是數字：看起來不是數字（既有偏移沒有被改動）"
+          }
+        ]
+      },
+      "want": {
+        "count": 1,
+        "kind": "warn",
+        "text": "含「音檔同步偏移要是數字」"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.2 yaml 沒動，camera_sync_offset.b 仍 0.42（cam 欄位是合法的，被擋的是音檔那一欄）",
+      "ok": true,
+      "got": {
+        "yamlChanged": false,
+        "cam": 0.42
+      },
+      "want": {
+        "yamlChanged": false,
+        "cam": 0.42
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.3 modal 仍開著、按鈕未卡在 disabled",
+      "ok": true,
+      "got": {
+        "open": true,
+        "btnDisabled": false
+      },
+      "want": {
+        "open": true,
+        "btnDisabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.0 合法值 → yaml 真的被改寫且不跳 toast",
+      "ok": true,
+      "got": {
+        "yamlChanged": true,
+        "toast": 0
+      },
+      "want": {
+        "yamlChanged": true,
+        "toast": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.1 camera_sync_offset.b 讀回 0.75",
+      "ok": true,
+      "got": 0.75,
+      "want": 0.75,
+      "status": "pass"
+    },
+    {
+      "name": "T6.2 存檔成功後 modal 關閉、按鈕文案復原「儲存」",
+      "ok": true,
+      "got": {
+        "open": false,
+        "btnText": "儲存",
+        "btnDisabled": false
+      },
+      "want": {
+        "open": false,
+        "btnText": "儲存",
+        "btnDisabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.3 重開 modal → cam 欄位讀回 0.75（state → yaml → state 走完一圈）",
+      "ok": true,
+      "got": "0.75",
+      "want": "0.75",
+      "status": "pass"
+    },
+    {
+      "name": "T6.4 手打 0.425（step=0.01 不整除，validity.valid 是 false）仍然存得進去——step 只是箭頭跳動量，拿它當合法性判準會擋掉本來就能用的值",
+      "ok": true,
+      "got": {
+        "yamlChanged": true,
+        "cam": 0.425,
+        "toast": 0
+      },
+      "want": {
+        "yamlChanged": true,
+        "cam": 0.425,
+        "toast": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.5 改回 0.42 → yaml 讀回 0.42",
+      "ok": true,
+      "got": {
+        "yamlChanged": true,
+        "cam": 0.42
+      },
+      "want": {
+        "yamlChanged": true,
+        "cam": 0.42
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1–T6 全段互動無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "MUT-A 真突變成立：拿掉唯一讀值器的 badInput 守衛 → 字幕偏移與 cam 偏移**同時**被靜默清零（RED），還原→兩條都守住（GREEN）。同一個突變點讓兩條路徑一起紅，正是「一刀兩路、沒有第二套機制」的證據",
+      "ok": true,
+      "got": {
+        "red": {
+          "sub": null,
+          "cam": null,
+          "toasts": [
+            0,
+            0
+          ]
+        },
+        "green": {
+          "sub": 1.5,
+          "cam": 0.42,
+          "toasts": [
+            1,
+            1
+          ]
+        }
+      },
+      "want": {
+        "red": {
+          "sub": "None（被清零）",
+          "cam": "None（被清零）",
+          "toasts": [
+            0,
+            0
+          ]
+        },
+        "green": {
+          "sub": 1.5,
+          "cam": 0.42,
+          "toasts": [
+            1,
+            1
+          ]
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-B 真突變成立：守衛拿掉＋builder 移出 try → 例外沒人接，按鈕卡在「儲存中…」且零 toast（靜默失敗），還原→可見錯誤＋按鈕可用",
+      "ok": true,
+      "got": {
+        "red": {
+          "disabled": true,
+          "text": "儲存中…",
+          "toasts": 0
+        },
+        "green": {
+          "disabled": false,
+          "text": "儲存",
+          "toasts": 1
+        }
+      },
+      "want": {
+        "red": {
+          "disabled": true,
+          "text": "儲存中…",
+          "toasts": 0
+        },
+        "green": {
+          "disabled": false,
+          "text": "儲存",
+          "toasts": 1
+        }
+      },
+      "status": "pass"
+    }
+  ]
+}
