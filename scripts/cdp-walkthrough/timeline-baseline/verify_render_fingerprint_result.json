@@ -1,0 +1,1490 @@
+{
+  "mode": "verify",
+  "results": [
+    {
+      "name": "R1 開場／卡片渲染",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "R1 開場／影片可 seek",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／卡數",
+      "ok": true,
+      "got": 11,
+      "want": 11,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／字幕預覽空態",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／caption 內聯字級有值",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／review toolbar 顯示",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／review 張數",
+      "ok": true,
+      "got": "2",
+      "want": "2",
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／sus toolbar 顯示",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／sus 張數",
+      "ok": true,
+      "got": "1",
+      "want": "1",
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／sus 已勾 0",
+      "ok": true,
+      "got": "已勾 0",
+      "want": "已勾 0",
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／cam ruler 單機集隱藏",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／speaker ruler 無 sidecar 隱藏",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／時間工具列未開",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／看過鈕 2 顆",
+      "ok": true,
+      "got": 2,
+      "want": 2,
+      "status": "pass"
+    },
+    {
+      "name": "S1 非退化／未儲存徽章隱藏",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S2 非退化／單行字幕",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S2 非退化／字幕文字命中卡 3",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S2 非退化／未掛 multi-speaker",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S3 點擊／⏱ 鈕最上層是它自己",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1330,
+        "cy": 320,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "card-time-edit-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S3 非退化／時間工具列已開",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S4 點擊／卡 3 看過鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1330,
+        "cy": 630.53125,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "card-review-seen"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S4 非退化／review 張數 2→1",
+      "ok": true,
+      "got": "1",
+      "want": "1",
+      "status": "pass"
+    },
+    {
+      "name": "S4 非退化／已標看過 1 張",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S4 非退化／review toolbar 仍顯示",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S5 點擊／卡 6 看過鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1330,
+        "cy": 904.875,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "card-review-seen"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S5 非退化／review toolbar 轉空態隱藏",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S5 非退化／已標看過 2 張",
+      "ok": true,
+      "got": 2,
+      "want": 2,
+      "status": "pass"
+    },
+    {
+      "name": "S5 非退化／sus toolbar 不受影響",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S6 點擊／卡 6 紅卡 checkbox",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 997,
+        "cy": 797.875,
+        "hit": true,
+        "hitTag": "INPUT",
+        "hitCls": "card-sus-check"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S6 非退化／已勾 1 且帶秒數",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S6 非退化／刪除已勾鈕啟用",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S6 非退化／字級是數字",
+      "ok": true,
+      "got": "60",
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S7 前置／展開出片設定面板",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 483,
+        "cy": 785.875,
+        "hit": true,
+        "hitTag": "SUMMARY",
+        "hitCls": "framing-summary"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S7 前置／面板已展開",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S7 點擊／字幕縮小鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 782,
+        "cy": 861.375,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "cap-size-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S7 非退化／字級 −2",
+      "ok": true,
+      "got": "58",
+      "want": "58",
+      "status": "pass"
+    },
+    {
+      "name": "S7 非退化／未儲存徽章現身",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "R0-STABILITY 正規化指紋跨兩次載入一致",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "MASK-R3 渲染耗時是真雜訊（換個值 raw 就不同）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "MASK-R3 遮罩規則把這個雜訊吃掉（正規化後相同）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "MUT-R1 指紋抓到渲染輸出改變且只動到對應容器",
+      "ok": true,
+      "got": [
+        "cards"
+      ],
+      "want": [
+        "cards"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "MUT-R2 反向確認：正規化吃掉真內容就會瞎掉",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "MUT-GREEN 還原後 S1 指紋與突變前相同",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "R2 開場／卡片渲染",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "R2 開場／影片可 seek",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／卡數",
+      "ok": true,
+      "got": 11,
+      "want": 11,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／cam ruler 顯示",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／cam ruler 有段",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／speaker ruler 顯示",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／speaker 段數",
+      "ok": true,
+      "got": 7,
+      "want": 7,
+      "status": "pass"
+    },
+    {
+      "name": "S8 非退化／speaker 缺漏灰段",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S9 非退化／兩行字幕",
+      "ok": true,
+      "got": 2,
+      "want": 2,
+      "status": "pass"
+    },
+    {
+      "name": "S9 非退化／overlay 掛 multi-speaker",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S10 點擊／卡 2 的 B 鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1278.6796875,
+        "cy": 420.75,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "cam-btn cam-b-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S10 非退化／cam ruler 分成多段",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S10 非退化／有卡染 cam-b",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "53a3728b437652c9",
+        "len": 9971
+      },
+      "want": {
+        "sha": "53a3728b437652c9",
+        "len": 9971
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "want": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "f8d6269c5cd97006",
+        "len": 13463
+      },
+      "want": {
+        "sha": "f8d6269c5cd97006",
+        "len": 13463
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "da58bc798bda1817",
+        "len": 276
+      },
+      "want": {
+        "sha": "da58bc798bda1817",
+        "len": 276
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "want": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "4b470023bea02157",
+        "len": 884
+      },
+      "want": {
+        "sha": "4b470023bea02157",
+        "len": 884
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "9e6cc3e94e609e40",
+        "len": 9979
+      },
+      "want": {
+        "sha": "9e6cc3e94e609e40",
+        "len": 9979
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "b977f2475f6d1b9e",
+        "len": 863
+      },
+      "want": {
+        "sha": "b977f2475f6d1b9e",
+        "len": 863
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "2eccbbb62203bab8",
+        "len": 11133
+      },
+      "want": {
+        "sha": "2eccbbb62203bab8",
+        "len": 11133
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "want": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "3892f736228256d0",
+        "len": 11156
+      },
+      "want": {
+        "sha": "3892f736228256d0",
+        "len": 11156
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "want": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "2659c4322524ed06",
+        "len": 1612
+      },
+      "want": {
+        "sha": "2659c4322524ed06",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "want": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "want": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "want": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "want": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "want": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "want": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "83cbe444411df9f1",
+        "len": 722
+      },
+      "want": {
+        "sha": "83cbe444411df9f1",
+        "len": 722
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "db13755950eb463f",
+        "len": 13447
+      },
+      "want": {
+        "sha": "db13755950eb463f",
+        "len": 13447
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "want": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "want": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "want": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "want": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "ad7e7f0bd3917748",
+        "len": 13455
+      },
+      "want": {
+        "sha": "ad7e7f0bd3917748",
+        "len": 13455
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "want": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "want": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "31fce9e1bb49a862",
+        "len": 1038
+      },
+      "want": {
+        "sha": "31fce9e1bb49a862",
+        "len": 1038
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "want": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "want": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "want": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "status": "pass"
+    }
+  ]
+}

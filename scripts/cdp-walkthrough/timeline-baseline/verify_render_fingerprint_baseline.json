@@ -1,0 +1,355 @@
+{
+  "note": "D6 動刀前錄的渲染指紋 baseline；只存 sha256[:16] 與長度",
+  "containers": {
+    "topbar": ".topbar-center",
+    "cards": "#cards-list",
+    "camRuler": "#cam-ruler",
+    "spkRuler": "#speaker-ruler",
+    "caption": "#caption-overlay",
+    "sus": "#sus-toolbar",
+    "review": "#review-toolbar",
+    "capSize": "#caption-size"
+  },
+  "states": {
+    "S1": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "53a3728b437652c9",
+        "len": 9971
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S10": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "f8d6269c5cd97006",
+        "len": 13463
+      },
+      "camRuler": {
+        "sha": "da58bc798bda1817",
+        "len": 276
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "4b470023bea02157",
+        "len": 884
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S2": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "9e6cc3e94e609e40",
+        "len": 9979
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "b977f2475f6d1b9e",
+        "len": 863
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S3": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "2eccbbb62203bab8",
+        "len": 11133
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S4": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3892f736228256d0",
+        "len": 11156
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "2659c4322524ed06",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S5": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S6": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S7": {
+      "topbar": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "83cbe444411df9f1",
+        "len": 722
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      }
+    },
+    "S8": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "db13755950eb463f",
+        "len": 13447
+      },
+      "camRuler": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    },
+    "S9": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "ad7e7f0bd3917748",
+        "len": 13455
+      },
+      "camRuler": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "31fce9e1bb49a862",
+        "len": 1038
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      }
+    }
+  }
+}

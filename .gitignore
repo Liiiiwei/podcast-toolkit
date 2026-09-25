@@ -39,3 +39,7 @@ _pkgbuild/
 # build 識別碼：每次 build_app.sh 產生的產物（記憶體端＋磁碟端），不入 git
 podcast_toolkit/_build_info.py
 podcast_toolkit/web/static/build-info.json
+
+# CDP 走查的除錯工件：指紋不符時才落下的 got/want HTML、以及走查自起的伺服器 log
+scripts/cdp-walkthrough/**/verify_*_diff/
+scripts/cdp-walkthrough/**/*_server.log

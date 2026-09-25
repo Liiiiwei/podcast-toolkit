@@ -588,3 +588,60 @@ CDP_PORT=9522 /usr/bin/python3 -u verify_editor_small_defects.py   # 26/26（含
 突變段直接改 `podcast_toolkit/web/static/{app.js,app.css,shortcuts.js}` 再改回來，
 `patch_file()` 以「命中數必須恰好 1」守門，`finally` 區塊比對開場快照還原 ——
 跑完務必 `git diff --stat podcast_toolkit/web/static/` 確認只剩本梯的正式改動。
+
+---
+
+## 2026-09-25 D6 重構護欄：渲染指紋（`verify_render_fingerprint.py`，136/136）
+
+D6 要把 30 個渲染函式從 `app.js` 搬到新檔 `render.js`。搬動式重構的風險不是
+「寫錯邏輯」而是「搬漏一行、漏一個 import」，**讀 diff 證明不了行為不變**。
+所以先立一道護欄：對 10 個狀態 × 8 個渲染容器抓正規化後的 `outerHTML` 當指紋，
+動刀前錄 baseline、動刀後逐一比對。
+
+正規化只有三條規則（集中在 Python 端 `norm()`）：摺疊標籤間空白、3 位以上小數
+統一 `toFixed(2)`、遮掉 `data-last-render-ms`。規則越少，護欄越不容易瞎掉。
+
+| 突變 | 檔案：改成 | 預期 | 實際 |
+|---|---|---|---|
+| R0-STABILITY | 不改碼，同一狀態開兩次新頁 | 正規化指紋必須一致（不穩＝護欄會假紅） | ✅ `True` |
+| MASK-R3 | 同一份 HTML 的 `data-last-render-ms` 換成 `999.9` | raw 必須不同、正規化後必須相同 | ✅ 兩條都 `True` |
+| MUT-R1 | `reviewReasonLabel`：`half_sentence: "半句結尾"` → `"半句結尾ZZ"` | 只有 `#cards-list` 指紋變 | ✅ `['cards']` |
+| MUT-R2 | 同一突變下改用「剝掉所有文字節點與 title」的 loose 指紋 | 過度正規化就看不見這個改動 | ✅ `[]`（瞎掉） |
+| MUT-GREEN | 還原 | 指紋回到突變前 | ✅ `True` |
+
+**MASK-R3 是這次補的關鍵一條。** 原本 R0-STABILITY 順便印「raw 是不是也一致」，
+但那取決於兩次載入的渲染耗時碰巧撞不撞號（實測曾是 7.0 vs 6.9，也曾完全相同）——
+拿運氣當證據等於沒證據。改成直接把耗時值換掉，確定性地證明「遮掉 render-ms」
+這條規則是承重的：不遮，護欄會因為一個純計時數字恆紅。
+
+### 護欄真的抓到東西
+
+抽完檔第一次跑：**126/136，10 個狀態的 topbar 指紋全紅**（427 → 384 字元）。
+`verify_render_fingerprint_diff/S1-topbar-got.html` 顯示版本標籤停在
+`<span id="version-label" title="讀取版本中…">版本 …</span>` 沒被更新。
+根因：`renderVersionLabel` 仍被 `probeVersion()` 呼叫 5 次，但漏了 export/import，
+ReferenceError 被 `probeVersion()` 每個分支的靜默 `return` 吞掉——
+**「失敗路徑不准靜默」的活教材**。補上 export 後 136/136。
+
+### 已知覆蓋缺口與補法
+
+`renderCardSkeletons` 也漏了 export，但**指紋護欄一條都沒紅**：10 個狀態全是
+「卡片已經回來」之後的畫面，沒有一個落在 loading 時點上。它是靠「拿動刀後的
+app.js 當地面真相、逐一 grep 30 個符號」的靜態核對抓到的
+（判準：用量 > 0 且 import = 0 → 缺；用量 = 0 且 import > 0 → 多餘）。
+
+缺口已補成獨立走查 `verify_render_skeleton_loading.py`（2/2），
+其突變是把 `export function renderCardSkeletons` 改回 `function renderCardSkeletons`，
+實際輸出 `SyntaxError: does not provide an export named 'renderCardSkeletons'`，
+還原後回綠——正是當天漏掉的那個缺陷。
+
+教訓：**指紋護欄只保護它取樣到的那些時點**。它證明不了沒取樣到的狀態，
+所以搬動式重構要同時有「動態指紋」與「靜態符號核對」兩道，缺一會漏。
+
+跑法：
+
+```bash
+CDP_PORT=9522 /usr/bin/python3 -u verify_render_fingerprint.py        # 136/136（含突變，自動還原）
+CDP_PORT=9522 /usr/bin/python3 -u verify_render_skeleton_loading.py   # 2/2
+/usr/bin/python3 -m pytest -q                                         # 1053 passed, 1 xfailed
+```
