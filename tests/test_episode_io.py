@@ -1468,3 +1468,92 @@ def test_save_state_empty_cuts_does_not_drop_deletions(tmp_episode_dir):
     out = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
     assert "cuts" not in out
     assert out["deletions"] == [3]
+
+
+# === D2 字幕樣式：整組九鍵的寫入 round-trip（寫入→yaml→config.merge→讀回）===
+
+_STYLE_FULL = {
+    "font_name": "Noto Sans TC",
+    "font_size": 72,
+    "bold": 0,
+    "primary_colour": "&H0000FFFF",
+    "outline_colour": "&H00203040",
+    "border_style": 3,
+    "outline": 4,
+    "shadow": 0,
+    "margin_v": 140,
+}
+
+
+def _merged(tmp_episode_dir, key="subtitle_style"):
+    """存檔後照真實讀取路徑（config.merge）讀回，不是直接看 yaml。"""
+    from podcast_toolkit import config
+
+    episode = yaml.safe_load(
+        (tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8")
+    )
+    return config.merge(config.load_defaults(), episode)[key]
+
+
+def test_save_state_subtitle_style_full_roundtrip(tmp_episode_dir):
+    """九個樣式鍵都要寫得進、讀得回。只驗 font_size 的舊版會漏掉另外八個。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"subtitle_style": dict(_STYLE_FULL)}
+    )
+    got = _merged(tmp_episode_dir)
+    for k, v in _STYLE_FULL.items():
+        assert got[k] == v, f"{k}：寫入 {v!r}，讀回 {got.get(k)!r}"
+
+
+def test_save_state_subtitle_style_accepts_hex_colour(tmp_episode_dir):
+    """原型那套 *_hex（#rrggbb）也走同一個正規化器，產出一樣的 ASS 色碼。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={"subtitle_style": {"primary_colour_hex": "#ff8800"}},
+    )
+    assert _merged(tmp_episode_dir)["primary_colour"] == "&H000088FF"
+
+
+def test_save_state_subtitle_style_drops_values_equal_to_defaults(tmp_episode_dir):
+    """等於 defaults 的鍵不留在 yaml（避免冗餘值），但讀回來仍是同一個值。"""
+    from podcast_toolkit import config
+
+    defaults = config.load_defaults()["subtitle_style"]
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={"subtitle_style": {k: defaults[k] for k in ("font_name", "bold", "outline")}},
+    )
+    raw = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "subtitle_style" not in raw, f"殘留冗餘值：{raw.get('subtitle_style')!r}"
+    got = _merged(tmp_episode_dir)
+    for k in ("font_name", "bold", "outline"):
+        assert got[k] == defaults[k]
+
+
+def test_save_state_reels_style_baseline_includes_episode_yt_style(tmp_episode_dir):
+    """Reels 的有效預設要疊上本集 YT 樣式（跟 config.merge 的四層疊加同一套）：
+    YT 已設 Noto Sans TC、Reels 送同一個字體 → Reels 不該再存一份。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={
+            "subtitle_style": {"font_name": "Noto Sans TC"},
+            "subtitle_style_reels": {"font_name": "Noto Sans TC", "margin_v": 520},
+        },
+    )
+    raw = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "font_name" not in raw["subtitle_style_reels"]
+    assert raw["subtitle_style_reels"]["margin_v"] == 520
+    assert _merged(tmp_episode_dir, "subtitle_style_reels")["font_name"] == "Noto Sans TC"
+
+
+def test_save_state_rejects_bad_style_value_without_writing(tmp_episode_dir):
+    """不合法的值要丟 ValueError（路由轉 400 中文訊息），而且寫檔前就擋下——
+    不可以半套進去，也不可以靜默忽略該鍵。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    before = yaml_path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        episode_io.save_state(
+            Episode(tmp_episode_dir),
+            payload={"subtitle_style": {"primary_colour": "red", "margin_v": 999}},
+        )
+    assert yaml_path.read_text(encoding="utf-8") == before

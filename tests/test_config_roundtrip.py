@@ -28,9 +28,9 @@ _WRITER_SOURCES = [
 # data["key"] = … 直接賦值；autotrim 走 changes["key"] 再 data.update(changes)
 _ASSIGN_RE = re.compile(r'(?:data|changes)\["([a-z_]+)"\]\s*=')
 
-# episode_io.py 的 crop 迴圈用變數寫入（for key in ("crop_yt", "crop_reels")），
+# episode_io.py 的 crop 與字幕樣式迴圈用變數寫入（data[_key] = …），
 # 正則掃不到，手動列。新增這種寫法時也要補這裡。
-_LOOP_WRITTEN = {"crop_yt", "crop_reels"}
+_LOOP_WRITTEN = {"crop_yt", "crop_reels", "subtitle_style", "subtitle_style_reels"}
 
 
 def _scan_written_keys() -> set:
@@ -65,6 +65,26 @@ SAMPLES = {
     "crop_reels": {"x": 0.3, "y": 0.0, "width": 0.4, "height": 1.0},
     # B4：版面模式（defaults 有此鍵但走 deny-list 明確驗證，非 dict → 驗全等）
     "layout_mode": "video",
+    # D2：字幕樣式九鍵（defaults 有此鍵 → 深合併；值刻意全部偏離 defaults 才驗得出透傳）
+    "subtitle_style": {
+        "font_name": "Noto Sans TC",
+        "font_size": 72,
+        "bold": 0,
+        "primary_colour": "&H0000FFFF",
+        "outline_colour": "&H00203040",
+        "border_style": 3,
+        "outline": 4,
+        "shadow": 0,
+        "margin_v": 140,
+    },
+    # Reels 走 deny-list 的四層疊加（defaults.subtitle_style → defaults.subtitle_style_reels
+    # → 本集 subtitle_style → 本集 subtitle_style_reels），最後一層要蓋得過前三層
+    "subtitle_style_reels": {
+        "font_size": 108,
+        "alignment": 2,
+        "margin_v": 520,
+        "outline": 5,
+    },
     # B2：純文字標題卡（episode-only 鍵，config.merge 原樣透傳 → 驗全等）
     "title_cards": [{"id": "tc1", "start": 3.0, "end": 6.0, "text": "開場卡", "tpl": "big"}],
 }

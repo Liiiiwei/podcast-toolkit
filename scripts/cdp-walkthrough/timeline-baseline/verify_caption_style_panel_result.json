@@ -1,0 +1,478 @@
+{
+  "mode": "d2-caption-style-panel",
+  "results": [
+    {
+      "name": "V0.0 podcast 編輯器已載入且 overlay 已套上 inline 樣式",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "V0.1 原始碼指紋：app.js/api.js/index.html 都是 D2-FE 後的版本",
+      "ok": true,
+      "got": {
+        "setupCaptionStyle": true,
+        "SUBTITLE_STYLE_KEYS": true,
+        "panelInHtml": true
+      },
+      "want": {
+        "setupCaptionStyle": true,
+        "SUBTITLE_STYLE_KEYS": true,
+        "panelInHtml": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V0.2 服務中的頁面真的有面板 DOM 與 pthook（來源已同步）",
+      "ok": true,
+      "got": {
+        "panel": true,
+        "btn": true,
+        "hook": "function"
+      },
+      "want": {
+        "panel": true,
+        "btn": true,
+        "hook": "function"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V0.3 seek 前提：#video readyState>=1 且 seekable.length>0（底色塊要有字才量得到）",
+      "ok": true,
+      "got": {
+        "readyState": 4,
+        "seekableLen": 1
+      },
+      "want": "readyState>=1 且 seekableLen>0",
+      "status": "pass"
+    },
+    {
+      "name": "T1.0 點「出片設定」摘要列 → 面板展開（字幕樣式鈕才摸得到）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "T1.1 「字幕樣式」鈕未被疊層遮擋（elementFromPoint 最上層落在按鈕內）",
+      "ok": true,
+      "got": {
+        "tag": "SPAN",
+        "id": null,
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.2 真點擊 → 面板展開且 aria-expanded=true",
+      "ok": true,
+      "got": {
+        "open": true,
+        "aria": "true"
+      },
+      "want": {
+        "open": true,
+        "aria": "true"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.3 已開集 → success 態：欄位可用、empty 說明收起、無錯誤",
+      "ok": true,
+      "got": {
+        "gridHidden": false,
+        "emptyHidden": true,
+        "errHidden": true,
+        "errText": "",
+        "marginDisabled": false,
+        "invalidCount": 0
+      },
+      "want": {
+        "gridHidden": false,
+        "emptyHidden": true,
+        "errHidden": true,
+        "marginDisabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T1.4 初始值＝defaults.yaml 的 subtitle_style（alignment 未設 → 保底 2 底部）",
+      "ok": true,
+      "got": {
+        "font_name": "Hiragino Sans GB",
+        "primary_colour": "#ffffff",
+        "outline_colour": "#000000",
+        "bold": 1,
+        "border_style": 1,
+        "outline": 2,
+        "shadow": 1,
+        "alignment": 2,
+        "margin_v": 100
+      },
+      "want": {
+        "font_name": "Hiragino Sans GB",
+        "primary_colour": "#ffffff",
+        "outline_colour": "#000000",
+        "bold": 1,
+        "border_style": 1,
+        "outline": 2,
+        "shadow": 1,
+        "alignment": 2,
+        "margin_v": 100
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T3.0 改動前：未儲存徽章是收起的（基準乾淨）",
+      "ok": true,
+      "got": {
+        "hidden": true,
+        "n": "0"
+      },
+      "want": {
+        "hidden": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T3.1 改一個欄位 → 未儲存徽章亮起且計數 ≥1（進 outputDirty，不是靜默改）",
+      "ok": true,
+      "got": {
+        "hidden": false,
+        "n": 1
+      },
+      "want": {
+        "hidden": false,
+        "n": ">=1"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.1 font_name → 預覽字型堆疊第一順位換成 PingFang TC",
+      "ok": true,
+      "got": "\"PingFang TC\", \"Noto San",
+      "want": "\"PingFang TC\", …",
+      "status": "pass"
+    },
+    {
+      "name": "T2.2 primary_colour → 預覽文字色變黃（面板 hex → ASS → CSS 兩次轉換沒走樣）",
+      "ok": true,
+      "got": "rgb(255, 255, 0)",
+      "want": "rgb(255, 255, 0)",
+      "status": "pass"
+    },
+    {
+      "name": "T2.3 取消粗體 → fontWeight 400（defaults 是 1，證明真的讀面板）",
+      "ok": true,
+      "got": "400",
+      "want": "400",
+      "status": "pass"
+    },
+    {
+      "name": "T2.4 outline=4＋outline_colour → 12 向描邊皆為藍",
+      "ok": true,
+      "got": 12,
+      "want": 12,
+      "status": "pass"
+    },
+    {
+      "name": "T2.5 shadow=0 → 描邊之外沒有額外投影",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "T2.6 border_style=3 → 字幕行帶不透明底色塊（底色＝outline_colour 藍）",
+      "ok": true,
+      "got": "rgb(0, 0, 255)",
+      "want": "rgb(0, 0, 255)",
+      "status": "pass"
+    },
+    {
+      "name": "T2.7 底色塊模式取消描邊（textShadow: none）",
+      "ok": true,
+      "got": "none",
+      "want": "none",
+      "status": "pass"
+    },
+    {
+      "name": "T2.8 alignment=6＋margin_v=200 → 字幕置頂，top＝200/1080≈18.52%",
+      "ok": true,
+      "got": 18.52,
+      "want": 18.52,
+      "status": "pass"
+    },
+    {
+      "name": "T2.9 置頂時不設 bottom／transform（落點只由 top 決定）",
+      "ok": true,
+      "got": {
+        "bottom": "",
+        "transform": ""
+      },
+      "want": {
+        "bottom": "",
+        "transform": ""
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2.10 state 裡九個鍵都被寫回（面板 ↔ 字級 ± 鈕同一份物件，沒開第二套）",
+      "ok": true,
+      "got": {
+        "alignment": 6,
+        "bold": 0,
+        "border_style": 3,
+        "font_name": "PingFang TC",
+        "font_size": 60,
+        "margin_v": 200,
+        "outline": 4,
+        "outline_colour": "&H00FF0000",
+        "primary_colour": "&H0000FFFF",
+        "shadow": 0
+      },
+      "want": {
+        "font_name": "PingFang TC",
+        "font_size": 60,
+        "bold": 0,
+        "primary_colour": "&H0000FFFF",
+        "outline_colour": "&H00FF0000",
+        "border_style": 3,
+        "outline": 4,
+        "shadow": 0,
+        "margin_v": 200,
+        "alignment": 6
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.1 超出上限（5000>2000）→ 面板顯示錯誤訊息且欄位標紅",
+      "ok": true,
+      "got": {
+        "errHidden": false,
+        "invalidCount": 1,
+        "errText": "邊距：數值不合法，這次改動沒有套用"
+      },
+      "want": {
+        "errHidden": false,
+        "invalidCount": 1,
+        "errText": "含「邊距」"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.2 非法值沒有被寫進 state（margin_v 仍是 200，不是 5000 也不是 0）",
+      "ok": true,
+      "got": 200,
+      "want": 200,
+      "status": "pass"
+    },
+    {
+      "name": "T4.3 真鍵盤打 '1e'（badInput）→ 錯誤訊息出現，且 margin_v 沒被靜默清成 0",
+      "ok": true,
+      "got": {
+        "errHidden": false,
+        "margin_v": 200
+      },
+      "want": {
+        "errHidden": false,
+        "margin_v": 200
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T4.4 改回合法值 → 錯誤訊息收起、紅框清掉（錯誤態可恢復）",
+      "ok": true,
+      "got": {
+        "errHidden": true,
+        "invalidCount": 0
+      },
+      "want": {
+        "errHidden": true,
+        "invalidCount": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.1 樣式為 null → 欄位區收起、說明顯示、欄位 disabled",
+      "ok": true,
+      "got": {
+        "gridHidden": true,
+        "emptyHidden": false,
+        "errHidden": true,
+        "errText": "",
+        "marginDisabled": true,
+        "invalidCount": 0
+      },
+      "want": {
+        "gridHidden": true,
+        "emptyHidden": false,
+        "marginDisabled": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T5.2 樣式回來 → 恢復 success 態（empty 不是單向門）",
+      "ok": true,
+      "got": {
+        "gridHidden": false,
+        "emptyHidden": true,
+        "errHidden": true,
+        "errText": "",
+        "marginDisabled": false,
+        "invalidCount": 0
+      },
+      "want": {
+        "gridHidden": false,
+        "emptyHidden": true,
+        "marginDisabled": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T2–T5 全段互動無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "T6.0 「完成並儲存」鈕未被疊層遮擋（elementFromPoint 最上層落在按鈕內）",
+      "ok": true,
+      "got": {
+        "tag": "SPAN",
+        "id": null,
+        "within": true
+      },
+      "want": {
+        "within": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.1 點存檔 → 磁碟上的 episode.yaml 真的被改寫（不看按鈕文案）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "T6.2 episode.yaml 的 subtitle_style 含全部 9 個調過的鍵且值正確",
+      "ok": true,
+      "got": {
+        "alignment": 6,
+        "bold": 0,
+        "border_style": 3,
+        "font_name": "PingFang TC",
+        "margin_v": 200,
+        "outline": 4,
+        "outline_colour": "&H00FF0000",
+        "primary_colour": "&H0000FFFF",
+        "shadow": 0
+      },
+      "want": {
+        "font_name": "PingFang TC",
+        "primary_colour": "&H0000FFFF",
+        "outline_colour": "&H00FF0000",
+        "bold": 0,
+        "border_style": 3,
+        "outline": 4,
+        "shadow": 0,
+        "alignment": 6,
+        "margin_v": 200
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.3 font_size 沒被面板動到（面板不管字級，± 鈕才管）",
+      "ok": true,
+      "got": [
+        "alignment",
+        "bold",
+        "border_style",
+        "font_name",
+        "margin_v",
+        "outline",
+        "outline_colour",
+        "primary_colour",
+        "shadow"
+      ],
+      "want": "無 font_size",
+      "status": "pass"
+    },
+    {
+      "name": "T6.4 重啟伺服器＋重載頁面 → 面板欄位讀回同一組值（真 round-trip）",
+      "ok": true,
+      "got": {
+        "font_name": "PingFang TC",
+        "primary_colour": "#ffff00",
+        "outline_colour": "#0000ff",
+        "bold": 0,
+        "border_style": 3,
+        "outline": 4,
+        "shadow": 0,
+        "alignment": 6,
+        "margin_v": 200
+      },
+      "want": {
+        "font_name": "PingFang TC",
+        "primary_colour": "#ffff00",
+        "outline_colour": "#0000ff",
+        "bold": 0,
+        "border_style": 3,
+        "outline": 4,
+        "shadow": 0,
+        "alignment": 6,
+        "margin_v": 200
+      },
+      "status": "pass"
+    },
+    {
+      "name": "T6.5 重載後預覽也吃到存下來的樣式（顏色＋置頂落點都還在）",
+      "ok": true,
+      "got": {
+        "color": "rgb(255, 255, 0)",
+        "top": 18.52
+      },
+      "want": {
+        "color": "rgb(255, 255, 0)",
+        "top": 18.52
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-A 真突變成立：白名單少一鍵 → 面板上改得動但存不進 yaml（RED），還原→存得進（GREEN）",
+      "ok": true,
+      "got": {
+        "red_saved": true,
+        "red_outline": 5,
+        "red": 200,
+        "green": 320
+      },
+      "want": {
+        "red": "200（沒存進去）",
+        "red_outline": 5,
+        "green": 320
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-B 真突變成立：守衛拿掉 → 非法值寫進 state（RED），還原→擋下（GREEN）",
+      "ok": true,
+      "got": {
+        "red": 5000,
+        "green": 320
+      },
+      "want": {
+        "red": 5000,
+        "green": 320
+      },
+      "status": "pass"
+    }
+  ]
+}

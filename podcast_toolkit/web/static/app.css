@@ -695,6 +695,124 @@ h2 {
   font-variant-numeric: tabular-nums;
 }
 
+/* 字幕樣式面板：掛在字級控制項旁邊，絕對定位往下展開（不擠掉 toolbar 排版） */
+.caption-style {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+}
+.caption-style > .btn-ghost {
+  gap: 4px;
+  font-size: var(--text-sm);
+  padding: 5px 8px;
+  min-height: 28px;
+}
+.cap-style-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 300px;
+  padding: 10px 12px 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+.cap-style-panel.hidden {
+  display: none;
+}
+.cap-style-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.cap-style-close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cap-style-close:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.cap-style-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 10px;
+}
+.cap-style-grid.hidden {
+  display: none;
+}
+.cap-style-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+.cap-style-row.cap-style-wide {
+  grid-column: 1 / -1;
+}
+.cap-style-row input[type="text"],
+.cap-style-row input[type="number"],
+.cap-style-row select {
+  width: 96px;
+  min-height: 26px;
+  padding: 2px 6px;
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.cap-style-row.cap-style-wide input[type="text"] {
+  width: 190px;
+}
+.cap-style-row input[type="color"] {
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.cap-style-row input:disabled,
+.cap-style-row select:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cap-style-row input.invalid {
+  border-color: var(--danger, #e05555);
+}
+.cap-style-empty,
+.cap-style-err,
+.cap-style-note {
+  margin: 8px 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+.cap-style-err {
+  color: var(--danger, #e05555);
+}
+.cap-style-empty.hidden,
+.cap-style-err.hidden {
+  display: none;
+}
+
 /* === 合成設定 modal 的輸出選項：倍速 / 去空拍 / 節目封面 === */
 .speed-factor {
   width: 56px;

@@ -674,6 +674,169 @@ function setupCaptionSize() {
   $("#cap-size-inc")?.addEventListener("click", () => nudgeCaptionSize(2));
 }
 
+// === 字幕樣式面板（字級 ± 鈕旁）：接出後端 build_style_string 讀得到的其餘 8 個參數 ===
+// 改的是 activeSubtitleStyle() 回傳的那個物件 —— 與字級 ± 鈕同一份 state，不另開第二套；
+// 存檔時 buildSavePayload 整包帶上，save_state 跟 defaults 比對後只寫真正調過的鍵。
+
+// episode.yaml 存 ASS 色碼 &HAABBGGRR（BGR 順序，與 HTML 的 #RRGGBB 相反），
+// <input type=color> 只吃 #rrggbb，所以進出各轉一次。面板不提供透明度，AA 原封保留。
+function assColourToHex(value) {
+  const m = /^&[Hh]([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(
+    String(value ?? "").trim(),
+  );
+  if (!m) return null;
+  const body = m[1].length === 8 ? m[1].slice(2) : m[1]; // 去掉 AA
+  return `#${(body.slice(4, 6) + body.slice(2, 4) + body.slice(0, 2)).toLowerCase()}`;
+}
+function hexToAssColour(hex, prevAss) {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(String(hex ?? "").trim());
+  if (!m) return null;
+  const rgb = m[1].toUpperCase();
+  const prev = /^&[Hh]([0-9a-fA-F]{8})$/.exec(String(prevAss ?? "").trim());
+  const aa = prev ? prev[1].slice(0, 2).toUpperCase() : "00";
+  return `&H${aa}${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`;
+}
+
+// kind 決定讀寫方式：text=字串、colour=ASS↔hex、bool=0/1、select/num=數字
+const CAP_STYLE_FIELDS = [
+  { id: "cap-font-name", key: "font_name", kind: "text", label: "字體" },
+  { id: "cap-primary-colour", key: "primary_colour", kind: "colour", label: "文字色" },
+  { id: "cap-outline-colour", key: "outline_colour", kind: "colour", label: "外框色" },
+  { id: "cap-bold", key: "bold", kind: "bool", label: "粗體" },
+  { id: "cap-border-style", key: "border_style", kind: "select", label: "邊框", fallback: 1 },
+  { id: "cap-outline", key: "outline", kind: "num", label: "外框粗細" },
+  { id: "cap-shadow", key: "shadow", kind: "num", label: "陰影" },
+  { id: "cap-alignment", key: "alignment", kind: "select", label: "位置", fallback: 2 },
+  { id: "cap-margin-v", key: "margin_v", kind: "num", label: "邊距" },
+];
+
+// error 態：訊息顯在面板內（不是 console），並把出問題的欄位框起來。訊息空＝清除。
+function setCaptionStyleError(message, el) {
+  const box = $("#cap-style-err");
+  if (box) {
+    box.textContent = message || "";
+    box.classList.toggle("hidden", !message);
+  }
+  $("#cap-style-panel")
+    ?.querySelectorAll(".invalid")
+    .forEach((n) => n.classList.remove("invalid"));
+  if (message && el) el.classList.add("invalid");
+}
+
+function renderCaptionStyleControls() {
+  const panel = $("#cap-style-panel");
+  if (!panel) return;
+  const style = activeSubtitleStyle();
+  const scope = $("#cap-style-scope");
+  if (scope)
+    scope.textContent = state.activeVersion === "reels" ? "Reels" : "YT";
+  // empty 態：還沒開集（或這個分頁沒樣式）→ 藏掉欄位並說明，不給一排空白輸入框
+  $("#cap-style-grid")?.classList.toggle("hidden", !style);
+  $("#cap-style-empty")?.classList.toggle("hidden", !!style);
+  setCaptionStyleError("");
+  for (const f of CAP_STYLE_FIELDS) {
+    const el = document.getElementById(f.id);
+    if (!el) continue;
+    el.disabled = !style;
+    if (!style) continue;
+    const v = style[f.key];
+    if (f.kind === "bool") {
+      el.checked = Number(v) === 1;
+    } else if (f.kind === "colour") {
+      // 讀不懂的色碼（舊集手寫過怪值）→ 退回白色顯示，但不回寫 state
+      el.value = assColourToHex(v) || "#ffffff";
+    } else if (f.kind === "select") {
+      const n = Number(v);
+      el.value = Number.isFinite(n) ? String(n) : "";
+      if (!el.value) el.value = String(f.fallback); // 值不在選項內：顯示保底值
+    } else if (f.kind === "num") {
+      el.value = Number.isFinite(Number(v)) ? String(Number(v)) : "";
+    } else {
+      el.value = v == null ? "" : String(v);
+    }
+  }
+}
+
+// success 態：寫回 state → 即時預覽（renderCropInfo 內含 applyCaptionStyle）→ 進未儲存計數。
+// 非法輸入一律 return，絕不把 NaN / 空字串靜默寫成 0。
+function commitCaptionStyleField(f, el) {
+  const style = activeSubtitleStyle();
+  if (!style) return;
+  let next;
+  if (f.kind === "bool") {
+    next = el.checked ? 1 : 0;
+  } else if (f.kind === "colour") {
+    next = hexToAssColour(el.value, style[f.key]);
+    if (next == null) {
+      setCaptionStyleError(`${f.label}：顏色格式不對，這次改動沒有套用`, el);
+      return;
+    }
+  } else if (f.kind === "text") {
+    next = String(el.value || "").trim();
+    if (!next) {
+      setCaptionStyleError(`${f.label}不能留空，這次改動沒有套用`, el);
+      return;
+    }
+  } else {
+    // num / select：validity 一次擋掉 badInput（打了非數字）與超出 min/max
+    if (String(el.value).trim() === "" || !el.validity.valid) {
+      setCaptionStyleError(`${f.label}：數值不合法，這次改動沒有套用`, el);
+      return;
+    }
+    next = Number(el.value);
+  }
+  setCaptionStyleError("");
+  if (style[f.key] === next) return;
+  style[f.key] = next;
+  state.outputDirty = true; // 按「完成並儲存」才寫進 episode.yaml
+  renderCropInfo(); // alignment / margin_v 會動落點，順帶重套 applyCaptionStyle
+  renderCaptionSizeControl();
+  renderTopbar();
+}
+
+function toggleCaptionStylePanel(open) {
+  const panel = $("#cap-style-panel");
+  const btn = $("#cap-style-btn");
+  if (!panel || !btn) return;
+  const next = open ?? panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !next);
+  btn.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) renderCaptionStyleControls();
+}
+
+function setupCaptionStyle() {
+  const panel = $("#cap-style-panel");
+  const btn = $("#cap-style-btn");
+  if (!panel || !btn) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleCaptionStylePanel();
+  });
+  $("#cap-style-close")?.addEventListener("click", () =>
+    toggleCaptionStylePanel(false),
+  );
+  for (const f of CAP_STYLE_FIELDS) {
+    const el = document.getElementById(f.id);
+    if (!el) continue;
+    // colour 拖曳中連發 input（要即時預覽）；其餘等 change（失焦／Enter）才 commit，
+    // 免得字體名打到一半（空字串）就被判非法、或每個按鍵都算一次未儲存改動
+    const evt = f.kind === "colour" ? "input" : "change";
+    el.addEventListener(evt, () => commitCaptionStyleField(f, el));
+  }
+  // 面板內的按鍵不外流：document 層的工作流快捷鍵（Space / ↑↓ / [ ]）對 select
+  // 沒有讓位判斷，不攔的話在面板裡按方向鍵會順便動到字幕卡。
+  panel.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      toggleCaptionStylePanel(false);
+      btn.focus();
+    }
+    e.stopPropagation();
+  });
+  // 點面板外面就收起來（面板本身的點擊要擋住，否則一點就關）
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => toggleCaptionStylePanel(false));
+}
+
 // 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
 // 「先 rotate 源、再從軸對齊矩形 crop」語意。crop-frame / caption-overlay 不旋轉（維持軸對齊）。
 // UI 的旋轉控制項已移除，但後端仍吃 episode.yaml 的 rotate：舊集手寫過角度時，
@@ -2711,6 +2874,7 @@ async function loadEpisodeState() {
       ? { ...data.subtitle_style }
       : null;
   renderCaptionSizeControl();
+  renderCaptionStyleControls();
   const parseRes = (s) => {
     const [w, h] = String(s || "")
       .split("x")
@@ -2995,6 +3159,17 @@ async function load() {
       Object.assign(c, patch || {});
       renderPodcastCardTrack();
       return Object.assign({}, c);
+    };
+    // D2：字幕樣式面板走查用。讀回是為了驗「非法輸入沒有被寫進 state」，
+    // 寫入是為了驅動 empty 態（傳 null＝這集還沒有樣式）—— 這兩態靠真實操作造不出來。
+    window.__ptCaptionStyle = () =>
+      state.subtitleStyleYt ? Object.assign({}, state.subtitleStyleYt) : null;
+    window.__ptSetCaptionStyle = (style) => {
+      state.subtitleStyleYt = style ? Object.assign({}, style) : null;
+      renderCaptionStyleControls();
+      renderCaptionSizeControl();
+      renderCropInfo();
+      return window.__ptCaptionStyle();
     };
   }
 }
@@ -7930,6 +8105,7 @@ function setupPopover(btnId, menuId) {
 }
 
 setupCaptionSize();
+setupCaptionStyle();
 $("#transcribe-breeze-btn")?.addEventListener("click", startBreezeTranscribe);
 setupAssembleButtons();
 setupOutputControls();

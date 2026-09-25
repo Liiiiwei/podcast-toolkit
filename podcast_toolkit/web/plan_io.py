@@ -16,6 +16,7 @@ YT（橫）與 Reels（直）都放得到相對位置一樣的地方。
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any
 
@@ -37,6 +38,8 @@ _STYLE_HEX_KEYS = {
 _STYLE_NUM_KEYS = (
     "font_size", "bold", "border_style", "outline", "shadow", "margin_v", "alignment",
 )
+# ASS 色碼：&H 後面 6 碼（BBGGRR）或 8 碼（AABBGGRR）
+_ASS_COLOUR_RE = re.compile(r"^&[Hh]([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 
 
 class PlanError(ValueError):
@@ -62,9 +65,23 @@ def _ass_colour(hex_str: Any, label: str) -> str:
     return f"&H00{bb.upper()}{gg.upper()}{rr.upper()}"
 
 
-def normalize_style(style: Any) -> dict[str, Any]:
-    """原型的 style 物件 → episode.yaml 的 subtitle_style 片段（只含有給的欄位）。
+def _ass_colour_passthrough(value: Any, label: str) -> str:
+    """已經是 ASS 色碼的輸入：驗格式後正規化成 &HAABBGGRR（大寫、補滿 alpha）。
 
+    不合格就丟 PlanError——寧可 400 也不要把 "red" 這種東西寫進 yaml，燒字幕時才炸。
+    """
+    m = _ASS_COLOUR_RE.match(str(value or "").strip())
+    if not m:
+        raise PlanError(f"{label} 應為 ASS 色碼（&H00BBGGRR）：{value!r}")
+    body = m.group(1).upper()
+    return "&H" + (body if len(body) == 8 else "00" + body)
+
+
+def normalize_style(style: Any) -> dict[str, Any]:
+    """style 物件 → episode.yaml 的 subtitle_style 片段（只含有給的欄位）。
+
+    全站唯一的樣式正規化器：原型（送 *_hex 的 #rrggbb）與主編輯器（送 episode.yaml
+    原形的 ASS 色碼）兩種輸入都收，產出同一份片段。
     走 config.merge 的自動深合併：這裡只寫使用者實際調過的鍵，沒給的鍵仍吃 defaults.yaml。
     """
     if style is None:
@@ -82,10 +99,17 @@ def normalize_style(style: Any) -> dict[str, Any]:
             continue
         v = _num(style[k], f"style.{k}")
         out[k] = int(v) if float(v).is_integer() else v
+    # 顏色兩種拼法擇一：原型送 *_hex（#rrggbb），主編輯器送 episode.yaml 原形（ASS 色碼）。
+    # 同一個鍵兩種都給就是呼叫端搞混了，直接拒收，不猜哪個才算數。
     for src, dst in _STYLE_HEX_KEYS.items():
-        if style.get(src) is None:
-            continue
-        out[dst] = _ass_colour(style[src], f"style.{src}")
+        has_hex = style.get(src) is not None
+        has_ass = style.get(dst) is not None
+        if has_hex and has_ass:
+            raise PlanError(f"style.{src} 與 style.{dst} 只能擇一給")
+        if has_hex:
+            out[dst] = _ass_colour(style[src], f"style.{src}")
+        elif has_ass:
+            out[dst] = _ass_colour_passthrough(style[dst], f"style.{dst}")
     return out
 
 

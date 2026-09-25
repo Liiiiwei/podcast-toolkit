@@ -1,0 +1,55 @@
+======================================================================
+D2-FE 字幕樣式面板走查  URL=http://127.0.0.1:8795/?pthook=1  CDP=9522
+======================================================================
+
+--- V0 版本指紋（避免測到未同步的舊碼）---
+
+--- T1 打開字幕樣式面板 ---
+
+--- T2 success 態：面板改值 → #caption-overlay 實測 CSS ---
+
+--- T4 error 態：非法輸入不得靜默寫進 state ---
+
+--- T5 empty 態：還沒有樣式物件時不給一排空白輸入框 ---
+
+--- T6 round-trip：存檔 → episode.yaml → 重啟重載 → 讀回原值 ---
+
+--- MUT-A 真突變：api.js 的 SUBTITLE_STYLE_KEYS 拿掉 margin_v ---
+
+--- MUT-B 真突變：commitCaptionStyleField 的非法值 return 拿掉 ---
+PASS	V0.0 podcast 編輯器已載入且 overlay 已套上 inline 樣式
+PASS	V0.1 原始碼指紋：app.js/api.js/index.html 都是 D2-FE 後的版本
+PASS	V0.2 服務中的頁面真的有面板 DOM 與 pthook（來源已同步）
+PASS	V0.3 seek 前提：#video readyState>=1 且 seekable.length>0（底色塊要有字才量得到）
+PASS	T1.0 點「出片設定」摘要列 → 面板展開（字幕樣式鈕才摸得到）
+PASS	T1.1 「字幕樣式」鈕未被疊層遮擋（elementFromPoint 最上層落在按鈕內）
+PASS	T1.2 真點擊 → 面板展開且 aria-expanded=true
+PASS	T1.3 已開集 → success 態：欄位可用、empty 說明收起、無錯誤
+PASS	T1.4 初始值＝defaults.yaml 的 subtitle_style（alignment 未設 → 保底 2 底部）
+PASS	T3.0 改動前：未儲存徽章是收起的（基準乾淨）
+PASS	T3.1 改一個欄位 → 未儲存徽章亮起且計數 ≥1（進 outputDirty，不是靜默改）
+PASS	T2.1 font_name → 預覽字型堆疊第一順位換成 PingFang TC
+PASS	T2.2 primary_colour → 預覽文字色變黃（面板 hex → ASS → CSS 兩次轉換沒走樣）
+PASS	T2.3 取消粗體 → fontWeight 400（defaults 是 1，證明真的讀面板）
+PASS	T2.4 outline=4＋outline_colour → 12 向描邊皆為藍
+PASS	T2.5 shadow=0 → 描邊之外沒有額外投影
+PASS	T2.6 border_style=3 → 字幕行帶不透明底色塊（底色＝outline_colour 藍）
+PASS	T2.7 底色塊模式取消描邊（textShadow: none）
+PASS	T2.8 alignment=6＋margin_v=200 → 字幕置頂，top＝200/1080≈18.52%
+PASS	T2.9 置頂時不設 bottom／transform（落點只由 top 決定）
+PASS	T2.10 state 裡九個鍵都被寫回（面板 ↔ 字級 ± 鈕同一份物件，沒開第二套）
+PASS	T4.1 超出上限（5000>2000）→ 面板顯示錯誤訊息且欄位標紅
+PASS	T4.2 非法值沒有被寫進 state（margin_v 仍是 200，不是 5000 也不是 0）
+PASS	T4.3 真鍵盤打 '1e'（badInput）→ 錯誤訊息出現，且 margin_v 沒被靜默清成 0
+PASS	T4.4 改回合法值 → 錯誤訊息收起、紅框清掉（錯誤態可恢復）
+PASS	T5.1 樣式為 null → 欄位區收起、說明顯示、欄位 disabled
+PASS	T5.2 樣式回來 → 恢復 success 態（empty 不是單向門）
+PASS	T2–T5 全段互動無 console 例外
+PASS	T6.0 「完成並儲存」鈕未被疊層遮擋（elementFromPoint 最上層落在按鈕內）
+PASS	T6.1 點存檔 → 磁碟上的 episode.yaml 真的被改寫（不看按鈕文案）
+PASS	T6.2 episode.yaml 的 subtitle_style 含全部 9 個調過的鍵且值正確
+PASS	T6.3 font_size 沒被面板動到（面板不管字級，± 鈕才管）
+PASS	T6.4 重啟伺服器＋重載頁面 → 面板欄位讀回同一組值（真 round-trip）
+PASS	T6.5 重載後預覽也吃到存下來的樣式（顏色＋置頂落點都還在）
+PASS	MUT-A 真突變成立：白名單少一鍵 → 面板上改得動但存不進 yaml（RED），還原→存得進（GREEN）
+PASS	MUT-B 真突變成立：守衛拿掉 → 非法值寫進 state（RED），還原→擋下（GREEN）

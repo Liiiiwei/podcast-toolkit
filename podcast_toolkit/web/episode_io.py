@@ -368,6 +368,14 @@ def save_mics_config(
     )
 
 
+def _style_value_eq(a: Any, b: Any) -> bool:
+    """樣式值等不等於預設：數字照數值比（60 == 60.0），字串去空白忽略大小寫
+    （ASS 色碼 &h00ffffff 與 &H00FFFFFF 同義）。"""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return float(a) == float(b)
+    return str(a).strip().upper() == str(b).strip().upper()
+
+
 def save_state(ep: Episode, payload: dict[str, Any]) -> None:
     """把前端 payload 寫回：episode.yaml 的 crop_yt / crop_reels / deletions、覆寫 _v2.srt。
 
@@ -599,24 +607,34 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop("srt_path", None)
 
-    # 字幕字級：只調 font_size override（不整段覆寫 subtitle_style）。等於 defaults →
-    # 移除 font_size，避免 yaml 殘留跟預設相同的冗餘值。YT 與 Reels 各自存。
+    # 字幕樣式：整組 subtitle_style（字體／字級／粗體／兩色／外框／陰影／對齊／下緣邊距）。
+    # 正規化只有 plan_io.normalize_style 一套（原型送 hex、這裡送 ASS 色碼，兩種都吃）；
+    # 不合法就丟 PlanError（ValueError 子類）→ 路由轉 400 中文訊息，不靜默吞掉。
+    # 值等於「這一層的有效預設」就把該鍵移除，避免 yaml 殘留冗餘值。Reels 的有效預設是
+    # defaults.subtitle_style → defaults.subtitle_style_reels → 本集 subtitle_style 疊出來的
+    # （與 config.merge 的四層疊加同一套），所以要先處理 YT 再處理 Reels。
     if "subtitle_style" in payload or "subtitle_style_reels" in payload:
         from podcast_toolkit import config as _config
+        from podcast_toolkit.web.plan_io import normalize_style as _normalize_style
         _defaults = _config.load_defaults()
         for _key in ("subtitle_style", "subtitle_style_reels"):
             if _key not in payload:
                 continue
-            _fs = (payload.get(_key) or {}).get("font_size")
-            if _fs in (None, ""):
-                continue
-            _fs = int(round(float(_fs)))
-            _default_fs = int(float((_defaults.get(_key) or {}).get("font_size") or 0))
-            _block = dict(data.get(_key) or {})
-            if _fs == _default_fs:
-                _block.pop("font_size", None)
+            _incoming = _normalize_style(payload.get(_key) or {})
+            if _key == "subtitle_style":
+                _baseline = dict(_defaults.get("subtitle_style") or {})
             else:
-                _block["font_size"] = _fs
+                _baseline = {
+                    **(_defaults.get("subtitle_style") or {}),
+                    **(_defaults.get("subtitle_style_reels") or {}),
+                    **(data.get("subtitle_style") or {}),
+                }
+            _block = dict(data.get(_key) or {})
+            for _k, _v in _incoming.items():
+                if _k in _baseline and _style_value_eq(_v, _baseline[_k]):
+                    _block.pop(_k, None)
+                else:
+                    _block[_k] = _v
             if _block:
                 data[_key] = _block
             else:

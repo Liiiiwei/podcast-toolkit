@@ -60,6 +60,31 @@ def test_normalize_style_only_emits_given_keys():
     assert plan_io.normalize_style(None) == {}
 
 
+def test_normalize_style_accepts_ass_colour_shape():
+    """主編輯器直接送 episode.yaml 原形（ASS 色碼）：驗格式後正規化成 &HAABBGGRR。
+    六碼寫法補滿 alpha、小寫轉大寫 —— 兩種拼法最後都收斂成同一個字串。"""
+    s = plan_io.normalize_style({"primary_colour": "&h00ccff", "outline_colour": "&H00203040"})
+    assert s == {"primary_colour": "&H0000CCFF", "outline_colour": "&H00203040"}
+    assert s["primary_colour"] == plan_io.normalize_style(
+        {"primary_colour_hex": "#ffcc00"}
+    )["primary_colour"]
+
+
+@pytest.mark.parametrize("bad", ["red", "&H00GGGGGG", "#ffcc00", "&H0", ""])
+def test_normalize_style_rejects_bad_ass_colour(bad):
+    """不合格的色碼要當場 PlanError（→400），不可以帶著髒值寫進 yaml 等燒字幕時才炸。"""
+    with pytest.raises(plan_io.PlanError):
+        plan_io.normalize_style({"primary_colour": bad})
+
+
+def test_normalize_style_rejects_both_colour_spellings():
+    """同一個顏色兩種拼法都給＝呼叫端搞混了，直接拒收，不猜哪個才算數。"""
+    with pytest.raises(plan_io.PlanError):
+        plan_io.normalize_style(
+            {"primary_colour": "&H00FFFFFF", "primary_colour_hex": "#ffffff"}
+        )
+
+
 def test_cuts_accept_both_shapes_and_get_sorted():
     p = plan_io.parse_plan(_plan(cuts=[{"start": 9.0, "end": 10.0}, [2.0, 3.0]]))
     assert p["cuts"] == [[2.0, 3.0], [9.0, 10.0]]

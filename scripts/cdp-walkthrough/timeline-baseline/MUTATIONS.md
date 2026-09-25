@@ -364,3 +364,42 @@ foreign cut（影片模式自己框的區間）一律不夾 —— 使用者畫�
 /usr/bin/python3 -u verify_b3_guard_and_shift.py                        # 27/27
 /usr/bin/python3 -u run_b3_mutations.py                                 # M1～M7
 ```
+
+---
+
+## 2026-09-25 D2-FE 字幕樣式面板（`verify_caption_style_panel.py`，36/36）
+
+後端早就吃得下 `subtitle_style` 九個鍵，只有字級有 UI；這梯把另外 8 個接出來。
+UI 改動的證據只能是瀏覽器實測數字，所以走查全程量 `#caption-overlay` 與
+`.caption-line` 的 computed style，不看 diff：
+
+- **T2 success 態**：字型堆疊第一順位、文字色 `rgb(255,255,0)`（面板 hex → ASS `&H0000FFFF`
+  → CSS 兩次轉換沒走樣）、`fontWeight 400`、12 向描邊皆藍、`border_style=3` 時
+  `.caption-line` 底色 `rgb(0,0,255)` 且 overlay `textShadow: none`、
+  `alignment=6` ＋ `margin_v=200` → `top` 實測 **18.52%**（＝200/1080），且不設 bottom／transform。
+- **T4 error 態**：超限 5000 與真鍵盤打 `1e`（`validity.badInput`）都要顯示錯誤、標紅、
+  **且 margin_v 維持 200** —— 證明 NaN 沒被靜默清成 0。
+- **T5 empty 態**：樣式為 null → 欄位收起＋說明顯示＋disabled，且能回到 success（不是單向門）。
+- **T6 round-trip**：存檔 → 讀磁碟 yaml → **重啟伺服器**＋重載頁面 → 欄位與預覽都讀回原值。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| MUT-A | `api.js`：`SUBTITLE_STYLE_KEYS` 註解掉 `"margin_v"` | 存檔後 yaml 的 margin_v 停在舊值 | ✅ 紅（200，還原後 320） |
+| MUT-B | `app.js`：`commitCaptionStyleField` 非法值的 `return` 拿掉 | 5000 被寫進 state | ✅ 紅（5000，還原後 320） |
+
+兩件值得記的事：
+
+- **MUT-A 一定要配對照鍵**。`save_state` 的區塊是從既有磁碟值起算，payload 少送一鍵時
+  該鍵會**保留舊值**而不是被刪 —— 光看「margin_v 沒變」無法分辨「白名單漏了」與
+  「整個存檔根本沒成功」。所以同一次存檔另外改 `outline`（仍在白名單）當對照：
+  RED 時 outline 存成 5、margin_v 停在 200，兩者並排才是證據。
+- **`elementFromPoint` 的疊層斷言不能比 id 全等**。`#cap-style-btn` 與 `#save-btn` 都把
+  標籤包在 `<span>` 裡，最上層元素本來就是那個 span，點擊照樣冒泡到按鈕。
+  要擋的是「別的疊層蓋在上面」，判準是 `el.closest(selector)` 命中。
+
+跑法（Chrome 用全新 profile 起在 :9522，避開舊 profile 媒體快取毀損的既知坑）：
+
+```bash
+CDP_PORT=9522 /usr/bin/python3 -u verify_caption_style_panel.py   # 36/36
+/usr/bin/python3 -m pytest -q                                      # 1053 passed, 1 xfailed
+```

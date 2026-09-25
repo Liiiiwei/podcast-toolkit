@@ -103,6 +103,34 @@ export function postSave(payload) {
   return p;
 }
 
+// 後端 build_style_string 讀得到、且 UI 開放調整的樣式鍵。
+// 刻意明列而不是整包 spread：normalize_style 對未知鍵是靜默過濾，明列才不會出現
+// 「面板上看得到、存了卻沒進 yaml」這種假完成。新增面板欄位時要同步補這裡。
+const SUBTITLE_STYLE_KEYS = [
+  "font_name",
+  "font_size",
+  "bold",
+  "primary_colour",
+  "outline_colour",
+  "border_style",
+  "outline",
+  "shadow",
+  "alignment",
+  "margin_v",
+];
+
+function serializeSubtitleStyle(style) {
+  const out = {};
+  if (!style) return out;
+  for (const k of SUBTITLE_STYLE_KEYS) {
+    const v = style[k];
+    // 只排除「沒有值」：bold / shadow 的合法值就是 0，用 falsy 判斷會把它們吃掉
+    if (v === null || v === undefined || v === "") continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 // 主儲存鈕與「合成設定 → 開始合成」共用的 /api/save payload 序列化。
 // 抽出來讓「合成的下一步」能用同一條已驗證的存檔路徑把倍速等輸出設定寫進 episode.yaml。
 export function buildSavePayload({ withSpeed = false } = {}) {
@@ -112,13 +140,10 @@ export function buildSavePayload({ withSpeed = false } = {}) {
     // 旋轉拉正（per cam 度數）/ 節目封面開關；後端 key-presence 判斷要不要寫
     rotate: { a: state.rotate.a, b: state.rotate.b },
     cover_enabled: state.coverEnabled,
-    // 字幕字級：只送 font_size，後端跟 defaults 比對 → 等於預設就移除 override、保持 yaml 乾淨
-    subtitle_style: {
-      font_size: Number(state.subtitleStyleYt?.font_size) || null,
-    },
-    subtitle_style_reels: {
-      font_size: Number(state.subtitleStyleReels?.font_size) || null,
-    },
+    // 字幕樣式：整組送（字幕樣式面板 + 字級 ± 鈕同改這份 state），
+    // 後端 normalize_style 驗過再跟 defaults 比對 → 等於預設就移除 override、保持 yaml 乾淨
+    subtitle_style: serializeSubtitleStyle(state.subtitleStyleYt),
+    subtitle_style_reels: serializeSubtitleStyle(state.subtitleStyleReels),
     silence_trim: {
       enabled: state.silenceTrim.enabled,
       min_silence: state.silenceTrim.minSilence,

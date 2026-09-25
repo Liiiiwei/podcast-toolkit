@@ -467,6 +467,134 @@
                       ＋
                     </button>
                   </div>
+                  <div class="caption-style" id="caption-style">
+                    <button
+                      type="button"
+                      id="cap-style-btn"
+                      class="btn btn-ghost"
+                      aria-expanded="false"
+                      aria-controls="cap-style-panel"
+                    >
+                      <span data-icon="settings" data-icon-size="13"></span>
+                      <span>字幕樣式</span>
+                    </button>
+                    <div
+                      class="cap-style-panel hidden"
+                      id="cap-style-panel"
+                      role="dialog"
+                      aria-label="字幕樣式"
+                    >
+                      <div class="cap-style-head">
+                        <span id="cap-style-scope">YT</span> 字幕樣式
+                        <button
+                          type="button"
+                          class="cap-style-close"
+                          id="cap-style-close"
+                          aria-label="關閉"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <p class="cap-style-empty hidden" id="cap-style-empty">
+                        尚未載入字幕樣式——先開一集再調。
+                      </p>
+                      <div class="cap-style-grid" id="cap-style-grid">
+                        <label class="cap-style-row cap-style-wide">
+                          <span>字體</span>
+                          <input
+                            type="text"
+                            id="cap-font-name"
+                            data-style-key="font_name"
+                            list="cap-font-list"
+                            spellcheck="false"
+                          />
+                        </label>
+                        <datalist id="cap-font-list">
+                          <option value="Hiragino Sans GB"></option>
+                          <option value="PingFang TC"></option>
+                          <option value="Noto Sans TC"></option>
+                          <option value="Heiti TC"></option>
+                        </datalist>
+                        <label class="cap-style-row">
+                          <span>文字色</span>
+                          <input
+                            type="color"
+                            id="cap-primary-colour"
+                            data-style-key="primary_colour"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>外框色</span>
+                          <input
+                            type="color"
+                            id="cap-outline-colour"
+                            data-style-key="outline_colour"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>粗體</span>
+                          <input
+                            type="checkbox"
+                            id="cap-bold"
+                            data-style-key="bold"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>邊框</span>
+                          <select id="cap-border-style" data-style-key="border_style">
+                            <option value="1">外框＋陰影</option>
+                            <option value="3">不透明底色塊</option>
+                          </select>
+                        </label>
+                        <label class="cap-style-row">
+                          <span>外框粗細</span>
+                          <input
+                            type="number"
+                            id="cap-outline"
+                            data-style-key="outline"
+                            min="0"
+                            max="20"
+                            step="1"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>陰影</span>
+                          <input
+                            type="number"
+                            id="cap-shadow"
+                            data-style-key="shadow"
+                            min="0"
+                            max="20"
+                            step="1"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>位置</span>
+                          <select id="cap-alignment" data-style-key="alignment">
+                            <option value="2">畫面底部</option>
+                            <option value="6">畫面頂部</option>
+                            <option value="10">畫面正中</option>
+                          </select>
+                        </label>
+                        <label class="cap-style-row">
+                          <span>邊距</span>
+                          <input
+                            type="number"
+                            id="cap-margin-v"
+                            data-style-key="margin_v"
+                            min="0"
+                            max="2000"
+                            step="1"
+                          />
+                        </label>
+                      </div>
+                      <p class="cap-style-err hidden" id="cap-style-err"></p>
+                      <p class="cap-style-note">
+                        改動即時反映在預覽，按「完成並儲存」才寫進 episode.yaml。
+                        標題卡的文字不吃這裡的樣式（卡片自己帶字型與顏色）。
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
