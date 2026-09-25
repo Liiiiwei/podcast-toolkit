@@ -124,3 +124,54 @@
 `renderCards`、`buildTimeToolbar`、`renderNewCardRow`、`renderTypo`、`renderCropInfo`、
 `renderTrimControls`、`renderCaptionStyleControls`——它們對 `app.js` 內部狀態的
 依賴面還太寬，先有 `render.js` 這個落點再逐步挪。
+
+---
+
+## 第二刀（2026-09-25 同日）：renderTrimControls ＋ 字幕樣式面板渲染端
+
+### 切點（同一套量化判準，改以「群組」為單位算）
+
+把互相引用的符號整組搬，「需新增 export」常常能歸零——這是第一刀沒用上的槓桿。
+
+| 候選群組 | 搬走行數 | 需新增 app.js export | 比值 | 結論 |
+|----------|---------|----------------------|------|------|
+| 時間編輯子系統（`renderCards`／`buildTimeToolbar`／`renderNewCardRow`…） | ~390 | 5 | 78 | 延後，見下方提案 |
+| 字幕樣式面板渲染端（4 符號） | 80 | **0** | ∞ | **採用** |
+| 　＋ `commitCaptionStyleField`／`toggleCaptionStylePanel` | 125 | 2 | 62.5 | 否決：那兩支是動作不是渲染 |
+| `renderTrimControls` | 47 | **0** | ∞ | **採用** |
+| `renderCropInfo` ＋ `applyRotationPreview` | 67 | 3 | 22.3 | 比值最差，延後 |
+
+採用 = 116 行、**app.js 新增 export 0 個**，app.js 改從 render.js import 回 4 支。
+`assColourToHex` 只被群內的 `renderCaptionStyleControls` 用，跟著搬且不對外 export；
+`hexToAssColour` 被留在 app.js 的 `commitCaptionStyleField` 用，所以不動。
+
+### 護欄缺口：這次是「容器」沒取樣到
+
+第一刀漏的是**時點**（loading 態），這一刀開工先查，發現漏的是**容器**——
+原本 8 個容器沒有一個蓋到要搬的這兩支。動刀前補到 13 個容器 ＋ S11／S12 兩個狀態，
+重錄 baseline 並比對舊檔確認**原 10 狀態 × 8 容器逐字不變**。
+
+另外解掉一個真盲點：`<input>`／`<select>` 的 `value`／`checked` 設定後
+**outerHTML 完全不變**，字幕樣式面板九成的輸出都在這些活值上。
+補了合成指紋鍵 `capStyleVals`（欄位串成 `id=value|disabled`）才測得到——
+MUT-R4 證實：色碼欄寫死時 `capStyleVals` 全紅、`capStyle` 的 HTML 指紋全綠。
+
+### 驗收
+
+- [x] 動刀前重錄 baseline，原 10 狀態 × 8 容器指紋逐字不變
+- [x] 護欄 **254/254**（12 狀態 × 15 指紋）；`verify_render_skeleton_loading.py` 2/2
+- [x] MUT-R3（trim 提示字串）／MUT-R4（色碼欄寫死）各自只紅對應容器，還原後全綠
+- [x] 靜態符號核對：4 支在 app.js 都有 import，`assColourToHex` 用量歸 0
+- [x] app.js 新增 export **0 個**
+- [x] `/usr/bin/python3 -m pytest -q`：**1053 passed, 1 xfailed**
+- [x] app.js 7756 → 7645 行；render.js 613 → 741 行
+- [x] MUTATIONS.md 登記 MUT-R3／MUT-R4
+
+### 下一刀的提案（未授權，先寫著）
+
+**時間編輯子系統另開 `timeedit.js`**：`renderCards`（590 行）、`buildTimeToolbar`、
+`renderNewCardRow` 三支互相纏繞，搬進 render.js 會讓那個檔變成第二個 app.js；
+另開新檔約 390 行、需 app.js 新增 5 個 export
+（`_auditionEnd`、`_undoCoalesce`、`clearCardTimings`、`getEffectiveCardTime`、`setCardTime`）。
+比值 78，數字上划算，但它是**架構決定**不是搬運，要單獨開梯並先補「卡片編輯」的指紋狀態。
+`renderCropInfo` 那一組（67 行／3 export，比值 22.3）等裁切相關功能要改時順手帶走。

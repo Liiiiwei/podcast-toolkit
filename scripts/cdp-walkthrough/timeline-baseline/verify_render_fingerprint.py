@@ -6,7 +6,7 @@
 所以改用指紋：對每個渲染容器抓正規化後的 outerHTML，動刀前錄 baseline、動刀後逐一
 比對 —— 相同就是零行為變更，不同就指名是哪個容器、哪個狀態變了。
 
-十個狀態（每個狀態都先跑「非退化斷言」再抓指紋，避免對一個空 div 錄指紋還當成有覆蓋）：
+十二個狀態（每個狀態都先跑「非退化斷言」再抓指紋，避免對一個空 div 錄指紋還當成有覆蓋）：
   第一輪（單機集、無 speakers sidecar）
     S1  initial           t=0：字幕預覽空態、review 2 張、sus 1 張、兩條 ruler 都 hidden
     S2  caption-single    seek 到卡 3 顯示窗：單行字幕預覽（含 .caption-line 與內聯樣式）
@@ -15,6 +15,8 @@
     S5  review-empty      點卡 6「看過」：#review-toolbar 轉 hidden（空態分支）
     S6  sus-checked       勾卡 6 紅卡 checkbox：「已勾 1·約 N 秒」＋兩顆刪除鈕啟用
     S7  cap-size-dec      點字幕縮小：字級 −2、caption CSS 重算、未儲存徽章現身
+    S11 capstyle-open     點「更多樣式」：renderCaptionStyleControls 把 9 個欄位填滿
+    S12 trim-head-set     設頭 3.0s：renderTrimControls 的 head>0 分支（色帶／把手／提示）
   第二輪（雙機集＋speakers sidecar＋重疊卡，重起伺服器）
     S8  dual-initial      cam-ruler 與 speaker-ruler 都有段（含一段 .speaker-ruler-gap）
     S9  dual-overlap-cap  seek 到重疊窗：兩行字幕＋overlay 掛 multi-speaker
@@ -23,7 +25,7 @@
 正規化只做三件事（規則集中在 Python 端的 norm()，JS 只回 raw outerHTML）：
   1. 摺疊標籤間空白 `>\\s+<` → `><`（index.html 的靜態縮排）
   2. 3 位以上小數統一 toFixed(2)（caption 樣式換算的浮點雜訊）
-  3. 遮掉 #cards-list 的 data-last-render-ms（app.js:2592 寫入的渲染耗時，
+  3. 遮掉 #cards-list 的 data-last-render-ms  ※合成鍵 capStyleVals 不吃這三條，它是活值串（app.js:2592 寫入的渲染耗時，
      每次載入必然不同 —— 實測兩次載入 7.0 vs 6.9，是指紋唯一的真實雜訊源）
 
 斷言紀律（README／MUTATIONS.md）：
@@ -124,7 +126,23 @@ CONTAINERS = {
     "sus": "#sus-toolbar",
     "review": "#review-toolbar",
     "capSize": "#caption-size",
+    # D6 第三刀（renderTrimControls／renderCaptionStyleControls）的覆蓋：
+    # 頭尾裁切的字樣／active 狀態在 .trim-controls，色帶與兩個把手是 .seek-wrap 的
+    # 兄弟節點（各自吃 inline style），所以分成 5 個容器各自比。
+    "trimCtl": ".trim-controls",
+    "trimBandH": "#trim-band-head",
+    "trimBandT": "#trim-band-tail",
+    "trimHandH": "#trim-handle-head",
+    "trimHandT": "#trim-handle-tail",
+    "capStyle": "#cap-style-panel",
 }
+
+# 合成指紋：<input>／<select> 的 value／checked 是 IDL 屬性，設定它不會反映到
+# outerHTML（只有 disabled 會）。renderCaptionStyleControls 寫的正是 value／checked，
+# 光抓 #cap-style-panel 的 HTML 會漏掉它九成的輸出 —— 所以另外把面板欄位的活值
+# 串成一個字串當第 14 個「容器」，一起進指紋。
+SYNTH_KEYS = ["capStyleVals"]
+FP_KEYS = list(CONTAINERS) + SYNTH_KEYS
 
 
 # ── 伺服器 ───────────────────────────────────────────────────────────────
@@ -319,6 +337,12 @@ JS_COLLECT = """(() => {
     html[k] = el ? el.outerHTML : null;
     loose[k] = el ? strip(el) : null;
   }
+  // 合成鍵（見 SYNTH_KEYS 註解）：面板欄位的活值，outerHTML 抓不到
+  const capVals = [...document.querySelectorAll('#cap-style-panel input, #cap-style-panel select')]
+    .map((e) => `${e.id}=${e.type === 'checkbox' ? (e.checked ? 1 : 0) : e.value}|${e.disabled ? 'd' : ''}`)
+    .join(';');
+  html['capStyleVals'] = capVals;
+  loose['capStyleVals'] = capVals;
   const q = (s) => document.querySelector(s);
   const n = (s) => document.querySelectorAll(s).length;
   const ov = q('#caption-overlay');
@@ -347,6 +371,17 @@ JS_COLLECT = """(() => {
     seenBtns: n('#cards-list .card-review-seen'),
     seenMarked: n('#cards-list .card-review-seen.is-seen'),
     camBCards: n('#cards-list .card.cam-b'),
+    capStyleHidden: !!(q('#cap-style-panel') || {}).classList.contains('hidden'),
+    capStyleGridHidden: !!(q('#cap-style-grid') || {}).classList.contains('hidden'),
+    capFontName: (q('#cap-font-name') || {}).value ?? null,
+    capPrimary: (q('#cap-primary-colour') || {}).value ?? null,
+    capFieldsDisabled: n('#cap-style-panel input:disabled, #cap-style-panel select:disabled'),
+    trimHeadVal: (q('#trim-head-val') || {}).textContent || null,
+    trimTailVal: (q('#trim-tail-val') || {}).textContent || null,
+    trimHeadActive: !!(q('#trim-head-btn') || {}).classList.contains('active'),
+    trimBandHeadDisp: (q('#trim-band-head') || {}).style?.display ?? null,
+    trimHandleHeadDisp: (q('#trim-handle-head') || {}).style?.display ?? null,
+    trimHint: (q('#trim-hint') || {}).textContent || null,
   };
   return { html, loose, probe };
 })()""" % json.dumps(CONTAINERS)
@@ -389,6 +424,13 @@ async def run_states_round1(browser, ws, sessions, snap):
         ("時間工具列未開", p["teOpen"], 0),
         ("看過鈕 2 顆", p["seenBtns"], 2),
         ("未儲存徽章隱藏", p["unsavedHidden"], True),
+        # renderTrimControls 的 head=0/tail=0 分支：色帶與把手都藏著、提示是預設句
+        ("裁切字樣 0.0s", (p["trimHeadVal"], p["trimTailVal"]), ("0.0s", "0.0s")),
+        ("設頭鈕未 active", p["trimHeadActive"], False),
+        ("頭色帶藏著", p["trimBandHeadDisp"], "none"),
+        ("裁切提示是預設句", (p["trimHint"] or "").startswith("把播放游標"), True),
+        # renderCaptionStyleControls 還沒被呼叫（面板未開）→ 欄位不該被動過
+        ("字幕樣式面板未開", p["capStyleHidden"], True),
     ])
     snap["S1"] = d
 
@@ -465,6 +507,40 @@ async def run_states_round1(browser, ws, sessions, snap):
     ])
     snap["S7"] = d
 
+    # S11 capstyle-open（點「更多樣式」→ renderCaptionStyleControls 把 9 個欄位填滿）
+    ok, info = await click_selector(page, "#cap-style-btn")
+    C.check("S11 點擊／更多樣式鈕", ok, info, True)
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S11", [
+        ("面板已開", p["capStyleHidden"], False),
+        ("欄位格顯示（非 empty 態）", p["capStyleGridHidden"], False),
+        ("欄位全部啟用", p["capFieldsDisabled"], 0),
+        ("字體欄有值", bool(p["capFontName"]), True),
+        ("文字色是 #rrggbb", bool(re.fullmatch(r"#[0-9a-f]{6}", p["capPrimary"] or "")), True),
+    ])
+    snap["S11"] = d
+
+    # S12 trim-head-set（設頭 → renderTrimControls 的 head>0 分支：色帶／把手／保留提示）
+    # 設頭讀的是 video.currentTime。S3 開過 ⏱ 工具列會啟動循環播放，不先暫停的話
+    # 這 0.8 秒等待期間播放頭會自己往前跑（實測錄到 3.7s）→ 指紋每次都不一樣。
+    await C.js(page, "(() => { const v = document.querySelector('#video'); v.pause(); return 1; })()")
+    await seek(page, 3.0)
+    now = await C.js(page, "(() => document.querySelector('#video').currentTime)()")
+    C.check("S12 前置／播放頭停在 3.0 沒漂走", now == 3.0, now, 3.0)
+    ok, info = await click_selector(page, "#trim-head-btn")
+    C.check("S12 點擊／設頭鈕", ok, info, True)
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S12", [
+        ("裁切字樣 3.0s", p["trimHeadVal"], "3.0s"),
+        ("設頭鈕轉 active", p["trimHeadActive"], True),
+        ("頭色帶現身", p["trimBandHeadDisp"], "block"),
+        ("頭把手現身", p["trimHandleHeadDisp"], "block"),
+        ("提示改成保留秒數", (p["trimHint"] or "").startswith("保留 "), True),
+    ])
+    snap["S12"] = d
+
     await close_page(page)
 
 
@@ -520,7 +596,7 @@ def compare_baseline(snap, baseline):
         if want is None:
             C.check(f"{state} 指紋／baseline 有這個狀態", False, None, "存在")
             continue
-        for key in CONTAINERS:
+        for key in FP_KEYS:
             g, w = got.get(key), want.get(key)
             ok = g == w
             C.check(f"{state} 指紋／{key}", ok, g, w)
@@ -583,7 +659,7 @@ async def main():
             b = await collect(page)
             await close_page(page)
             norm_same = fps(a["html"]) == fps(b["html"])
-            raw_diff = sorted(k for k in CONTAINERS if a["html"][k] != b["html"][k])
+            raw_diff = sorted(k for k in FP_KEYS if a["html"][k] != b["html"][k])
             C.check("R0-STABILITY 正規化指紋跨兩次載入一致", norm_same, norm_same, True)
             # raw 相不相同取決於當次的渲染耗時碰巧撞不撞號（實測兩次載入曾是 7.0 vs 6.9，
             # 也曾完全相同），所以它不當斷言、只如實印出來。
@@ -610,11 +686,11 @@ async def main():
                 await close_page(page)
                 base_fp = fps(snap["S1"]["html"])
                 mut_fp = fps(m["html"])
-                changed = {k for k in CONTAINERS if base_fp[k] != mut_fp[k]}
+                changed = {k for k in FP_KEYS if base_fp[k] != mut_fp[k]}
                 ok1 = raw_eq("MUT-R1 只有 #cards-list 指紋改變", sorted(changed), ["cards"])
                 base_loose = fps(snap["S1"]["loose"])
                 mut_loose = fps(m["loose"])
-                loose_changed = {k for k in CONTAINERS if base_loose[k] != mut_loose[k]}
+                loose_changed = {k for k in FP_KEYS if base_loose[k] != mut_loose[k]}
                 ok2 = raw_eq("MUT-R2 過度正規化的 loose 指紋看不見這個改動",
                              sorted(loose_changed), [])
                 C.check("MUT-R1 指紋抓到渲染輸出改變且只動到對應容器", ok1, sorted(changed), ["cards"])
@@ -653,7 +729,7 @@ async def main():
                 json.dumps(
                     {
                         "note": "D6 動刀前錄的渲染指紋 baseline；只存 sha256[:16] 與長度",
-                        "containers": CONTAINERS,
+                        "containers": {**CONTAINERS, "capStyleVals": "(合成：面板欄位活值)"},
                         "states": {s: fps(snap[s]["html"]) for s in sorted(snap)},
                     },
                     ensure_ascii=False,

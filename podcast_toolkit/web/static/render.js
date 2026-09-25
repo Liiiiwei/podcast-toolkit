@@ -5,8 +5,13 @@
 //   該進來：只讀 state／DOM、把結果寫進畫面的純渲染函式，以及只被渲染用到的換算工具。
 //   不該進來：改 state 的動作、事件綁定、後端往返。那些留在 app.js。
 //   還沒進來（留給後續刀次）：renderCards、buildTimeToolbar、renderNewCardRow、
-//   renderTypo、renderCropInfo、renderTrimControls、renderCaptionStyleControls
-//   ——它們對 app.js 內部狀態的依賴面還太寬，先有這個落點再逐步挪。
+//   renderTypo、renderCropInfo——前三支屬「時間編輯子系統」，依賴面寬到值得另開
+//   timeedit.js（約 390 行／需 app.js 多開 5 個 export）；renderCropInfo 這一組
+//   要多開 3 個 export 換 67 行，比值最差，等裁切相關的下一次改動再一起挪。
+//
+// 第二刀（2026-09-25）再搬進來：renderTrimControls、字幕樣式面板的渲染四件
+//   （assColourToHex／CAP_STYLE_FIELDS／setCaptionStyleError／renderCaptionStyleControls），
+//   127 行、app.js 需新增 export 0 個。
 //
 // 循環 import 的鐵律（與 timeline.js／api.js 同一形狀）：
 //   app.js 是進入點，本檔求值時它的 const/let 還在 TDZ。
@@ -607,4 +612,130 @@ export function renderVersionLabel(memId) {
     ? `v${info.version} · ${info.date}`
     : `v${info.version}`;
   el.title = memId; // 滑鼠停留看完整 build_id（含 sha），供診斷
+}
+
+// === 裁切（頭／尾）控制列 ===
+
+export function renderTrimControls() {
+  const head = state.headTrimSec || 0;
+  const tail = state.tailTrimSec || 0;
+  $("#trim-head-val").textContent = `${head.toFixed(1)}s`;
+  $("#trim-tail-val").textContent = `${tail.toFixed(1)}s`;
+  $("#trim-head-btn").classList.toggle("active", head > 0);
+  $("#trim-tail-btn").classList.toggle("active", tail > 0);
+
+  const dur = $("#video").duration || 0;
+  const headBand = $("#trim-band-head");
+  const tailBand = $("#trim-band-tail");
+  if (dur > 0 && head > 0) {
+    headBand.style.width = `${Math.min(100, (head / dur) * 100).toFixed(2)}%`;
+    headBand.style.display = "block";
+  } else {
+    headBand.style.display = "none";
+  }
+  if (dur > 0 && tail > 0) {
+    tailBand.style.width = `${Math.min(100, (tail / dur) * 100).toFixed(2)}%`;
+    tailBand.style.display = "block";
+  } else {
+    tailBand.style.display = "none";
+  }
+
+  // 兩個拖把：影片載入後才能定位（沒 duration 時藏起來，避免拖到沒意義的位置）
+  const headHandle = $("#trim-handle-head");
+  const tailHandle = $("#trim-handle-tail");
+  if (dur > 0) {
+    const headPct = Math.min(100, Math.max(0, (head / dur) * 100));
+    const tailPct = Math.min(100, Math.max(0, ((dur - tail) / dur) * 100));
+    headHandle.style.left = `${headPct.toFixed(2)}%`;
+    tailHandle.style.left = `${tailPct.toFixed(2)}%`;
+    headHandle.style.display = "block";
+    tailHandle.style.display = "block";
+  } else {
+    headHandle.style.display = "none";
+    tailHandle.style.display = "none";
+  }
+
+  const hint = $("#trim-hint");
+  if (head > 0 || tail > 0) {
+    const remain = Math.max(0, dur - head - tail);
+    hint.textContent = `保留 ${remain.toFixed(1)}s / 總長 ${dur.toFixed(1)}s`;
+  } else {
+    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾，或直接拖把";
+  }
+}
+
+
+// === 字幕樣式面板的渲染端 ===
+// 寫回 state 的 commitCaptionStyleField、面板開關 toggleCaptionStylePanel、
+// 事件綁定 setupCaptionStyle 留在 app.js —— 那些是動作不是渲染。
+
+// episode.yaml 存 ASS 色碼 &HAABBGGRR（BGR 順序，與 HTML 的 #RRGGBB 相反），
+// <input type=color> 只吃 #rrggbb，所以進出各轉一次。面板不提供透明度，AA 原封保留。
+function assColourToHex(value) {
+  const m = /^&[Hh]([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(
+    String(value ?? "").trim(),
+  );
+  if (!m) return null;
+  const body = m[1].length === 8 ? m[1].slice(2) : m[1]; // 去掉 AA
+  return `#${(body.slice(4, 6) + body.slice(2, 4) + body.slice(0, 2)).toLowerCase()}`;
+}
+
+// kind 決定讀寫方式：text=字串、colour=ASS↔hex、bool=0/1、select/num=數字
+export const CAP_STYLE_FIELDS = [
+  { id: "cap-font-name", key: "font_name", kind: "text", label: "字體" },
+  { id: "cap-primary-colour", key: "primary_colour", kind: "colour", label: "文字色" },
+  { id: "cap-outline-colour", key: "outline_colour", kind: "colour", label: "外框色" },
+  { id: "cap-bold", key: "bold", kind: "bool", label: "粗體" },
+  { id: "cap-border-style", key: "border_style", kind: "select", label: "邊框", fallback: 1 },
+  { id: "cap-outline", key: "outline", kind: "num", label: "外框粗細" },
+  { id: "cap-shadow", key: "shadow", kind: "num", label: "陰影" },
+  { id: "cap-alignment", key: "alignment", kind: "select", label: "位置", fallback: 2 },
+  { id: "cap-margin-v", key: "margin_v", kind: "num", label: "邊距" },
+];
+
+// error 態：訊息顯在面板內（不是 console），並把出問題的欄位框起來。訊息空＝清除。
+export function setCaptionStyleError(message, el) {
+  const box = $("#cap-style-err");
+  if (box) {
+    box.textContent = message || "";
+    box.classList.toggle("hidden", !message);
+  }
+  $("#cap-style-panel")
+    ?.querySelectorAll(".invalid")
+    .forEach((n) => n.classList.remove("invalid"));
+  if (message && el) el.classList.add("invalid");
+}
+
+export function renderCaptionStyleControls() {
+  const panel = $("#cap-style-panel");
+  if (!panel) return;
+  const style = activeSubtitleStyle();
+  const scope = $("#cap-style-scope");
+  if (scope)
+    scope.textContent = state.activeVersion === "reels" ? "Reels" : "YT";
+  // empty 態：還沒開集（或這個分頁沒樣式）→ 藏掉欄位並說明，不給一排空白輸入框
+  $("#cap-style-grid")?.classList.toggle("hidden", !style);
+  $("#cap-style-empty")?.classList.toggle("hidden", !!style);
+  setCaptionStyleError("");
+  for (const f of CAP_STYLE_FIELDS) {
+    const el = document.getElementById(f.id);
+    if (!el) continue;
+    el.disabled = !style;
+    if (!style) continue;
+    const v = style[f.key];
+    if (f.kind === "bool") {
+      el.checked = Number(v) === 1;
+    } else if (f.kind === "colour") {
+      // 讀不懂的色碼（舊集手寫過怪值）→ 退回白色顯示，但不回寫 state
+      el.value = assColourToHex(v) || "#ffffff";
+    } else if (f.kind === "select") {
+      const n = Number(v);
+      el.value = Number.isFinite(n) ? String(n) : "";
+      if (!el.value) el.value = String(f.fallback); // 值不在選項內：顯示保底值
+    } else if (f.kind === "num") {
+      el.value = Number.isFinite(Number(v)) ? String(Number(v)) : "";
+    } else {
+      el.value = v == null ? "" : String(v);
+    }
+  }
 }

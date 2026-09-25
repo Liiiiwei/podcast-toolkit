@@ -37,6 +37,7 @@ import { renderShortcutsModal, timeToolbarHintHtml } from "./shortcuts.js";
 // 渲染層（循環 import：render.js 也會匯入本檔的 state／$ 等共用符號，
 // TDZ 規則見該檔頭註解）
 import {
+  CAP_STYLE_FIELDS,
   activeCardAt,
   activeSubtitleStyle,
   applyCaptionStyle,
@@ -50,13 +51,16 @@ import {
   renderCamRuler,
   renderCaption,
   renderCaptionSizeControl,
+  renderCaptionStyleControls,
   renderCardSkeletons,
   renderReviewToolbar,
   renderSpeakerRuler,
   renderSusToolbar,
   renderTopbar,
+  renderTrimControls,
   renderVersionLabel,
   reviewReasonLabel,
+  setCaptionStyleError,
   speakerLabel,
 } from "./render.js";
 
@@ -517,58 +521,6 @@ export function unsavedCount() {
 }
 
 
-function renderTrimControls() {
-  const head = state.headTrimSec || 0;
-  const tail = state.tailTrimSec || 0;
-  $("#trim-head-val").textContent = `${head.toFixed(1)}s`;
-  $("#trim-tail-val").textContent = `${tail.toFixed(1)}s`;
-  $("#trim-head-btn").classList.toggle("active", head > 0);
-  $("#trim-tail-btn").classList.toggle("active", tail > 0);
-
-  const dur = $("#video").duration || 0;
-  const headBand = $("#trim-band-head");
-  const tailBand = $("#trim-band-tail");
-  if (dur > 0 && head > 0) {
-    headBand.style.width = `${Math.min(100, (head / dur) * 100).toFixed(2)}%`;
-    headBand.style.display = "block";
-  } else {
-    headBand.style.display = "none";
-  }
-  if (dur > 0 && tail > 0) {
-    tailBand.style.width = `${Math.min(100, (tail / dur) * 100).toFixed(2)}%`;
-    tailBand.style.display = "block";
-  } else {
-    tailBand.style.display = "none";
-  }
-
-  // 兩個拖把：影片載入後才能定位（沒 duration 時藏起來，避免拖到沒意義的位置）
-  const headHandle = $("#trim-handle-head");
-  const tailHandle = $("#trim-handle-tail");
-  if (dur > 0) {
-    const headPct = Math.min(100, Math.max(0, (head / dur) * 100));
-    const tailPct = Math.min(100, Math.max(0, ((dur - tail) / dur) * 100));
-    headHandle.style.left = `${headPct.toFixed(2)}%`;
-    tailHandle.style.left = `${tailPct.toFixed(2)}%`;
-    headHandle.style.display = "block";
-    tailHandle.style.display = "block";
-  } else {
-    headHandle.style.display = "none";
-    tailHandle.style.display = "none";
-  }
-
-  const hint = $("#trim-hint");
-  if (head > 0 || tail > 0) {
-    const remain = Math.max(0, dur - head - tail);
-    hint.textContent = `保留 ${remain.toFixed(1)}s / 總長 ${dur.toFixed(1)}s`;
-  } else {
-    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾，或直接拖把";
-  }
-}
-
-
-
-
-
 
 
 function nudgeCaptionSize(delta) {
@@ -592,16 +544,6 @@ function setupCaptionSize() {
 // 改的是 activeSubtitleStyle() 回傳的那個物件 —— 與字級 ± 鈕同一份 state，不另開第二套；
 // 存檔時 buildSavePayload 整包帶上，save_state 跟 defaults 比對後只寫真正調過的鍵。
 
-// episode.yaml 存 ASS 色碼 &HAABBGGRR（BGR 順序，與 HTML 的 #RRGGBB 相反），
-// <input type=color> 只吃 #rrggbb，所以進出各轉一次。面板不提供透明度，AA 原封保留。
-function assColourToHex(value) {
-  const m = /^&[Hh]([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(
-    String(value ?? "").trim(),
-  );
-  if (!m) return null;
-  const body = m[1].length === 8 ? m[1].slice(2) : m[1]; // 去掉 AA
-  return `#${(body.slice(4, 6) + body.slice(2, 4) + body.slice(0, 2)).toLowerCase()}`;
-}
 function hexToAssColour(hex, prevAss) {
   const m = /^#([0-9a-fA-F]{6})$/.exec(String(hex ?? "").trim());
   if (!m) return null;
@@ -611,65 +553,6 @@ function hexToAssColour(hex, prevAss) {
   return `&H${aa}${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`;
 }
 
-// kind 決定讀寫方式：text=字串、colour=ASS↔hex、bool=0/1、select/num=數字
-const CAP_STYLE_FIELDS = [
-  { id: "cap-font-name", key: "font_name", kind: "text", label: "字體" },
-  { id: "cap-primary-colour", key: "primary_colour", kind: "colour", label: "文字色" },
-  { id: "cap-outline-colour", key: "outline_colour", kind: "colour", label: "外框色" },
-  { id: "cap-bold", key: "bold", kind: "bool", label: "粗體" },
-  { id: "cap-border-style", key: "border_style", kind: "select", label: "邊框", fallback: 1 },
-  { id: "cap-outline", key: "outline", kind: "num", label: "外框粗細" },
-  { id: "cap-shadow", key: "shadow", kind: "num", label: "陰影" },
-  { id: "cap-alignment", key: "alignment", kind: "select", label: "位置", fallback: 2 },
-  { id: "cap-margin-v", key: "margin_v", kind: "num", label: "邊距" },
-];
-
-// error 態：訊息顯在面板內（不是 console），並把出問題的欄位框起來。訊息空＝清除。
-function setCaptionStyleError(message, el) {
-  const box = $("#cap-style-err");
-  if (box) {
-    box.textContent = message || "";
-    box.classList.toggle("hidden", !message);
-  }
-  $("#cap-style-panel")
-    ?.querySelectorAll(".invalid")
-    .forEach((n) => n.classList.remove("invalid"));
-  if (message && el) el.classList.add("invalid");
-}
-
-function renderCaptionStyleControls() {
-  const panel = $("#cap-style-panel");
-  if (!panel) return;
-  const style = activeSubtitleStyle();
-  const scope = $("#cap-style-scope");
-  if (scope)
-    scope.textContent = state.activeVersion === "reels" ? "Reels" : "YT";
-  // empty 態：還沒開集（或這個分頁沒樣式）→ 藏掉欄位並說明，不給一排空白輸入框
-  $("#cap-style-grid")?.classList.toggle("hidden", !style);
-  $("#cap-style-empty")?.classList.toggle("hidden", !!style);
-  setCaptionStyleError("");
-  for (const f of CAP_STYLE_FIELDS) {
-    const el = document.getElementById(f.id);
-    if (!el) continue;
-    el.disabled = !style;
-    if (!style) continue;
-    const v = style[f.key];
-    if (f.kind === "bool") {
-      el.checked = Number(v) === 1;
-    } else if (f.kind === "colour") {
-      // 讀不懂的色碼（舊集手寫過怪值）→ 退回白色顯示，但不回寫 state
-      el.value = assColourToHex(v) || "#ffffff";
-    } else if (f.kind === "select") {
-      const n = Number(v);
-      el.value = Number.isFinite(n) ? String(n) : "";
-      if (!el.value) el.value = String(f.fallback); // 值不在選項內：顯示保底值
-    } else if (f.kind === "num") {
-      el.value = Number.isFinite(Number(v)) ? String(Number(v)) : "";
-    } else {
-      el.value = v == null ? "" : String(v);
-    }
-  }
-}
 
 // success 態：寫回 state → 即時預覽（renderCropInfo 內含 applyCaptionStyle）→ 進未儲存計數。
 // 非法輸入一律 return，絕不把 NaN / 空字串靜默寫成 0。

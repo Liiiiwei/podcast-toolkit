@@ -645,3 +645,50 @@ CDP_PORT=9522 /usr/bin/python3 -u verify_render_fingerprint.py        # 136/136�
 CDP_PORT=9522 /usr/bin/python3 -u verify_render_skeleton_loading.py   # 2/2
 /usr/bin/python3 -m pytest -q                                         # 1053 passed, 1 xfailed
 ```
+
+---
+
+## D6 第二刀（2026-09-25）：renderTrimControls ＋ 字幕樣式面板渲染四件
+
+搬走 116 行（`renderTrimControls`、`assColourToHex`、`CAP_STYLE_FIELDS`、
+`setCaptionStyleError`、`renderCaptionStyleControls`），**app.js 新增 export 0 個**
+——把互相引用的符號整組搬，耦合面就不用擴。
+
+### 動刀前先補護欄（上一刀的教訓直接複用）
+
+第一刀的缺口是「時點」沒取樣到（loading 態）；這一刀開工先查，發現是「容器」
+沒取樣到：8 個容器裡沒有任何一個蓋到 trim 控制列或字幕樣式面板。補成 13 個
+HTML 容器（`.trim-controls`、`#trim-band-head/tail`、`#trim-handle-head/tail`、
+`#cap-style-panel`）＋ 2 個新狀態：
+
+- **S11 capstyle-open**：點「更多樣式」→ `renderCaptionStyleControls` 填滿 9 個欄位。
+- **S12 trim-head-set**：設頭 → `renderTrimControls` 的 `head > 0` 分支（色帶／把手／保留提示）。
+
+重錄 baseline 後比對舊檔：**原 10 狀態 × 8 容器的指紋逐字不變**，證明重錄沒把東西藏掉。
+
+### 合成指紋鍵 `capStyleVals`：outerHTML 看不見表單的值
+
+`<input>`／`<select>` 的 `value`／`checked` 是 IDL 屬性，**設定後 outerHTML 一個字都不會變**
+（只有 `disabled` 會反映）。字幕樣式面板九成的輸出就是這些活值——只抓 HTML 等於沒測。
+所以另立合成鍵，把面板內每個欄位串成 `id=value|disabled`。
+
+### 突變
+
+| 編號 | 改什麼 | 預期 | 實際 |
+|------|--------|------|------|
+| MUT-R3 | `renderTrimControls` 的預設提示字串改成 `"MUT-R3"` | 只有 `trimCtl` 紅 | 11 個狀態的 `trimCtl` ＋ S1 非退化斷言紅；S12 走 `head>0` 分支所以不受影響（正確）｜還原後全綠 |
+| MUT-R4 | `renderCaptionStyleControls` 的色碼欄改成寫死 `#123456` | 只有 `capStyleVals` 紅 | 12 個狀態的 `capStyleVals` 紅，**`capStyle` 的 HTML 指紋全綠**——正是合成鍵要補的盲點｜還原後全綠 |
+
+### S12 的不穩定源（走查自己的 bug，不是產品碼）
+
+第一次錄 baseline 時 S12 斷言 `got='3.7s' want='3.0s'`。根因：S3 開過 ⏱ 工具列會啟動
+循環播放，`seek(3.0)` 後那 0.8 秒等待期間播放頭自己往前跑，而設頭鈕讀的是當下
+`video.currentTime`。修法是 S12 先 `pause()` 再 seek，並加一條前置斷言確認播放頭真的停在 3.0。
+**會漂的量不能直接當指紋輸入**。
+
+### 驗收數字
+
+護欄 **254/254**（12 狀態 × 15 指紋 ＋ 74 條斷言），`verify_render_skeleton_loading.py` 2/2，
+`/usr/bin/python3 -m pytest -q` **1053 passed, 1 xfailed**。
+靜態符號核對：4 支搬走的符號在 app.js 都有 import、`assColourToHex` 在 app.js 用量歸 0。
+`app.js` 7756 → 7645 行，`render.js` 613 → 741 行。

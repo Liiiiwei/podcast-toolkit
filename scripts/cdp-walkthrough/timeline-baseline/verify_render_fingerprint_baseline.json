@@ -8,7 +8,14 @@
     "caption": "#caption-overlay",
     "sus": "#sus-toolbar",
     "review": "#review-toolbar",
-    "capSize": "#caption-size"
+    "capSize": "#caption-size",
+    "trimCtl": ".trim-controls",
+    "trimBandH": "#trim-band-head",
+    "trimBandT": "#trim-band-tail",
+    "trimHandH": "#trim-handle-head",
+    "trimHandT": "#trim-handle-tail",
+    "capStyle": "#cap-style-panel",
+    "capStyleVals": "(合成：面板欄位活值)"
   },
   "states": {
     "S1": {
@@ -43,6 +50,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S10": {
@@ -77,6 +112,158 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      }
+    },
+    "S11": {
+      "topbar": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "df86965266efb3e5",
+        "len": 2284
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      }
+    },
+    "S12": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S2": {
@@ -111,6 +298,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S3": {
@@ -145,6 +360,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S4": {
@@ -179,6 +422,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S5": {
@@ -213,6 +484,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S6": {
@@ -247,6 +546,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S7": {
@@ -281,6 +608,34 @@
       "capSize": {
         "sha": "0685acce4f207d70",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S8": {
@@ -315,6 +670,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     },
     "S9": {
@@ -349,6 +732,34 @@
       "capSize": {
         "sha": "3da0a2811e5fe8da",
         "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
       }
     }
   }
