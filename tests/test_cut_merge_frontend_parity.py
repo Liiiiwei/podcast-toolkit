@@ -5,6 +5,10 @@
 
 背景：前端原本自帶另一套合併（無 pad、門檻 0.05、只夾下一張保留卡起點），預覽跳段每段
 都比成品短 cut_pad 秒／側。移植成共用純函式後，用這支差分測試釘住兩邊不再各自漂移。
+
+2026-09-25 補：加入「相鄰卡時間戳重疊」的 case（OVERLAP_CARDS / SANDWICH_CARDS）。
+那是走查 B5 量到的 0.75 秒落差來源 —— 刪卡產生的區間本身要夾在保留卡語音之外，
+而影片模式自己框的區間（foreign cut）不夾。兩邊各自實作，靠這支測試釘住逐位元相同。
 """
 from __future__ import annotations
 
@@ -73,6 +77,22 @@ CARDS = [
 ]
 
 
+# ★ 相鄰卡時間戳重疊（Whisper 逐字時間戳的常態）：#2 被刪、#3 的頭往回咬進它 0.75 秒
+OVERLAP_CARDS = [
+    {"start": 4.25, "end": 6.65},
+    {"start": 7.35, "end": 8.25},    # 這張被刪
+    {"start": 7.50, "end": 10.15},   # 頭與上一張重疊 0.75s（＝走查 B 階段的情境）
+    {"start": 11.05, "end": 13.05},
+]
+
+# 兩張保留卡把被刪卡的整段語音都蓋住 → 夾完歸零 → 這段不剪（後端另外印警告）
+SANDWICH_CARDS = [
+    {"start": 1.0, "end": 2.3},   # 尾巴落在刪段內
+    {"start": 2.0, "end": 2.5},   # 這張被刪
+    {"start": 2.2, "end": 3.0},   # 頭落在刪段內
+]
+
+
 def _case(intervals, pad, cards=None):
     return {"intervals": intervals, "cards": cards if cards is not None else CARDS, "pad": pad}
 
@@ -102,6 +122,17 @@ FIXED_CASES = [
     _case([[1.0, 2.0]], 0.3, cards=[]),
     # 延伸後互相重疊 → 再合併一次
     _case([[4.0, 8.0], [12.5, 14.0]], 3.0),
+    # ★ 重疊卡：刪 #2，區間本身要夾到保留卡 #3 的頭（7.50），pad 只能往左吃到 6.65
+    _case([[7.35, 8.25]], 0.4, cards=OVERLAP_CARDS),
+    # ★ 同上但 pad=0：夾制與 pad 無關（pad 只管延伸）
+    _case([[7.35, 8.25]], 0.0, cards=OVERLAP_CARDS),
+    # ★ 連刪兩張重疊卡：兩張都不是保留卡 → 互相不夾，照樣併成整段
+    _case([[7.35, 8.25], [7.5, 10.15]], 0.15, cards=OVERLAP_CARDS),
+    # ★ foreign cut 落在兩張保留卡的重疊區：不是刪卡產生的 → 邊界原樣，不夾
+    _case([[7.4, 7.6]], 0.15, cards=OVERLAP_CARDS),
+    # ★ 被兩張保留卡夾殺：夾完長度歸零 → 丟掉這段（不剪）
+    _case([[2.0, 2.5]], 0.15, cards=SANDWICH_CARDS),
+    _case([[2.0, 2.5]], 0.0, cards=SANDWICH_CARDS),
 ]
 
 
@@ -125,6 +156,9 @@ def test_random_cases_match_backend(tmp_path):
             dur = round(rnd.uniform(0.3, 3.0), 2)
             cards.append({"start": round(t, 2), "end": round(t + dur, 2)})
             t += dur
+            if rnd.random() < 0.25:
+                # 下一張的頭往回咬進這一張（逐字時間戳重疊）→ 壓夾制那條規則
+                t = max(0.0, t - round(rnd.uniform(0.05, 0.8), 2))
         intervals = []
         for c in cards:
             if rnd.random() < 0.4:

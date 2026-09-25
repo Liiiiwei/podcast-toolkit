@@ -80,7 +80,7 @@
       "ok": true,
       "got": {
         "before": 9,
-        "after": 9.000216,
+        "after": 9.0002,
         "fired": true
       },
       "want": {
@@ -94,7 +94,7 @@
       "ok": true,
       "got": {
         "before": 9.5,
-        "after": 9.501239,
+        "after": 9.500996,
         "fired": true
       },
       "want": {
@@ -108,7 +108,7 @@
       "ok": true,
       "got": {
         "before": 8.3,
-        "after": 8.300291,
+        "after": 8.300303,
         "fired": true
       },
       "want": {
@@ -147,42 +147,42 @@
       "status": "pass"
     },
     {
-      "name": "B3 後端區間 +1.5 = [8.45, 9.75]",
+      "name": "B3 後端區間 +1.5 = [8.45, 9.0]（右緣被夾制讓位給保留卡 #5 的頭 9.00）",
       "ok": true,
       "got": [
         [
           6.949999999999999,
-          8.25
+          7.5
         ]
       ],
       "want": [
         [
           6.949999999999999,
-          8.25
+          7.5
         ]
       ],
       "status": "pass"
     },
     {
-      "name": "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.75",
-      "ok": true,
+      "name": "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.0",
+      "ok": false,
       "got": {
         "before": 8.5,
         "after": 9.75,
         "fired": true
       },
       "want": {
-        "after": 9.75,
+        "after": 9.0,
         "fired": true
       },
-      "status": "pass"
+      "status": "fail"
     },
     {
-      "name": "B4b 落在剪除區間內、但同時落在保留卡 #5 語音裡的 9.30 → 不跳（守衛護住保留卡；拿掉守衛就會跳到 9.75）",
+      "name": "B4b 保留卡 #5 語音裡的 9.30 → 不跳（夾制之後它已不在剪除區間內；守衛退居第二層防線，改守衛不會讓這條紅，能讓它紅的是夾制 —— 見 B5）",
       "ok": true,
       "got": {
         "before": 9.3,
-        "after": 9.300215,
+        "after": 9.300237,
         "fired": true
       },
       "want": {
@@ -192,10 +192,10 @@
       "status": "pass"
     },
     {
-      "name": "B5 已知落差（待裁決）：後端剪除區間侵入保留卡 #5 的語音 0.75s，預覽刻意不跳過這段",
+      "name": "B5 夾制生效：後端剪除區間侵入保留卡 #5 的語音 0.000s（停掉夾制會退回 0.750s）",
       "ok": true,
-      "got": 0.75,
-      "want": 0.75,
+      "got": 0.0,
+      "want": 0.0,
       "status": "pass"
     },
     {
@@ -321,7 +321,9 @@
       "status": "pass"
     }
   ],
-  "failed": [],
-  "b5_backend_bites_into_kept_card_sec": 0.75,
+  "failed": [
+    "B4a 沒有任何保留卡語音的 8.50 → 跳到 9.0"
+  ],
+  "b5_backend_bites_into_kept_card_sec": 0.0,
   "srt_card4_after_save": "00:00:07,247 --> 00:00:08,247"
 }

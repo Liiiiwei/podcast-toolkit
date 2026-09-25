@@ -104,11 +104,39 @@ def build_style_string(style: dict) -> str:
     return ",".join(parts)
 
 
+def _clamp_cut_to_kept(
+    s: float, e: float, kept: list[tuple[float, float]]
+) -> tuple[float, float]:
+    """把「刪卡產生的」刪除區間本身夾在保留卡的語音之外（不是延伸後才夾）。
+
+    為什麼需要：相鄰字幕卡的時間戳會重疊（Whisper 逐字時間戳的常態）——被刪卡的尾巴
+    其實已經是下一張保留卡的開頭語音。原本只有 pad 延伸被夾在保留卡邊界內，區間本身
+    （卡自己的 start/end）沒夾，於是後端剪掉了保留卡的頭，而前端預覽守門看的是
+    「t 在不在保留卡語音裡」所以刻意不跳 —— 兩邊對不上（走查 B5 量到 0.75 秒）。
+
+    只夾「頭或尾落在區間內的保留卡」：整段被涵蓋的卡不算保留卡，所以
+    - 連刪相鄰兩卡 → 兩張都不是保留卡 → 互相不夾（連刪照樣併成整段）
+    - 影片模式在單張卡肚子裡切的任意區間 → 沒有保留卡的頭尾落在裡面 → 不動
+    呼叫端另外只對「邊界等於某張被刪卡」的區間套用本函式，跨卡的 foreign cut 一律原樣。
+
+    前端 timeline-core.js 的 padAndMergeCuts 有逐行對照的同一段，
+    tests/test_cut_merge_frontend_parity.py 逐位元比對兩邊。
+    """
+    ns, ne = s, e
+    for cs, ce in kept:
+        if s + 1e-6 < ce < e - 1e-6:  # 保留卡的尾巴落在區間內 → 左緣讓位到它的尾
+            ns = max(ns, ce)
+        if s + 1e-6 < cs < e - 1e-6:  # 保留卡的頭落在區間內 → 右緣讓位到它的頭
+            ne = min(ne, cs)
+    return ns, max(ne, ns)
+
+
 def _pad_and_merge_cuts(
     intervals: list[tuple[float, float]], v2_cards: list[dict], pad: float
 ) -> list[tuple[float, float]]:
     """把每個刪除區間往前後各「最多」吃掉 pad 秒的邊緣雜音（換氣/吸氣/底噪）；
-    但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。pad<=0 → 原樣返回。
+    但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。
+    pad<=0 → 不延伸也不合併（向後相容分支），但保留卡語音的夾制仍然生效。
 
     保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
     語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
@@ -118,8 +146,8 @@ def _pad_and_merge_cuts(
     某一側沒有鄰卡（片頭/片尾側）→ 該側不外吃（頭尾留給 head/tail trim 處理）。
     """
     intervals = sorted(intervals)
-    if pad <= 0 or not intervals:
-        return intervals  # 關閉 → 維持原本逐卡區間（向後相容、逐位元等同 baseline）
+    if not intervals:
+        return intervals
 
     # 正規化：修反置 (start>end)、丟零長度（手動 cuts 打錯時的防呆）
     norm = sorted((min(a, b), max(a, b)) for a, b in intervals if a != b)
@@ -132,11 +160,36 @@ def _pad_and_merge_cuts(
         (cs, ce) for cs, ce in cards
         if not any(s - 1e-6 <= cs and ce <= e + 1e-6 for s, e in norm)
     ]
+    # 被刪的卡 = 被整段涵蓋的卡。用「區間邊界是否等於某張被刪卡」判定這段 cut 是不是
+    # 「刪卡產生的」—— 只有它要夾保留卡語音；影片模式自己框的任意區間（foreign cut）
+    # 原樣保留，使用者畫的邊界不該被我們竄改。2ms 容差吃掉 yaml round-trip 的取整誤差。
+    deleted = [
+        (cs, ce) for cs, ce in cards
+        if any(s - 1e-6 <= cs and ce <= e + 1e-6 for s, e in norm)
+    ]
+    clamped: list[tuple[float, float]] = []
+    for s, e in norm:
+        if not any(abs(s - cs) <= 2e-3 and abs(e - ce) <= 2e-3 for cs, ce in deleted):
+            clamped.append((s, e))  # foreign cut：原樣，不夾
+            continue
+        ns, ne = _clamp_cut_to_kept(s, e, kept)
+        if ne - ns <= 1e-6:
+            # 失敗不靜默：整段都是別人的語音（相鄰卡時間戳重疊到這種程度）→ 這次不剪，但要講
+            print(
+                f"⚠ 刪段 {s:.3f}–{e:.3f}s 整段落在保留卡的語音範圍內（相鄰卡時間戳重疊），"
+                "本次不剪以免咬掉要保留的語音。",
+                file=sys.stderr,
+            )
+            continue
+        clamped.append((ns, ne))
+    clamped.sort()
+    if pad <= 0 or not clamped:
+        return clamped  # 不延伸也不合併，但保留卡語音已經夾過
 
     # 先併「相鄰刪段之間沒有保留卡語音」的區間（連刪 → 中間間隙一起砍）。判定「間隙有保留卡」
     # = 有保留卡與間隙 (pe, s) 重疊（cs < s 且 ce > pe）→ flush-adjacent（cs==pe、連續字幕常態）也擋得下。
-    pre = [list(norm[0])]
-    for s, e in norm[1:]:
+    pre = [list(clamped[0])]
+    for s, e in clamped[1:]:
         pe = pre[-1][1]
         gap_has_kept = any(cs < s - 1e-6 and ce > pe + 1e-6 for cs, ce in kept)
         if s <= pe + 1e-6 or not gap_has_kept:

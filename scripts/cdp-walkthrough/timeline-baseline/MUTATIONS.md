@@ -317,3 +317,50 @@ C 階段開 ⏱ 工具列會觸發 `startTimeLoop()`（自動 `v.play()` 循環�
 /usr/bin/python3 -m pytest -q tests/test_new_card_keys_never_deleted.py   # 6 passed
 python3 -u scripts/cdp-walkthrough/timeline-baseline/run_b3_3_mutations.py
 ```
+
+---
+
+## #25 刪卡產生的 cut 夾在保留卡語音之外（B3 附錄 1 的落差修掉）
+
+修的是走查原本釘成「已知落差」的那 0.75 秒：相鄰字幕卡的時間戳重疊時（Whisper 逐字
+時間戳的常態），被刪卡的尾巴其實是下一張保留卡的開頭語音。原本只有 **pad 延伸**被夾在
+保留卡邊界內，**區間本身**沒夾 → 後端真的剪掉保留卡的頭，前端預覽卻靠守衛刻意不跳，
+兩邊對不上。修法是前後端同時把「刪卡產生的」區間本身夾到保留卡語音之外
+（`assemble.py:_clamp_cut_to_kept` ↔ `timeline-core.js:padAndMergeCuts`），
+foreign cut（影片模式自己框的區間）一律不夾 —— 使用者畫的邊界不該被竄改。
+
+走查 B 階段的期望值同步改：`B_HI` 9.75 → **9.00**、B4a 目標 → 9.00、
+`B_OVERLAP` 0.75 → **0.0**（B5 從「已知落差」變成「夾制生效」）。
+
+| 突變 | 檔案：改成 | 預期變紅 | 實際 |
+|---|---|---|---|
+| M6 | `assemble.py`：`ns, ne = s, e`（後端不夾） | B3（後端區間）＋B5（侵入量退回 0.75） | ✅ 2 紅 |
+| M7 | `timeline-core.js`：右緣讓位那行改 `if (false)`（前端不夾） | B4a（預覽跳到 9.75） | ✅ 1 紅 |
+| 差分 | `assemble.py` 整個夾制關掉 | `test_cut_merge_frontend_parity.py` 固定 case #12＋隨機 case | ✅ 2 紅 |
+| 差分 | `timeline-core.js` 只關左緣夾制 | 固定 case #16（夾殺→丟段）＋隨機 case | ✅ 2 紅 |
+| 差分 | `timeline-core.js` 只關右緣夾制 | 固定 case #12＋隨機 case | ✅ 2 紅 |
+
+三件值得記的事：
+
+- **M6／M7 的紅項不同，這正是要的**：M6 只紅後端那條（B3／B5），M7 只紅預覽那條（B4a）。
+  兩邊各自被獨立釘住，任一側偷偷漂走都有人喊。
+- **M6 順手抓到走查自己的靜默 fallback**：B5 原本算 `ov` 前先 `if ok_ivB:`，於是
+  M6 讓 B3 紅、B5 卻因為 `ov` 留在預設 0.0 而照樣綠。已改成算不出來就判紅
+  （`ov = None` → fail），這才是「失敗不靜默」。
+- **夾制上線後 M2（整個守門拿掉）變成 0 紅**：card-derived cut 已經不可能覆蓋保留卡語音，
+  foreign cut 又本來就跳過守門 → `nextKeepTime` 的保留卡守衛實際上已不可達。
+  本梯不動它（範圍紀律），寫進計畫檔附錄留給下一梯裁決：拿掉冗餘機制，或留著當第二層
+  並補一個真能讓它紅的情境。M1（退回卡優先守門）仍單點紅 A5a，所以 B3-1 的行為還有人守。
+
+差分測試新增的重疊卡 fixture：`tests/test_cut_merge_frontend_parity.py` 的
+`OVERLAP_CARDS`（卡 #3 的頭往回咬進被刪卡 0.75s）、`SANDWICH_CARDS`（兩張保留卡把被刪卡
+的語音整段蓋住 → 夾完歸零 → 丟段，後端另外印警告），隨機產生器也有 25% 機率讓下一張卡
+的頭往回咬 —— 沒有這些 fixture，夾制在差分測試裡是完全沒被走到的死碼。
+
+跑法：
+
+```bash
+/usr/bin/python3 -m pytest -q tests/test_cut_merge_frontend_parity.py   # 5 passed
+/usr/bin/python3 -u verify_b3_guard_and_shift.py                        # 27/27
+/usr/bin/python3 -u run_b3_mutations.py                                 # M1～M7
+```

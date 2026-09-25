@@ -10,10 +10,12 @@
      併軌前 `nextKeepTime` 的第一個迴圈是「t 落在未刪的保留卡內就直接回 t」，保留卡
      守門優先於 cut 區間 → 預覽整段播過去；改成看來源後必須跳到 cut 末端。
 
-  B. 守衛回歸：把 _v2.srt 的卡 #5 起點挪到磁碟 7.5（與被刪的卡 #4 7.35–8.25 重疊，
-     逐字時間戳常見的狀況）。此時「由卡換算出來的 cut」會覆蓋保留卡 #5 的頭 0.75 秒。
-     守衛（t 落在未刪保留卡內就不跳）必須仍然護住 #5 的語音 —— 拿掉守衛就會紅。
-     同時把「後端會剪掉、預覽刻意不跳」這條已知落差釘成數字（B5），任一側改了就紅。
+  B. 重疊卡夾制：把 _v2.srt 的卡 #5 起點挪到磁碟 7.5（與被刪的卡 #4 7.35–8.25 重疊，
+     逐字時間戳常見的狀況）。沒有夾制時「由卡換算出來的 cut」會吃掉保留卡 #5 的頭
+     0.75 秒 —— 後端真的剪掉，預覽卻靠守衛刻意不跳，兩邊對不上（原 B5 的已知落差）。
+     2026-09-25 前後端同時把「刪卡產生的」區間本身夾在保留卡語音之外之後，剪除區間的
+     右緣讓位到卡 #5 的頭（磁碟 7.5 → 顯示 9.00），B5 的侵入量必須是 0.000s。
+     停掉任一側的夾制 → B3／B4a／B5 三條一起紅（見 MUTATIONS.md #25）。
 
   C. B3-2：subtitle_offset_sec=0.123 ＋ yaml 留著 audio.sync_offset=2.0 但沒接音檔。
      這是 `alignShift` 的 audioPath 守衛唯一會被行使的情境。載入端守衛壞掉 → 卡 #4
@@ -58,8 +60,9 @@ A_CUT_DISK = [7.6, 7.9]
 A_LO, A_HI = 9.1, 9.4  # 顯示軸（pad 兩側都被卡 #4 自己的語音邊界夾死）
 # B 階段：刪卡 #4，且卡 #5 起點被挪到磁碟 7.5（顯示 9.0）與它重疊
 B_CUT_DISK = [7.35, 8.25]
-B_LO, B_HI = 8.45, 9.75
-B_OVERLAP = 0.75  # 後端剪除區間侵入保留卡 #5 的秒數（已知落差，待裁決）
+# 夾制之後：磁碟 [7.35, 7.5]（右緣讓位給卡 #5 的頭），pad 往左吃到 6.95（卡 #3 尾 6.65 之後）
+B_LO, B_HI = 8.45, 9.00
+B_OVERLAP = 0.0  # 夾制生效後，後端剪除區間侵入保留卡 #5 的秒數必須是 0
 # C 階段
 C_OFFSET = 0.123
 C_SYNC = 2.0
@@ -445,7 +448,7 @@ async def main():
         and close(ivB[0][1] + OFFSET_AB, B_HI, 0.005)
     )
     C.check(
-        f"B3 後端區間 +1.5 = [{B_LO}, {B_HI}]",
+        f"B3 後端區間 +1.5 = [{B_LO}, {B_HI}]（右緣被夾制讓位給保留卡 #5 的頭 9.00）",
         ok_ivB,
         ivB,
         [[B_LO - OFFSET_AB, B_HI - OFFSET_AB]],
@@ -454,27 +457,31 @@ async def main():
     await check_probe(pageB, f"B4a 沒有任何保留卡語音的 8.50 → 跳到 {B_HI}", 8.50, B_HI)
     await check_probe(
         pageB,
-        "B4b 落在剪除區間內、但同時落在保留卡 #5 語音裡的 9.30 → 不跳"
-        "（守衛護住保留卡；拿掉守衛就會跳到 9.75）",
+        "B4b 保留卡 #5 語音裡的 9.30 → 不跳（夾制之後它已不在剪除區間內；"
+        "守衛退居第二層防線，改守衛不會讓這條紅，能讓它紅的是夾制 —— 見 B5）",
         9.30,
         9.30,
     )
 
-    # B5：把「後端會剪掉、預覽刻意不跳」這條已知落差釘成數字。兩側任一改了都會紅，
-    # 逼人回頭重看，而不是讓落差靜靜擴大。
+    # B5：釘住夾制的成果 —— 後端剪除區間與保留卡 #5 的語音「零重疊」。
+    # 停掉任一側的夾制，這裡會退回 0.75s（前後端對不上的那個落差）→ 紅。
     card5_disp = [9.00, 11.65]
-    ov = 0.0
-    if ok_ivB:
-        lo = max(ivB[0][0] + OFFSET_AB, card5_disp[0])
-        hi = min(ivB[0][1] + OFFSET_AB, card5_disp[1])
-        ov = round(max(0.0, hi - lo), 3)
+    # 失敗不靜默：算不出區間（後端回了意外形狀）就是紅，不可以讓 ov 留在預設 0.0 假裝通過。
+    # 原本這裡綁 ok_ivB，結果 M6（停掉後端夾制）讓 B3 紅、B5 卻照樣綠 —— 自己就是靜默 fallback。
+    ov = None
+    if isinstance(ivB, list) and ivB and all(isinstance(x, list) and len(x) == 2 for x in ivB):
+        ov = 0.0
+        for a, b in ivB:
+            lo = max(a + OFFSET_AB, card5_disp[0])
+            hi = min(b + OFFSET_AB, card5_disp[1])
+            ov = round(max(ov, max(0.0, hi - lo)), 3)
     C.check(
-        f"B5 已知落差（待裁決）：後端剪除區間侵入保留卡 #5 的語音 {B_OVERLAP}s，預覽刻意不跳過這段",
-        close(ov, B_OVERLAP, 0.005),
+        f"B5 夾制生效：後端剪除區間侵入保留卡 #5 的語音 {B_OVERLAP:.3f}s（停掉夾制會退回 0.750s）",
+        ov is not None and close(ov, B_OVERLAP, 0.005),
         ov,
         B_OVERLAP,
     )
-    extra["b5_backend_bites_into_kept_card_sec"] = ov
+    extra["b5_backend_bites_into_kept_card_sec"] = ov  # 夾制生效後必須是 0.0
 
     V2SRT.write_text(_SRT_ORIG, encoding="utf-8")
 

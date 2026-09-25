@@ -3,7 +3,8 @@
 會紅在預期的項目上（只印值不斷言等於未測；只有突變能證明斷言真的在守東西）。
 
 跑法：/usr/bin/python3 -u run_b3_mutations.py（headless Chrome CDP :9331 要自己先開）
-產物：五個突變各自的紅項清單 + 還原回歸，逐項對照見 MUTATIONS.md #19～#23。
+產物：七個突變各自的紅項清單 + 還原回歸，逐項對照見 MUTATIONS.md #19～#23、#25。
+2026-09-25 加 M6／M7：前後端各自停掉「刪卡產生的 cut 夾在保留卡語音之外」的夾制。
 """
 import subprocess, sys, shutil
 from pathlib import Path
@@ -13,6 +14,7 @@ REPO = HERE.parents[2]
 APP = REPO / "podcast_toolkit/web/static/app.js"
 API = REPO / "podcast_toolkit/web/static/api.js"
 CORE = REPO / "podcast_toolkit/web/static/timeline-core.js"
+ASM = REPO / "podcast_toolkit/assemble.py"
 DRIVE = HERE / "verify_b3_guard_and_shift.py"
 BAK = Path("/private/tmp/b3-mutate-bak")
 BAK.mkdir(exist_ok=True)
@@ -51,9 +53,19 @@ MUTS = {
         "  const audioShift = s.audioPath && s.audioSyncOffset ? -s.audioSyncOffset : 0;",
         "  const audioShift = s.audioSyncOffset ? -s.audioSyncOffset : 0; // 突變",
     ),
+    "M6 後端停掉保留卡語音夾制": (
+        ASM,
+        "        ns, ne = _clamp_cut_to_kept(s, e, kept)\n",
+        "        ns, ne = s, e  # 突變：不夾\n",
+    ),
+    "M7 前端停掉保留卡語音夾制（右緣讓位）": (
+        CORE,
+        "      if (s + 1e-6 < cs && cs < e - 1e-6) ne = Math.min(ne, cs);",
+        "      if (false) ne = Math.min(ne, cs); // 突變：不夾右緣",
+    ),
 }
 
-for f in (APP, API, CORE):
+for f in (APP, API, CORE, ASM):
     shutil.copy2(f, BAK / f.name)
 
 summary = []
@@ -79,9 +91,9 @@ try:
         summary.append((name, fails))
         shutil.copy2(BAK / f.name, f)
 finally:
-    for f in (APP, API, CORE):
+    for f in (APP, API, CORE, ASM):
         shutil.copy2(BAK / f.name, f)
-    print("\n（已還原三支 JS）")
+    print("\n（已還原三支 JS 與 assemble.py）")
 
 print("\n===== 彙總 =====")
 for name, fails in summary:

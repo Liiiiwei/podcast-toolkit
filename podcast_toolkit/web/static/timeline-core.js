@@ -675,9 +675,12 @@ export function cutsToCardSelection(cuts, rows, tol = 0.02) {
  * 使用者看到的跳段時機跟成品對不上。
  *
  * 規則（與後端逐條相同）：
- * - `pad <= 0` → 原樣返回（不合併），維持後端的向後相容分支。
  * - 正規化：修反置 (start>end)、丟零長度。
  * - 保留卡 = 未被任一刪段「整段涵蓋」的卡；部分被切的卡仍算保留。
+ * - 「刪卡產生的」cut（邊界等於某張被刪卡）先把**區間本身**夾在保留卡語音之外：相鄰卡
+ *   時間戳重疊時，被刪卡的尾巴其實是下一張保留卡的開頭語音，不夾的話後端剪掉、預覽不跳。
+ *   影片模式自己框的任意區間（foreign cut）不夾 —— 使用者畫的邊界不該被竄改。
+ * - `pad <= 0` → 到此為止（不延伸也不合併），維持後端的向後相容分支。
  * - 先併「中間沒有保留卡語音」的相鄰刪段（連刪跨停頓也併）。
  * - 每段往兩側最多吃 pad 秒，但夾在鄰近保留卡的語音邊界內；某側沒有鄰卡則該側不外吃。
  * - 延伸後重疊/相鄰再合併一次。
@@ -690,7 +693,7 @@ export function cutsToCardSelection(cuts, rows, tol = 0.02) {
 export function padAndMergeCuts(intervals, cards, pad) {
   const byStart = (a, b) => a[0] - b[0] || a[1] - b[1];
   const src = (intervals || []).map(([s, e]) => [Number(s), Number(e)]).sort(byStart);
-  if (!(pad > 0) || !src.length) return src;
+  if (!src.length) return src;
 
   // 正規化：修反置、丟零長度（手動 cuts 打錯時的防呆）
   const norm = src
@@ -699,13 +702,38 @@ export function padAndMergeCuts(intervals, cards, pad) {
     .sort(byStart);
   if (!norm.length) return [];
 
-  const kept = (cards || [])
-    .map((c) => [Number(c.start), Number(c.end)])
-    .filter(([cs, ce]) => !norm.some(([s, e]) => s - 1e-6 <= cs && ce <= e + 1e-6));
+  const all = (cards || []).map((c) => [Number(c.start), Number(c.end)]);
+  const isCovered = ([cs, ce]) => norm.some(([s, e]) => s - 1e-6 <= cs && ce <= e + 1e-6);
+  const kept = all.filter((c) => !isCovered(c));
+  const deleted = all.filter(isCovered); // 被整段涵蓋 ＝ 這張卡被刪掉了
+
+  // 「刪卡產生的」cut 才把區間本身夾在保留卡語音之外（理由見後端 _clamp_cut_to_kept）。
+  // 2ms 容差吃掉 yaml round-trip 的取整誤差；對不上任何被刪卡 → foreign cut → 原樣。
+  const clamped = [];
+  for (const [s, e] of norm) {
+    const fromCard = deleted.some(
+      ([cs, ce]) => Math.abs(s - cs) <= 2e-3 && Math.abs(e - ce) <= 2e-3,
+    );
+    if (!fromCard) {
+      clamped.push([s, e]);
+      continue;
+    }
+    let ns = s;
+    let ne = e;
+    for (const [cs, ce] of kept) {
+      if (s + 1e-6 < ce && ce < e - 1e-6) ns = Math.max(ns, ce); // 保留卡的尾巴在裡面 → 左緣讓位
+      if (s + 1e-6 < cs && cs < e - 1e-6) ne = Math.min(ne, cs); // 保留卡的頭在裡面 → 右緣讓位
+    }
+    // 整段都是保留卡的語音 → 這次不剪（後端會在這裡印警告，預覽端只要跟它算出同一份區間）
+    if (ne - ns <= 1e-6) continue;
+    clamped.push([ns, Math.max(ne, ns)]);
+  }
+  clamped.sort(byStart);
+  if (!(pad > 0) || !clamped.length) return clamped;
 
   // 先併「相鄰刪段之間沒有保留卡語音」的區間（flush-adjacent 的連續字幕也擋得下）
-  const pre = [[...norm[0]]];
-  for (const [s, e] of norm.slice(1)) {
+  const pre = [[...clamped[0]]];
+  for (const [s, e] of clamped.slice(1)) {
     const pe = pre[pre.length - 1][1];
     const gapHasKept = kept.some(([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6);
     if (s <= pe + 1e-6 || !gapHasKept) pre[pre.length - 1][1] = Math.max(pe, e);
