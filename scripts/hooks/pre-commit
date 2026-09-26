@@ -30,10 +30,31 @@ if [ -n "$JS_STAGED" ]; then
 fi
 
 # ── 2. 快測：只在動到 .py 時，跑上次失敗優先、遇錯即停 ─────────────
+# 解譯器要自己挑，不能直接用 PATH 上的 python3：本專案宣告的執行環境是 3.9，
+# 但 PATH 上常是 Homebrew 的新版（本機 3.14.6），用它跑會撞到與改動無關的
+# 環境紅（tests/test_dashboard_fault_tolerance.py 兩測）—— 結果是每次提交都得
+# --no-verify，護欄實質失效。優先序：PODCAST_PY 環境變數 > 啟用中的 venv >
+# /usr/bin/python3（macOS 內建 3.9）> PATH 的 python3。
 if echo "$STAGED" | grep -q '\.py$'; then
-  echo "→ 跑快測（pytest -x --ff）…"
-  if ! python3 -m pytest -q tests/ -x --ff >/dev/null 2>&1; then
-    echo "✗ 測試沒過，已擋下提交。跑 python3 -m pytest tests/ -x --ff 看細節（或 --no-verify 略過）。"
+  PY="${PODCAST_PY:-}"
+  if [ -z "$PY" ]; then
+    if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+      PY="$VIRTUAL_ENV/bin/python"
+    elif [ -x /usr/bin/python3 ]; then
+      PY="/usr/bin/python3"
+    else
+      PY="python3"
+    fi
+  fi
+  # 挑到的解譯器沒有 pytest 就退回 PATH 的 python3，但要吵出來（不靜默降級）
+  if ! "$PY" -c "import pytest" >/dev/null 2>&1; then
+    echo "! $PY 沒有 pytest，退回 PATH 的 python3（$(python3 -V 2>&1)）；"
+    echo "  想指定解譯器：PODCAST_PY=/path/to/python git commit …"
+    PY="python3"
+  fi
+  echo "→ 跑快測（$("$PY" -V 2>&1)：pytest -x --ff）…"
+  if ! "$PY" -m pytest -q tests/ -x --ff >/dev/null 2>&1; then
+    echo "✗ 測試沒過，已擋下提交。跑 $PY -m pytest tests/ -x --ff 看細節（或 --no-verify 略過）。"
     exit 1
   fi
 fi

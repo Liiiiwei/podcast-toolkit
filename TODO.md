@@ -314,9 +314,10 @@
   待裁決 —— 傾向不要（會多一套並行機制），但 CI 目前跑不到這些走查（需真瀏覽器），這是缺口。
 - [ ] 下一刀（未授權）：`renderCropInfo` ＋ `applyRotationPreview`（67 行／3 個新 export）
   等裁切相關功能要改時順手帶走。`renderCards`（590 行／29 個 export）**維持否決**。
-- [ ] pre-commit hook（`scripts/hooks/pre-commit:35`）用 `python3` 跑 pytest，本機 `python3` 是
-  3.14.6 → 恆撞 `test_dashboard_fault_tolerance` 兩個環境紅，每次提交都得 `--no-verify`（護欄實質失效）。
-  修法二選一：hook 改用 `/usr/bin/python3`（3.9.6，全綠）或把那兩測標成環境相依。
+- [x] pre-commit hook（`scripts/hooks/pre-commit`）改為自己挑解譯器：`PODCAST_PY` > 啟用中的 venv >
+  `/usr/bin/python3`（3.9.6）> PATH 的 `python3`；挑到的沒有 pytest 會印警告再退回（不靜默降級）。
+  三態實測：3.9.6 綠（exit 0）／`PODCAST_PY=python3`(3.14.6) 紅（突變測試，證明關卡真的在跑）／
+  指定無 pytest 的解譯器會吵出來。`test_dashboard_fault_tolerance` 兩測在 3.14 仍紅（環境相依，未改）。
 - [ ] B 梯剩餘項（見 `docs/plans/2026-09-23-unified-timeline-core.md`）：B3a scrub 播放頭下放
   （核心已有 `timeline-core.js:428 bindPlayheadScrubCore`，podcast 端尚未接）、B3b 字幕塊整段平移下放；
   Phase 2 的「`cuts`／`deletions` 全面併軌」與標題卡後端持久化仍待接真功能時一起做。
