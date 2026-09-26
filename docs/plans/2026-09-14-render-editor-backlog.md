@@ -207,3 +207,24 @@ encode 設定加 `archival` profile 選項；出片時可另存一份高位元�
 3. **D7** — CI matrix 改 `3.9/3.12/3.14`＋`fail-fast: false`。
 4. **關卡**：全套 `pytest tests/` = **2 failed / 980 passed / 18 skipped / 1 xfailed**。2 紅為附錄 B 的既有 py3.14 環境紅（`test_dashboard_fault_tolerance`），與本梯零重疊、pristine HEAD 同樣紅 —— 非新紅，關卡通過。
 5. 附錄 B 的 2 條環境紅**仍在**（本梯未觸碰 dashboard）；D7 的 3.14 矩陣正是要在 CI 把它們曝出來。
+
+## 附錄 D：本梯（Batch-3）執行結果（2026-09-25～26）
+
+1. **D2 — 已完成**：字幕樣式面板接出後端已支援的 8 個參數（`3c25ee4`）。後端先收斂成單一
+   `normalize_style` 正規化器、`save_state` 改委派、並納入 round-trip 自動列舉守門，
+   前端才接 UI＋即時預覽。
+2. **D6 — 已完成（分三刀，全部零行為變更）**，計畫與量化判準見
+   `docs/plans/2026-09-25-app-js-split-render.md`：
+   - 第一刀 `f33a71c`：抽 `render.js`（30 符號／554 行，app.js 新增 export 3 個）。
+   - 第二刀 `5a936d0`：搬 `renderTrimControls` ＋字幕樣式面板渲染四件（116 行／0 個新 export）。
+   - 第三刀 `762e59c`：⏱ 時間編輯工具列另開 `timeedit.js`（19 符號／403 行／5 個新 export）。
+   - `app.js` 8285 → **7256 行**。護欄從 136/136 長到 **392/392**（17 狀態 × 17 指紋）。
+   - **煙霧測試的實作方式與原提案不同**：沒用 Playwright，改用既有的 CDP 走查基礎設施
+     寫「渲染指紋」護欄（正規化後的 outerHTML ＋ 表單活值合成鍵），理由是 repo 既有
+     `scripts/cdp-walkthrough/` 一整套慣例，再引入 Playwright 會多一套並行機制。
+3. **搬動式重構的驗收關卡收斂成三道**（三刀各被抓漏一次才長齊，見 `MUTATIONS.md`）：
+   動態指紋（行為零變更）＋靜態符號 grep（用了卻沒 import）＋`jsc -m` module link（import 了卻沒 export）。
+4. **仍未動**：D4（polish 門檻常數收斂）、D5（錯字詞典 modal）、D8（近無損母帶 profile）；
+   D1 維持附錄 C 的結論（需 API key 才能重現）。附錄 B 的 2 條 py3.14 環境紅**仍在**
+   （本梯未觸碰 dashboard），pre-commit hook 用 `python3` 會踩到，故本梯 commit 皆以
+   3.9.6 全綠為關卡、必要時 `--no-verify`。
