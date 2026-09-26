@@ -6,7 +6,7 @@
 所以改用指紋：對每個渲染容器抓正規化後的 outerHTML，動刀前錄 baseline、動刀後逐一
 比對 —— 相同就是零行為變更，不同就指名是哪個容器、哪個狀態變了。
 
-十二個狀態（每個狀態都先跑「非退化斷言」再抓指紋，避免對一個空 div 錄指紋還當成有覆蓋）：
+十七個狀態（每個狀態都先跑「非退化斷言」再抓指紋，避免對一個空 div 錄指紋還當成有覆蓋）：
   第一輪（單機集、無 speakers sidecar）
     S1  initial           t=0：字幕預覽空態、review 2 張、sus 1 張、兩條 ruler 都 hidden
     S2  caption-single    seek 到卡 3 顯示窗：單行字幕預覽（含 .caption-line 與內聯樣式）
@@ -17,6 +17,11 @@
     S7  cap-size-dec      點字幕縮小：字級 −2、caption CSS 重算、未儲存徽章現身
     S11 capstyle-open     點「更多樣式」：renderCaptionStyleControls 把 9 個欄位填滿
     S12 trim-head-set     設頭 3.0s：renderTrimControls 的 head>0 分支（色帶／把手／提示）
+    S13 time-nudge-btn    ⏱「＋」鈕：起點 +0.1s → 輸入框活值／時長／time-dirty
+    S14 time-nudge-key    Shift+→：走 onTimeNudgeKey（非按鈕路徑），起點 +0.5s
+    S15 time-overlap      訖點打字 4.70：timeOverlapWarnings 的 next 分支（⚠ 與 #2 重疊 0.5s）
+    S16 time-reset        「還原」鈕：clearCardTimings 回 fixture 原值、警示收起
+    S17 time-closed       再按 ⏱：toggleTimeEdit 關閉分支（工具列移除＋循環停止）
   第二輪（雙機集＋speakers sidecar＋重疊卡，重起伺服器）
     S8  dual-initial      cam-ruler 與 speaker-ruler 都有段（含一段 .speaker-ruler-gap）
     S9  dual-overlap-cap  seek 到重疊窗：兩行字幕＋overlay 掛 multi-speaker
@@ -135,13 +140,19 @@ CONTAINERS = {
     "trimHandH": "#trim-handle-head",
     "trimHandT": "#trim-handle-tail",
     "capStyle": "#cap-style-panel",
+    # D6 第三刀（timeedit.js：buildTimeToolbar／timeOverlapWarnings／syncTimeLoopBtn）的
+    # 覆蓋。工具列本身長在卡片裡（已被 cards 容器含住），但單獨抓一份才能讓突變指名到
+    # 「是工具列變了」而不是「整個 #cards-list 變了」。
+    "timeBar": ".card-time-edit",
 }
 
 # 合成指紋：<input>／<select> 的 value／checked 是 IDL 屬性，設定它不會反映到
 # outerHTML（只有 disabled 會）。renderCaptionStyleControls 寫的正是 value／checked，
 # 光抓 #cap-style-panel 的 HTML 會漏掉它九成的輸出 —— 所以另外把面板欄位的活值
 # 串成一個字串當第 14 個「容器」，一起進指紋。
-SYNTH_KEYS = ["capStyleVals"]
+# ⏱ 工具列的起／訖輸入框同理（buildTimeToolbar 的 repaint 寫的就是 inp.value），
+# 所以再加第二個合成鍵 timeVals。
+SYNTH_KEYS = ["capStyleVals", "timeVals"]
 FP_KEYS = list(CONTAINERS) + SYNTH_KEYS
 
 
@@ -311,6 +322,15 @@ async def click_selector(page, selector):
     return True, info
 
 
+async def press_key(page, key, modifiers=0):
+    """真鍵盤事件（Alt=1／Ctrl=2／Meta=4／Shift=8）。onTimeNudgeKey 是 document 層
+    監聽，焦點若在 INPUT／[role=slider] 它會自己讓開，所以按之前要先確認焦點位置。"""
+    base = {"key": key, "modifiers": modifiers}
+    await page.send("Input.dispatchKeyEvent", dict(base, type="keyDown"))
+    await page.send("Input.dispatchKeyEvent", dict(base, type="keyUp"))
+    await asyncio.sleep(0.4)
+
+
 async def seek(page, t):
     await C.js(page, f"(() => {{ document.querySelector('#video').currentTime = {t}; return 1; }})()")
     await asyncio.sleep(0.8)  # 等 timeupdate 驅動 renderCaption
@@ -343,6 +363,11 @@ JS_COLLECT = """(() => {
     .join(';');
   html['capStyleVals'] = capVals;
   loose['capStyleVals'] = capVals;
+  const teVals = [...document.querySelectorAll('.card-time-edit .te-input')]
+    .map((e, i) => `i${i}=${e.value}`)
+    .join(';');
+  html['timeVals'] = teVals;
+  loose['timeVals'] = teVals;
   const q = (s) => document.querySelector(s);
   const n = (s) => document.querySelectorAll(s).length;
   const ov = q('#caption-overlay');
@@ -382,6 +407,17 @@ JS_COLLECT = """(() => {
     trimBandHeadDisp: (q('#trim-band-head') || {}).style?.display ?? null,
     trimHandleHeadDisp: (q('#trim-handle-head') || {}).style?.display ?? null,
     trimHint: (q('#trim-hint') || {}).textContent || null,
+    teInStart: (q('.card-time-edit .te-input') || {}).value ?? null,
+    teInEnd: ([...document.querySelectorAll('.card-time-edit .te-input')][1] || {}).value ?? null,
+    teDur: (q('.card-time-edit .te-val') || {}).textContent ?? null,
+    teOverlapHidden: q('.card-time-edit .te-overlap') ? q('.card-time-edit .te-overlap').hidden : null,
+    teOverlapText: (q('.card-time-edit .te-overlap') || {}).textContent ?? null,
+    teLoopPressed: q('.card-time-edit .te-loop')
+      ? q('.card-time-edit .te-loop').getAttribute('aria-pressed') : null,
+    teLoopActive: !!(q('.card-time-edit .te-loop') || {}).classList?.contains('active'),
+    teDirty: n('#cards-list .card.time-dirty'),
+    teEditingCards: n('#cards-list .card.editing-time'),
+    teCard1Time: (q('#cards-list .card[data-idx="1"] .card-time-val') || {}).textContent ?? null,
   };
   return { html, loose, probe };
 })()""" % json.dumps(CONTAINERS)
@@ -540,6 +576,105 @@ async def run_states_round1(browser, ws, sessions, snap):
         ("提示改成保留秒數", (p["trimHint"] or "").startswith("保留 "), True),
     ])
     snap["S12"] = d
+
+    # ── S13–S17：⏱ 時間編輯子系統（D6 第三刀 timeedit.js 的護欄）─────────────
+    # 都接在 S12 之後跑，前面 12 個狀態的指紋一個字都不受影響（重錄 baseline 時要驗這件事）。
+    # 軸別（唯一容易踩的點）：工具列顯示的是**顯示軸（cam A 軸）= 磁碟軸 + alignShift**
+    # （api.js:38；本集 subtitle_offset_sec=1.5 且沒接外部音檔 → alignShift = 1.5）。
+    # 磁碟 SRT 卡 1 = 0.400–2.200、卡 2 = 2.700–3.900
+    #   → 顯示軸  卡 1 = 1.900–3.700（時長 1.80s）、卡 2 = 4.200–5.400。
+    # 以下每個期待值都是顯示軸的定值，不要拿 SRT 的數字對。
+    # 前提：S12 已把影片暫停。這一段全程不可讓循環試聽重新播放（toggleTimeLoop 開啟會
+    # v.play()），播放頭一動 renderCaption 的輸出就會漂，指紋變成假紅。
+
+    # S13 time-nudge-btn（按「＋」鈕 → 起點 +0.1s：repaint 寫 input.value／時長／time-dirty）
+    ok, info = await click_selector(page, '.card-time-edit .te-btn[title="起點 +0.1s（→）"]')
+    C.check("S13 點擊／起點 +0.1s 鈕", ok, info, True)
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S13", [
+        ("起點 1.900→2.000", p["teInStart"], "0:02.00"),
+        ("訖點沒被動到", p["teInEnd"], "0:03.70"),
+        ("時長 1.70s", p["teDur"], "1.70s"),
+        ("卡 1 掛 time-dirty", p["teDirty"], 1),
+        ("卡面時間同步成 0:02.00", "0:02.00" in (p["teCard1Time"] or ""), True),
+        ("重疊警示仍收起", p["teOverlapHidden"], True),
+    ])
+    snap["S13"] = d
+
+    # S14 time-nudge-key（Shift+→ → 起點 +0.5s：走 onTimeNudgeKey 而非按鈕）
+    # 前置斷言焦點不在輸入框／slider —— 在那兩處 onTimeNudgeKey 會刻意讓開，
+    # 按了沒反應會被誤讀成「鍵盤微調壞了」。
+    act = await C.js(page, "(() => document.activeElement ? document.activeElement.tagName : null)()")
+    C.check("S14 前置／焦點不在輸入框", act != "INPUT", act, "非 INPUT")
+    in_slider = await C.js(
+        page,
+        "(() => !!(document.activeElement && document.activeElement.closest"
+        "&& document.activeElement.closest('[role=\"slider\"]')))()",
+    )
+    C.check("S14 前置／焦點不在裁切拖把", not in_slider, in_slider, False)
+    await press_key(page, "ArrowRight", modifiers=8)  # Shift = 8
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S14", [
+        ("起點 2.000→2.500（Shift 步長 0.5）", p["teInStart"], "0:02.50"),
+        ("時長 1.20s", p["teDur"], "1.20s"),
+        ("卡 1 仍 time-dirty", p["teDirty"], 1),
+    ])
+    snap["S14"] = d
+
+    # S15 time-overlap（訖點打字送出 4.70 → 與卡 2（顯示軸 4.200–5.400）重疊 0.5s：
+    # timeOverlapWarnings 的 next 分支現形）。輸入框吃的也是顯示軸，與它顯示的同一把尺。
+    focused = await C.js(
+        page,
+        """(() => {
+          const i = [...document.querySelectorAll('.card-time-edit .te-input')][1];
+          if (!i) return false;
+          i.focus();
+          i.value = '4.70';
+          return document.activeElement === i;
+        })()""",
+    )
+    C.check("S15 前置／訖點輸入框取得焦點且填入 4.70", focused, focused, True)
+    await press_key(page, "Enter")
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S15", [
+        ("訖點 3.700→4.700", p["teInEnd"], "0:04.70"),
+        ("時長 2.20s", p["teDur"], "2.20s"),
+        ("重疊警示展開", p["teOverlapHidden"], False),
+        ("警示文字指名卡 2 與重疊量", p["teOverlapText"], "⚠ 與 #2 重疊 0.5s"),
+    ])
+    snap["S15"] = d
+
+    # S16 time-reset（按「還原」→ clearCardTimings：回到 fixture 原值、警示收起、dirty 清掉）
+    ok, info = await click_selector(page, '.card-time-edit .te-btn[title="清除這張卡的時間微調"]')
+    C.check("S16 點擊／還原鈕", ok, info, True)
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S16", [
+        ("起點回 1.900（顯示軸原值）", p["teInStart"], "0:01.90"),
+        ("訖點回 3.700（顯示軸原值）", p["teInEnd"], "0:03.70"),
+        ("時長 1.80s", p["teDur"], "1.80s"),
+        ("time-dirty 清掉", p["teDirty"], 0),
+        ("重疊警示收起", p["teOverlapHidden"], True),
+    ])
+    snap["S16"] = d
+
+    # S17 time-closed（再點 ⏱ → toggleTimeEdit 的關閉分支：工具列移除、循環停止）
+    ok, info = await click_selector(page, '#cards-list .card[data-idx="1"] .card-time-edit-btn')
+    C.check("S17 點擊／再按 ⏱ 收起工具列", ok, info, True)
+    d = await collect(page)
+    p = d["probe"]
+    check_probe("S17", [
+        ("工具列已移除", p["teOpen"], 0),
+        ("editing-time 類別清掉", p["teEditingCards"], 0),
+        ("起點輸入框不存在", p["teInStart"], None),
+        ("循環鈕不存在（工具列連帶移除）", p["teLoopPressed"], None),
+    ])
+    paused = await C.js(page, "(() => document.querySelector('#video').paused)()")
+    C.check("S17 非退化／循環停止後影片是暫停的", paused, paused, True)
+    snap["S17"] = d
 
     await close_page(page)
 

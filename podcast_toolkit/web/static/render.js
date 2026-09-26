@@ -4,14 +4,15 @@
 // 邊界（D6 第一刀，2026-09-25 抽出，見 docs/plans/2026-09-25-app-js-split-render.md）：
 //   該進來：只讀 state／DOM、把結果寫進畫面的純渲染函式，以及只被渲染用到的換算工具。
 //   不該進來：改 state 的動作、事件綁定、後端往返。那些留在 app.js。
-//   還沒進來（留給後續刀次）：renderCards、buildTimeToolbar、renderNewCardRow、
-//   renderTypo、renderCropInfo——前三支屬「時間編輯子系統」，依賴面寬到值得另開
-//   timeedit.js（約 390 行／需 app.js 多開 5 個 export）；renderCropInfo 這一組
-//   要多開 3 個 export 換 67 行，比值最差，等裁切相關的下一次改動再一起挪。
+//   不會進來：⏱ 時間編輯工具列那一整套（buildTimeToolbar／toggleTimeEdit／循環試聽…）
+//   ——它九成不是渲染而是互動狀態機，已於第三刀另開 timeedit.js。
+//   還沒進來（留給後續刀次）：renderCards（590 行，但要 app.js 多開 29 個 export，
+//   已量化否決）、renderNewCardRow、renderTypo、renderCropInfo（多開 3 個 export
+//   換 67 行，比值最差，等裁切相關的下一次改動再一起挪）。
 //
 // 第二刀（2026-09-25）再搬進來：renderTrimControls、字幕樣式面板的渲染四件
 //   （assColourToHex／CAP_STYLE_FIELDS／setCaptionStyleError／renderCaptionStyleControls），
-//   127 行、app.js 需新增 export 0 個。
+//   116 行、app.js 需新增 export 0 個。
 //
 // 循環 import 的鐵律（與 timeline.js／api.js 同一形狀）：
 //   app.js 是進入點，本檔求值時它的 const/let 還在 TDZ。

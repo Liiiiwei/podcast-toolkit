@@ -64,6 +64,19 @@ import {
   speakerLabel,
 } from "./render.js";
 
+// ⏱ 時間編輯工具列子系統（循環 import：本檔提供它 state／setCardTime 等，
+// 規則見 timeedit.js 檔頭）
+import {
+  _teLoopOn,
+  _timeEditCtl,
+  buildTimeToolbar,
+  cardTimeTarget,
+  newCardTimeTarget,
+  resetTimeEdit,
+  toggleTimeEdit,
+  toggleTimeLoop,
+} from "./timeedit.js";
+
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 export const state = {
   name: "",
@@ -284,6 +297,11 @@ function applyEditSnapshot(snap) {
 // 不抑制的話按住 3 秒（約 30 次連發）就把 UNDO_MAX=100 的堆疊洗掉三成，
 // 而且一次 ⌘Z 只退 0.1s —— 使用者得按幾十次才回得去。
 let _undoCoalesce = false;
+// ⏱ 工具列的長按連發要算一次編輯，但 ESM 的 import 是唯讀繫結 —— timeedit.js
+// 不能跨檔對這個 let 賦值，所以開這支 setter（語意與原本的直接賦值相同）。
+export function setUndoCoalesce(on) {
+  _undoCoalesce = on === true;
+}
 export function pushUndo() {
   if (_undoCoalesce) return;
   state.undoStack.push(snapshotEditState());
@@ -293,7 +311,7 @@ export function pushUndo() {
 
 // 切句 / 合併會重算該卡各段時間（allocate_split_times），舊的手動時間覆寫失效 →
 // 清掉這張原卡的 int key 與所有 "idx:part" composite key。
-function clearCardTimings(idx) {
+export function clearCardTimings(idx) {
   state.cardTimings.delete(idx);
   const prefix = `${idx}:`;
   for (const k of [...state.cardTimings.keys()]) {
@@ -457,17 +475,6 @@ export function fmtTimeCard(sec) {
   const m = Math.floor(a / 60);
   const s = a - m * 60;
   return `${neg ? "-" : ""}${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
-}
-
-// "12.34" / "1:23.45" / "01:23" → 秒；解析不出來回 null（呼叫端負責維持原值）
-function parseTimeCard(str) {
-  const raw = String(str == null ? "" : str).trim();
-  if (!raw) return null;
-  const m = raw.match(/^(-)?(?:(\d+):)?(\d+(?:\.\d+)?)$/);
-  if (!m) return null;
-  const sec = (m[2] ? parseInt(m[2], 10) * 60 : 0) + parseFloat(m[3]);
-  if (!isFinite(sec)) return null;
-  return m[1] ? -sec : sec;
 }
 
 // 秒 → "mm:ss"；ref（通常是總長）≥ 1 小時時改用 "h:mm:ss"。
@@ -936,13 +943,13 @@ export function expandedCards() {
 
 // 取一張卡實際生效的時間（含時間覆寫）。必須跟 expandedCards 的整卡封套讀同一個來源，
 // 否則時間軸拖過的卡在 ⏱ 工具列會讀到舊值、按了也像沒反應。
-function getEffectiveCardTime(c) {
+export function getEffectiveCardTime(c) {
   const ov = state.cardTimings.get(c.idx);
   return ov ? { start: ov.start, end: ov.end } : { start: c.start, end: c.end };
 }
 
 // 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除覆寫
-function setCardTime(c, start, end) {
+export function setCardTime(c, start, end) {
   start = Math.max(0, Math.round(start * 100) / 100);
   end = Math.max(start + 0.1, Math.round(end * 100) / 100);
   const sameAsOrig =
@@ -1008,399 +1015,6 @@ function reorderCardTo(dragIdx, targetIdx, before) {
   renderTopbar();
 }
 
-// 時間微調的「目標」抽象：既有卡走 cardTimings（與時間軸拖拉同一份），新卡直接改自身 start/end。
-// target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
-function cardTimeTarget(c) {
-  return {
-    domKey: String(c.idx),
-    get: () => getEffectiveCardTime(c),
-    set: (s, e) => setCardTime(c, s, e),
-    reset: () => {
-      if (!state.cardTimings.has(c.idx)) return;
-      pushUndo();
-      // 整卡「還原」連子卡的釘死時間一起清（否則封套回原位、子卡還停在舊處）
-      clearCardTimings(c.idx);
-    },
-    isDirty: () => state.cardTimings.has(c.idx),
-  };
-}
-function newCardTimeTarget(nc) {
-  return {
-    domKey: `new:${nc.tempId}`,
-    get: () => ({ start: nc.start, end: nc.end }),
-    set: (s, e) => {
-      s = Math.max(0, Math.round(s * 100) / 100);
-      e = Math.max(s + 0.1, Math.round(e * 100) / 100);
-      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005)
-        return;
-      pushUndo();
-      nc.start = s;
-      nc.end = e;
-    },
-    reset: null,
-    isDirty: () => false,
-  };
-}
-
-// 目前展開的 ⏱ 工具列控制器 { target, repaint }。給鍵盤微調（onTimeNudgeKey）用；
-// 工具列關掉 / 整列重繪換卡時會被覆寫或清成 null。
-let _timeEditCtl = null;
-
-// === E1 循環試聽 ===
-// 工具列開啟期間把播放圈在「起點 −0.3s ～ 訖點 ＋0.3s」。邊界每圈從 _timeEditCtl.target
-// 重讀生效值（既有卡走 getEffectiveCardTime、新卡讀 nc 自身），所以打字／±鈕／方向鍵／
-// ⇤⇥／[ ]／時間軸拖同卡邊緣改值後，下一圈自然生效 —— 不另存循環邊界 state。
-// listener 只在工具列開啟期間掛在 #video 上；關工具列（Esc／再點 ⏱／換集）即拆，全域無殘留。
-const TIME_LOOP_PAD = 0.3;
-let _teLoopOn = false; // 循環開關（toggle 鈕／P 鍵可停續；工具列關閉時恆為 false）
-let _teLoopAttached = false; // timeupdate listener 是否掛著（開工具列期間恆掛）
-function onTimeLoopTick() {
-  // 工具列已關卻還在跑（某個關閉路徑漏拆時的自癒）→ 拆 listener 收尾
-  if (!_timeEditCtl || state.timeEditKey === null) {
-    stopTimeLoop(false);
-    return;
-  }
-  const v = $("#video");
-  // 暫停中不拉回：讓「暫停 → 拖到目標點 → ⇤⇥／[ ] 打點」的工作流可以自由移動游標
-  if (!_teLoopOn || v.paused) return;
-  const t = _timeEditCtl.target.get();
-  if (v.currentTime > t.end + TIME_LOOP_PAD) {
-    v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
-  }
-}
-function startTimeLoop() {
-  if (!_timeEditCtl) return;
-  if (!_teLoopAttached) {
-    $("#video").addEventListener("timeupdate", onTimeLoopTick);
-    _teLoopAttached = true;
-  }
-  _teLoopOn = true;
-  _auditionEnd = null; // 循環接管播放守門，取消單次試聽（P 鍵此時也不會再進 auditionCard）
-  const v = $("#video");
-  const t = _timeEditCtl.target.get();
-  v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
-  v.play().catch(() => {});
-  syncTimeLoopBtn();
-}
-function stopTimeLoop(pauseVideo = true) {
-  if (_teLoopAttached) {
-    $("#video").removeEventListener("timeupdate", onTimeLoopTick);
-    _teLoopAttached = false;
-  }
-  // 循環驅動中的播放才順手暫停（「影片停在當下即可」）；使用者自己在放的不動
-  if (_teLoopOn && pauseVideo) $("#video").pause();
-  _teLoopOn = false;
-  syncTimeLoopBtn();
-}
-// toggle 鈕／P 鍵：停 = 只關循環判定並暫停（listener 留著，工具列還開）；續 = 從頭起圈
-function toggleTimeLoop() {
-  if (_teLoopOn) {
-    _teLoopOn = false;
-    $("#video").pause();
-    syncTimeLoopBtn();
-  } else {
-    startTimeLoop();
-  }
-}
-// 把工具列裡的「循環」鈕同步到 _teLoopOn（鈕可能不在 DOM，例如整列重繪的瞬間）
-function syncTimeLoopBtn() {
-  const b = document.querySelector(".card-time-edit .te-loop");
-  if (!b) return;
-  b.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
-  b.classList.toggle("active", _teLoopOn);
-}
-
-// E3：本卡（生效起訖 t）與前後相鄰既有卡的重疊警示文字。維持「刻意不夾制」——
-// 重疊照樣放行，只在工具列給可見訊號。相鄰以生效 start 排序（expandedCards 已排序），
-// 只看緊鄰前一張與後一張；已刪卡不進最終輸出、新卡沒有 #N 可指，都不比。
-// 顯示格式一位小數（X.Xs）：低於 0.05s 的重疊顯示會變 0.0s，視為貼齊不警示
-// （字幕卡半數首尾貼齊，0 距離是常態不是問題）。
-function timeOverlapWarnings(domKey, t) {
-  const rows = expandedCards().filter(
-    (r) => r.c && String(r.key) !== domKey && !state.deletions.has(r.key),
-  );
-  let prev = null;
-  let next = null;
-  for (const r of rows) {
-    if (r.start <= t.start) prev = r;
-    else {
-      next = r;
-      break;
-    }
-  }
-  const out = [];
-  if (prev) {
-    const ov = Math.min(prev.end, t.end) - Math.max(prev.start, t.start);
-    if (ov >= 0.05) out.push(`⚠ 與 #${prev.c.idx} 重疊 ${ov.toFixed(1)}s`);
-  }
-  if (next) {
-    const ov = Math.min(t.end, next.end) - Math.max(t.start, next.start);
-    if (ov >= 0.05) out.push(`⚠ 與 #${next.c.idx} 重疊 ${ov.toFixed(1)}s`);
-  }
-  return out;
-}
-
-// 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
-// undo / 整列重繪時靠 renderCards 的注入點還原。
-function buildTimeToolbar(target) {
-  const bar = document.createElement("div");
-  bar.className = "card-time-edit";
-  bar.addEventListener("click", (e) => e.stopPropagation());
-  const val = document.createElement("span");
-  val.className = "te-val";
-  // E3：重疊警示（時長旁的紅字，repaint 時即時增減）
-  const warn = document.createElement("span");
-  warn.className = "te-overlap";
-  warn.hidden = true;
-  const inS = mkTimeInput("起點時間（可打 12.34 或 1:23.45）");
-  const inE = mkTimeInput("終點時間（可打 12.34 或 1:23.45）");
-  const repaint = () => {
-    const t = target.get();
-    inS.value = fmtTimeCard(t.start);
-    inE.value = fmtTimeCard(t.end);
-    val.textContent = `${(t.end - t.start).toFixed(2)}s`;
-    const msgs = timeOverlapWarnings(target.domKey, t);
-    warn.textContent = msgs.join("｜");
-    warn.hidden = msgs.length === 0;
-    const card = document.querySelector(
-      `#cards-list .card[data-idx="${target.domKey}"]`,
-    );
-    if (card) {
-      card.classList.toggle("time-dirty", target.isDirty());
-      const cv = card.querySelector(".card-time-val");
-      // 卡號那行是整列渲染時貼的，這裡只換時間兩行 —— 整段覆寫會把 #34 洗掉，
-      // 一開工具列卡號就消失、關掉才回來（既有缺陷，順手在同一行修掉）。
-      if (cv) {
-        const head = cv.textContent.split("\n")[0];
-        const keep = head.startsWith("#") ? `${head}\n` : "";
-        cv.textContent = `${keep}${fmtTimeCard(t.start)}\n${fmtTimeCard(t.end)}`;
-      }
-    }
-    // 時間軸也要跟上：卡面數字、時間軸區塊、播放器 seek 是同一份狀態的三個讀者，
-    // 少同步一個就會出現「卡片說 3:10.6、點時間軸卻跳到 3:10.1」這種對不起來的畫面。
-    syncTimelineBlock(target.domKey, t.start, t.end, target.isDirty());
-    renderCaption();
-    renderTopbar();
-  };
-  const act = (fn) => () => {
-    fn();
-    repaint();
-  };
-  const nudge = (ds, de) => {
-    const t = target.get();
-    target.set(t.start + ds, t.end + de);
-  };
-  // 打字送出：解析失敗（或空白）就退回目前值，不動資料
-  const commit = (inp, which) => () => {
-    const v = parseTimeCard(inp.value);
-    const t = target.get();
-    if (v === null) {
-      repaint();
-      return;
-    }
-    if (which === "start") target.set(v, t.end);
-    else target.set(t.start, v);
-    repaint();
-  };
-  for (const [inp, which] of [
-    [inS, "start"],
-    [inE, "end"],
-  ]) {
-    const done = commit(inp, which);
-    inp.addEventListener("blur", done);
-    inp.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        done();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        repaint();
-        inp.blur();
-      }
-    });
-  }
-  const mk = (label, title, fn) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "te-btn";
-    b.textContent = label;
-    b.title = title;
-    b.addEventListener("click", act(fn));
-    return b;
-  };
-  const lab = (t) => {
-    const s = document.createElement("span");
-    s.className = "te-lab";
-    s.textContent = t;
-    return s;
-  };
-  // E1：循環試聽 toggle。開工具列時 toggleTimeEdit 會自動 startTimeLoop，
-  // 這裡建鈕時帶當下狀態（整列重繪重建工具列時循環不中斷，鈕的亮暗要跟上）。
-  const loopBtn = mk("循環", "循環試聽這張卡（P 鍵同效）", () =>
-    toggleTimeLoop(),
-  );
-  loopBtn.classList.add("te-loop");
-  loopBtn.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
-  loopBtn.classList.toggle("active", _teLoopOn);
-  bar.append(
-    lab("起"),
-    inS,
-    mk("⇤游標", "把起點設到目前播放位置", () => {
-      const t = target.get();
-      target.set($("#video").currentTime, t.end);
-    }),
-    mk("−", "起點 −0.1s（←）", () => nudge(-0.1, 0)),
-    mk("＋", "起點 +0.1s（→）", () => nudge(0.1, 0)),
-    lab("訖"),
-    inE,
-    mk("游標⇥", "把終點設到目前播放位置", () => {
-      const t = target.get();
-      target.set(t.start, $("#video").currentTime);
-    }),
-    mk("−", "終點 −0.1s（⌥←）", () => nudge(0, -0.1)),
-    mk("＋", "終點 +0.1s（⌥→）", () => nudge(0, 0.1)),
-    loopBtn,
-    val,
-    warn,
-  );
-  if (target.reset) {
-    bar.append(mk("還原", "清除這張卡的時間微調", () => target.reset()));
-  }
-  // E2：快捷鍵提示列 —— 微調快捷鍵早就存在但介面零提示等於不存在，讓它們現形
-  const hints = document.createElement("div");
-  hints.className = "te-hints";
-  hints.innerHTML = timeToolbarHintHtml();
-  bar.append(hints);
-  repaint();
-  _timeEditCtl = { target, repaint };
-  return bar;
-}
-
-function mkTimeInput(title) {
-  const inp = document.createElement("input");
-  inp.type = "text";
-  inp.className = "te-input";
-  inp.title = title;
-  inp.inputMode = "decimal";
-  inp.spellcheck = false;
-  inp.autocomplete = "off";
-  return inp;
-}
-
-// 鍵盤微調：←/→ 0.1s、Shift 0.5s、⌘ 1.0s（沿用 trim 拖把既有慣例）；加 ⌥ 改調終點。
-// 獨立於「編輯工作流快捷鍵」那個 listener —— 那個開頭就 return 掉所有修飾鍵，
-// 而這裡的 ⌘/⌥ 組合正是主力用法。
-const TIME_NUDGE_STEPS = { plain: 0.1, shift: 0.5, meta: 1.0 };
-document.addEventListener("keydown", onTimeNudgeKey);
-function onTimeNudgeKey(e) {
-  if (!_timeEditCtl || state.timeEditKey === null) return;
-  const isArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
-  const isBracket = e.key === "[" || e.key === "]";
-  if (!isArrow && !isBracket && e.key !== "Escape") return;
-  if (e.ctrlKey) return;
-  // [ ] 打點與 Esc 關工具列都是無修飾鍵語意（⌘[ 這類瀏覽器組合不搶）
-  if (!isArrow && (e.metaKey || e.altKey || e.shiftKey)) return;
-  const t = e.target;
-  // 焦點在輸入框／字幕本文時讓出原生游標移動
-  if (
-    t &&
-    (t.tagName === "INPUT" ||
-      t.tagName === "TEXTAREA" ||
-      t.isContentEditable === true)
-  ) {
-    return;
-  }
-  // 焦點在自己就吃 ←/→ 的控制項（片頭/片尾裁切拖把 role=slider）時整個讓開。
-  // 這是 document 層的監聽，不讓開的話一次按鍵會同時改裁切點和字卡時間 —— 使用者
-  // 以為在微調片頭，字幕卡的時間也被偷偷改掉了。
-  if (t && t.closest && t.closest('[role="slider"]')) return;
-  if (document.querySelector("dialog[open]")) return;
-  // 工具列已不在畫面上（卡被刪 / 整列重繪沒重建）→ 別對看不見的東西改時間
-  if (
-    !document.querySelector(
-      `#cards-list .card[data-idx="${state.timeEditKey}"] .card-time-edit`,
-    )
-  ) {
-    return;
-  }
-  if (e.key === "Escape") {
-    // E1：Esc 關工具列（循環一併停止）。輸入框內的 Esc 到不了這裡（上面焦點守衛讓開，
-    // 由輸入框自己還原值＋blur）—— 所以是「第一下還原輸入、第二下關工具列」。
-    e.preventDefault();
-    closeTimeEdit();
-    return;
-  }
-  e.preventDefault();
-  if (isBracket) {
-    // E2：單鍵打點 —— [ 設起點、] 設訖點＝目前播放位置（與 ⇤/⇥ 鈕同路徑同效）
-    const cur = _timeEditCtl.target.get();
-    const now = $("#video").currentTime;
-    if (e.key === "[") _timeEditCtl.target.set(now, cur.end);
-    else _timeEditCtl.target.set(cur.start, now);
-    _timeEditCtl.repaint();
-    return;
-  }
-  const step = e.metaKey
-    ? TIME_NUDGE_STEPS.meta
-    : e.shiftKey
-      ? TIME_NUDGE_STEPS.shift
-      : TIME_NUDGE_STEPS.plain;
-  const d = e.key === "ArrowLeft" ? -step : step;
-  const cur = _timeEditCtl.target.get();
-  // 長按連發整串算一次編輯：⌘Z 一下就回到按下去之前
-  _undoCoalesce = e.repeat === true;
-  try {
-    if (e.altKey) _timeEditCtl.target.set(cur.start, cur.end + d);
-    else _timeEditCtl.target.set(cur.start + d, cur.end);
-  } finally {
-    _undoCoalesce = false;
-  }
-  _timeEditCtl.repaint();
-}
-
-// 開 / 關某卡的時間微調工具列（一次只開一張）
-function toggleTimeEdit(target, cardEl) {
-  if (state.timeEditKey !== null && state.timeEditKey !== target.domKey) {
-    const prev = document.querySelector(
-      `#cards-list .card[data-idx="${state.timeEditKey}"]`,
-    );
-    if (prev) {
-      const bar = prev.querySelector(".card-time-edit");
-      if (bar) bar.remove();
-      prev.classList.remove("editing-time");
-    }
-  }
-  const existing = cardEl.querySelector(".card-time-edit");
-  if (existing) {
-    existing.remove();
-    cardEl.classList.remove("editing-time");
-    state.timeEditKey = null;
-    _timeEditCtl = null;
-    stopTimeLoop(); // E1：再點 ⏱ 關工具列 → 停循環
-  } else {
-    cardEl.appendChild(buildTimeToolbar(target));
-    cardEl.classList.add("editing-time");
-    state.timeEditKey = target.domKey;
-    startTimeLoop(); // E1：開工具列（含切到別卡）即自動循環試聽該卡區間
-  }
-}
-
-// Esc（或任何程式路徑）直接關掉目前開著的時間工具列；循環一併停止
-function closeTimeEdit() {
-  if (state.timeEditKey === null) return;
-  const card = document.querySelector(
-    `#cards-list .card[data-idx="${state.timeEditKey}"]`,
-  );
-  if (card) {
-    const bar = card.querySelector(".card-time-edit");
-    if (bar) bar.remove();
-    card.classList.remove("editing-time");
-  }
-  state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop();
-}
-
 // 渲染一張「新增字卡」列（自包，不碰既有卡的 sus / split / cam 邏輯）
 function renderNewCardRow(r, list) {
   const nc = r.newCard;
@@ -1458,8 +1072,7 @@ function renderNewCardRow(r, list) {
     state.newCards = state.newCards.filter((x) => x.tempId !== nc.tempId);
     if (state.timeEditKey === `new:${nc.tempId}`) {
       state.timeEditKey = null;
-      _timeEditCtl = null;
-      stopTimeLoop(); // E1：刪掉正在編輯的新卡 → 停循環
+      resetTimeEdit(); // E1：刪掉正在編輯的新卡 → 停循環
     }
     renderCards();
     renderTopbar();
@@ -2172,8 +1785,7 @@ async function loadEpisodeState() {
   state.cardSplits = new Map();
   state.cardMerges = new Set();
   state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop(); // E1：換集 → 停循環，避免舊集的循環邊界殘留
+  resetTimeEdit(); // E1：換集 → 停循環，避免舊集的循環邊界殘留
   state.newCards = [];
   state.newCardSeq = 0;
   state.cardTimings = new Map();
@@ -2860,6 +2472,10 @@ function nextKeepTime(t) {
 
 // 試聽該卡：P 鍵從某張卡 start 播到 end 就自動停。_auditionEnd 非 null = 試聽中。
 let _auditionEnd = null;
+// 循環試聽接管播放守門時要取消單次試聽。同上：跨檔不能對 let 賦值，收成這支。
+export function clearAudition() {
+  _auditionEnd = null;
+}
 function auditionCard(r) {
   const v = $("#video");
   _auditionEnd = r.end;
@@ -7202,8 +6818,7 @@ $("#card-insert-btn").addEventListener("click", () => {
   const tempId = state.newCardSeq++;
   state.newCards.push({ tempId, start, end, text: "" });
   state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop(); // E1：插卡會關掉原工具列 → 一併停循環
+  resetTimeEdit(); // E1：插卡會關掉原工具列 → 一併停循環
   renderCards();
   renderTopbar();
   renderCaption();

@@ -692,3 +692,74 @@ HTML 容器（`.trim-controls`、`#trim-band-head/tail`、`#trim-handle-head/tai
 `/usr/bin/python3 -m pytest -q` **1053 passed, 1 xfailed**。
 靜態符號核對：4 支搬走的符號在 app.js 都有 import、`assColourToHex` 在 app.js 用量歸 0。
 `app.js` 7756 → 7645 行，`render.js` 613 → 741 行。
+
+---
+
+## D6 第三刀（2026-09-26）：⏱ 時間編輯工具列抽成 `timeedit.js`
+
+搬走 19 支符號／403 行，`app.js` 7645 → 7256 行，新建 `timeedit.js` 457 行。
+計畫與量化判準見 `docs/plans/2026-09-25-app-js-split-render.md` 第三刀段。
+
+### 護欄缺口三連：時點 → 容器 → 狀態
+
+前兩刀的缺口各是一種取樣維度沒蓋到，這一刀開工先查，果然是第三種：
+
+| 刀次 | 漏的維度 | 具體 |
+|------|---------|------|
+| 第一刀 | **時點** | 10 個狀態全落在「卡片已回來」之後，loading 態沒取樣 → `renderCardSkeletons` 漏 export 一條都沒紅 |
+| 第二刀 | **容器** | 8 個容器沒有一個蓋到 trim 控制列／字幕樣式面板 |
+| 第三刀 | **狀態** | 12 個狀態沒有一個把 ⏱ 工具列開起來過（S3 只開過一瞬又關掉） |
+
+動刀前擴充到 **17 狀態 × 17 指紋**：容器加 `timeBar` (`.card-time-edit`)，
+合成鍵加 `timeVals`（比照第二刀的 `capStyleVals`——`<input>` 的 `value` 是 IDL 屬性，
+設定後 outerHTML 一字不變，不補合成鍵就等於沒測到工具列的主要輸出）。
+新狀態 S13–S17：工具列展開／改過時間／循環試聽開啟／重疊警示／新卡工具列。
+重錄 baseline 後比對舊檔，**原 12 狀態 × 15 指紋逐字不變**。
+
+### 突變
+
+| 編號 | 改什麼 | 預期 | 實際 |
+|------|--------|------|------|
+| MUT-R5 | `buildTimeToolbar` 的起點時間欄改成寫死 `00:00.000` | 只有 `timeVals` 紅 | S13–S17 的 `timeVals` 紅，**`timeBar` 的 HTML 指紋全綠**（IDL 屬性盲點再次證實）；S14「改過時間」的值斷言同時紅｜還原後全綠 |
+| MUT-R6 | `startTimeLoop` 不掛 `timeupdate` listener（只改旗標） | 只有循環試聽相關紅 | S15 的「播放頭到達尾端會跳回起點」斷言紅，`_teLoopOn` 旗標與按鈕樣式照樣綠——**證明按鈕態測不出循環有沒有真的在跑**｜還原後全綠 |
+| MUT-GREEN | 兩項還原 | 392/392 | 392/392 |
+
+### 期待值的前提錯 ≠ 產品碼錯（軸別）
+
+寫 S13–S17 的期待值時第一版全紅：工具列顯示 `00:03.500`，srt 裡是 `00:02.000`。
+差的 1.5 秒正是沙盒集的 `subtitle_offset_sec`。**編輯器卡片時間是顯示軸
+（磁碟軸 + `alignShift(state)`，載入時加、存檔時減，見 `api.js:38-39`）**，
+⏱ 工具列顯示值與輸入框吃的值都在顯示軸上。
+
+這種紅的處置是**改期待值**，不是改產品碼、也不是放寬門檻——判準是「我對受測物的
+座標系理解錯了」還是「受測物的行為變了」。前者改測試，後者改產品碼。
+為免下次再踩，S13–S17 段首都寫明該段斷言用的是哪個軸。
+
+### 第三道關卡：`jsc -m` 的 module link 會抓「import 了卻沒 export」
+
+`jsc -m file.js` 在**執行前**做 module link，import 一個不存在的 export 會拋
+`SyntaxError: Importing binding name 'X' is not found.`。突變證實：把 `timeedit.js`
+的 `clearAudition,` 改成 `clearAuditionXX,` → 立刻紅（還原後正常）。
+
+但它**抓不到反向**：「用了卻沒 import」是 runtime ReferenceError，會被函式裡的
+靜默 `return` 吞掉（第一刀的 `renderVersionLabel` 就是那一型，5 個呼叫點全被吞）。
+所以結論從第一刀的「兩道」升級成三道：
+
+> 搬動式重構要三道關：**動態指紋**（行為零變更）＋**靜態符號 grep**
+> （用了卻沒 import，拿動刀後的 app.js 當地面真相逐一數）＋**`jsc -m` module link**
+> （import 了卻沒 export）。三道各抓一種，缺任一都會漏。
+
+### ESM import 是唯讀繫結——搬程式碼前先 grep 賦值點
+
+跨檔對另一個模組的 `let` 賦值會 TypeError。這次搬的 block 裡有 3 個賦值點
+（`_undoCoalesce` ×2、`_auditionEnd` ×1）、app.js 反向有 3 處對 `_timeEditCtl` 賦值，
+照搬必炸。**動刀前先 grep 每一個要跨檔的變數有沒有被賦值**，有就先在來源檔開 setter
+（`setUndoCoalesce()`／`clearAudition()`／`resetTimeEdit()`）。純讀取則可用
+`export let` 的 live binding，不必開 getter。
+
+### 驗收數字
+
+護欄 **392/392**（17 狀態 × 17 指紋，與 baseline 逐一相同），
+`verify_render_skeleton_loading.py` 2/2，
+`/usr/bin/python3 -m pytest -q` **1053 passed, 1 xfailed**。
+靜態符號核對 19/19 對得上（12 支在 app.js 歸 0、7 支只剩 import＋呼叫）。

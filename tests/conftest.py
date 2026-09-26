@@ -16,6 +16,7 @@ EDITOR_JS = [
     "api.js",
     "timeline-core.js",
     "shortcuts.js",
+    "timeedit.js",
 ]
 
 

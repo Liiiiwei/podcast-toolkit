@@ -15,6 +15,7 @@
     "trimHandH": "#trim-handle-head",
     "trimHandT": "#trim-handle-tail",
     "capStyle": "#cap-style-panel",
+    "timeBar": ".card-time-edit",
     "capStyleVals": "(合成：面板欄位活值)"
   },
   "states": {
@@ -75,9 +76,14 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": null,
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     },
     "S10": {
@@ -137,9 +143,14 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": null,
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     },
     "S11": {
@@ -199,9 +210,17 @@
         "sha": "df86965266efb3e5",
         "len": 2284
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S12": {
@@ -261,9 +280,364 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S13": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "24f090aa07eda6b2",
+        "len": 11182
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "5c08fe9f98530de6",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "f049dfd0e897917d",
+        "len": 21
+      }
+    },
+    "S14": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "17783cdb0f512fad",
+        "len": 11182
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "6bfa69e1b5c8fb3b",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "0a6ab5836307d524",
+        "len": 21
+      }
+    },
+    "S15": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "2cf8c57872496002",
+        "len": 11186
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "a638f894407039d8",
+        "len": 1153
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "61e7128935e43e98",
+        "len": 21
+      }
+    },
+    "S16": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S17": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "6b2e9e00672531ca",
+        "len": 10009
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     },
     "S2": {
@@ -323,9 +697,14 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": null,
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     },
     "S3": {
@@ -385,9 +764,17 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S4": {
@@ -447,9 +834,17 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S5": {
@@ -509,9 +904,17 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S6": {
@@ -571,9 +974,17 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S7": {
@@ -633,9 +1044,17 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       }
     },
     "S8": {
@@ -695,9 +1114,14 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": null,
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     },
     "S9": {
@@ -757,9 +1181,14 @@
         "sha": "c4c662f6adc212fa",
         "len": 2291
       },
+      "timeBar": null,
       "capStyleVals": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       }
     }
   }

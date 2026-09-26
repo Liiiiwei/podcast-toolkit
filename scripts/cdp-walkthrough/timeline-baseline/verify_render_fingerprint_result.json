@@ -449,6 +449,230 @@
       "status": "pass"
     },
     {
+      "name": "S13 點擊／起點 +0.1s 鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1175.109375,
+        "cy": 322.5625,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "te-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／起點 1.900→2.000",
+      "ok": true,
+      "got": "0:02.00",
+      "want": "0:02.00",
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／訖點沒被動到",
+      "ok": true,
+      "got": "0:03.70",
+      "want": "0:03.70",
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／時長 1.70s",
+      "ok": true,
+      "got": "1.70s",
+      "want": "1.70s",
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／卡 1 掛 time-dirty",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／卡面時間同步成 0:02.00",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S13 非退化／重疊警示仍收起",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S14 前置／焦點不在輸入框",
+      "ok": true,
+      "got": "BUTTON",
+      "want": "非 INPUT",
+      "status": "pass"
+    },
+    {
+      "name": "S14 前置／焦點不在裁切拖把",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S14 非退化／起點 2.000→2.500（Shift 步長 0.5）",
+      "ok": true,
+      "got": "0:02.50",
+      "want": "0:02.50",
+      "status": "pass"
+    },
+    {
+      "name": "S14 非退化／時長 1.20s",
+      "ok": true,
+      "got": "1.20s",
+      "want": "1.20s",
+      "status": "pass"
+    },
+    {
+      "name": "S14 非退化／卡 1 仍 time-dirty",
+      "ok": true,
+      "got": 1,
+      "want": 1,
+      "status": "pass"
+    },
+    {
+      "name": "S15 前置／訖點輸入框取得焦點且填入 4.70",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S15 非退化／訖點 3.700→4.700",
+      "ok": true,
+      "got": "0:04.70",
+      "want": "0:04.70",
+      "status": "pass"
+    },
+    {
+      "name": "S15 非退化／時長 2.20s",
+      "ok": true,
+      "got": "2.20s",
+      "want": "2.20s",
+      "status": "pass"
+    },
+    {
+      "name": "S15 非退化／重疊警示展開",
+      "ok": true,
+      "got": false,
+      "want": false,
+      "status": "pass"
+    },
+    {
+      "name": "S15 非退化／警示文字指名卡 2 與重疊量",
+      "ok": true,
+      "got": "⚠ 與 #2 重疊 0.5s",
+      "want": "⚠ 與 #2 重疊 0.5s",
+      "status": "pass"
+    },
+    {
+      "name": "S16 點擊／還原鈕",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1250.640625,
+        "cy": 350.5625,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "te-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S16 非退化／起點回 1.900（顯示軸原值）",
+      "ok": true,
+      "got": "0:01.90",
+      "want": "0:01.90",
+      "status": "pass"
+    },
+    {
+      "name": "S16 非退化／訖點回 3.700（顯示軸原值）",
+      "ok": true,
+      "got": "0:03.70",
+      "want": "0:03.70",
+      "status": "pass"
+    },
+    {
+      "name": "S16 非退化／時長 1.80s",
+      "ok": true,
+      "got": "1.80s",
+      "want": "1.80s",
+      "status": "pass"
+    },
+    {
+      "name": "S16 非退化／time-dirty 清掉",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "S16 非退化／重疊警示收起",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S17 點擊／再按 ⏱ 收起工具列",
+      "ok": true,
+      "got": {
+        "found": true,
+        "cx": 1330,
+        "cy": 273.390625,
+        "hit": true,
+        "hitTag": "BUTTON",
+        "hitCls": "card-time-edit-btn"
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "S17 非退化／工具列已移除",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "S17 非退化／editing-time 類別清掉",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "S17 非退化／起點輸入框不存在",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "S17 非退化／循環鈕不存在（工具列連帶移除）",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "S17 非退化／循環停止後影片是暫停的",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
       "name": "R0-STABILITY 正規化指紋跨兩次載入一致",
       "ok": true,
       "got": true,
@@ -775,6 +999,13 @@
       "status": "pass"
     },
     {
+      "name": "S1 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
       "name": "S1 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -784,6 +1015,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S1 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     },
@@ -970,6 +1214,13 @@
       "status": "pass"
     },
     {
+      "name": "S10 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
       "name": "S10 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -979,6 +1230,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S10 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     },
@@ -1165,6 +1429,19 @@
       "status": "pass"
     },
     {
+      "name": "S11 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S11 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -1174,6 +1451,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S11 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -1360,6 +1650,19 @@
       "status": "pass"
     },
     {
+      "name": "S12 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S12 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -1369,6 +1672,1118 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S12 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "want": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "24f090aa07eda6b2",
+        "len": 11182
+      },
+      "want": {
+        "sha": "24f090aa07eda6b2",
+        "len": 11182
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "want": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／trimCtl",
+      "ok": true,
+      "got": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "want": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／trimBandH",
+      "ok": true,
+      "got": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "want": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／trimBandT",
+      "ok": true,
+      "got": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "want": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／trimHandH",
+      "ok": true,
+      "got": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "want": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／trimHandT",
+      "ok": true,
+      "got": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "want": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／capStyle",
+      "ok": true,
+      "got": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "want": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "5c08fe9f98530de6",
+        "len": 1149
+      },
+      "want": {
+        "sha": "5c08fe9f98530de6",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／capStyleVals",
+      "ok": true,
+      "got": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "want": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S13 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "f049dfd0e897917d",
+        "len": 21
+      },
+      "want": {
+        "sha": "f049dfd0e897917d",
+        "len": 21
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "want": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "17783cdb0f512fad",
+        "len": 11182
+      },
+      "want": {
+        "sha": "17783cdb0f512fad",
+        "len": 11182
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "want": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／trimCtl",
+      "ok": true,
+      "got": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "want": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／trimBandH",
+      "ok": true,
+      "got": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "want": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／trimBandT",
+      "ok": true,
+      "got": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "want": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／trimHandH",
+      "ok": true,
+      "got": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "want": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／trimHandT",
+      "ok": true,
+      "got": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "want": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／capStyle",
+      "ok": true,
+      "got": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "want": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "6bfa69e1b5c8fb3b",
+        "len": 1149
+      },
+      "want": {
+        "sha": "6bfa69e1b5c8fb3b",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／capStyleVals",
+      "ok": true,
+      "got": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "want": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S14 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "0a6ab5836307d524",
+        "len": 21
+      },
+      "want": {
+        "sha": "0a6ab5836307d524",
+        "len": 21
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "want": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "2cf8c57872496002",
+        "len": 11186
+      },
+      "want": {
+        "sha": "2cf8c57872496002",
+        "len": 11186
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "want": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／trimCtl",
+      "ok": true,
+      "got": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "want": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／trimBandH",
+      "ok": true,
+      "got": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "want": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／trimBandT",
+      "ok": true,
+      "got": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "want": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／trimHandH",
+      "ok": true,
+      "got": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "want": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／trimHandT",
+      "ok": true,
+      "got": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "want": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／capStyle",
+      "ok": true,
+      "got": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "want": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "a638f894407039d8",
+        "len": 1153
+      },
+      "want": {
+        "sha": "a638f894407039d8",
+        "len": 1153
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／capStyleVals",
+      "ok": true,
+      "got": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "want": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S15 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "61e7128935e43e98",
+        "len": 21
+      },
+      "want": {
+        "sha": "61e7128935e43e98",
+        "len": 21
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "want": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "want": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "want": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／trimCtl",
+      "ok": true,
+      "got": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "want": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／trimBandH",
+      "ok": true,
+      "got": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "want": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／trimBandT",
+      "ok": true,
+      "got": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "want": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／trimHandH",
+      "ok": true,
+      "got": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "want": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／trimHandT",
+      "ok": true,
+      "got": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "want": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／capStyle",
+      "ok": true,
+      "got": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "want": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／capStyleVals",
+      "ok": true,
+      "got": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "want": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S16 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／topbar",
+      "ok": true,
+      "got": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "want": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／cards",
+      "ok": true,
+      "got": {
+        "sha": "6b2e9e00672531ca",
+        "len": 10009
+      },
+      "want": {
+        "sha": "6b2e9e00672531ca",
+        "len": 10009
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／camRuler",
+      "ok": true,
+      "got": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "want": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／spkRuler",
+      "ok": true,
+      "got": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "want": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／caption",
+      "ok": true,
+      "got": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "want": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／sus",
+      "ok": true,
+      "got": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "want": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／review",
+      "ok": true,
+      "got": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "want": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／capSize",
+      "ok": true,
+      "got": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "want": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／trimCtl",
+      "ok": true,
+      "got": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "want": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／trimBandH",
+      "ok": true,
+      "got": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "want": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／trimBandT",
+      "ok": true,
+      "got": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "want": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／trimHandH",
+      "ok": true,
+      "got": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "want": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／trimHandT",
+      "ok": true,
+      "got": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "want": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／capStyle",
+      "ok": true,
+      "got": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "want": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／capStyleVals",
+      "ok": true,
+      "got": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "want": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S17 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     },
@@ -1555,6 +2970,13 @@
       "status": "pass"
     },
     {
+      "name": "S2 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
       "name": "S2 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -1564,6 +2986,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S2 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     },
@@ -1750,6 +3185,19 @@
       "status": "pass"
     },
     {
+      "name": "S3 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S3 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -1759,6 +3207,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S3 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -1945,6 +3406,19 @@
       "status": "pass"
     },
     {
+      "name": "S4 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S4 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -1954,6 +3428,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S4 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -2140,6 +3627,19 @@
       "status": "pass"
     },
     {
+      "name": "S5 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S5 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -2149,6 +3649,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S5 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -2335,6 +3848,19 @@
       "status": "pass"
     },
     {
+      "name": "S6 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S6 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -2344,6 +3870,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S6 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -2530,6 +4069,19 @@
       "status": "pass"
     },
     {
+      "name": "S7 指紋／timeBar",
+      "ok": true,
+      "got": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "want": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "status": "pass"
+    },
+    {
       "name": "S7 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -2539,6 +4091,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S7 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      },
+      "want": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
       },
       "status": "pass"
     },
@@ -2725,6 +4290,13 @@
       "status": "pass"
     },
     {
+      "name": "S8 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
       "name": "S8 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -2734,6 +4306,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S8 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     },
@@ -2920,6 +4505,13 @@
       "status": "pass"
     },
     {
+      "name": "S9 指紋／timeBar",
+      "ok": true,
+      "got": null,
+      "want": null,
+      "status": "pass"
+    },
+    {
       "name": "S9 指紋／capStyleVals",
       "ok": true,
       "got": {
@@ -2929,6 +4521,19 @@
       "want": {
         "sha": "40207121204e4fb6",
         "len": 183
+      },
+      "status": "pass"
+    },
+    {
+      "name": "S9 指紋／timeVals",
+      "ok": true,
+      "got": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      },
+      "want": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
       },
       "status": "pass"
     }

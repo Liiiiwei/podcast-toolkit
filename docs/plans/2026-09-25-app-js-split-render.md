@@ -135,7 +135,7 @@
 
 | 候選群組 | 搬走行數 | 需新增 app.js export | 比值 | 結論 |
 |----------|---------|----------------------|------|------|
-| 時間編輯子系統（`renderCards`／`buildTimeToolbar`／`renderNewCardRow`…） | ~390 | 5 | 78 | 延後，見下方提案 |
+| 時間編輯子系統（`buildTimeToolbar`／`toggleTimeEdit`／循環試聽…） | ~390 | 5 | 78 | 延後，見下方提案 |
 | 字幕樣式面板渲染端（4 符號） | 80 | **0** | ∞ | **採用** |
 | 　＋ `commitCaptionStyleField`／`toggleCaptionStylePanel` | 125 | 2 | 62.5 | 否決：那兩支是動作不是渲染 |
 | `renderTrimControls` | 47 | **0** | ∞ | **採用** |
@@ -169,9 +169,88 @@ MUT-R4 證實：色碼欄寫死時 `capStyleVals` 全紅、`capStyle` 的 HTML �
 
 ### 下一刀的提案（未授權，先寫著）
 
-**時間編輯子系統另開 `timeedit.js`**：`renderCards`（590 行）、`buildTimeToolbar`、
-`renderNewCardRow` 三支互相纏繞，搬進 render.js 會讓那個檔變成第二個 app.js；
+**時間編輯子系統另開 `timeedit.js`**：`buildTimeToolbar`、`toggleTimeEdit`、
+循環試聽與鍵盤微調互相纏繞，搬進 render.js 會讓那個檔變成第二個 app.js；
 另開新檔約 390 行、需 app.js 新增 5 個 export
 （`_auditionEnd`、`_undoCoalesce`、`clearCardTimings`、`getEffectiveCardTime`、`setCardTime`）。
 比值 78，數字上划算，但它是**架構決定**不是搬運，要單獨開梯並先補「卡片編輯」的指紋狀態。
+（`renderCards` 不屬這一組——它是整列渲染的中樞，要 29 個 export，見第一刀的表已否決。）
 `renderCropInfo` 那一組（67 行／3 export，比值 22.3）等裁切相關功能要改時順手帶走。
+
+---
+
+## 第三刀（2026-09-26）：⏱ 時間編輯工具列子系統 → `timeedit.js`
+
+### 為什麼另開新檔而不併進 render.js
+
+第二刀提案裡算過比值 78，數字划算。但真正的理由不是行數：這一組九成不是渲染，
+而是**互動狀態機**——循環試聽的 `timeupdate` listener、document 層的 keydown、
+undo 連發合併、工具列開關的控制器物件。塞進 `render.js` 會讓那個檔變成第二個
+`app.js`（渲染與動作再度混在一起），等於把第一刀的成果吃回去。
+
+### 搬走的 19 支（403 行）
+
+時間換算與目標抽象：`parseTimeCard`（私有）、`cardTimeTarget`、`newCardTimeTarget`
+
+循環試聽：`_timeEditCtl`、`TIME_LOOP_PAD`、`_teLoopOn`、`_teLoopAttached`、
+`onTimeLoopTick`、`startTimeLoop`、`stopTimeLoop`、`toggleTimeLoop`、`syncTimeLoopBtn`
+
+工具列 DOM 與互動：`timeOverlapWarnings`、`buildTimeToolbar`、`mkTimeInput`、
+`TIME_NUDGE_STEPS`（含 top-level keydown 掛載）、`onTimeNudgeKey`、
+`toggleTimeEdit`、`closeTimeEdit`
+
+### app.js 新增的 export 恰 5 個——但其中 2 支必須是 setter
+
+`getEffectiveCardTime`、`setCardTime`、`clearCardTimings` 直接加 `export`。
+另兩支不能照搬：**ESM 的 import 是唯讀繫結**，`timeedit.js` 不可能跨檔對 app.js 的
+`let` 賦值（會直接 TypeError）。原本兩處直接賦值改成：
+
+| 原本（同檔內賦值） | 改成 |
+|--------------------|------|
+| `_undoCoalesce = e.repeat === true;` | `setUndoCoalesce(e.repeat === true);` |
+| `_auditionEnd = null;` | `clearAudition();` |
+
+反向同理：app.js 原本三處各寫兩行 `_timeEditCtl = null; stopTimeLoop();`
+（刪新卡／換集／插卡），收成 `timeedit.js` 匯出的 `resetTimeEdit()`。
+`_teLoopOn`／`_timeEditCtl` 則以 `export let` 給 app.js **只讀**（live binding，合法）。
+
+### 護欄：動刀前先把「卡片編輯」的狀態補上
+
+第一刀漏的是**時點**、第二刀漏的是**容器**，這一刀開工先查，發現漏的是**狀態**——
+既有 12 個狀態沒有一個把 ⏱ 工具列開起來過。動刀前擴充到 **17 狀態 × 17 指紋**：
+容器加 `timeBar` (`.card-time-edit`)，並比照 `capStyleVals` 的做法補合成鍵 `timeVals`
+（`<input>` 的 `value` 是 IDL 屬性，設定後 outerHTML 一字不變，不補就測不到）。
+S13–S17 五個新狀態：工具列展開／改過時間／循環試聽開啟／重疊警示／新卡工具列。
+
+寫 S13–S17 的期待值時踩到一次：**編輯器卡片時間是顯示軸（磁碟軸 + `alignShift`）**，
+沙盒集 `subtitle_offset_sec: 1.5` 所以工具列顯示值比 srt 多 1.5 秒。第一版期待值
+寫成磁碟軸而紅了——那是**期待值的前提錯，不是產品碼錯**，改期待值不算放寬門檻。
+
+### 第三道關卡：`jsc -m` 的 module link
+
+這一刀多用了一道免費的靜態關：`jsc -m file.js` 在**執行前**就會檢查 import 名，
+import 了不存在的 export 會拋 `SyntaxError: Importing binding name 'X' is not found.`。
+突變證實有效（把 `clearAudition` 改成 `clearAuditionXX` → 立刻紅）。
+
+但它**抓不到反向**——「用了卻沒 import」是 runtime ReferenceError，會被靜默 `return`
+吞掉（第一刀的 `renderVersionLabel` 正是這一型）。所以搬動式重構要三道關：
+**動態指紋（行為零變更）＋ 靜態符號 grep（用了卻沒 import）＋ jsc module link（import 了卻沒 export）**。
+
+### 驗收
+
+- [x] 動刀前把護欄從 12 狀態 × 15 指紋擴充到 **17 狀態 × 17 指紋**並重錄 baseline
+- [x] MUT-R5（工具列時間欄寫死）／MUT-R6（循環試聽不掛 listener）各自只紅對應指紋，還原後全綠
+- [x] 抽出後重跑護欄 **392/392**，與 baseline 逐一相同；`verify_render_skeleton_loading.py` 2/2
+- [x] 靜態符號核對：19 支逐一 grep 現版 app.js，數字全部對得上（12 支歸 0、7 支只剩 import＋呼叫）
+- [x] `jsc -m` 三檔（app.js／render.js／timeedit.js）module link 通過，並以突變證明這道關會紅
+- [x] app.js 新增 export **恰 5 個**（與第二刀的預估一致），其中 2 支是 setter
+- [x] app.js 7645 → **7256 行**；新建 `timeedit.js` **457 行**，對外 export 9 支
+- [x] `tests/conftest.py` 的 `EDITOR_JS` 加上 `timeedit.js`
+- [x] `/usr/bin/python3 -m pytest -q`：**1053 passed, 1 xfailed**
+- [x] MUTATIONS.md 登記 MUT-R5／MUT-R6 與「軸別 ≠ 產品碼錯」的判準
+
+### 還留在 app.js 的（給下一刀）
+
+`renderCards`（590 行／29 export，比值 20.3）——**維持否決**，它是整列渲染的中樞。
+`renderCropInfo` ＋ `applyRotationPreview`（67 行／3 export，比值 22.3）——等裁切
+相關功能要改時順手帶走。`renderNewCardRow` 只在最後兩行碰到 timeedit.js，不急。
