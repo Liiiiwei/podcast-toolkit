@@ -8,9 +8,11 @@ demo 用的同一份素材），跨兩模式共用同一份時間資料方便比
 冪等：目錄已存在就整個重建（trash 舊的），可重跑。
 """
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
@@ -19,7 +21,37 @@ SANDBOX_ROOT = Path("/private/tmp/pt-timeline-baseline")
 NAME = "時間軸基準集"
 EP_DIR = SANDBOX_ROOT / "episode" / f"20260601 {NAME}"
 
-FFMPEG = "/Users/Mac365/.local/bin/ffmpeg"
+
+def ffmpeg_path() -> str:
+    """挑一顆能用的 ffmpeg：環境變數 FFMPEG > 專案的 ffmpeg_bin() > PATH。
+
+    原本這裡寫死 /Users/Mac365/.local/bin/ffmpeg，別台機器（含 CI runner）一跑就
+    FileNotFoundError —— 這支是走查的地基，寫死路徑等於整批走查只能在我這台跑。
+    """
+    env = os.environ.get("FFMPEG")
+    if env:
+        return env
+    try:
+        sys.path.insert(0, str(REPO))
+        from podcast_toolkit.assemble import ffmpeg_bin
+
+        return ffmpeg_bin()
+    except Exception:
+        return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def retire_dir(d: Path) -> None:
+    """清掉舊沙盒目錄：優先 trash CLI，沒有就搬進 _graveyard/（CI runner 沒裝 trash）。
+
+    禁用 rm -rf／shutil.rmtree —— 即使是自建臨時目錄也不例外（打錯一個路徑的代價
+    與正式檔案相同）。_graveyard/ 會累積，本機要清請自行 trash。
+    """
+    if shutil.which("trash"):
+        subprocess.run(["trash", str(d)], check=True)
+        return
+    grave = SANDBOX_ROOT / "_graveyard"
+    grave.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(d), str(grave / f"{d.name}-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"))
 
 
 def sec_to_srt_ts(t: float) -> str:
@@ -32,8 +64,7 @@ def sec_to_srt_ts(t: float) -> str:
 
 def build():
     if EP_DIR.exists():
-        # 禁用 rm -rf／shutil.rmtree，一律用 trash CLI 清舊沙盒（即使是自建臨時目錄也不例外）。
-        subprocess.run(["trash", str(EP_DIR)], check=True)
+        retire_dir(EP_DIR)
     for sub in ("01_母帶", "03_成品", "04_工作檔"):
         (EP_DIR / sub).mkdir(parents=True, exist_ok=True)
 
@@ -44,12 +75,16 @@ def build():
     shutil.copyfile(src_video, dst_video)
 
     dst_audio = EP_DIR / "01_母帶" / f"{NAME}.wav"
-    r = subprocess.run(
-        [FFMPEG, "-y", "-i", str(src_video), "-vn", "-ac", "1", "-ar", "48000", str(dst_audio)],
-        capture_output=True, text=True,
-    )
+    ffmpeg = ffmpeg_path()
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-i", str(src_video), "-vn", "-ac", "1", "-ar", "48000", str(dst_audio)],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        sys.exit(f"找不到 ffmpeg（試了 {ffmpeg}）；可用 FFMPEG=/path/to/ffmpeg 指定")
     if r.returncode != 0 or not dst_audio.exists():
-        sys.exit(f"ffmpeg 抽音軌失敗：{r.stderr[-800:]}")
+        sys.exit(f"ffmpeg 抽音軌失敗（{ffmpeg}）：{r.stderr[-800:]}")
 
     subs = json.loads((STATIC / "sample-subtitles.json").read_text(encoding="utf-8"))["subs"]
     lines = []
@@ -74,7 +109,7 @@ force_join: []
 """
     (EP_DIR / "episode.yaml").write_text(episode_yaml, encoding="utf-8")
 
-    print(f"沙盒集建好：{EP_DIR}")
+    print(f"沙盒集建好：{EP_DIR}（ffmpeg={ffmpeg}）")
     print(f"  video={dst_video} ({dst_video.stat().st_size} bytes)")
     print(f"  audio={dst_audio} ({dst_audio.stat().st_size} bytes)")
     print(f"  subs={len(subs)} 句")

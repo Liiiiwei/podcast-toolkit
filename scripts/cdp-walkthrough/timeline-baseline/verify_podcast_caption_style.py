@@ -35,6 +35,9 @@ import cdp_common as C
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent.parent
 APP_JS = REPO_ROOT / "podcast_toolkit" / "web" / "static" / "app.js"
+# D6 第一刀把 applyCaptionStyle／placeCaptionOverlay／_captionCss 搬進 render.js，
+# MUT1 的突變目標跟著搬；MUT2（capBucket）仍在 app.js。
+RENDER_JS = REPO_ROOT / "podcast_toolkit" / "web" / "static" / "render.js"
 SANDBOX_ROOT = Path("/private/tmp/pt-timeline-baseline")
 EP_YAML = SANDBOX_ROOT / "episode" / "20260601 時間軸基準集" / "episode.yaml"
 
@@ -298,8 +301,8 @@ async def main():
         logp(f"\n--- P1 變體 A：{VARIANTS['A']['desc']} ---")
         C.check("P1.0 podcast 編輯器已載入且 overlay 已套上 inline 樣式", bool(ready), ready, True)
 
-        # 版本指紋：W2 前的 app.js 沒有 applyCaptionStyle／placeCaptionOverlay
-        src = APP_JS.read_text(encoding="utf-8")
+        # 版本指紋：W2 前沒有 applyCaptionStyle／placeCaptionOverlay（不綁特定檔，見 static_js_all）
+        src = C.static_js_all()
         fp = {
             "applyCaptionStyle": "function applyCaptionStyle()" in src,
             "placeCaptionOverlay": "function placeCaptionOverlay(" in src,
@@ -395,7 +398,7 @@ async def main():
         # ── MUT1 真突變：把換算改回「只有字級」（W2 前行為）────────────────
         logp("\n--- MUT1 真突變：applyCaptionStyle 只留字級（產品碼一行）---")
         mut1 = {}
-        patch_file(APP_JS, MUT1_OLD, MUT1_NEW)
+        patch_file(RENDER_JS, MUT1_OLD, MUT1_NEW)
         try:
             page_r, _ = await open_pod(browser, ws, sessions)
             await seek_to_caption(page_r)
@@ -405,7 +408,7 @@ async def main():
             mut1["red"] = {"color": mr["computed"]["color"],
                            "fontWeight": mr["computed"]["fontWeight"]}
         finally:
-            patch_file(APP_JS, MUT1_NEW, MUT1_OLD)
+            patch_file(RENDER_JS, MUT1_NEW, MUT1_OLD)
         page_g, _ = await open_pod(browser, ws, sessions)
         await seek_to_caption(page_g)
         mg = await measure(page_g)

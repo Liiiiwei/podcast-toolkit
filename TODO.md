@@ -297,7 +297,7 @@
 - [ ] 補齊集數識別到其他集數相關路由，並加入雙分頁衝突整合測試。
 - [x] 建立 Breeze sidecar 版本清單與建置前置檢查；正式資產雜湊需在取得 sidecar 後填入。
 - [x] 統一 `pyproject.toml`、`setup_app.py` 與 `build_app.sh` 版本來源；README 安裝與跨電腦開發流程已同步。
-- [ ] 以 Node 或 Playwright 補上實際前端互動測試。
+- [x] 以 Node 或 Playwright 補上實際前端互動測試 → **改採 CDP 走查達成**，且 CI 在跑（見 2026-09-26 段 D7）。
 
 ## 2026-09-26｜共用時間軸核心 ＋ 編輯器小缺陷 ＋ app.js 拆檔（W／B／F／D 梯）
 
@@ -309,9 +309,21 @@
   卡片操作欄固定寬、toast 不再吞點擊、偏移欄位打錯字不再靜默清零。
 - [x] D6：`app.js` 8285 → 7256 行，分三刀抽出 `render.js`（741 行）與 `timeedit.js`（457 行），
   指紋護欄 392/392 證明零行為變更。詳見 `docs/plans/2026-09-25-app-js-split-render.md`。
-- [ ] 「以 Node 或 Playwright 補上實際前端互動測試」（上一段的既有項）**改採 CDP 走查達成**：
-  `scripts/cdp-walkthrough/` 已有指紋護欄＋突變測試一整套。要不要仍額外引入 Playwright
-  待裁決 —— 傾向不要（會多一套並行機制），但 CI 目前跑不到這些走查（需真瀏覽器），這是缺口。
+- [x] D7：CI 跑得到 CDP 走查（缺口補完）。`scripts/cdp-walkthrough/run_walkthroughs.py` 是總跑器
+  ——自己建沙盒集、用全新 profile 起 headless Chrome、依序跑 7 支走查、收攤，紅了回非零 exit；
+  `ci.yml` 新增獨立 `cdp-walkthrough` job（不進 test matrix，壞了要一眼分辨是瀏覽器護欄紅還是
+  單元測試紅），`pyproject.toml` 加 `cdp` extra（websockets）。
+  防假綠三條判準：exit code 為 0 ＋ 這次真的重寫了 `{stem}_result.json`（跑前先 retire 舊檔）
+  ＋ json 內 `fail` 0 筆且 `pass` ≥1 筆（「一項 pass 都沒有」不算綠）。
+  本機端到端實跑：7/7 支綠（2／54／42／13／30／36／26＝203 項斷言，225s，EXIT=0）。
+  兩個突變都成立：拿掉 `render.js` 的 `export function renderCardSkeletons` → 2 項紅、EXIT=1；
+  走查改成 `sys.exit(0)` 不寫 result json（假綠）→ 「沒寫出 …_result.json」、EXIT=1。
+  順手修掉走查的兩類脆弱前提：(a) D6 搬家後「符號存在嗎」型指紋寫死 `app.js` 會集體假紅 ——
+  改用 `cdp_common.static_js_all()` 跨整個 `static/*.js` 找（指紋要驗的是「修法在服務中的
+  原始碼樹裡」，不是「它住在哪個檔」）；(b) `verify_offset_badinput.py` 原本靠「沙盒 yaml 本來
+  就有 `subtitle_offset_sec: 1.5`」這個我手動塞的隱藏前提，在乾淨機器／CI 上一跑就 ABORT，
+  改成走查自己 seed 兩個鍵、跑完還原（沙盒基準狀態不變，指紋 baseline 不受影響）。
+  Playwright **維持不引入**（會多一套並行機制），此項裁決結案。
 - [ ] 下一刀（未授權）：`renderCropInfo` ＋ `applyRotationPreview`（67 行／3 個新 export）
   等裁切相關功能要改時順手帶走。`renderCards`（590 行／29 個 export）**維持否決**。
 - [x] pre-commit hook（`scripts/hooks/pre-commit`）改為自己挑解譯器：`PODCAST_PY` > 啟用中的 venv >

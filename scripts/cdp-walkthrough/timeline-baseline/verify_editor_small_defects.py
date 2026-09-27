@@ -388,7 +388,9 @@ async def main():
         src_fp = {
             "shortcutsTable": "export const SHORTCUTS = [" in SHORTCUTS_JS.read_text(encoding="utf-8"),
             "appImports": 'from "./shortcuts.js"' in APP_JS.read_text(encoding="utf-8"),
-            "camBtnTitle": "function camBtnTitle(which, eff, mapped)" in APP_JS.read_text(encoding="utf-8"),
+            # 定義已隨 D6 第一刀搬進 render.js，故改跨整個 static/ 找（呼叫端仍在 app.js，
+            # 由 MUT-F2 直接 patch app.js 把關）。
+            "camBtnTitle": "function camBtnTitle(which, eff, mapped)" in C.static_js_all(),
             "dlEmptyInHtml": '<dl class="shortcuts-list"></dl>' in INDEX_HTML.read_text(encoding="utf-8"),
             "actionsVar": "--card-actions-w: 58px;" in APP_CSS.read_text(encoding="utf-8"),
             "hasCamVar": "1fr auto var(--card-actions-w)" in APP_CSS.read_text(encoding="utf-8"),

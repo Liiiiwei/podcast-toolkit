@@ -4,8 +4,28 @@
 # 額外加「真事件」滑鼠序列 helper（down→多次 move→up）與 elementFromPoint 疊層驗證。
 import asyncio
 import json
+from pathlib import Path
 
 import websockets
+
+STATIC_DIR = Path(__file__).resolve().parents[3] / "podcast_toolkit" / "web" / "static"
+
+
+def static_js_all() -> str:
+    """把 static/ 下所有 .js 串成一份字串，供「符號存在嗎」型的版本指紋用。
+
+    為什麼不各自寫死 app.js：D6 三刀把符號從 app.js 搬進 render.js／timeedit.js／
+    timeline-core.js 之後，寫死檔名的指紋會一路變 False —— 但指紋要驗的是「新版的修法
+    有沒有在服務中的原始碼樹裡」，不是「它住在哪個檔」。搬家判紅是假紅，真的被刪掉才
+    該紅。要驗「某個符號必須在某個特定檔」（例如 app.js 有沒有 import 某模組）就照舊
+    直接讀那個檔，不要用這支。
+    """
+    parts = []
+    for f in sorted(STATIC_DIR.glob("*.js")):
+        parts.append(f.read_text(encoding="utf-8"))
+    if not parts:
+        raise RuntimeError(f"{STATIC_DIR} 下找不到任何 .js，指紋無從驗起")
+    return "\n".join(parts)
 
 # 每筆 (name, ok, got, want, status)；status ∈ {"pass","fail","skip"}。
 # skip 不計入通過/失敗分母（#4：避免「恆真的略過」被灌水成 PASS）。

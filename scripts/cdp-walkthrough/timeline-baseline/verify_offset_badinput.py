@@ -58,9 +58,12 @@ POD = f"http://127.0.0.1:{POD_PORT}/?pthook=1"
 RESULT_JSON = HERE / "verify_offset_badinput_result.json"
 LOG_TXT = HERE / "verify_offset_badinput_log.txt"
 
-BASE_SUB = 1.5    # 沙盒 episode.yaml 原有的 subtitle_offset_sec
+# 兩個基準值都由走查自己 seed 進沙盒 yaml、跑完還原 —— 原本 BASE_SUB 靠「沙盒 yaml 本來就有
+# subtitle_offset_sec: 1.5」這個隱藏前提（是我手動塞的），build_sandbox_episode.py 從來沒寫
+# 這個鍵，所以在乾淨機器（含 CI）上一跑就 ABORT。前提改成自己造，不要靠環境剛好長對。
+BASE_SUB = 1.5    # 走查開場 seed 的 subtitle_offset_sec
 BASE_CAM = 0.42   # 走查開場 seed 的 camera_sync_offset.b（值取自 test_config_roundtrip SAMPLES）
-SEED = f"camera_sync_offset:\n  b: {BASE_CAM}\n"
+SEED = f"subtitle_offset_sec: {BASE_SUB}\ncamera_sync_offset:\n  b: {BASE_CAM}\n"
 
 
 # ── serve_podcast 生命週期 ────────────────────────────────────────────────
@@ -376,12 +379,12 @@ async def main():
         return 2
 
     base_yaml = yaml_text()
-    if "camera_sync_offset" in base_yaml:
-        print("[ABORT] 沙盒 episode.yaml 已含 camera_sync_offset，先還原再跑", flush=True)
-        return 2
-    if f"subtitle_offset_sec: {BASE_SUB}" not in base_yaml:
-        print(f"[ABORT] 沙盒 episode.yaml 的 subtitle_offset_sec 不是 {BASE_SUB}，先還原再跑", flush=True)
-        return 2
+    for key in ("camera_sync_offset", "subtitle_offset_sec"):
+        # 兩個鍵都由 seed_yaml() 追加，沙盒本來就有的話會變成重複鍵（PyYAML 後者覆蓋前者），
+        # 還原時也分不清原值 → 直接擋下，要求先重建沙盒。
+        if key in base_yaml:
+            print(f"[ABORT] 沙盒 episode.yaml 已含 {key}，請重建沙盒再跑", flush=True)
+            return 2
 
     log_lines = []
 

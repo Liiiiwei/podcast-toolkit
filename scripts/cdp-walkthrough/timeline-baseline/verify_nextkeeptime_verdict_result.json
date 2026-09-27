@@ -116,7 +116,7 @@
     "ok": true,
     "got": {
       "before": 10,
-      "after": 10.000358,
+      "after": 10.000312,
       "fired": true
     },
     "want": {
@@ -137,7 +137,7 @@
     "ok": true,
     "got": {
       "before": 9.3,
-      "after": 9.303186,
+      "after": 9.303111,
       "fired": true
     },
     "want": {
@@ -162,7 +162,7 @@
     "name": "MUT-G 真突變成立：守衛在這個情境不是保險而是製造分歧 —— 拿掉是對的，而且 N3 真的在測這件事",
     "ok": true,
     "got": {
-      "red": 9.303186,
+      "red": 9.303111,
       "green": 9.75
     },
     "want": {

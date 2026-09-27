@@ -285,7 +285,7 @@ async def main():
     if not start_server():
         C.check("V0.0 serve_podcast 起得來", False, None, "8795 有回應")
         C.summary()
-        return
+        return 1
 
     ws = None
     browser = None
@@ -445,12 +445,15 @@ async def main():
             except Exception:
                 pass
 
-    C.summary()
+    bad = C.summary()
     OUT.write_text(
         json.dumps(C.results_as_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(f"→ {OUT}", flush=True)
+    # 原本這裡是裸 asyncio.run(main())，main 又沒回傳值 —— 不管紅幾項 exit code 都是 0，
+    # 等於這支走查在任何自動化關卡裡都是恆綠的裝飾。照專案規則（失敗路徑不准靜默）補上。
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

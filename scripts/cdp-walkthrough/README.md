@@ -26,6 +26,64 @@
 `python -m http.server` 不回 206，瀏覽器會判定影片不可 seek（`seekable.length === 0`）而且**不拋任何錯**，
 所有跟時間軸有關的斷言都會靜默失效。要跑任何含影片的走查，一律用它。
 
+## `timeline-baseline/` —— 這批是真的能跑的，而且 CI 在跑
+
+上面那段「它們不是可以直接跑的測試套件」講的是 `vt-cdp/`／`vt-proto/`／`vt-realmode/`。
+`timeline-baseline/` 是 2026-09 後補的一批，寫法不同：共用 `cdp_common.py` 的斷言紀律、
+自己起 `serve_podcast.py`（8795）、沙盒集用 `build_sandbox_episode.py` 從版控內的
+`static/sample-video.mp4` 現建，沒有寫死我這台的路徑。
+
+一支指令跑完整批：
+
+```bash
+python3 -u scripts/cdp-walkthrough/run_walkthroughs.py          # 預設清單
+python3 -u scripts/cdp-walkthrough/run_walkthroughs.py --list    # 只看清單
+python3 -u scripts/cdp-walkthrough/run_walkthroughs.py --only verify_toast_no_block
+python3 -u scripts/cdp-walkthrough/run_walkthroughs.py --include-fingerprint
+```
+
+它負責「以前我手動做的那兩件事」：建沙盒集、用**全新 profile** 起 headless Chrome
+（`CDP_PORT`，預設 9522），然後序列跑完再收攤（Chrome 與 profile 都用搬進
+`_graveyard/` 的方式退場，不做遞迴刪除）。走查必須序列跑 —— 它們都搶 8795。
+
+需要：`pip install -e ".[dev,cdp]"`（`cdp` extra 就是 `websockets`）、`ffmpeg`（只用來抽音軌，
+不需 libass）、Google Chrome 或 Chromium（可用 `CHROME=` 指定）。
+
+**「綠」的判準是三條同時成立**，不是只看 exit code：
+
+1. 子程序 exit code == 0
+2. 這次真的寫出了 `{stem}_result.json`（跑前先把舊檔搬走，跑後必須存在）
+3. 該檔內 `status == "fail"` 為 0 筆，且 `status == "pass"` 至少 1 筆
+
+第 2、3 條是防假綠：走查若裸跑 `asyncio.run()` 不傳 exit code（`verify_nextkeeptime_verdict.py`
+原本就是這樣，已修），或前提不成立整批 `skip`（skip 不計入分母），光看 exit code 會綠得很漂亮。
+
+清單（`--list` 會印同一份）：
+
+| 走查 | 驗什麼 |
+|------|--------|
+| `verify_render_skeleton_loading.py` | loading 態骨架卡＋`render.js` 模組圖解得開 |
+| `verify_toast_no_block.py` | toast 不擋點擊（三種視窗寬×訊息長度） |
+| `verify_offset_badinput.py` | 偏移欄位壞輸入不靜默清零 |
+| `verify_nextkeeptime_verdict.py` | `nextKeepTime` 保留卡守衛 |
+| `verify_podcast_caption_style.py` | podcast 模式字幕樣式預覽 |
+| `verify_caption_style_panel.py` | 字幕樣式面板 8 參數＋存檔 round-trip |
+| `verify_editor_small_defects.py` | F 梯三項（快捷鍵表／A-B tooltip／操作欄寬） |
+| `verify_render_fingerprint.py` | 渲染指紋護欄 —— **要 `--include-fingerprint` 才跑** |
+
+指紋護欄預設不跑，因為 `verify_render_fingerprint_baseline.json` 是在我這台錄的
+（392 個 `outerHTML` 的 sha），換一台機器只要字體度量或 Chrome 版本差一點就全紅。
+它的價值在「同一台機器上動刀前後零變更」，不適合當跨機器關卡。要進 CI 得先證明
+baseline 在 runner 上重現得出來（目前未確認，不要假設）。
+
+**還沒進這份清單的五支**（`verify_b.py`、`verify_b1_cuts.py`、`verify_b3_guard_and_shift.py`、
+`verify_cardtrack_toggle.py`、`verify_cutpad_preview.py`）把 CDP port 寫死 9331，
+有的還要外部先起 server。要納入得先改成吃 `CDP_PORT`＋自起 server。
+
+CI 端是 `.github/workflows/ci.yml` 的 `cdp-walkthrough` job（獨立於 `test` matrix，
+macos runner ＋ 真 Chrome），紅了會把所有 `*_result.json` 當 artifact 收上去，
+看得到每一列的 `got`／`want`。
+
 ## 受測對象
 
 `podcast_toolkit/web/static/video-edit-prototype.html?demo=1`，
