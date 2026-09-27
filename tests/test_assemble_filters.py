@@ -838,6 +838,96 @@ def test_prepare_assembly_burn_mode_has_no_sidecar(tmp_episode_full):
     assert "subtitles=" in fc              # burn 模式仍燒字幕
 
 
+def _set_cards(ep_dir, cards):
+    ep_yaml = ep_dir / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["title_cards"] = cards
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+
+CARD = {
+    "id": "c1", "tpl": "lower", "text": "下標條",
+    "start": 20.0, "end": 24.0, "x": 0.2, "y": 0.18, "scale": 100,
+}
+
+
+def test_prepare_assembly_sidecar_with_title_cards_still_burns_cards(tmp_episode_full):
+    """sidecar（字幕另存 .srt）＋有標題卡 → 卡仍要燒進畫面。
+
+    前科：srt_rel 只在 burn_subs 時才設，sidecar 模式連標題卡的 ASS 都不寫，
+    使用者在時間軸上做的大字報／下標條／引言框整批靜默消失（畫面無卡、也無錯誤）。
+    """
+    _set_cards(tmp_episode_full, [CARD])
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, subtitle_mode="sidecar",
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "subtitles=" in fc, "sidecar + 標題卡：整條 subtitles 濾鏡不見了，卡沒燒"
+    assert "_cardsonly.ass" in fc, "sidecar 的卡要燒 cards-only ASS，不與 burn 版同檔"
+
+    ass = tmp_episode_full / "04_工作檔" / "_v2_aligned_1920x1080_cardsonly.ass"
+    assert ass.exists(), f"沒寫出 {ass.name}"
+    body = ass.read_text(encoding="utf-8")
+    assert "\\p1" in body, "ASS 裡沒有 drawing 事件（卡的底框沒畫）"
+    assert "下標條" in body
+    # 只有卡、沒有字幕：Layer 0 是字幕事件，卡在更高 Layer
+    assert "Dialogue: 0," not in body, "sidecar 模式不該燒字幕，卻寫進了 Layer 0 事件"
+    # 字幕該走外掛檔，不因為多寫了一份 ASS 就消失
+    assert plan["sidecar_srt"] is not None and "-->" in plan["sidecar_srt"]["content"]
+
+
+def test_prepare_assembly_sidecar_without_cards_has_no_subtitles_filter(tmp_episode_full):
+    """對照組：sidecar 且沒有標題卡 → 不該多長出 subtitles 濾鏡（維持「較快」）。"""
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, subtitle_mode="sidecar",
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "subtitles=" not in fc
+    assert not (tmp_episode_full / "04_工作檔" / "_v2_aligned_1920x1080_cardsonly.ass").exists()
+
+
+def test_prepare_assembly_sidecar_with_cards_and_cuts_drops_cards_in_cut(tmp_episode_full):
+    """sidecar ＋標題卡 ＋刪段：走刪段過濾那條閘門，落在剪除區的卡要丟掉、其餘照燒。"""
+    keep = {**CARD, "id": "keep"}
+    gone = {**CARD, "id": "gone", "text": "會被剪掉", "start": 10.5, "end": 11.5}
+    _set_cards(tmp_episode_full, [keep, gone])
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["cuts"] = [[10.0, 12.0]]
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True, subtitle_mode="sidecar",
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "_v2_assembled_yt_1920x1080_cardsonly.ass" in fc
+    body = (
+        tmp_episode_full / "04_工作檔" / "_v2_assembled_yt_1920x1080_cardsonly.ass"
+    ).read_text(encoding="utf-8")
+    assert "下標條" in body
+    assert "會被剪掉" not in body, "落在剪除區的標題卡沒被丟掉"
+    assert "Dialogue: 0," not in body
+
+
+def test_prepare_assembly_audio_only_ignores_title_cards(tmp_episode_full):
+    """純音訊 MP3 沒有畫面 → 標題卡無處可燒，不該生出 ASS 或 subtitles 濾鏡。"""
+    _set_cards(tmp_episode_full, [CARD])
+    # 原速 MP3 一律用外接 mix 音檔（不吃影片內建聲音）→ 補一顆 stub 才走得到那條路徑
+    (tmp_episode_full / "01_母帶" / "測試集_mix.wav").write_bytes(b"")
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["audio"] = {"path": "01_母帶/測試集_mix.wav"}
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True,
+        subtitle_mode="sidecar", audio_only=True,
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "subtitles=" not in fc
+    assert not (tmp_episode_full / "04_工作檔" / "_v2_aligned_1920x1080_cardsonly.ass").exists()
+
+
 def test_prepare_assembly_sidecar_yt_applies_intro_offset(tmp_episode_full):
     """YT sidecar：正片接在片頭後 → 第一卡時間軸平移 intro_duration。"""
     from podcast_toolkit import srt_io

@@ -323,6 +323,7 @@ def _write_ass_from_srt(
     speaker_spans: list[tuple[float, float, str]] | None = None,
     style: dict | None = None,
     cards_overlay: list[dict] | None = None,
+    include_subs: bool = True,
 ) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
@@ -342,6 +343,9 @@ def _write_ass_from_srt(
 
     cards_overlay（標題卡）會以更高的 Layer 追加在字幕事件之後，整組用 inline
     override tag 畫（見 title_cards 模組），所以 force_style 蓋不到它。
+
+    include_subs=False → 只寫標題卡、不寫 Layer 0 字幕事件（sidecar 模式用：影片
+    不燒字幕，但使用者做的標題卡仍要出現在畫面上）。src 的內容此時完全不影響產出。
     """
     from podcast_toolkit import dual_line, srt_io
 
@@ -384,6 +388,8 @@ def _write_ass_from_srt(
         margins = [base + off if off else 0 for off in offsets]
     else:
         events, margins = cards, [0] * len(cards)
+    if not include_subs:
+        events, margins = [], []
 
     rows = [head]
     for e, margin_v in zip(events, margins):
@@ -1436,8 +1442,9 @@ def prepare_assembly(
         if cfg.get("subtitle_dual_line") and v2_canon_path.exists() else None
     )
 
-    # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
-    # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
+    # 燒字幕要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免 libass
+    # 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 模式不燒字幕，但若有
+    # 標題卡仍要寫一份「只有卡、沒有字幕」的 ASS（見下方 need_overlay_ass）。
     # 標題卡：原型時間軸上做的大字報／下標條／引言框，跟字幕燒在同一個 ASS，
     # 合成的濾鏡鏈完全不用動。時間軸跟字幕一致（兩者都在 select/setpts 之前燒，
     # 每塊的 t 仍是原始時間軸），所以只要套用跟 SRT 同一個 srt_total_shift。
@@ -1453,19 +1460,33 @@ def prepare_assembly(
             )
         overlay_cards = shifted_cards
 
+    # 標題卡不是字幕：sidecar（影片不燒字幕、字幕另存 .srt）模式下，使用者在時間軸上做的
+    # 大字報／下標條／引言框仍然該出現在畫面上。所以「要不要寫這份 ASS」的判準是
+    # 「burn_subs 或有標題卡」，include_subs=burn_subs 才決定要不要寫 Layer 0 字幕事件。
+    # 前科：這三處閘門原本只看 burn_subs → sidecar 模式的標題卡連 ASS 都不寫、整批靜默消失。
+    # 純音訊（audio_only）沒有畫面，標題卡無處可燒，不進這條。
+    need_overlay_ass = burn_subs or (bool(overlay_cards) and not audio_only)
+    # cards-only 的 ASS 與 burn 版分檔存，避免同一集切換模式時互相覆蓋／讀到上一輪殘檔
+    ass_kind = "" if burn_subs else "_cardsonly"
+    if need_overlay_ass and not burn_subs and not _has_subtitles_filter(ffmpeg_bin()):
+        raise AssembleError(
+            "ffmpeg 缺 subtitles 濾鏡（沒編 libass），無法燒標題卡。"
+            "請裝含 libass 的 ffmpeg（例如 evermeet 靜態版放 ~/.local/bin），"
+            "或把這集的標題卡清空。"
+        )
     srt_rel: str | None = None
-    if burn_subs:
+    if need_overlay_ass:
         if output_kind == "yt":
             ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
             sub_style = cfg["subtitle_style"]
         else:
             ass_res_w, ass_res_h = 1080, 1920
             sub_style = cfg.get("subtitle_style_reels") or cfg["subtitle_style"]
-        ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
+        ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
         _write_ass_from_srt(
             srt, ass_path, ass_res_w, ass_res_h,
             speaker_spans=dual_spans, style=sub_style,
-            cards_overlay=overlay_cards,
+            cards_overlay=overlay_cards, include_subs=burn_subs,
         )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
@@ -1541,25 +1562,28 @@ def prepare_assembly(
         # 先在下面 legacy 區塊改寫 overlay_cards 之前留一份原始清單。
         overlay_cards_src = overlay_cards
 
-        if burn_subs and cut_intervals:
-            # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
-            clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
-            filter_srt_by_intervals(srt, clean_srt, cut_intervals)
-            srt = clean_srt
+        if need_overlay_ass and cut_intervals:
+            if burn_subs:
+                # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
+                clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
+                filter_srt_by_intervals(srt, clean_srt, cut_intervals)
+                srt = clean_srt
             # 標題卡用跟字幕同一條判準（起點落在剪除區就丟），時間同樣不位移
             overlay_cards = title_cards.drop_by_intervals(overlay_cards, cut_intervals)
             # 過濾後仍要轉成標明 PlayResX/Y 的 ASS 再燒；直接燒 SRT 會讓 libass 用預設
             # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
-            # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
-            clean_ass = ep.subdir("work") / f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+            # 沿用上面那段算好的輸出解析度（ass_res_w/ass_res_h）。
+            clean_ass = ep.subdir("work") / (
+                f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
+            )
             _write_ass_from_srt(
-                clean_srt, clean_ass, ass_res_w, ass_res_h,
+                srt, clean_ass, ass_res_w, ass_res_h,
                 speaker_spans=dual_spans, style=sub_style,
-                cards_overlay=overlay_cards,
+                cards_overlay=overlay_cards, include_subs=burn_subs,
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
-        if seek_segments and burn_subs:
+        if seek_segments and need_overlay_ass:
             # seek inputs 的 PTS 都從 0 開始，字幕也先收掉刪段映射到緊密正片時間軸。
             compact_srt = ep.subdir("work") / f"_v2_seeked_assembled_{output_kind}.srt"
             compact_srt.write_text(
@@ -1567,7 +1591,7 @@ def prepare_assembly(
                 encoding="utf-8",
             )
             compact_ass = ep.subdir("work") / (
-                f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+                f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
             )
             # 雙行：講者 spans 與字幕卡同軸，套字幕卡完全一樣的 remap 收掉刪段搬到緊密軸，
             # 雙行上色才不會落在錯的時間。speed=1.0/offset=0 與 compact_srt 一致。
@@ -1595,7 +1619,7 @@ def prepare_assembly(
             _write_ass_from_srt(
                 compact_srt, compact_ass, ass_res_w, ass_res_h,
                 speaker_spans=compact_spans, style=sub_style,
-                cards_overlay=compact_cards,
+                cards_overlay=compact_cards, include_subs=burn_subs,
             )
             srt_rel = (
                 str(compact_ass.relative_to(cwd))

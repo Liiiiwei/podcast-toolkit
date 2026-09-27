@@ -1,0 +1,258 @@
+{
+  "ok": true,
+  "generated_at": "2026-09-27T23:15:45+0800",
+  "ffmpeg": "/Users/Mac365/.local/bin/ffmpeg",
+  "episode": "/private/tmp/pt-export-verify/episode/20260927 匯出驗證集",
+  "intro_offset": 7.040375,
+  "speed": 1.1,
+  "frames_sampled_source": {
+    "big": 2.0,
+    "lower": 9.5,
+    "quote": 15.5,
+    "sub": 5.5
+  },
+  "frames_sampled_output": {
+    "big": 8.859,
+    "lower": 15.677,
+    "quote": 21.131,
+    "sub": 12.04
+  },
+  "probe": {
+    "A": {
+      "kinds": [
+        "audio",
+        "video"
+      ],
+      "w": 1920,
+      "h": 1080,
+      "dur": 49.3493
+    },
+    "B": {
+      "kinds": [
+        "audio",
+        "video"
+      ],
+      "w": 1920,
+      "h": 1080,
+      "dur": 49.3493
+    },
+    "C": {
+      "kinds": [
+        "audio",
+        "video"
+      ],
+      "w": 1920,
+      "h": 1080,
+      "dur": 49.3493
+    }
+  },
+  "checks": [
+    {
+      "name": "A1 burn 合成 exit 0",
+      "ok": true,
+      "got": 0,
+      "want": 0
+    },
+    {
+      "name": "E1 A 成品有 video+audio 兩軌",
+      "ok": true,
+      "got": [
+        "audio",
+        "video"
+      ],
+      "want": [
+        "audio",
+        "video"
+      ]
+    },
+    {
+      "name": "E2 A 成品長度 ≥ 片頭+正片/1.1倍速（含片尾卡故用下界）",
+      "ok": true,
+      "got": 49.349,
+      "want": ">= 28.359"
+    },
+    {
+      "name": "E3 burn 模式產出 ASS 工作檔",
+      "ok": true,
+      "got": "/private/tmp/pt-export-verify/episode/20260927 匯出驗證集/04_工作檔/_v2_aligned_1920x1080.ass",
+      "want": "存在"
+    },
+    {
+      "name": "E4 ASS 的 Layer 0 字幕事件數 == SRT 卡數",
+      "ok": true,
+      "got": 11,
+      "want": 11
+    },
+    {
+      "name": "E5 三張標題卡的文字都進了 ASS，且有 Layer>0 的 drawing 事件",
+      "ok": true,
+      "got": {
+        "文字齊": true,
+        "drawing 事件": 5
+      },
+      "want": {
+        "文字齊": true,
+        "drawing 事件": ">= 4"
+      }
+    },
+    {
+      "name": "E6 lower 色條用 #ff7849（ASS 是 BGR：\\1c&H4978FF&）",
+      "ok": true,
+      "got": true,
+      "want": true
+    },
+    {
+      "name": "B1 對照組合成 exit 0",
+      "ok": true,
+      "got": 0,
+      "want": 0
+    },
+    {
+      "name": "B2 對照組 ASS 沒有任何 drawing 事件（確認對照組真的沒卡）",
+      "ok": true,
+      "got": 0,
+      "want": 0
+    },
+    {
+      "name": "E8-big A−B 有差異像素（標題卡真的燒進畫面）",
+      "ok": true,
+      "got": 140629,
+      "want": ">= 2000"
+    },
+    {
+      "name": "E9-big 差異質心的 y 落在卡宣告的 y=0.28 附近（±0.14）",
+      "ok": true,
+      "got": 0.279,
+      "want": 0.28
+    },
+    {
+      "name": "E8-lower A−B 有差異像素（標題卡真的燒進畫面）",
+      "ok": true,
+      "got": 52223,
+      "want": ">= 2000"
+    },
+    {
+      "name": "E9-lower 差異質心的 y 落在卡宣告的 y=0.18 附近（±0.14）",
+      "ok": true,
+      "got": 0.18,
+      "want": 0.18
+    },
+    {
+      "name": "E8-quote A−B 有差異像素（標題卡真的燒進畫面）",
+      "ok": true,
+      "got": 107828,
+      "want": ">= 2000"
+    },
+    {
+      "name": "E9-quote 差異質心的 y 落在卡宣告的 y=0.42 附近（±0.14）",
+      "ok": true,
+      "got": 0.419,
+      "want": 0.42
+    },
+    {
+      "name": "E7 lower 色條橘色像素（在 A−B 差集內）：A 有、B 無",
+      "ok": true,
+      "got": {
+        "A": 1451,
+        "B": 0
+      },
+      "want": {
+        "A": ">= 300",
+        "B": "<= 145"
+      }
+    },
+    {
+      "name": "E10 A 在無卡時刻底部有燒上的白色字幕像素",
+      "ok": true,
+      "got": 12660,
+      "want": ">= 300"
+    },
+    {
+      "name": "E10b 無卡時刻 A 與 B 幾乎相同（證明白像素來自字幕不是卡）",
+      "ok": true,
+      "got": 0,
+      "want": "<= 2000"
+    },
+    {
+      "name": "C1 sidecar 合成 exit 0",
+      "ok": true,
+      "got": 0,
+      "want": 0
+    },
+    {
+      "name": "E11 sidecar 模式產出外掛 .srt",
+      "ok": true,
+      "got": "C_sidecar_cards.srt",
+      "want": "存在"
+    },
+    {
+      "name": "E11b 外掛 .srt 卡數 == 原字幕卡數",
+      "ok": true,
+      "got": 11,
+      "want": 11
+    },
+    {
+      "name": "E11c 外掛 .srt 時間 = 片頭 7.040375s + 原時間/1.1倍速（逐句比對）",
+      "ok": true,
+      "got": [
+        7.404,
+        28.149
+      ],
+      "want": [
+        7.404,
+        28.149
+      ]
+    },
+    {
+      "name": "E12 sidecar 影片畫面沒有燒字幕（白像素遠少於 burn）",
+      "ok": true,
+      "got": {
+        "sidecar": 0,
+        "burn": 12660
+      },
+      "want": "<= 1266"
+    },
+    {
+      "name": "E13 sidecar 模式的標題卡仍燒進畫面（上半畫面 C−B 有差異像素）",
+      "ok": true,
+      "got": 52216,
+      "want": ">= 2000"
+    },
+    {
+      "name": "E13b 該差異是 lower 色條（差集內橘色 #ff7849 像素）",
+      "ok": true,
+      "got": 1451,
+      "want": ">= 300"
+    },
+    {
+      "name": "E13c 差異質心 y 落在卡宣告的 y=0.18 附近（±0.14）",
+      "ok": true,
+      "got": 0.18,
+      "want": 0.18
+    },
+    {
+      "name": "E14 sidecar 產出 cards-only ASS 工作檔",
+      "ok": true,
+      "got": "_v2_aligned_1920x1080_cardsonly.ass",
+      "want": "存在"
+    },
+    {
+      "name": "E14b cards-only ASS 有 drawing 事件但沒有 Layer 0 字幕事件",
+      "ok": true,
+      "got": {
+        "drawing": 5,
+        "layer0": 0
+      },
+      "want": {
+        "drawing": "> 0",
+        "layer0": 0
+      }
+    },
+    {
+      "name": "E14c burn 版 ASS 沒被 sidecar 那輪覆蓋（兩種模式分檔存）",
+      "ok": true,
+      "got": true,
+      "want": true
+    }
+  ]
+}
