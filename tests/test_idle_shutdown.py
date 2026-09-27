@@ -12,7 +12,6 @@ import socket
 import threading
 import time
 
-import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 

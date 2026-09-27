@@ -84,7 +84,7 @@ def _handle_existing_server(
     existing_pid: int,
     existing_port: int,
     *,
-    probe: Callable[[int], "str | None"] = _probe_build_id,
+    probe: Callable[[int], str | None] = _probe_build_id,
     terminate: Callable[[int], bool] = _terminate_and_wait,
     open_browser: Callable[[str], object] = webbrowser.open,
 ) -> int | None:

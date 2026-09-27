@@ -9,11 +9,10 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -188,7 +187,7 @@ def load_words(words_json_path: Path) -> list:
     return raw["words"]
 
 
-def find_words_json(ep) -> Optional[Path]:
+def find_words_json(ep) -> Path | None:
     """定位混音逐字檔：ep.dir 下 glob *_字幕_words.json，取 mtime 最新；無則 None。"""
     candidates = list(Path(ep.dir).glob("*_字幕_words.json"))
     if not candidates:
@@ -264,7 +263,7 @@ def assign_speakers_per_word(
     words: list,
     envelopes: dict,
     *,
-    offsets: Optional[dict] = None,
+    offsets: dict | None = None,
     params: DiarizeParams,
 ) -> list:
     """
@@ -281,7 +280,7 @@ def assign_speakers_per_word(
 
     # ── 第一遍：逐字判（margin + hysteresis）──
     assignments: list = [None] * n
-    prev_spk: Optional[str] = None
+    prev_spk: str | None = None
 
     for idx, word in enumerate(words):
         start = float(word["start"])
@@ -991,7 +990,7 @@ def run(
     ep,
     *,
     force: bool = False,
-    progress: Optional[Callable] = None,
+    progress: Callable | None = None,
 ) -> int:
     """
     1. mics = ep.mic_paths()；空 → return 4。

@@ -14,7 +14,6 @@ from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.segment_plan import (
-    keep_intervals,
     merge_intervals,
     removed_with_trim,
 )

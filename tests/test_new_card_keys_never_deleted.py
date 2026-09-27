@@ -100,7 +100,7 @@ def test_all_deletion_write_sites_are_reviewed():
     for name, allowed in ALLOWED_WRITES.items():
         src = _src(name)
         found = Counter()
-        for i, ln in enumerate(src.splitlines(), 1):
+        for ln in src.splitlines():
             if WRITE_RE.search(ln):
                 found[ln.strip()] += 1
         want = Counter({k: v for k, (v, _) in allowed.items()})

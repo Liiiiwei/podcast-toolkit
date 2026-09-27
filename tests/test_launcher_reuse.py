@@ -4,10 +4,9 @@
 新啟動若無腦沿用 → 瀏覽器被導去舊行程 → 前端誤報「執行的是舊版」＋90 秒後閒置關閉。
 修法是：探既有 server 的 /api/version，版本相同才沿用，不同或探不到就關掉它、搶回 lock。
 """
-import os
 from pathlib import Path
 
-from podcast_toolkit import edit, server_lock
+from podcast_toolkit import edit
 
 
 # —— _should_reuse：純函式，版本相同才沿用 ——

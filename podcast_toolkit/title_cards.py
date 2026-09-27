@@ -259,7 +259,11 @@ def ass_events(
 
         # 底框／色條／外框都是獨立的 drawing 事件：\an7 讓 drawing 的 (0,0)
         # 對到 \pos 給的左上角，形狀完全由 drawing 決定，force_style 碰不到。
-        def _shape(color: str, opacity: float, path: str) -> str:
+        # left/top/c 用預設參數綁定本輪的值（三次呼叫都在本輪迴圈內、行為不變）：
+        # closure 不再依賴迴圈變數，將來若改成延後呼叫也不會取到最後一輪的值。
+        def _shape(
+            color: str, opacity: float, path: str, *, left=left, top=top, c=c
+        ) -> str:
             tags = (
                 f"\\an7\\pos({left:.1f},{top:.1f})\\bord0\\shad0"
                 f"\\1c{_ass_color(color)}\\1a{_ass_alpha(opacity)}\\p1"

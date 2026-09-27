@@ -18,7 +18,6 @@ cancel_job() 從不檢查 state 是否真的離開 running，join 一個已死�
 from __future__ import annotations
 
 import threading
-from pathlib import Path
 from time import monotonic, sleep
 
 import pytest
