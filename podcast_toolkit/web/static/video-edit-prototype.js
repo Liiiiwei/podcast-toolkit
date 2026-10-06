@@ -861,6 +861,11 @@ import {
         // 卡一變動，右欄的「已升格」標記與底部字幕預覽都要跟著重算
         syncLineCardMarks();
         updateSubPreview();
+        // 標題卡軌會依車道數長高（timeline-core 在 onAfterRender 前已設好
+        // track.style.height）；gutter 的「標題卡」格要跟著一樣高，標籤才不會
+        // 與軌道錯位、指錯列（字幕 44／波形 64 固定，1 車道時本格也是 44）。
+        const gutter = $("vt-gutter-card");
+        if (gutter) gutter.style.height = track.offsetHeight + "px";
       },
     });
   }
@@ -2616,6 +2621,22 @@ import {
   }
 
   // ── 對齊面板（與這集 episode.yaml 共用的五個欄位）─────────────────────
+  // 改了值但還沒存＝dirty。沒有這個回饋，使用者改完值不知道要按儲存，
+  // 存成功後若又改值、綠色「已儲存」還留著也會誤導（#7／#8）。
+  let alignDirty = false;
+  function markAlignDirty() {
+    alignDirty = true;
+    const status = $("vt-al-status");
+    if (status) {
+      // 覆蓋殘留的綠色 is-ok「已儲存」，改成 warning 色「尚未儲存」
+      status.className = "vt-align-status is-dirty";
+      status.textContent = "尚未儲存";
+    }
+  }
+  function clearAlignDirty() {
+    alignDirty = false;
+  }
+
   // 對齊載入：真模式向 /api/episode 取這集對齊欄位（與 app.js loadEpisodeState 同源，
   // 但只取五個對齊純量 + audio.path + episode_dir）。四態：loading→success/error；demo 跳過。
   async function loadEpisodeAlignment() {
@@ -2678,7 +2699,20 @@ import {
     if (DEMO) return;
     const btn = $("vt-al-save");
     const status = $("vt-al-status");
+    // 存檔期間鎖住全部五個欄位（不只按鈕）：in-flight 時打進的值會在下方
+    // syncAlignInputs() 被剛讀回磁碟的值靜默覆蓋 → 資料遺失（#3）。
+    const fieldIds = [
+      "vt-al-audio",
+      "vt-al-camb",
+      "vt-al-head",
+      "vt-al-tail",
+      "vt-al-sub",
+    ];
     if (btn) btn.disabled = true;
+    fieldIds.forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = true;
+    });
     if (status) {
       status.className = "vt-align-status is-busy";
       status.textContent = "儲存中…";
@@ -2699,6 +2733,7 @@ import {
       renderLines();
       render();
       renderCardTrack();
+      clearAlignDirty(); // 存成功 → 不再是 dirty（#7／#8）
       if (status) {
         status.className = "vt-align-status is-ok";
         status.textContent = "已儲存";
@@ -2709,7 +2744,9 @@ import {
         status.textContent = `儲存失敗：${err.message || err}`;
       }
     } finally {
-      if (btn) btn.disabled = DEMO;
+      // 還原欄位停用狀態（依 DEMO／有無外接音檔正確還原，不會誤開無音檔集的
+      // 聲音欄）；syncAlignInputs 不碰 #vt-al-status，上面設的成功／失敗訊息留著。
+      syncAlignInputs();
     }
   }
 
@@ -2737,7 +2774,9 @@ import {
     const note = $("vt-align-note");
     if (note) {
       const map = {
-        loading: "載入中…",
+        // 註：loadEpisodeAlignment 的 loading 態只存在於它自己 await 期間，
+        // 而 syncAlignInputs 的所有呼叫點都在 await 之後才跑（state 必為
+        // success／error／demo／idle），故不列 loading，免留永不觸發的死分支。
         error: "載入失敗",
         success: hasAudio ? "有外接音檔" : "無外接音檔",
         demo: "demo（唯讀）",
@@ -2769,7 +2808,11 @@ import {
     };
     const bind = (id, apply) => {
       const el = $(id);
-      if (el) el.addEventListener("change", () => apply(numOf(el)));
+      if (el)
+        el.addEventListener("change", () => {
+          apply(numOf(el));
+          markAlignDirty(); // 改了值但還沒存 → 標記 dirty（#7／#8）
+        });
     };
     bind("vt-al-audio", (v) => (state.audioSyncOffset = v));
     bind("vt-al-camb", (v) => (state.camSyncOffsetB = v));
@@ -2778,6 +2821,42 @@ import {
     bind("vt-al-sub", (v) => (state.subtitleOffsetSec = v));
     const btn = $("vt-al-save");
     if (btn) btn.addEventListener("click", saveAlignment);
+  }
+
+  // 方案 A：對齊面板從右欄移到頂列，改成「對齊」鈕 + popover。純 DOM 位置搬移，
+  // 五個欄位 id 與 bindAlignPanel 的繫結完全不動 → id-bound 的位移數學不受影響。
+  function bindAlignPopover() {
+    const toggle = $("vt-al-toggle");
+    const pop = $("vt-align-pop");
+    if (!toggle || !pop) return;
+    const isOpen = () => !pop.hidden;
+    const setOpen = (open) => {
+      pop.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      // 打開時用最新 state 重灌欄位：對齊值可能被他處（如 head_trim）經非輸入
+      // 路徑改動，若不同步會顯示舊值（搬成 popover 後新增的開啟時機）。
+      if (open) syncAlignInputs();
+    };
+    toggle.addEventListener("click", (e) => {
+      // 自己 stopPropagation，才不會被下面的「點外面關閉」立刻收回
+      e.stopPropagation();
+      setOpen(!isOpen());
+    });
+    // 點 popover 內部（欄位、儲存鈕）不關閉
+    pop.addEventListener("click", (e) => e.stopPropagation());
+    // 點 popover 以外任何地方 → 關閉
+    document.addEventListener("click", () => {
+      if (isOpen()) setOpen(false);
+    });
+    // Esc 關閉：掛在 document（bubble 早於 window 上既有的快捷鍵 handler），
+    // stopPropagation 擋掉既有 Esc 分支（它只在有 in/out mark 時才動，仍先攔）。
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && isOpen()) {
+        e.stopPropagation();
+        setOpen(false);
+        toggle.focus();
+      }
+    });
   }
 
   async function init() {
@@ -2833,6 +2912,12 @@ import {
     // 原始（磁碟／外接音檔軸）字幕 +totalShift → cam A 顯示軸，highlight 才對得上影片
     applyLoadShiftToSubs();
     bindAlignPanel(); // 綁定對齊面板五欄 + 儲存鈕
+    bindAlignPopover(); // 綁定頂列「對齊」鈕 + popover 開關（方案 A）
+    // 對齊只對真集有意義（demo 無真集）→ 真模式才露出頂列「對齊」入口
+    if (!DEMO) {
+      const alignMount = $("vt-align-mount");
+      if (alignMount) alignMount.hidden = false;
+    }
     syncAlignInputs(); // 把載入到的對齊值灌進輸入框、依四態設定停用/提示
     bindStylePanel(); // 綁定字幕樣式面板（收在進階摺疊區）
     bindPlanDialog(); // 綁定「輸出剪輯指令」面板
@@ -3104,6 +3189,7 @@ import {
       totalShift: alignShift(),
       state: state.align.state,
       err: state.align.err,
+      dirty: alignDirty, // 改了值但還沒存（#7／#8 走查用）
       inputs: {
         audio: $("vt-al-audio").value,
         camb: $("vt-al-camb").value,
@@ -3123,6 +3209,7 @@ import {
       if (patch && typeof patch === "object") {
         Object.assign(state, patch);
         syncAlignInputs();
+        markAlignDirty(); // 與真實 change 一致：設值即 dirty（#7／#8）
       }
       return alignShift();
     };
