@@ -1,0 +1,52 @@
+======================================================================
+F 梯小缺陷走查（F1 快捷鍵併軌／F2 鏡頭鈕 tooltip／F3 操作欄固定寬）
+URL=http://127.0.0.1:8795/?pthook=1  CDP=9522
+======================================================================
+
+--- V0 版本指紋（避免測到未同步的舊碼）---
+
+--- F1 快捷鍵清單併軌 ---
+
+--- F3 卡片操作欄固定寬（單機集）---
+
+--- MUT-F1 真突變：改資料表一條 hint/desc（兩個消費端各驗一次）---
+
+--- MUT-F3A 真突變：.card 的 --card-actions-w 換回 auto（單機集）---
+
+--- F1-c 失敗路徑不靜默（資料表為空）---
+
+--- 第二輪：episode.yaml 加 cameras.b，重起伺服器 ---
+
+--- F2 鏡頭 A/B 鈕 tooltip 四態 ---
+
+--- F3 卡片操作欄固定寬（雙機集：.card.card-has-cam 是另一條規則）---
+
+--- MUT-F2 真突變：camBtnTitle 兩個呼叫端還原成舊三元 ---
+
+--- MUT-F3B 真突變：.card.card-has-cam 末欄換回 auto（雙機集那一半）---
+PASS	V0.0 編輯器載入且卡片列表有卡
+PASS	V0.1 原始碼指紋：三顆缺陷的修法都在服務中的原始碼樹裡
+PASS	V0.2 DOM 指紋：<dl> 存在且開啟前是空的（清單由 openShortcuts() 每次渲染）
+PASS	F1-a.0 ? 鈕點得到（elementFromPoint 最上層是它自己）
+PASS	F1-a modal 渲染出 17 組 dt/dd，且含 [ ] 與 P 循環（併軌前 modal 缺這兩條）
+PASS	F1-d ? 鈕與 ? 鍵開出同一份內容（逐字相同）
+PASS	F1-b 提示列 HTML 與併軌前的字面字串逐字相同（重構無行為變更）
+PASS	F1/F3 單機輪：無未捕捉的 console 例外
+PASS	F3-fixture 這一輪確實同時有待複查卡與一般卡，且是單機集（無 cam 欄）
+PASS	F3-a 單機集：全卡 .card-text 右緣同一個 x（參差 0px）、操作欄恆 58px
+PASS	F3-a2 點「看過」→「已看過」後右緣不動（舊碼整張卡的字右彈 10px）
+PASS	F3-b 三顆操作鈕在 58px 固定欄內都沒被裁、沒溢出、elementFromPoint 仍是自己
+PASS	MUT-F1 真突變成立：改一條資料 → modal 與提示列兩個消費端同時變（RED），還原→綠
+PASS	MUT-F3A 真突變成立：末欄 auto → 參差 18px（RED），固定寬 → 0（GREEN）
+PASS	F1-c 資料表為空 → modal 與提示列各留可見錯誤文字（不是空白）
+PASS	F2-fixture 雙機集：每張卡都有 A/B 膠囊且帶 card-has-cam
+PASS	F2-a.0 A/B 鈕點得到（elementFromPoint 最上層是它自己）
+PASS	F2-a explicit b（第 1 卡，自己標的 B）：A/B 兩顆 tooltip 都說對
+PASS	F2-a 繼承 b（第 2 卡，沿用前一張）：A/B 兩顆 tooltip 都說對
+PASS	F2-a explicit a（第 3 卡，自己標的 A）：A/B 兩顆 tooltip 都說對
+PASS	F2-a 繼承 a（第 4 卡，沿用前一張）：A/B 兩顆 tooltip 都說對
+PASS	F2-b 點 A/B 仍真的切鏡頭（active 高亮跟著 carry-forward 走）
+PASS	F3-a3 雙機集：全卡右緣同一個 x（參差 0px）、操作欄恆 58px
+PASS	F2/F3 雙機輪：無未捕捉的 console 例外
+PASS	MUT-F2 真突變成立：舊三元 → 四態說謊（RED），camBtnTitle → 說對（GREEN）
+PASS	MUT-F3B 真突變成立：card-has-cam 末欄 auto → 參差回來（RED），吃固定寬 → 0（GREEN）

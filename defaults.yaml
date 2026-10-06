@@ -185,6 +185,11 @@ camera_rule:
 # 想更乾淨 → 調大（如 0.25）；嫌趕 → 調小；完全不吃只砍語音 → 0；吃滿貼死（會趕）→ 設很大（如 3600）。
 cut_pad: 0.15
 
+# 編輯器版面模式：podcast（標題卡軌隱藏）| video（標題卡軌顯示）。
+# 只控前端時間軸是否顯示標題卡軌，不影響出片管線。既有集皆為 podcast。
+# episode.yaml 可覆寫成 video；壞值/缺值一律回退此預設。
+layout_mode: podcast
+
 assets:
   intro: "assets/intro.mp4"
   intro_duration: 7.040375

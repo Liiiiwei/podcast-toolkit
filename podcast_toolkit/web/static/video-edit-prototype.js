@@ -10,6 +10,19 @@
  *   預設    → 真 /api/waveform（目前開啟集）＋ <video src="/api/video">，需要真 app server。
  *   ?demo=1 → bundled sample-waveform.json ＋ sample-video.mp4，不需 server/開集即可整頁渲染。
  */
+import {
+  alignShift as alignShiftCore,
+  applyTimelineZoom,
+  positionPlayhead,
+  drawWaveformCore,
+  assignCardLanes,
+  renderCardTrackCore,
+  bindCardTimeDragCore,
+  hexToAss,
+  buildSubtitleCss,
+  subtitlePositionCss,
+} from "./timeline-core.js";
+
 (() => {
   "use strict";
 
@@ -32,7 +45,7 @@
     editingSub: null, // 正在就地編輯的字幕句 index（null=無）
     // 標題卡：畫面上疊的視覺卡片，與逐句字幕是兩回事
     // [{ id, start, end, tpl, text, scale, x, y }]；x/y 是 0–1 相對座標（卡片中心）
-    cards: [],
+    titleCards: [],
     selectedCard: null, // 目前選取的標題卡 id
     editingCard: null, // 正在就地編輯文字的標題卡 id
     // 樣式記憶：新卡沿用上一張的版型與大小；位置一律回該版型的固定預設位，
@@ -104,7 +117,7 @@
         end: x.end,
         text: x.text,
       })),
-      cards: state.cards.map((c) => Object.assign({}, c)),
+      cards: state.titleCards.map((c) => Object.assign({}, c)),
       lastCard: Object.assign({}, state.lastCard),
       selectedCard: state.selectedCard,
       // 樣式也進快照：匯入一份剪輯指令會連字幕樣式一起換掉，
@@ -218,7 +231,7 @@
     lastUndoTag = null;
     state.cuts = s.cuts;
     state.subs = s.subs;
-    state.cards = s.cards;
+    state.titleCards = s.cards;
     state.lastCard = s.lastCard;
     // 復原後那張卡可能已經不存在了，選取要跟著失效
     state.selectedCard = s.cards.some((c) => c.id === s.selectedCard)
@@ -237,97 +250,31 @@
 
   const MIN_CUT = 0.15; // 秒；短於此的拖曳視為點擊定位而非剪除
 
-  // ── 波形繪製（改寫自 app.js drawTlWaveform，只畫不算）───────────────
+  // ── 波形繪製（T1：core 抽到 timeline-core.js，與 podcast 模式共用）───
   const TL_WAVE_MAX_PX = 16384;
+  const GUIDE_MIN_ZOOM = 2;
+  const GUIDE_MIN_GAP_PX = 5;
   function drawWaveform() {
     const tl = $("vt-timeline");
     const canvas = $("vt-waveform");
     const wf = state.waveform;
     if (!tl || !canvas || !wf || !wf.peaks || !wf.peaks.length) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const total = state.duration;
-    const cssW = tl.clientWidth;
-    const cssH = tl.clientHeight;
-    if (!(total > 0) || cssW < 2 || cssH < 2) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const backW = Math.min(Math.max(1, Math.round(cssW * dpr)), TL_WAVE_MAX_PX);
-    const backH = Math.max(1, Math.round(cssH * dpr));
-    if (canvas.width !== backW) canvas.width = backW;
-    if (canvas.height !== backH) canvas.height = backH;
-    ctx.clearRect(0, 0, backW, backH);
-
-    const peaks = wf.peaks;
-    const nP = peaks.length;
-    const peakMax = wf.peak_max || 100;
-    const secPerBucket = (wf.bucket_ms || 20) / 1000;
-    const colV = new Float32Array(backW);
-    for (let x = 0; x < backW; x++) {
-      let k0 = Math.floor(((x / backW) * total) / secPerBucket);
-      let k1 = Math.floor((((x + 1) / backW) * total) / secPerBucket);
-      let v = 0;
-      if (k1 <= k0) {
-        const k = k0 < 0 ? 0 : k0 >= nP ? nP - 1 : k0;
-        v = peaks[k] || 0;
-      } else {
-        if (k0 < 0) k0 = 0;
-        if (k1 > nP) k1 = nP;
-        for (let k = k0; k < k1; k++) if (peaks[k] > v) v = peaks[k];
-      }
-      colV[x] = v;
-    }
-
-    // 中線鏡像填色波形（半透明），色彩取自 tokens 的 --accent
-    const mid = backH / 2;
-    const amp = backH * 0.46;
-    ctx.beginPath();
-    for (let x = 0; x < backW; x++) {
-      const y = mid - (colV[x] / peakMax) * amp;
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    for (let x = backW - 1; x >= 0; x--) {
-      ctx.lineTo(x, mid + (colV[x] / peakMax) * amp);
-    }
-    ctx.closePath();
-    ctx.fillStyle = token("--accent");
-    ctx.globalAlpha = 0.4;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    drawSilenceGuides(ctx, wf, total, backW, backH);
-  }
-
-  // 靜音參考帶（改寫自 app.js drawSilenceGuides）：只給眼睛對齊，不做吸附
-  const GUIDE_MIN_ZOOM = 2;
-  const GUIDE_MIN_GAP_PX = 5;
-  function drawSilenceGuides(ctx, wf, total, backW, backH) {
-    const sil = wf && wf.silences;
-    if (!Array.isArray(sil) || !sil.length) return;
-    if (state.tlZoom < GUIDE_MIN_ZOOM) return;
-    const dpr = window.devicePixelRatio || 1;
-    const minGap = GUIDE_MIN_GAP_PX * dpr;
-    const xOf = (t) => (t / total) * backW;
-    const edgeW = Math.max(1, Math.round(dpr));
-    const dim = token("--text-dim");
-    ctx.save();
-    let lastEdge = -Infinity;
-    for (const s of sil) {
-      if (!Array.isArray(s) || s.length < 2) continue;
-      const x0 = xOf(s[0]);
-      const x1 = xOf(s[1]);
-      if (x1 < 0 || x0 > backW) continue;
-      if (x0 - lastEdge < minGap && x1 - lastEdge < minGap) continue;
-      ctx.fillStyle = dim;
-      ctx.globalAlpha = 0.08;
-      ctx.fillRect(x0, 0, Math.max(1, x1 - x0), backH);
-      ctx.globalAlpha = 0.35;
-      ctx.fillRect(x0, 0, edgeW, backH);
-      ctx.fillRect(x1 - edgeW, 0, edgeW, backH);
-      lastEdge = x1;
-    }
-    ctx.restore();
+    // 影片模式沒有窗口化時間軸，t0 恆為 0（整片）
+    drawWaveformCore({
+      tl,
+      canvas,
+      wf,
+      t0: 0,
+      total: state.duration,
+      maxPx: TL_WAVE_MAX_PX,
+      accentColor: token("--accent"),
+      silence: {
+        zoom: state.tlZoom,
+        minZoom: GUIDE_MIN_ZOOM,
+        minGapPx: GUIDE_MIN_GAP_PX,
+        dimColor: token("--text-dim"),
+      },
+    });
   }
 
   // ── 剪除段 / 選區 DOM 渲染 ──────────────────────────────────────
@@ -707,34 +654,10 @@
   const MIN_CARD_DUR = 0.3; // 秒；再短就抓不到也讀不到，拖曳不讓它縮到這以下
   let cardSeq = 0;
 
-  // ── 標題卡自動車道（lane-packing）──────────────────────────────
-  // 時間重疊的卡不再疊在一起，改成往下長出新列；不重疊時收回單列。
-  // 零資料結構改動：車道只在畫面上算，不寫回 state.cards，每次 render 都重算。
-  const CARD_LANE_H = 36; // 車道高度（不含上下留白）
-  const CARD_LANE_PAD = 4; // 軌道上下留白，比照原本 .vt-card 的 top:4px/bottom:4px
-  const CARD_LANE_GAP = 3; // 車道之間的視覺間隙
-  // 只有 1 車道時，track 高度＝ 1*CARD_LANE_H + 2*CARD_LANE_PAD = 44px，
-  // 跟原本寫死的 .vt-sub-track { height:44px } 完全一致（不變）。
-
-  // 貪婪區間分割：依 start 排序的副本逐一分配，找第一條「上一張卡已播完」
-  // 的車道塞進去，找不到就開新車道。用小 epsilon 容忍浮點誤差。
-  function assignCardLanes(cards) {
-    const sorted = cards.slice().sort((a, b) => a.start - b.start);
-    const laneEnds = []; // 每個車道目前排到的結束時間
-    const laneOf = new Map(); // card.id → 車道序號
-    const EPS = 1e-6;
-    for (const c of sorted) {
-      let lane = laneEnds.findIndex((end) => c.start >= end - EPS);
-      if (lane === -1) {
-        lane = laneEnds.length;
-        laneEnds.push(c.end);
-      } else {
-        laneEnds[lane] = c.end;
-      }
-      laneOf.set(c.id, lane);
-    }
-    return { laneOf, nLanes: laneEnds.length };
-  }
+  // 標題卡自動車道（lane-packing）與軌道渲染/拖曳幾何已搬進 timeline-core.js
+  // 的 assignCardLanes/renderCardTrackCore/bindCardTimeDragCore（T4，podcast
+  // 模式的 #tl-card-track 共用同一份）。零資料結構改動：車道只在畫面上算，
+  // 不寫回 state.titleCards，每次 render 都重算。
 
   function makeCard(start, end, text, tpl, src) {
     const last = state.lastCard;
@@ -762,8 +685,8 @@
   }
 
   function addCard(card) {
-    state.cards.push(card);
-    state.cards.sort((a, b) => a.start - b.start);
+    state.titleCards.push(card);
+    state.titleCards.sort((a, b) => a.start - b.start);
     // 新卡一律走 selectCard —— 它會把播放頭帶進這張卡的區間。
     // 少了這一步，剛升格的卡在畫面上根本看不到（面板卻亮著），
     // 使用者只會覺得「按了沒反應」。
@@ -786,8 +709,8 @@
   function cardFromSub(sub) {
     if (!sub) return null;
     return (
-      state.cards.find((c) => subMatchesCardSrc(c, sub)) ||
-      state.cards.find(
+      state.titleCards.find((c) => subMatchesCardSrc(c, sub)) ||
+      state.titleCards.find(
         (c) =>
           !c.src &&
           Math.abs(c.start - sub.start) < 1e-6 &&
@@ -827,14 +750,14 @@
   }
 
   function findCard(id) {
-    return state.cards.find((c) => c.id === id) || null;
+    return state.titleCards.find((c) => c.id === id) || null;
   }
 
   function removeCard(id) {
-    const i = state.cards.findIndex((c) => c.id === id);
+    const i = state.titleCards.findIndex((c) => c.id === id);
     if (i < 0) return;
     pushUndo();
-    state.cards.splice(i, 1);
+    state.titleCards.splice(i, 1);
     if (state.selectedCard === id) state.selectedCard = null;
     if (state.editingCard === id) state.editingCard = null;
     renderCardTrack();
@@ -888,117 +811,63 @@
 
   // 在時間軸上直接調卡的進出點：整塊拖＝平移（長度不變），拖左右兩端＝改長度。
   // 跟影片上拖位置同一套規矩 —— 不吸附，拖到哪就是哪；只夾在 0–總長內、不短於 MIN_CARD_DUR。
+  // T4：幾何與事件本體搬進 timeline-core.js 的 bindCardTimeDragCore（t0=0、
+  // total=state.duration，換算出來的數字與舊版逐位元相同）；本函式只負責注入
+  // video 特有的 callback（真正的 undo 堆疊、selectCard、渲染收尾）。
   function bindCardTimeDrag(el, c, mode) {
-    el.addEventListener("pointerdown", (e) => {
-      if (e.button != null && e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      selectCard(c.id);
-      const rect = $("vt-card-track").getBoundingClientRect();
-      const x0 = e.clientX;
-      const s0 = c.start;
-      const e0 = c.end;
-      const dur = e0 - s0;
-      const block = el.closest(".vt-card") || el;
-      block.classList.add("is-dragging");
-      const move = (ev) => {
-        pushUndo("cardtime:" + c.id); // 整段拖曳只留一個復原點
-        const dt = ((ev.clientX - x0) / rect.width) * state.duration;
-        if (mode === "move") {
-          c.start = clamp(s0 + dt, 0, Math.max(0, state.duration - dur));
-          c.end = c.start + dur;
-        } else if (mode === "l") {
-          c.start = clamp(s0 + dt, 0, e0 - MIN_CARD_DUR);
-          c.end = e0;
-        } else {
-          c.start = s0;
-          c.end = clamp(e0 + dt, s0 + MIN_CARD_DUR, state.duration);
-        }
-        block.style.left = `${pct(c.start)}%`;
-        block.style.width = `${pct(c.end - c.start)}%`;
-        block.title = cardTitle(c);
-      };
-      const up = () => {
-        block.classList.remove("is-dragging");
+    bindCardTimeDragCore(el, c, mode, {
+      trackEl: $("vt-card-track"),
+      t0: 0,
+      total: state.duration,
+      minDur: MIN_CARD_DUR,
+      getTitle: cardTitle,
+      onPointerDown: (cc) => selectCard(cc.id),
+      onDragTick: (cc) => pushUndo("cardtime:" + cc.id), // 整段拖曳只留一個復原點
+      onDragEnd: () => {
         endUndoGroup();
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
         renderCardTrack();
         syncCardInspector();
         // 卡的區間變了，播放頭現在可能剛好落在區間外／內，疊層要重算
         updateCardLayer(true);
-      };
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", up);
+      },
     });
   }
 
+  // T4：軌道靜態渲染搬進 timeline-core.js 的 renderCardTrackCore（含
+  // assignCardLanes 自動分軌），本函式只負責注入 video 特有的狀態
+  // （cut/partial、雙擊改字、渲染完的右欄標記重算）。
   function renderCardTrack() {
     const track = $("vt-card-track");
     if (!track) return;
-    track.querySelectorAll(".vt-card, .vt-sub-input").forEach((n) => {
-      if (n.isConnected) n.remove();
+    renderCardTrackCore({
+      track,
+      cards: state.titleCards,
+      t0: 0,
+      total: state.duration,
+      selectedId: state.selectedCard,
+      editingId: state.editingCard,
+      // 卡落在剪除區時要在軌上看得出來，不能等按下輸出才被 confirm 告知
+      // （比照字幕塊）。片頭/片尾裁切區也算落區：起點被移除＝整張不出現，
+      // 直接標 cut（不用等 confirm）。
+      getStatus: (c) => (cardDropped(c) ? "cut" : subStatus(c)),
+      getBadgeText: (c) => CARD_TEMPLATES[c.tpl].name.slice(0, 2),
+      getCardText: (c) => c.text || "（空白標題卡）",
+      getTitle: cardTitle,
+      onSelect: (id) => selectCard(id),
+      onDblClick: (id) => startEditCard(id),
+      bindDrag: bindCardTimeDrag,
+      renderEditingCard: renderCardInput,
+      onAfterRender: () => {
+        // 卡一變動，右欄的「已升格」標記與底部字幕預覽都要跟著重算
+        syncLineCardMarks();
+        updateSubPreview();
+        // 標題卡軌會依車道數長高（timeline-core 在 onAfterRender 前已設好
+        // track.style.height）；gutter 的「標題卡」格要跟著一樣高，標籤才不會
+        // 與軌道錯位、指錯列（字幕 44／波形 64 固定，1 車道時本格也是 44）。
+        const gutter = $("vt-gutter-card");
+        if (gutter) gutter.style.height = track.offsetHeight + "px";
+      },
     });
-    // 自動車道：每次重繪都重算，不重疊時自然收回單列
-    const { laneOf, nLanes } = assignCardLanes(state.cards);
-    const effLanes = Math.max(1, nLanes);
-    track.style.height = `${effLanes * CARD_LANE_H + 2 * CARD_LANE_PAD}px`;
-    state.cards.forEach((c) => {
-      const lane = laneOf.get(c.id) || 0;
-      const top = lane * CARD_LANE_H + CARD_LANE_PAD;
-      const laneHeight = CARD_LANE_H - CARD_LANE_GAP;
-      if (state.editingCard === c.id) {
-        renderCardInput(track, c, top, laneHeight);
-        return;
-      }
-      const el = document.createElement("div");
-      // 卡落在剪除區時要在軌上看得出來，不能等按下輸出才被 confirm 告知（比照字幕塊）。
-      // 片頭/片尾裁切區也算落區：起點被移除＝整張不出現，直接標 cut（不用等 confirm）。
-      const cut = cardDropped(c) ? "cut" : subStatus(c);
-      el.className =
-        "vt-card" +
-        (state.selectedCard === c.id ? " is-selected" : "") +
-        (cut === "cut" ? " is-cut" : cut === "partial" ? " is-partial" : "");
-      el.style.left = `${pct(c.start)}%`;
-      el.style.width = `${pct(Math.max(0.3, c.end - c.start))}%`;
-      el.style.top = `${top}px`;
-      el.style.height = `${laneHeight}px`;
-      el.title = cardTitle(c);
-      const badge = document.createElement("span");
-      badge.className = "vt-card-badge";
-      badge.textContent = CARD_TEMPLATES[c.tpl].name.slice(0, 2);
-      el.appendChild(badge);
-      const txt = document.createElement("span");
-      txt.className = "vt-card-txt";
-      txt.textContent = c.text || "（空白標題卡）";
-      el.appendChild(txt);
-      el.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        selectCard(c.id);
-      });
-      el.addEventListener("dblclick", (ev) => {
-        ev.stopPropagation();
-        startEditCard(c.id);
-      });
-      // 兩端各一個把手改長度，其餘區域拖整塊平移。
-      // 卡太窄時兩個把手會把整塊佔滿 —— 那就別畫把手，先讓它拖得動；
-      // 要改長度可以放大時間軸再拖。
-      const wpx =
-        ((c.end - c.start) / (state.duration || 1)) * track.clientWidth;
-      if (wpx >= 24)
-        ["l", "r"].forEach((side) => {
-          const h = document.createElement("div");
-          h.className = "vt-card-h is-" + side;
-          h.title = side === "l" ? "拖曳改進點" : "拖曳改出點";
-          el.appendChild(h);
-          bindCardTimeDrag(h, c, side);
-        });
-      bindCardTimeDrag(el, c, "move");
-      track.appendChild(el);
-    });
-    // 卡一變動，右欄的「已升格」標記與底部字幕預覽都要跟著重算
-    syncLineCardMarks();
-    updateSubPreview();
   }
 
   function startEditCard(id) {
@@ -1069,11 +938,11 @@
     return `translate(${(-c.x * 100).toFixed(3)}%, ${(-c.y * 100).toFixed(3)}%)`;
   }
 
-  // 同一時間點命中的所有卡，依 state.cards 順序（後加的疊在上面）。
+  // 同一時間點命中的所有卡，依 state.titleCards 順序（後加的疊在上面）。
   // 卡的進出點可以自由拖，重疊是常態 —— 下標條配大字報本來就該同時出現。
   // 只畫最後一張的話，被蓋掉的那張會在畫面上靜默消失，而時間軸上還看得到它。
   function cardsActiveAt(t) {
-    return state.cards.filter((c) => t >= c.start && t < c.end);
+    return state.titleCards.filter((c) => t >= c.start && t < c.end);
   }
 
   // force=true 時忽略「內容沒變就不重畫」的快取（新增/改樣式後要立刻反映）
@@ -1634,55 +1503,10 @@
   }
 
   // ── 字幕樣式：即時預覽 ──────────────────────────────────────────
-  // hex #RRGGBB → ASS &H00BBGGRR（讓面板數值看起來跟後端同格式）
-  function hexToAss(hex) {
-    const h = (hex || "#000000").replace("#", "");
-    const r = h.slice(0, 2);
-    const g = h.slice(2, 4);
-    const b = h.slice(4, 6);
-    return `&H00${b}${g}${r}`.toUpperCase();
-  }
-
-  function fontStack(name) {
-    // demo：選到的字型排最前，後面墊 CJK fallback，無該字型時仍看得到字
-    const cjk =
-      '"Noto Sans TC", "PingFang TC", "Hiragino Sans GB", "Microsoft JhengHei", sans-serif';
-    return `"${name}", ${cjk}`;
-  }
-
-  // 用多向 text-shadow 疊出 ASS 描邊 + 陰影
-  function buildOutlineShadow(color, outlinePx, shadowPx) {
-    const parts = [];
-    if (outlinePx > 0) {
-      const n = 12;
-      for (let k = 0; k < n; k++) {
-        const a = (k / n) * Math.PI * 2;
-        parts.push(
-          `${(Math.cos(a) * outlinePx).toFixed(2)}px ${(Math.sin(a) * outlinePx).toFixed(2)}px 0 ${color}`,
-        );
-      }
-    }
-    if (shadowPx > 0) {
-      // ASS 陰影固定黑、往右下（此為字幕內容陰影，非 UI chrome）
-      parts.push(
-        `${shadowPx.toFixed(2)}px ${shadowPx.toFixed(2)}px ${(shadowPx * 1.2).toFixed(2)}px rgba(0,0,0,0.9)`,
-      );
-    }
-    return parts.length ? parts.join(", ") : "none";
-  }
-
+  // 換算（ASS → CSS）全部在 timeline-core.js 的「字幕樣式」段，podcast 模式吃同一份；
+  // 本檔只負責把算出來的 CSS 指派到 DOM 上。
   function positionPreview(wrap, alignment, marginPx) {
-    wrap.style.top = "auto";
-    wrap.style.bottom = "auto";
-    wrap.style.transform = "none";
-    if (alignment === 6) {
-      wrap.style.top = `${marginPx}px`; // 頂部置中
-    } else if (alignment === 10) {
-      wrap.style.top = "50%"; // 畫面正中（marginV 正值向下偏移）
-      wrap.style.transform = `translateY(calc(-50% + ${marginPx}px))`;
-    } else {
-      wrap.style.bottom = `${marginPx}px`; // 底部置中（預設）
-    }
+    Object.assign(wrap.style, subtitlePositionCss(alignment, marginPx));
   }
 
   // 把面板控制項的顯示值同步成 state（供程式化改值後刷新 UI）
@@ -1768,28 +1592,7 @@
     // ASS 字級是相對 1080p；預覽依實際影片高度等比縮放
     const vh = v && v.clientHeight ? v.clientHeight : 360;
     const scale = vh / 1080;
-    const px = Math.max(9, st.font_size * scale);
-    el.style.fontFamily = fontStack(st.font_name);
-    el.style.fontSize = `${px.toFixed(1)}px`;
-    el.style.fontWeight = st.bold ? "700" : "400";
-    el.style.color = st.primary_colour_hex;
-    const outlinePx = st.outline * scale * 1.2; // 略放大讓小預覽看得見描邊
-    if (st.border_style === 3) {
-      // 不透明底色塊：底色用描邊色，取消描邊
-      el.style.background = st.outline_colour_hex;
-      el.style.padding = `${(px * 0.1).toFixed(1)}px ${(px * 0.32).toFixed(1)}px`;
-      el.style.borderRadius = "2px";
-      el.style.textShadow = "none";
-    } else {
-      el.style.background = "transparent";
-      el.style.padding = "0";
-      el.style.borderRadius = "0";
-      el.style.textShadow = buildOutlineShadow(
-        st.outline_colour_hex,
-        outlinePx,
-        st.shadow * scale * 1.2,
-      );
-    }
+    Object.assign(el.style, buildSubtitleCss(st, scale));
     positionPreview(wrap, st.alignment, st.margin_v * scale);
     updateSubPreview();
   }
@@ -1843,28 +1646,24 @@
     });
   }
 
-  // ── 播放頭同步（rAF 平滑，改寫自 app.js updateTimelinePlayhead）──────
+  // ── 播放頭同步（T1：core 抽到 timeline-core.js，與 podcast 模式共用）───
   function updatePlayhead() {
     const v = $("vt-video");
     const ph = $("vt-playhead");
     if (!v || !ph || !(state.duration > 0)) return;
-    const leftPct = clamp((v.currentTime / state.duration) * 100, 0, 100);
-    ph.style.left = `${leftPct}%`;
-    // 刮動把手跟播放頭同步移動，位置算法完全共用（都是同一個 leftPct）
     const grip = $("vt-playhead-grip");
-    if (grip) grip.style.left = `${leftPct}%`;
     const scroll = $("vt-tl-scroll");
     const tl = $("vt-timeline");
-    // 放大後播放頭跑出可視 → 自動捲動維持在中間附近
-    if (scroll && tl && tl.offsetWidth > scroll.clientWidth + 1) {
-      const x = (v.currentTime / state.duration) * tl.offsetWidth;
-      if (
-        x < scroll.scrollLeft + 40 ||
-        x > scroll.scrollLeft + scroll.clientWidth - 40
-      ) {
-        scroll.scrollLeft = x - scroll.clientWidth / 2;
-      }
-    }
+    // 影片模式沒有窗口化時間軸，t0 恆為 0（整片）
+    positionPlayhead({
+      t: v.currentTime,
+      t0: 0,
+      total: state.duration,
+      elPh: ph,
+      elGrip: grip,
+      elScroll: scroll,
+      elTl: tl,
+    });
     // 只標了單邊時，範圍的另一端就是播放頭 → 播放頭動就得重畫
     if ((state.mark.in == null) !== (state.mark.out == null)) renderSelection();
   }
@@ -1926,7 +1725,7 @@
     if (rafId == null) rafId = requestAnimationFrame(frame);
   }
 
-  // ── 縮放（改寫自 app.js setTlZoom）──────────────────────────────
+  // ── 縮放（T1：core 抽到 timeline-core.js，與 podcast 模式共用）───────
   const ZOOM_MIN = 1,
     ZOOM_MAX = 60,
     ZOOM_STEP = 1.6;
@@ -1937,20 +1736,22 @@
     $("vt-zoom-in").disabled = state.tlZoom >= ZOOM_MAX - 1e-6;
   }
   function setZoom(z, anchorClientX = null) {
-    z = clamp(z, ZOOM_MIN, ZOOM_MAX);
-    if (Math.abs(z - state.tlZoom) < 1e-6) return;
     const scroll = $("vt-tl-scroll");
     const tl = $("vt-timeline");
-    const w = tl.offsetWidth || scroll.clientWidth || 1;
-    const anchorOffset =
-      anchorClientX != null
-        ? anchorClientX - scroll.getBoundingClientRect().left
-        : scroll.clientWidth / 2;
-    const frac = (scroll.scrollLeft + anchorOffset) / w;
-    state.tlZoom = z;
-    applyZoomWidth();
-    const newW = tl.offsetWidth || scroll.clientWidth * z;
-    scroll.scrollLeft = frac * newW - anchorOffset;
+    const applied = applyTimelineZoom({
+      z,
+      currentZoom: state.tlZoom,
+      zoomMin: ZOOM_MIN,
+      zoomMax: ZOOM_MAX,
+      scroll,
+      tl,
+      anchorClientX,
+      setZoomValue: (v) => {
+        state.tlZoom = v;
+      },
+      applyWidth: applyZoomWidth,
+    });
+    if (applied == null) return;
     drawWaveform(); // 寬度變了 → 波形重畫一次
     render();
   }
@@ -2031,17 +1832,14 @@
   const r3 = (n) => Math.round(n * 1000) / 1000;
   const r4 = (n) => Math.round(n * 10000) / 10000;
 
-  // ── 對齊位移數學（與 app.js / api.js 對稱）───────────────────────────
+  // ── 對齊位移數學（B3 併軌：算式與 audioPath 守衛只有 timeline-core.js: alignShift 一份）──
   // 顯示軸位移 totalShift：把磁碟 _v2.srt（外接音檔軸）的字幕時間搬到 cam A 軸，
   // 讓播放預覽的字幕 highlight 對得上 video.currentTime。
-  //   totalShift = (有外接音檔 ? -audioSyncOffset : 0) + subtitleOffsetSec
   //   載入：display = disk + totalShift（見 applyLoadShiftToSubs）
   //   存檔：disk = display − totalShift（見 toDiskTime）
-  // 兩向保證對稱（存→重載不會越存越早）；demo 或零偏移時 = 0，行為不變。
+  // 本檔這層只做「綁定本模組的 state」，不重寫算式。
   function alignShift() {
-    const audioShift =
-      state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
-    return audioShift + (state.subtitleOffsetSec || 0);
+    return alignShiftCore(state);
   }
   // 時間軸還原：cam A 軸顯示時間 → 磁碟 _v2.srt 時間。必與 alignShift 對稱。
   function toDiskTime(t) {
@@ -2124,7 +1922,7 @@
       // fromSubtitle：這張卡從哪一句升格來的。血緣本來只活在記憶體裡，
       // 匯出再匯入就靠時間硬湊 —— 卡一旦被拖過長度就湊不回去，字幕會重新
       // 冒出來。寫進指令才活得過一次 round-trip。
-      cards: state.cards.map((c) => {
+      cards: state.titleCards.map((c) => {
         const o = stamp({
           start: r3(c.start),
           end: r3(c.end),
@@ -2223,7 +2021,7 @@
     endUndoGroup();
     state.cuts = cuts;
     state.subs = subs;
-    state.cards = cards;
+    state.titleCards = cards;
     state.selectedCard = null;
     state.editingCard = null;
     state.editingSub = null;
@@ -2823,6 +2621,22 @@
   }
 
   // ── 對齊面板（與這集 episode.yaml 共用的五個欄位）─────────────────────
+  // 改了值但還沒存＝dirty。沒有這個回饋，使用者改完值不知道要按儲存，
+  // 存成功後若又改值、綠色「已儲存」還留著也會誤導（#7／#8）。
+  let alignDirty = false;
+  function markAlignDirty() {
+    alignDirty = true;
+    const status = $("vt-al-status");
+    if (status) {
+      // 覆蓋殘留的綠色 is-ok「已儲存」，改成 warning 色「尚未儲存」
+      status.className = "vt-align-status is-dirty";
+      status.textContent = "尚未儲存";
+    }
+  }
+  function clearAlignDirty() {
+    alignDirty = false;
+  }
+
   // 對齊載入：真模式向 /api/episode 取這集對齊欄位（與 app.js loadEpisodeState 同源，
   // 但只取五個對齊純量 + audio.path + episode_dir）。四態：loading→success/error；demo 跳過。
   async function loadEpisodeAlignment() {
@@ -2885,7 +2699,20 @@
     if (DEMO) return;
     const btn = $("vt-al-save");
     const status = $("vt-al-status");
+    // 存檔期間鎖住全部五個欄位（不只按鈕）：in-flight 時打進的值會在下方
+    // syncAlignInputs() 被剛讀回磁碟的值靜默覆蓋 → 資料遺失（#3）。
+    const fieldIds = [
+      "vt-al-audio",
+      "vt-al-camb",
+      "vt-al-head",
+      "vt-al-tail",
+      "vt-al-sub",
+    ];
     if (btn) btn.disabled = true;
+    fieldIds.forEach((id) => {
+      const el = $(id);
+      if (el) el.disabled = true;
+    });
     if (status) {
       status.className = "vt-align-status is-busy";
       status.textContent = "儲存中…";
@@ -2906,6 +2733,7 @@
       renderLines();
       render();
       renderCardTrack();
+      clearAlignDirty(); // 存成功 → 不再是 dirty（#7／#8）
       if (status) {
         status.className = "vt-align-status is-ok";
         status.textContent = "已儲存";
@@ -2916,7 +2744,9 @@
         status.textContent = `儲存失敗：${err.message || err}`;
       }
     } finally {
-      if (btn) btn.disabled = DEMO;
+      // 還原欄位停用狀態（依 DEMO／有無外接音檔正確還原，不會誤開無音檔集的
+      // 聲音欄）；syncAlignInputs 不碰 #vt-al-status，上面設的成功／失敗訊息留著。
+      syncAlignInputs();
     }
   }
 
@@ -2944,7 +2774,9 @@
     const note = $("vt-align-note");
     if (note) {
       const map = {
-        loading: "載入中…",
+        // 註：loadEpisodeAlignment 的 loading 態只存在於它自己 await 期間，
+        // 而 syncAlignInputs 的所有呼叫點都在 await 之後才跑（state 必為
+        // success／error／demo／idle），故不列 loading，免留永不觸發的死分支。
         error: "載入失敗",
         success: hasAudio ? "有外接音檔" : "無外接音檔",
         demo: "demo（唯讀）",
@@ -2976,7 +2808,11 @@
     };
     const bind = (id, apply) => {
       const el = $(id);
-      if (el) el.addEventListener("change", () => apply(numOf(el)));
+      if (el)
+        el.addEventListener("change", () => {
+          apply(numOf(el));
+          markAlignDirty(); // 改了值但還沒存 → 標記 dirty（#7／#8）
+        });
     };
     bind("vt-al-audio", (v) => (state.audioSyncOffset = v));
     bind("vt-al-camb", (v) => (state.camSyncOffsetB = v));
@@ -2985,6 +2821,42 @@
     bind("vt-al-sub", (v) => (state.subtitleOffsetSec = v));
     const btn = $("vt-al-save");
     if (btn) btn.addEventListener("click", saveAlignment);
+  }
+
+  // 方案 A：對齊面板從右欄移到頂列，改成「對齊」鈕 + popover。純 DOM 位置搬移，
+  // 五個欄位 id 與 bindAlignPanel 的繫結完全不動 → id-bound 的位移數學不受影響。
+  function bindAlignPopover() {
+    const toggle = $("vt-al-toggle");
+    const pop = $("vt-align-pop");
+    if (!toggle || !pop) return;
+    const isOpen = () => !pop.hidden;
+    const setOpen = (open) => {
+      pop.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      // 打開時用最新 state 重灌欄位：對齊值可能被他處（如 head_trim）經非輸入
+      // 路徑改動，若不同步會顯示舊值（搬成 popover 後新增的開啟時機）。
+      if (open) syncAlignInputs();
+    };
+    toggle.addEventListener("click", (e) => {
+      // 自己 stopPropagation，才不會被下面的「點外面關閉」立刻收回
+      e.stopPropagation();
+      setOpen(!isOpen());
+    });
+    // 點 popover 內部（欄位、儲存鈕）不關閉
+    pop.addEventListener("click", (e) => e.stopPropagation());
+    // 點 popover 以外任何地方 → 關閉
+    document.addEventListener("click", () => {
+      if (isOpen()) setOpen(false);
+    });
+    // Esc 關閉：掛在 document（bubble 早於 window 上既有的快捷鍵 handler），
+    // stopPropagation 擋掉既有 Esc 分支（它只在有 in/out mark 時才動，仍先攔）。
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && isOpen()) {
+        e.stopPropagation();
+        setOpen(false);
+        toggle.focus();
+      }
+    });
   }
 
   async function init() {
@@ -3040,6 +2912,12 @@
     // 原始（磁碟／外接音檔軸）字幕 +totalShift → cam A 顯示軸，highlight 才對得上影片
     applyLoadShiftToSubs();
     bindAlignPanel(); // 綁定對齊面板五欄 + 儲存鈕
+    bindAlignPopover(); // 綁定頂列「對齊」鈕 + popover 開關（方案 A）
+    // 對齊只對真集有意義（demo 無真集）→ 真模式才露出頂列「對齊」入口
+    if (!DEMO) {
+      const alignMount = $("vt-align-mount");
+      if (alignMount) alignMount.hidden = false;
+    }
     syncAlignInputs(); // 把載入到的對齊值灌進輸入框、依四態設定停用/提示
     bindStylePanel(); // 綁定字幕樣式面板（收在進階摺疊區）
     bindPlanDialog(); // 綁定「輸出剪輯指令」面板
@@ -3150,7 +3028,7 @@
       return Object.assign({}, state.style);
     };
     // 目前所有標題卡
-    window.__vtCards = () => state.cards.map((c) => Object.assign({}, c));
+    window.__vtCards = () => state.titleCards.map((c) => Object.assign({}, c));
     // 從第 i 句字幕升格成標題卡（等同點卡片上的 ⤴）
     window.__vtPromote = (i) => {
       const c = addCardFromSub(i);
@@ -3311,6 +3189,7 @@
       totalShift: alignShift(),
       state: state.align.state,
       err: state.align.err,
+      dirty: alignDirty, // 改了值但還沒存（#7／#8 走查用）
       inputs: {
         audio: $("vt-al-audio").value,
         camb: $("vt-al-camb").value,
@@ -3330,6 +3209,7 @@
       if (patch && typeof patch === "object") {
         Object.assign(state, patch);
         syncAlignInputs();
+        markAlignDirty(); // 與真實 change 一致：設值即 dirty（#7／#8）
       }
       return alignShift();
     };

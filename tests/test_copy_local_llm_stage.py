@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 
 def test_copy_stage_resolves_model_symlink_and_preserves_executable(tmp_path):

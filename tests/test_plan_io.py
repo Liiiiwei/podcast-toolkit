@@ -60,6 +60,31 @@ def test_normalize_style_only_emits_given_keys():
     assert plan_io.normalize_style(None) == {}
 
 
+def test_normalize_style_accepts_ass_colour_shape():
+    """主編輯器直接送 episode.yaml 原形（ASS 色碼）：驗格式後正規化成 &HAABBGGRR。
+    六碼寫法補滿 alpha、小寫轉大寫 —— 兩種拼法最後都收斂成同一個字串。"""
+    s = plan_io.normalize_style({"primary_colour": "&h00ccff", "outline_colour": "&H00203040"})
+    assert s == {"primary_colour": "&H0000CCFF", "outline_colour": "&H00203040"}
+    assert s["primary_colour"] == plan_io.normalize_style(
+        {"primary_colour_hex": "#ffcc00"}
+    )["primary_colour"]
+
+
+@pytest.mark.parametrize("bad", ["red", "&H00GGGGGG", "#ffcc00", "&H0", ""])
+def test_normalize_style_rejects_bad_ass_colour(bad):
+    """不合格的色碼要當場 PlanError（→400），不可以帶著髒值寫進 yaml 等燒字幕時才炸。"""
+    with pytest.raises(plan_io.PlanError):
+        plan_io.normalize_style({"primary_colour": bad})
+
+
+def test_normalize_style_rejects_both_colour_spellings():
+    """同一個顏色兩種拼法都給＝呼叫端搞混了，直接拒收，不猜哪個才算數。"""
+    with pytest.raises(plan_io.PlanError):
+        plan_io.normalize_style(
+            {"primary_colour": "&H00FFFFFF", "primary_colour_hex": "#ffffff"}
+        )
+
+
 def test_cuts_accept_both_shapes_and_get_sorted():
     p = plan_io.parse_plan(_plan(cuts=[{"start": 9.0, "end": 10.0}, [2.0, 3.0]]))
     assert p["cuts"] == [[2.0, 3.0], [9.0, 10.0]]
@@ -135,6 +160,38 @@ def test_empty_cuts_clears_the_key(tmp_episode_dir: Path):
     plan_io.apply_plan(Episode(tmp_episode_dir), plan_io.parse_plan(_plan(cuts=[])))
     data = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
     assert "cuts" not in data
+
+
+def test_apply_plan_drops_legacy_deletions(tmp_episode_dir: Path, capsys):
+    """B1 單一 source of truth：套用剪輯指令寫入 cuts 時，舊 idx 版 deletions 必須一起走。
+    留著的話 assemble 只吃 cuts，那份 deletions 變成「看不到、移不掉、又不生效」的幽靈。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["deletions"] = [1, 3]
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                         encoding="utf-8")
+
+    plan_io.apply_plan(Episode(tmp_episode_dir), plan_io.parse_plan(_plan()))
+
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert after["cuts"]                      # 指令的 cuts 有寫進去
+    assert "deletions" not in after           # 舊格式一次遷移掉
+    assert "deletions" in capsys.readouterr().err   # 不准靜默
+
+
+def test_apply_plan_without_cuts_keeps_deletions(tmp_episode_dir: Path):
+    """反向護欄：指令沒有剪除時不碰 deletions —— 只有「真的寫了 cuts」才構成遷移條件。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    data["deletions"] = [2]
+    yaml_path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+                         encoding="utf-8")
+
+    plan_io.apply_plan(Episode(tmp_episode_dir), plan_io.parse_plan(_plan(cuts=[])))
+
+    after = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "cuts" not in after
+    assert after["deletions"] == [2]
 
 
 def test_apply_plan_keeps_untouched_yaml_keys(tmp_episode_dir: Path):

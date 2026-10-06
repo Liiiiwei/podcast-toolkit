@@ -1,0 +1,496 @@
+{
+  "mode": "f-tier-editor-small-defects",
+  "results": [
+    {
+      "name": "V0.0 編輯器載入且卡片列表有卡",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "V0.1 原始碼指紋：三顆缺陷的修法都在服務中的原始碼樹裡",
+      "ok": true,
+      "got": {
+        "shortcutsTable": true,
+        "appImports": true,
+        "camBtnTitle": true,
+        "dlEmptyInHtml": true,
+        "actionsVar": true,
+        "hasCamVar": true
+      },
+      "want": {
+        "shortcutsTable": true,
+        "appImports": true,
+        "camBtnTitle": true,
+        "dlEmptyInHtml": true,
+        "actionsVar": true,
+        "hasCamVar": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "V0.2 DOM 指紋：<dl> 存在且開啟前是空的（清單由 openShortcuts() 每次渲染）",
+      "ok": true,
+      "got": {
+        "dlExists": true,
+        "dlEmptyBeforeOpen": true,
+        "modalOpen": false
+      },
+      "want": {
+        "dlExists": true,
+        "dlEmptyBeforeOpen": true,
+        "modalOpen": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F1-a.0 ? 鈕點得到（elementFromPoint 最上層是它自己）",
+      "ok": true,
+      "got": {
+        "clicked": true,
+        "top": {
+          "found": true,
+          "cx": 197,
+          "cy": 30,
+          "w": 34,
+          "h": 32,
+          "hit": true,
+          "hitTag": "BUTTON",
+          "hitCls": "btn btn-icon"
+        }
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "F1-a modal 渲染出 17 組 dt/dd，且含 [ ] 與 P 循環（併軌前 modal 缺這兩條）",
+      "ok": true,
+      "got": {
+        "open": true,
+        "dt": 17,
+        "dd": 17,
+        "bracket": true,
+        "ploop": true,
+        "errRows": 0
+      },
+      "want": {
+        "open": true,
+        "dt": 17,
+        "dd": 17,
+        "bracket": true,
+        "ploop": true,
+        "errRows": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F1-d ? 鈕與 ? 鍵開出同一份內容（逐字相同）",
+      "ok": true,
+      "got": {
+        "closedInBetween": false,
+        "openByKey": true,
+        "sameHtml": true,
+        "dt": 17
+      },
+      "want": {
+        "closedInBetween": false,
+        "openByKey": true,
+        "sameHtml": true,
+        "dt": 17
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F1-b 提示列 HTML 與併軌前的字面字串逐字相同（重構無行為變更）",
+      "ok": true,
+      "got": {
+        "teBtnClickable": true,
+        "found": true,
+        "html": "<kbd>←→</kbd> 起點｜<kbd>⌥←→</kbd> 訖點｜<kbd>Shift</kbd> ×5｜<kbd>⌘</kbd> ×10｜<kbd>[</kbd> <kbd>]</kbd> 設為播放位置｜<kbd>P</kbd> 循環",
+        "errRows": 0
+      },
+      "want": {
+        "teBtnClickable": true,
+        "found": true,
+        "html": "<kbd>←→</kbd> 起點｜<kbd>⌥←→</kbd> 訖點｜<kbd>Shift</kbd> ×5｜<kbd>⌘</kbd> ×10｜<kbd>[</kbd> <kbd>]</kbd> 設為播放位置｜<kbd>P</kbd> 循環",
+        "errRows": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F1/F3 單機輪：無未捕捉的 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "F3-fixture 這一輪確實同時有待複查卡與一般卡，且是單機集（無 cam 欄）",
+      "ok": true,
+      "got": {
+        "nReview": true,
+        "nPlain": true,
+        "hasCam": false
+      },
+      "want": {
+        "nReview": true,
+        "nPlain": true,
+        "hasCam": false
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F3-a 單機集：全卡 .card-text 右緣同一個 x（參差 0px）、操作欄恆 58px",
+      "ok": true,
+      "got": {
+        "txtRs": [
+          1294
+        ],
+        "actWs": [
+          58
+        ],
+        "spread": 0
+      },
+      "want": {
+        "txtRs": [
+          1294
+        ],
+        "actWs": [
+          58.0
+        ],
+        "spread": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F3-a2 點「看過」→「已看過」後右緣不動（舊碼整張卡的字右彈 10px）",
+      "ok": true,
+      "got": {
+        "clickable": true,
+        "isSeen": true,
+        "label": "已看過",
+        "txtRs": [
+          1294
+        ]
+      },
+      "want": {
+        "clickable": true,
+        "isSeen": true,
+        "label": "已看過",
+        "txtRs": [
+          1294
+        ]
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F3-b 三顆操作鈕在 58px 固定欄內都沒被裁、沒溢出、elementFromPoint 仍是自己",
+      "ok": true,
+      "got": {
+        "del": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        },
+        "timeEdit": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        },
+        "seen": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        }
+      },
+      "want": {
+        "del": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        },
+        "timeEdit": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        },
+        "seen": {
+          "clipped": false,
+          "overflowRight": false,
+          "topIsSelf": true
+        }
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-F1 真突變成立：改一條資料 → modal 與提示列兩個消費端同時變（RED），還原→綠",
+      "ok": true,
+      "got": {
+        "red": {
+          "modal": true,
+          "hint": true,
+          "frozenRed": true
+        },
+        "green": true
+      },
+      "want": {
+        "red": {
+          "modal": true,
+          "hint": true,
+          "frozenRed": true
+        },
+        "green": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-F3A 真突變成立：末欄 auto → 參差 18px（RED），固定寬 → 0（GREEN）",
+      "ok": true,
+      "got": {
+        "red": {
+          "spread": true,
+          "widths": true,
+          "actWs": [
+            28,
+            46
+          ]
+        },
+        "green": 0
+      },
+      "want": {
+        "red": {
+          "spread": true,
+          "widths": true,
+          "actWs": [
+            28.0,
+            46.0
+          ]
+        },
+        "green": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F1-c 資料表為空 → modal 與提示列各留可見錯誤文字（不是空白）",
+      "ok": true,
+      "got": {
+        "modalOpen": true,
+        "errRows": 1,
+        "errTextNonEmpty": true,
+        "notBlank": true,
+        "hintErrRows": 1,
+        "hintNotBlank": true
+      },
+      "want": {
+        "modalOpen": true,
+        "errRows": 1,
+        "errTextNonEmpty": true,
+        "notBlank": true,
+        "hintErrRows": 1,
+        "hintNotBlank": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-fixture 雙機集：每張卡都有 A/B 膠囊且帶 card-has-cam",
+      "ok": true,
+      "got": {
+        "pills": 11,
+        "hasCamClass": 11
+      },
+      "want": {
+        "pills": ">0",
+        "hasCamClass": "== pills"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-a.0 A/B 鈕點得到（elementFromPoint 最上層是它自己）",
+      "ok": true,
+      "got": {
+        "b1": {
+          "found": true,
+          "cx": 1278.6796875,
+          "cy": 241,
+          "w": 24.640625,
+          "h": 20,
+          "hit": true,
+          "hitTag": "BUTTON",
+          "hitCls": "cam-btn cam-b-btn"
+        },
+        "a3": {
+          "found": true,
+          "cx": 1249.9921875,
+          "cy": 428.171875,
+          "w": 24.734375,
+          "h": 20,
+          "hit": true,
+          "hitTag": "BUTTON",
+          "hitCls": "cam-btn cam-a-btn"
+        }
+      },
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "F2-a explicit b（第 1 卡，自己標的 B）：A/B 兩顆 tooltip 都說對",
+      "ok": true,
+      "got": {
+        "aTitle": "鏡頭 A：切到 A 鏡頭",
+        "bTitle": "鏡頭 B：目前鏡頭（已 explicit 標記）"
+      },
+      "want": {
+        "aTitle": "鏡頭 A：切到 A 鏡頭",
+        "bTitle": "鏡頭 B：目前鏡頭（已 explicit 標記）"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-a 繼承 b（第 2 卡，沿用前一張）：A/B 兩顆 tooltip 都說對",
+      "ok": true,
+      "got": {
+        "aTitle": "鏡頭 A：切到 A 鏡頭",
+        "bTitle": "鏡頭 B：目前鏡頭（沿用前一張）"
+      },
+      "want": {
+        "aTitle": "鏡頭 A：切到 A 鏡頭",
+        "bTitle": "鏡頭 B：目前鏡頭（沿用前一張）"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-a explicit a（第 3 卡，自己標的 A）：A/B 兩顆 tooltip 都說對",
+      "ok": true,
+      "got": {
+        "aTitle": "鏡頭 A：目前鏡頭（已 explicit 標記）",
+        "bTitle": "鏡頭 B：切到 B 鏡頭"
+      },
+      "want": {
+        "aTitle": "鏡頭 A：目前鏡頭（已 explicit 標記）",
+        "bTitle": "鏡頭 B：切到 B 鏡頭"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-a 繼承 a（第 4 卡，沿用前一張）：A/B 兩顆 tooltip 都說對",
+      "ok": true,
+      "got": {
+        "aTitle": "鏡頭 A：目前鏡頭（沿用前一張）",
+        "bTitle": "鏡頭 B：切到 B 鏡頭"
+      },
+      "want": {
+        "aTitle": "鏡頭 A：目前鏡頭（沿用前一張）",
+        "bTitle": "鏡頭 B：切到 B 鏡頭"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2-b 點 A/B 仍真的切鏡頭（active 高亮跟著 carry-forward 走）",
+      "ok": true,
+      "got": [
+        {
+          "a": false,
+          "b": true
+        },
+        {
+          "a": false,
+          "b": true
+        },
+        {
+          "a": true,
+          "b": false
+        },
+        {
+          "a": true,
+          "b": false
+        }
+      ],
+      "want": [
+        {
+          "a": false,
+          "b": true
+        },
+        {
+          "a": false,
+          "b": true
+        },
+        {
+          "a": true,
+          "b": false
+        },
+        {
+          "a": true,
+          "b": false
+        }
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "F3-a3 雙機集：全卡右緣同一個 x（參差 0px）、操作欄恆 58px",
+      "ok": true,
+      "got": {
+        "nReview": 1,
+        "txtRs": [
+          1230.63
+        ],
+        "actWs": [
+          58
+        ],
+        "spread": 0.0
+      },
+      "want": {
+        "nReview": ">=1",
+        "txtRs": "單一值",
+        "actWs": [
+          58.0
+        ],
+        "spread": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "F2/F3 雙機輪：無未捕捉的 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "MUT-F2 真突變成立：舊三元 → 四態說謊（RED），camBtnTitle → 說對（GREEN）",
+      "ok": true,
+      "got": {
+        "red": {
+          "a1": true,
+          "b3": true,
+          "a2": true
+        },
+        "green": true
+      },
+      "want": {
+        "red": {
+          "a1": true,
+          "b3": true,
+          "a2": true
+        },
+        "green": true
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT-F3B 真突變成立：card-has-cam 末欄 auto → 參差回來（RED），吃固定寬 → 0（GREEN）",
+      "ok": true,
+      "got": {
+        "redSpread": true,
+        "redWidths": true,
+        "green": 0.0
+      },
+      "want": {
+        "redSpread": true,
+        "redWidths": true,
+        "green": 0
+      },
+      "status": "pass"
+    }
+  ]
+}

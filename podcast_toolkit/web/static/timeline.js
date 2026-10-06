@@ -18,6 +18,14 @@ import {
   rerenderEditState,
   _lastActiveKey,
 } from "./app.js";
+import {
+  applyTimelineZoom,
+  positionPlayhead,
+  drawWaveformCore,
+  renderCardTrackCore,
+  bindCardTimeDragCore,
+  bindPlayheadScrubCore,
+} from "./timeline-core.js";
 
 // === 字幕時間軸（拖卡片邊緣改進/出時間）===
 // 整集時長映射成一條橫軸，每張字幕卡畫一塊 block；拖左/右邊緣改 start/end。
@@ -62,11 +70,18 @@ function renderCardTimeline() {
   const wrap = $("#card-timeline-wrap");
   const tl = $("#card-timeline");
   if (!wrap || !tl) return;
+  // 框選 marquee（B3c）：綁在持久的 #card-timeline 元素上（renderCardTimeline 只清 innerHTML、
+  // 不換元素），故一次綁定即可，用旗標擋每次 render 重複疊監聽。
+  if (!tl.__ptMarqueeBound) {
+    tl.__ptMarqueeBound = true;
+    bindTimelineMarquee(tl);
+  }
   const rendered =
     state.needsTranscribe || !state.cards.length ? [] : expandedCards();
   if (!rendered.length) {
     wrap.hidden = true;
     tl.innerHTML = "";
+    setCardTrackVisible(false);
     return;
   }
   wrap.hidden = false;
@@ -86,8 +101,20 @@ function renderCardTimeline() {
     block.title = `${fmtTime(r.start)} – ${fmtTime(r.end)}（${(r.end - r.start).toFixed(1)}s）\n${r.text}`;
     block.addEventListener("click", (e) => {
       if (e.target.classList.contains("tl-handle")) return;
+      // 剛結束整段平移時，滑鼠放開會補一個 click —— 這種 click 不跳播放頭（B3b）
+      if (block.__ptMoved) {
+        block.__ptMoved = false;
+        return;
+      }
       // 讀 dataset 不讀 r.start：時間改過之後這個 closure 就過期了
       $("#video").currentTime = Number(block.dataset.start);
+    });
+    // 整段平移（B3b）：拖卡塊本體（非兩端把手）水平移動整句時間，長度不變、夾在鄰句之間。
+    // 純點擊（未超過門檻）不會啟動平移、不 pushUndo、不重算 —— 交給上面的 click 跳播放頭。
+    block.addEventListener("pointerdown", (e) => {
+      if (e.target.classList.contains("tl-handle")) return; // 兩端把手自己處理
+      if (e.button != null && e.button !== 0) return;
+      startTimelineDrag(e, r, "move");
     });
     const hL = document.createElement("div");
     hL.className = "tl-handle tl-handle-l";
@@ -111,9 +138,26 @@ function renderCardTimeline() {
   ph.className = "tl-playhead";
   ph.id = "tl-playhead";
   tl.appendChild(ph);
+  // 播放頭刮動把手（B3a）：跟播放頭同位、命中區加寬到 13px 好抓（播放頭本體 2px 且
+  // pointer-events:none 抓不到）。無 .tl-playhead-grip CSS（本梯只動 JS 兩檔），
+  // 幾何用 inline style 給足。z-index 高於字幕塊 → 播放頭那 13px 帶改由刮動接管
+  // （代價：正落在播放頭下的那顆卡把手在該帶內點不到，是刻意取捨，見計畫 B3a）。
+  const grip = document.createElement("div");
+  grip.className = "tl-playhead-grip";
+  grip.id = "tl-playhead-grip";
+  grip.title = "拖曳刮動播放時間";
+  grip.style.cssText =
+    "position:absolute;top:0;bottom:0;width:13px;margin-left:-6px;z-index:6;cursor:ew-resize;background:transparent;touch-action:none;";
+  tl.appendChild(grip);
+  bindPodcastScrub(grip);
   _applyTlZoomWidth();
   updateTimelinePlayhead($("#video").currentTime);
   drawTlWaveform(); // 若波形已載入就即刻畫；否則下面背景載入回來會再畫
+  // 標題卡軌（T4）：與 #card-timeline 共用 t0/total。podcast 預設「關」（index.html 寫死
+  // hidden，對齊 D1「podcast 預設關、影片預設開」）——這裡「不」強制開啟；只有軌已開啟時
+  // （影片模式 markup 預設開、或 podcast 走查以 __ptSetCardTrackVisible 開）才跟著重畫，
+  // 維持一起縮放/對齊。renderPodcastCardTrack 內部對 track.hidden 自我防呆，關閉時為 no-op。
+  renderPodcastCardTrack();
   // 背景載波形（首次要 ffmpeg 解碼，可能 20~40s）：不 await、不擋首屏。只抓一次——
   // flag 擋住每次 render 重抓；換集會整頁重載、state 重置。轉錄前（沒卡）不抓。
   if (!state.waveform && !state._wfFetching && !state.needsTranscribe) {
@@ -124,6 +168,174 @@ function renderCardTimeline() {
   }
 }
 
+// 標題卡軌開關 + 渲染（T3 開了空容器，T4 本次接上實際內容）：
+// flag 就是 DOM 的 hidden 屬性本身（無需另開 state 布林）：關閉時 [hidden] 對應
+// display:none，完全不佔版面；#card-timeline 與波形/播放頭的量測行為不受影響。
+// podcast 預設關（index.html 該節點已寫死 hidden）；影片模式的對應軌預設開，
+// 由 video-edit-prototype.html 自己的 markup 決定，不受本函式影響。
+function setCardTrackVisible(show) {
+  const t = $("#tl-card-track");
+  if (t) t.hidden = !show;
+  if (show) renderPodcastCardTrack();
+}
+
+// 標題卡軌實際渲染（T4，docs/plans/2026-09-23-unified-timeline-core.md）：
+// 與影片模式共用 timeline-core.js 的 renderCardTrackCore/bindCardTimeDragCore，
+// 沿用 #card-timeline 已經算好的 t0/total（同一條時間軸，同一套座標系）。
+// D2：podcast 沒有 cuts，getStatus 一律回 null，不判斷「剪掉/部分剪掉」。
+// 本函式只讀 state.titleCards 畫軌，不寫任何 state、不呼叫 /api/save（純渲染）。
+// 持久化改由 B2 負責：buildSavePayload 送 title_cards、loadEpisodeState 讀回（不再是丟棄式）。
+// 標題卡目前沒有文字編輯 UI（onDblClick/renderEditingCard 不注入）。
+let _ptSelectedId = null;
+
+function renderPodcastCardTrack() {
+  const track = $("#tl-card-track");
+  const tl = $("#card-timeline");
+  if (!track || !tl || track.hidden || !tl.dataset.total) return;
+  const t0 = parseFloat(tl.dataset.t0 || "0");
+  const total = parseFloat(tl.dataset.total || "1");
+  const label = (c) => `${fmtTimeCard(c.start)} – ${fmtTimeCard(c.end)}`;
+  renderCardTrackCore({
+    track,
+    cards: state.titleCards,
+    t0,
+    total,
+    selectedId: _ptSelectedId,
+    getStatus: () => null,
+    getBadgeText: () => "卡",
+    getCardText: (c) => c.text || "",
+    getTitle: label,
+    onSelect: (id) => {
+      _ptSelectedId = id;
+      renderPodcastCardTrack();
+    },
+    bindDrag: (el, c, mode) =>
+      bindCardTimeDragCore(el, c, mode, {
+        trackEl: track,
+        t0,
+        total,
+        getTitle: label,
+        onDragEnd: () => renderPodcastCardTrack(),
+      }),
+  });
+}
+
+// 走查用：程式化選取（等同點卡片）。
+function selectTitleCard(id) {
+  _ptSelectedId = id;
+  renderPodcastCardTrack();
+}
+
+// 播放頭刮動把手綁定（B3a）：把「換算時間 / seek / 可否刮動」注入共用核心
+// bindPlayheadScrubCore。與剪除語意零耦合——只設 #video.currentTime 並更新播放頭。
+// timeFromEvent 每次都讀 tl 的 live dataset（t0/total 只在整條重建時才變、重建會重綁），
+// 座標換算與 podcast 的字幕窗一致（t0 可能非 0）。
+function bindPodcastScrub(grip) {
+  const tl = $("#card-timeline");
+  bindPlayheadScrubCore(grip, {
+    // duration 未知（無影片/尚未載入）→ 不刮動；seekable 由走查在 CDP 端先驗（Range 支援）
+    canScrub: () => {
+      const v = $("#video");
+      return !!(v && isFinite(v.duration) && v.duration > 0);
+    },
+    timeFromEvent: (e) => {
+      const rect = tl.getBoundingClientRect();
+      const t0 = Number(tl.dataset.t0) || 0;
+      const total = Number(tl.dataset.total) || 1;
+      const t = t0 + ((e.clientX - rect.left) / rect.width) * total;
+      return Math.max(t0, Math.min(t0 + total, t));
+    },
+    seek: (t) => {
+      const v = $("#video");
+      if (!v) return;
+      v.currentTime = t;
+      updateTimelinePlayhead(t); // 暫停時 timeupdate 不一定即時，主動同步播放頭幾何
+    },
+  });
+}
+
+// 框選 marquee（B3c，docs/plans/2026-09-23-unified-timeline-core.md）：
+// 在 #card-timeline 背景橫拖一個矩形，放開時把「被框到時間範圍涵蓋的字幕卡」idx 併入既有
+// state.deletions。刻意不碰 cuts、不動 proofread、零後端改動——純前端把選取換算成既有刪段語意。
+//
+// 與 B3a 刮動 / B3b 整段平移 / 端點拖曳共存的關鍵：字幕塊與端點把手的 pointerdown 都會
+// stopPropagation（startTimelineDrag），播放頭刮把手是自己的子元素——所以只在
+// `e.target === tl`（時間軸背景本身：上下各 3px 帶 + 卡與卡之間的空隙）啟動框選，
+// 三者互不搶事件。代價：框選只能從背景帶起手（人手偏窄，但 CDP 座標派發穩定；最小版取捨）。
+//
+// 選取判準採「相交」：卡的時間區間與框選區間有交集即算涵蓋（`start < hi && end > lo`），
+// 比「完全包住」更貼近「框到就選」的直覺。新增卡（key `new:*`，尚未進 _v2.srt）不納入——
+// 它的刪除語意是從 state.newCards 移除、非進 deletions，最小版不動它。
+// 合併是 union：只加不減（Set 自動去重），對齊計畫「併入既有 deletions」。
+const _MARQUEE_MIN_PX = 4; // 位移小於此值 = 視為誤點，不選取（避免背景輕點就框到整批）
+
+function bindTimelineMarquee(tl) {
+  tl.addEventListener("pointerdown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    // 只在時間軸背景起手：卡塊/把手已 stopPropagation，刮把手是子元素 target≠tl → 天然排除。
+    if (e.target !== tl) return;
+    const rect = tl.getBoundingClientRect();
+    const total = Number(tl.dataset.total) || 0;
+    const t0 = Number(tl.dataset.t0) || 0;
+    if (total <= 0) return; // 尚無時間軸資料（無卡/未載入）→ 不啟動，不假裝成功
+    e.preventDefault();
+    const x0 = e.clientX;
+    const box = document.createElement("div");
+    box.className = "tl-marquee";
+    box.id = "tl-marquee";
+    // 不動 CSS（本項只許改 app.js/timeline.js/api.js）→ 幾何與外觀走 inline style。
+    // z-index 4：蓋在波形(3)/卡塊之上、播放頭(5)之下；pointer-events:none 不吃事件。
+    box.style.cssText =
+      "position:absolute;top:0;bottom:0;z-index:4;pointer-events:none;" +
+      "background:var(--accent);opacity:0.22;border:1px solid var(--accent);box-sizing:border-box;";
+    tl.appendChild(box);
+    const pxToTime = (clientX) => {
+      const frac = (clientX - rect.left) / rect.width;
+      return Math.max(t0, Math.min(t0 + total, t0 + frac * total));
+    };
+    const paint = (clientX) => {
+      const lo = Math.min(x0, clientX) - rect.left;
+      const hi = Math.max(x0, clientX) - rect.left;
+      const L = Math.max(0, Math.min(rect.width, lo));
+      const R = Math.max(0, Math.min(rect.width, hi));
+      box.style.left = `${L}px`;
+      box.style.width = `${Math.max(0, R - L)}px`;
+    };
+    paint(x0);
+    try {
+      tl.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    const move = (ev) => paint(ev.clientX);
+    const up = (ev) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      box.remove();
+      // 位移太小 = 誤點，不選取（避免背景一點就把整批卡吞進 deletions）
+      if (Math.abs(ev.clientX - x0) < _MARQUEE_MIN_PX) return;
+      const lo = pxToTime(Math.min(x0, ev.clientX));
+      const hi = pxToTime(Math.max(x0, ev.clientX));
+      // 相交即涵蓋；排除新增卡（key new:*，刪除語意不同）
+      const keys = expandedCards()
+        .filter(
+          (r) =>
+            !String(r.key).startsWith("new:") && r.start < hi && r.end > lo,
+        )
+        .map((r) => r.key);
+      // 只有真的框到卡、且會新增至少一個尚未刪的 key 才 pushUndo + 重繪（失敗不靜默：
+      // 框到空白 → 無事發生但也無錯誤狀態，符合「什麼都沒選到」的可見結果）。
+      const added = keys.filter((k) => !state.deletions.has(k));
+      if (!added.length) return;
+      pushUndo();
+      for (const k of added) state.deletions.add(k);
+      rerenderEditState();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  });
+}
+
 // 三邊同步：影片時間 → 時間軸播放頭位置 + 高亮當前 block（縮放時自動捲到可見）
 function updateTimelinePlayhead(t) {
   const tl = $("#card-timeline");
@@ -131,19 +343,17 @@ function updateTimelinePlayhead(t) {
   if (!tl || !ph) return;
   const t0 = parseFloat(tl.dataset.t0 || "0");
   const total = parseFloat(tl.dataset.total || "1");
-  const pct = Math.max(0, Math.min(100, ((t - t0) / total) * 100));
-  ph.style.left = `${pct}%`;
-  // 縮放後（內層比視窗寬）→ 播放頭跑出可視範圍就自動捲動，維持在中間附近
-  const scroll = tl.closest(".card-timeline-scroll");
-  if (scroll && tl.offsetWidth > scroll.clientWidth + 1) {
-    const x = (pct / 100) * tl.offsetWidth;
-    if (
-      x < scroll.scrollLeft + 40 ||
-      x > scroll.scrollLeft + scroll.clientWidth - 40
-    ) {
-      scroll.scrollLeft = x - scroll.clientWidth / 2;
-    }
-  }
+  // 幾何本體（pct 計算 + 自動捲動）抽到 timeline-core.js，與影片模式共用；
+  // elGrip 讓刮動把手跟著播放頭同位移動（B3a）。
+  positionPlayhead({
+    t,
+    t0,
+    total,
+    elPh: ph,
+    elGrip: $("#tl-playhead-grip"),
+    elScroll: tl.closest(".card-timeline-scroll"),
+    elTl: tl,
+  });
   // re-render 會重建 block → 當前高亮掉了就補回（_lastActiveKey 由 timeupdate 維護）
   if (_lastActiveKey != null && !tl.querySelector(".tl-block.playing")) {
     const blk = tl.querySelector(`.tl-block[data-key="${_lastActiveKey}"]`);
@@ -181,100 +391,34 @@ function drawTlWaveform() {
   const canvas = $("#tl-waveform");
   const wf = state.waveform;
   if (!tl || !canvas || !wf || !wf.peaks || !wf.peaks.length) return;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
   const t0 = parseFloat(tl.dataset.t0 || "0");
   const total = parseFloat(tl.dataset.total || "1");
-  const cssW = tl.clientWidth;
-  const cssH = tl.clientHeight;
-  if (!(total > 0) || cssW < 2 || cssH < 2) return;
-  // 背板尺寸吃 devicePixelRatio 求銳利，但封頂避免高倍率下超出 canvas 限制而整片空白
-  const dpr = window.devicePixelRatio || 1;
-  const backW = Math.min(Math.max(1, Math.round(cssW * dpr)), TL_WAVE_MAX_PX);
-  const backH = Math.max(1, Math.round(cssH * dpr));
-  if (canvas.width !== backW) canvas.width = backW;
-  if (canvas.height !== backH) canvas.height = backH;
-  ctx.clearRect(0, 0, backW, backH);
-
-  const peaks = wf.peaks;
-  const nP = peaks.length;
-  const peakMax = wf.peak_max || 100;
-  const secPerBucket = (wf.bucket_ms || 20) / 1000;
-  // 每個背板欄位的高度：涵蓋多個 bucket → 取 max（縮小時）；不足一 bucket → 取最近（放大時，免斷點）
-  const colV = new Float32Array(backW);
-  for (let x = 0; x < backW; x++) {
-    let k0 = Math.floor((t0 + (x / backW) * total) / secPerBucket);
-    let k1 = Math.floor((t0 + ((x + 1) / backW) * total) / secPerBucket);
-    let v = 0;
-    if (k1 <= k0) {
-      const k = k0 < 0 ? 0 : k0 >= nP ? nP - 1 : k0;
-      v = peaks[k] || 0;
-    } else {
-      if (k0 < 0) k0 = 0;
-      if (k1 > nP) k1 = nP;
-      for (let k = k0; k < k1; k++) if (peaks[k] > v) v = peaks[k];
-    }
-    colV[x] = v;
-  }
-
-  // 中線鏡像的填色波形；半透明讓底下的字幕塊/高亮仍可讀
-  const mid = backH / 2;
-  const amp = backH * 0.46;
-  ctx.beginPath();
-  for (let x = 0; x < backW; x++) {
-    const y = mid - (colV[x] / peakMax) * amp;
-    if (x === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  for (let x = backW - 1; x >= 0; x--) {
-    ctx.lineTo(x, mid + (colV[x] / peakMax) * amp);
-  }
-  ctx.closePath();
   const accent =
     getComputedStyle(document.documentElement)
       .getPropertyValue("--accent")
       .trim() || "#4a9eff";
-  ctx.fillStyle = accent;
-  ctx.globalAlpha = 0.4;
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  drawSilenceGuides(ctx, wf, t0, total, backW, backH);
+  // 繪圖本體（含靜音參考帶）抽到 timeline-core.js，與影片模式共用；
+  // 顏色/門檻值仍由呼叫端各自決定，不改變原本外觀。
+  drawWaveformCore({
+    tl,
+    canvas,
+    wf,
+    t0,
+    total,
+    maxPx: TL_WAVE_MAX_PX,
+    accentColor: accent,
+    silence: {
+      zoom: state.tlZoom,
+      minZoom: TL_GUIDE_MIN_ZOOM,
+      minGapPx: TL_GUIDE_MIN_GAP_PX,
+      dimColor: "#9b9ba8", // --text-dim，刻意不用 accent（那是波形的顏色）
+    },
+  });
 }
 
 // 靜音區間的視覺參考線：只給眼睛對齊，不做任何吸附（吸附已於 2026-08 移除，見 onTimelineDragMove）。
-// 畫成一條淡帶＋兩側細邊，帶子本身就是靜音範圍、邊界就是可以下刀的位置。
 const TL_GUIDE_MIN_ZOOM = 2; // 1×（總覽）時邊界密到變雜訊，放大後才顯示
 const TL_GUIDE_MIN_GAP_PX = 5; // 兩條邊界靠太近就只畫前一條，避免糊成一片
-function drawSilenceGuides(ctx, wf, t0, total, backW, backH) {
-  const sil = wf && wf.silences;
-  if (!Array.isArray(sil) || !sil.length) return;
-  if (state.tlZoom < TL_GUIDE_MIN_ZOOM) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  const minGap = TL_GUIDE_MIN_GAP_PX * dpr;
-  const x = (t) => ((t - t0) / total) * backW;
-  const edgeW = Math.max(1, Math.round(dpr));
-
-  ctx.save();
-  let lastEdge = -Infinity;
-  for (const s of sil) {
-    if (!Array.isArray(s) || s.length < 2) continue;
-    const x0 = x(s[0]);
-    const x1 = x(s[1]);
-    if (x1 < 0 || x0 > backW) continue; // 不在可視範圍
-    if (x0 - lastEdge < minGap && x1 - lastEdge < minGap) continue;
-
-    ctx.fillStyle = "#9b9ba8"; // --text-dim，刻意不用 accent（那是波形的顏色）
-    ctx.globalAlpha = 0.08;
-    ctx.fillRect(x0, 0, Math.max(1, x1 - x0), backH);
-    ctx.globalAlpha = 0.35;
-    ctx.fillRect(x0, 0, edgeW, backH);
-    ctx.fillRect(x1 - edgeW, 0, edgeW, backH);
-    lastEdge = x1;
-  }
-  ctx.restore();
-}
 
 // === 時間軸縮放（zoom + 橫向捲動）===
 // #card-timeline 寬度 = zoom×100%（其容器 .card-timeline-scroll 提供橫向捲動）。
@@ -284,8 +428,14 @@ const TL_ZOOM_MAX = 60;
 const TL_ZOOM_STEP = 1.6; // 每按一次 ＋/− 的倍率
 
 function _applyTlZoomWidth() {
-  const tl = $("#card-timeline");
-  if (tl) tl.style.width = `${state.tlZoom * 100}%`;
+  // 縮放施加在「三軌共用容器」#tl-tracks 上（寬度＝zoom×100%），#card-timeline 與
+  // #tl-card-track 都是 width:100% 子元素 → 任一縮放倍率下自動等寬對齊（與影片模式對
+  // #vt-tracks 施加縮放同構）。#card-timeline 不再自己設 inline width，改吃 CSS 100%；
+  // 因它 = 100% × #tl-tracks 寬 = zoom×scrollWidth，最終幾何與舊版逐像素相同，
+  // 字幕塊/播放頭/波形量測零回歸。applyTimelineZoom 讀的 tl.offsetWidth（=#card-timeline）
+  // 於 applyWidth 後 reflow 即反映新寬，錨點數學不變。
+  const tracks = $("#tl-tracks");
+  if (tracks) tracks.style.width = `${state.tlZoom * 100}%`;
   const out = $("#tl-zoom-out");
   const inn = $("#tl-zoom-in");
   const fit = $("#tl-zoom-fit");
@@ -299,39 +449,43 @@ function _applyTlZoomWidth() {
 // z：目標倍率（會 clamp）。anchorClientX：縮放錨點的螢幕 X（滑鼠位置）；
 // 沒給就以視窗中央為錨。縮放後把錨點對應的時間點維持在原位，手感才穩。
 function setTlZoom(z, { anchorClientX = null } = {}) {
-  z = Math.max(TL_ZOOM_MIN, Math.min(TL_ZOOM_MAX, z));
-  if (Math.abs(z - state.tlZoom) < 1e-6) return;
   const scroll = $("#card-timeline-scroll");
   const tl = $("#card-timeline");
-  let frac = 0.5;
-  let anchorOffset = scroll ? scroll.clientWidth / 2 : 0;
-  if (scroll && tl) {
-    const w = tl.offsetWidth || scroll.clientWidth || 1;
-    anchorOffset =
-      anchorClientX != null
-        ? anchorClientX - scroll.getBoundingClientRect().left
-        : scroll.clientWidth / 2;
-    frac = (scroll.scrollLeft + anchorOffset) / w;
-  }
-  state.tlZoom = z;
-  _applyTlZoomWidth();
-  if (scroll && tl) {
-    const newW = tl.offsetWidth || scroll.clientWidth * z;
-    scroll.scrollLeft = frac * newW - anchorOffset;
-  }
+  // 夾制 + 錨點保留數學抽到 timeline-core.js，與影片模式共用；
+  // 回傳 null 代表 z 沒有實際變化，比照原本提前 return（不重畫、不寫 localStorage）。
+  const applied = applyTimelineZoom({
+    z,
+    currentZoom: state.tlZoom,
+    zoomMin: TL_ZOOM_MIN,
+    zoomMax: TL_ZOOM_MAX,
+    scroll,
+    tl,
+    anchorClientX,
+    setZoomValue: (v) => {
+      state.tlZoom = v;
+    },
+    applyWidth: _applyTlZoomWidth,
+  });
+  if (applied == null) return;
   drawTlWaveform(); // 寬度變了 → 波形背板重算重畫（只在縮放時，一次）
   try {
-    localStorage.setItem("edit.tlZoom", String(z));
+    localStorage.setItem("edit.tlZoom", String(applied));
   } catch (_) {}
 }
 
+// edge：'start' | 'end'（拖端點改進出時間）| 'move'（B3b：整段平移）。
+// 端點拖曳：e.currentTarget 是把手，block = 把手的父卡塊，立即 pushUndo + 建 readout。
+// 整段平移：e.currentTarget 就是卡塊本體，pushUndo/readout 延到「真的移動超過門檻」才做
+// （純點擊 = 只跳播放頭，不污染復原堆疊、不整條重算）。
 function startTimelineDrag(e, r, edge) {
   e.preventDefault();
   e.stopPropagation();
-  const handle = e.currentTarget;
+  const isMove = edge === "move";
+  const el = e.currentTarget; // 端點把手 or 卡塊本體
+  const block = isMove ? el : el.parentElement;
   const tl = $("#card-timeline");
   const rect = tl.getBoundingClientRect();
-  pushUndo();
+  if (!isMove) pushUndo();
   _tlDrag = {
     key: r.key,
     edge,
@@ -339,24 +493,32 @@ function startTimelineDrag(e, r, edge) {
     total: Number(tl.dataset.total) || 1,
     t0: Number(tl.dataset.t0) || 0,
     tl,
-    handle,
-    block: handle.parentElement,
+    handle: el,
+    block,
+    x0: e.clientX,
+    s0: r.start,
+    e0: r.end,
+    moved: false,
+    undoPushed: !isMove,
   };
   try {
-    handle.setPointerCapture(e.pointerId);
+    el.setPointerCapture(e.pointerId);
   } catch (_) {}
-  // 拖曳精確時間讀值：接到 body（fixed 定位，不受時間軸 overflow:hidden 裁切）
-  let readout = document.getElementById("tl-drag-readout");
-  if (!readout) {
-    readout = document.createElement("div");
-    readout.id = "tl-drag-readout";
-    readout.className = "tl-drag-readout";
-    document.body.appendChild(readout);
+  // 端點拖曳精確時間讀值：接到 body（fixed 定位，不受時間軸 overflow:hidden 裁切）。
+  // 整段平移的 readout 改在 onTimelineDragMove 第一次真移動時才建（避免純點擊也閃一下）。
+  if (!isMove) {
+    let readout = document.getElementById("tl-drag-readout");
+    if (!readout) {
+      readout = document.createElement("div");
+      readout.id = "tl-drag-readout";
+      readout.className = "tl-drag-readout";
+      document.body.appendChild(readout);
+    }
+    _tlDrag.readout = readout;
   }
-  _tlDrag.readout = readout;
-  handle.addEventListener("pointermove", onTimelineDragMove);
-  handle.addEventListener("pointerup", endTimelineDrag);
-  handle.addEventListener("pointercancel", endTimelineDrag);
+  el.addEventListener("pointermove", onTimelineDragMove);
+  el.addEventListener("pointerup", endTimelineDrag);
+  el.addEventListener("pointercancel", endTimelineDrag);
 }
 
 function onTimelineDragMove(e) {
@@ -388,6 +550,40 @@ function onTimelineDragMove(e) {
       block.classList.add("edited");
     }
   };
+  // 整段平移（B3b）：長度不變，整塊夾在鄰句之間（前句結束 ~ 後句開始），永不重疊、不換序。
+  // 與剪除語意零耦合——只改 timing（cardTimings/newCard），不碰 deletions。
+  if (edge === "move") {
+    const { x0, s0, e0 } = _tlDrag;
+    const dur = e0 - s0;
+    const lo = prev ? prev.end : t0; // 不得壓過前一句結束
+    const hi = next ? next.start : t0 + total; // 不得壓過後一句開始
+    const dt = ((e.clientX - x0) / rect.width) * total;
+    const ns = Math.max(lo, Math.min(hi - dur, s0 + dt));
+    // 移動門檻：未超過 4px 視為點擊 → 不寫時間、不 pushUndo，交給 block 的 click 跳播放頭
+    if (Math.abs(e.clientX - x0) > 4) {
+      if (!_tlDrag.undoPushed) {
+        pushUndo();
+        _tlDrag.undoPushed = true;
+      }
+      _tlDrag.moved = true;
+      block.__ptMoved = true;
+    }
+    if (!_tlDrag.moved) return;
+    writeTime(ns, ns + dur);
+    _tlSetBlockGeom(block, ns, ns + dur, t0, total);
+    // readout 延到第一次真移動才建（見 startTimelineDrag）
+    if (!_tlDrag.readout) {
+      const ro = document.createElement("div");
+      ro.id = "tl-drag-readout";
+      ro.className = "tl-drag-readout";
+      document.body.appendChild(ro);
+      _tlDrag.readout = ro;
+    }
+    _tlDrag.readout.textContent = fmtTimeCard(ns);
+    _tlDrag.readout.style.left = `${e.clientX}px`;
+    _tlDrag.readout.style.top = `${e.clientY}px`;
+    return;
+  }
   if (edge === "start") {
     // 同源觸接子卡：拖 start 同步把前一段 end 拉到同位，維持連續不留空窗
     const touch =
@@ -440,7 +636,7 @@ function onTimelineDragMove(e) {
 
 function endTimelineDrag(e) {
   if (!_tlDrag) return;
-  const { handle } = _tlDrag;
+  const { handle, edge, moved } = _tlDrag;
   try {
     handle.releasePointerCapture(e.pointerId);
   } catch (_) {}
@@ -449,8 +645,9 @@ function endTimelineDrag(e) {
   handle.removeEventListener("pointercancel", endTimelineDrag);
   if (_tlDrag.readout) _tlDrag.readout.remove();
   _tlDrag = null;
+  // 端點拖曳一律重算；整段平移只有真的移動過才重算（純點擊 = 只跳播放頭，交給 click）。
   // 全量同步：卡片時間欄 / ruler / caption / 未儲存徽章 / timeline 重建
-  rerenderEditState();
+  if (edge !== "move" || moved) rerenderEditState();
 }
 
 export {
@@ -459,6 +656,9 @@ export {
   TL_ZOOM_STEP,
   drawTlWaveform,
   renderCardTimeline,
+  renderPodcastCardTrack,
+  selectTitleCard,
+  setCardTrackVisible,
   setTlZoom,
   syncTimelineBlock,
   updateTimelinePlayhead,

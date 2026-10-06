@@ -1409,3 +1409,151 @@ def test_load_state_audio_tracks_empty_when_no_audio(tmp_episode_dir):
     state = episode_io.load_state(Episode(tmp_episode_dir))
     assert state["audio_tracks"] == []
     assert state["audio_candidates"] == []
+
+
+def test_save_state_with_cuts_drops_legacy_deletions(tmp_episode_dir, capsys):
+    """B1 單一 source of truth：cuts 非空時，同一份 yaml 不得同時留著舊 idx 版 deletions。
+    並存的後果不是「兩份都生效」而是「deletions 整份靜默失效」（assemble 只吃 cuts），
+    所以存檔時一次遷移掉，並且不准靜默 —— 真的丟東西要印得出來。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [2, 4]  # 舊格式殘留（例如 podcast 編輯器存過）
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"cuts": [[10.0, 15.0]], "cards": []}
+    )
+
+    out = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert out["cuts"] == [[10.0, 15.0]]
+    assert "deletions" not in out
+    assert "deletions" in capsys.readouterr().err  # 失敗路徑不准靜默
+
+
+def test_save_state_cuts_only_payload_still_drops_stale_deletions(tmp_episode_dir):
+    """就算這次存檔的 payload 完全沒提 deletions（影片模式只送 cuts），
+    yaml 裡既有的 deletions 一樣要被遷移掉 —— 否則「看不到、移不掉、又不生效」。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [1]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": [[1.0, 2.0]]})
+
+    assert "deletions" not in yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+
+def test_save_state_without_cuts_keeps_deletions_working(tmp_episode_dir, capsys):
+    """反向護欄：沒有 cuts 的集（純 podcast 舊流程）行為完全不變，
+    deletions 照寫照留，也不該印任何遷移訊息。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"deletions": [2, 4], "cards": []}
+    )
+    out = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert out["deletions"] == [2, 4]
+    assert "cuts" not in out
+    assert "已移除 deletions" not in capsys.readouterr().err
+
+
+def test_save_state_empty_cuts_does_not_drop_deletions(tmp_episode_dir):
+    """cuts 傳空（使用者把時間版刪段全清掉）→ 不可順手把 deletions 也吞掉。
+    只有「cuts 真的有值」才構成遷移條件。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    d = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    d["deletions"] = [3]
+    yaml_path.write_text(yaml.safe_dump(d, allow_unicode=True), encoding="utf-8")
+
+    episode_io.save_state(Episode(tmp_episode_dir), payload={"cuts": []})
+
+    out = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+    assert "cuts" not in out
+    assert out["deletions"] == [3]
+
+
+# === D2 字幕樣式：整組九鍵的寫入 round-trip（寫入→yaml→config.merge→讀回）===
+
+_STYLE_FULL = {
+    "font_name": "Noto Sans TC",
+    "font_size": 72,
+    "bold": 0,
+    "primary_colour": "&H0000FFFF",
+    "outline_colour": "&H00203040",
+    "border_style": 3,
+    "outline": 4,
+    "shadow": 0,
+    "margin_v": 140,
+}
+
+
+def _merged(tmp_episode_dir, key="subtitle_style"):
+    """存檔後照真實讀取路徑（config.merge）讀回，不是直接看 yaml。"""
+    from podcast_toolkit import config
+
+    episode = yaml.safe_load(
+        (tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8")
+    )
+    return config.merge(config.load_defaults(), episode)[key]
+
+
+def test_save_state_subtitle_style_full_roundtrip(tmp_episode_dir):
+    """九個樣式鍵都要寫得進、讀得回。只驗 font_size 的舊版會漏掉另外八個。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir), payload={"subtitle_style": dict(_STYLE_FULL)}
+    )
+    got = _merged(tmp_episode_dir)
+    for k, v in _STYLE_FULL.items():
+        assert got[k] == v, f"{k}：寫入 {v!r}，讀回 {got.get(k)!r}"
+
+
+def test_save_state_subtitle_style_accepts_hex_colour(tmp_episode_dir):
+    """原型那套 *_hex（#rrggbb）也走同一個正規化器，產出一樣的 ASS 色碼。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={"subtitle_style": {"primary_colour_hex": "#ff8800"}},
+    )
+    assert _merged(tmp_episode_dir)["primary_colour"] == "&H000088FF"
+
+
+def test_save_state_subtitle_style_drops_values_equal_to_defaults(tmp_episode_dir):
+    """等於 defaults 的鍵不留在 yaml（避免冗餘值），但讀回來仍是同一個值。"""
+    from podcast_toolkit import config
+
+    defaults = config.load_defaults()["subtitle_style"]
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={"subtitle_style": {k: defaults[k] for k in ("font_name", "bold", "outline")}},
+    )
+    raw = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "subtitle_style" not in raw, f"殘留冗餘值：{raw.get('subtitle_style')!r}"
+    got = _merged(tmp_episode_dir)
+    for k in ("font_name", "bold", "outline"):
+        assert got[k] == defaults[k]
+
+
+def test_save_state_reels_style_baseline_includes_episode_yt_style(tmp_episode_dir):
+    """Reels 的有效預設要疊上本集 YT 樣式（跟 config.merge 的四層疊加同一套）：
+    YT 已設 Noto Sans TC、Reels 送同一個字體 → Reels 不該再存一份。"""
+    episode_io.save_state(
+        Episode(tmp_episode_dir),
+        payload={
+            "subtitle_style": {"font_name": "Noto Sans TC"},
+            "subtitle_style_reels": {"font_name": "Noto Sans TC", "margin_v": 520},
+        },
+    )
+    raw = yaml.safe_load((tmp_episode_dir / "episode.yaml").read_text(encoding="utf-8"))
+    assert "font_name" not in raw["subtitle_style_reels"]
+    assert raw["subtitle_style_reels"]["margin_v"] == 520
+    assert _merged(tmp_episode_dir, "subtitle_style_reels")["font_name"] == "Noto Sans TC"
+
+
+def test_save_state_rejects_bad_style_value_without_writing(tmp_episode_dir):
+    """不合法的值要丟 ValueError（路由轉 400 中文訊息），而且寫檔前就擋下——
+    不可以半套進去，也不可以靜默忽略該鍵。"""
+    yaml_path = tmp_episode_dir / "episode.yaml"
+    before = yaml_path.read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        episode_io.save_state(
+            Episode(tmp_episode_dir),
+            payload={"subtitle_style": {"primary_colour": "red", "margin_v": 999}},
+        )
+    assert yaml_path.read_text(encoding="utf-8") == before

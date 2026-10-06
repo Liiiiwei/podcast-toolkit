@@ -1,0 +1,1195 @@
+{
+  "note": "D6 動刀前錄的渲染指紋 baseline；只存 sha256[:16] 與長度",
+  "containers": {
+    "topbar": ".topbar-center",
+    "cards": "#cards-list",
+    "camRuler": "#cam-ruler",
+    "spkRuler": "#speaker-ruler",
+    "caption": "#caption-overlay",
+    "sus": "#sus-toolbar",
+    "review": "#review-toolbar",
+    "capSize": "#caption-size",
+    "trimCtl": ".trim-controls",
+    "trimBandH": "#trim-band-head",
+    "trimBandT": "#trim-band-tail",
+    "trimHandH": "#trim-handle-head",
+    "trimHandT": "#trim-handle-tail",
+    "capStyle": "#cap-style-panel",
+    "timeBar": ".card-time-edit",
+    "capStyleVals": "(合成：面板欄位活值)"
+  },
+  "states": {
+    "S1": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "53a3728b437652c9",
+        "len": 9971
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    },
+    "S10": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "f8d6269c5cd97006",
+        "len": 13463
+      },
+      "camRuler": {
+        "sha": "da58bc798bda1817",
+        "len": 276
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "4b470023bea02157",
+        "len": 884
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    },
+    "S11": {
+      "topbar": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "df86965266efb3e5",
+        "len": 2284
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S12": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S13": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "24f090aa07eda6b2",
+        "len": 11182
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "5c08fe9f98530de6",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "f049dfd0e897917d",
+        "len": 21
+      }
+    },
+    "S14": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "17783cdb0f512fad",
+        "len": 11182
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "6bfa69e1b5c8fb3b",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "0a6ab5836307d524",
+        "len": 21
+      }
+    },
+    "S15": {
+      "topbar": {
+        "sha": "e77a052f833a7eec",
+        "len": 438
+      },
+      "cards": {
+        "sha": "2cf8c57872496002",
+        "len": 11186
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "a638f894407039d8",
+        "len": 1153
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "61e7128935e43e98",
+        "len": 21
+      }
+    },
+    "S16": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "f2def3f633aafb6c",
+        "len": 11171
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S17": {
+      "topbar": {
+        "sha": "64635cc578eadee0",
+        "len": 438
+      },
+      "cards": {
+        "sha": "6b2e9e00672531ca",
+        "len": 10009
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "779150700b3422f0",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "b9e125d2e9beecdf",
+        "len": 2947
+      },
+      "trimBandH": {
+        "sha": "388dd2eb40f06be2",
+        "len": 92
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "6fcc37c06746cd91",
+        "len": 191
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    },
+    "S2": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "9e6cc3e94e609e40",
+        "len": 9979
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "b977f2475f6d1b9e",
+        "len": 863
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    },
+    "S3": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "2eccbbb62203bab8",
+        "len": 11133
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S4": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3892f736228256d0",
+        "len": 11156
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "2659c4322524ed06",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S5": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S6": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "8e5c216f60686a07",
+        "len": 865
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S7": {
+      "topbar": {
+        "sha": "3f4d3d2cda508dae",
+        "len": 420
+      },
+      "cards": {
+        "sha": "3cc6409c24d84f2f",
+        "len": 11163
+      },
+      "camRuler": {
+        "sha": "1b1b76468fb9cb62",
+        "len": 86
+      },
+      "spkRuler": {
+        "sha": "abc05adf26b4e1b6",
+        "len": 94
+      },
+      "caption": {
+        "sha": "83cbe444411df9f1",
+        "len": 722
+      },
+      "sus": {
+        "sha": "dcce6a9c43ff4e27",
+        "len": 1935
+      },
+      "review": {
+        "sha": "13e9c8819850ae6d",
+        "len": 1619
+      },
+      "capSize": {
+        "sha": "0685acce4f207d70",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": {
+        "sha": "dcf56b8e84d97612",
+        "len": 1149
+      },
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "118f0cfa169ada4d",
+        "len": 21
+      }
+    },
+    "S8": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "db13755950eb463f",
+        "len": 13447
+      },
+      "camRuler": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "df06906cd03fcbfa",
+        "len": 722
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    },
+    "S9": {
+      "topbar": {
+        "sha": "0e08066698bbd5f2",
+        "len": 427
+      },
+      "cards": {
+        "sha": "ad7e7f0bd3917748",
+        "len": 13455
+      },
+      "camRuler": {
+        "sha": "6db174ace3f6cb37",
+        "len": 175
+      },
+      "spkRuler": {
+        "sha": "8db558db6b36065b",
+        "len": 831
+      },
+      "caption": {
+        "sha": "31fce9e1bb49a862",
+        "len": 1038
+      },
+      "sus": {
+        "sha": "a5aee5c9dcfe40db",
+        "len": 1877
+      },
+      "review": {
+        "sha": "ce9fd956f34b02e0",
+        "len": 1612
+      },
+      "capSize": {
+        "sha": "3da0a2811e5fe8da",
+        "len": 862
+      },
+      "trimCtl": {
+        "sha": "a13f9574cc8b3765",
+        "len": 2948
+      },
+      "trimBandH": {
+        "sha": "787cfc810760eb5b",
+        "len": 77
+      },
+      "trimBandT": {
+        "sha": "5a90c6be72fa3846",
+        "len": 77
+      },
+      "trimHandH": {
+        "sha": "b27dc551114e7cac",
+        "len": 188
+      },
+      "trimHandT": {
+        "sha": "5033c725f3a347c3",
+        "len": 190
+      },
+      "capStyle": {
+        "sha": "c4c662f6adc212fa",
+        "len": 2291
+      },
+      "timeBar": null,
+      "capStyleVals": {
+        "sha": "40207121204e4fb6",
+        "len": 183
+      },
+      "timeVals": {
+        "sha": "e3b0c44298fc1c14",
+        "len": 0
+      }
+    }
+  }
+}

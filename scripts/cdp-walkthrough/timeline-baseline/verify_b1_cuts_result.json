@@ -1,0 +1,342 @@
+{
+  "results": [
+    {
+      "name": "開得起來：卡片已渲染",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "來源已同步：三個 JS 都是 B1 版",
+      "ok": true,
+      "got": {
+        "core": true,
+        "api": true,
+        "app": true
+      },
+      "want": "core/api/app 皆 True",
+      "status": "pass"
+    },
+    {
+      "name": "1 舊集相容：yaml 的 deletions:[2] 仍渲染成紅卡",
+      "ok": true,
+      "got": [
+        "2"
+      ],
+      "want": [
+        "2"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "2a 卡 #4 的刪除鈕找得到",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "2b 該座標最上層就是刪除鈕（沒被疊層吃掉）",
+      "ok": true,
+      "got": {
+        "tag": "path",
+        "id": null,
+        "cls": {}
+      },
+      "want": "card-del / 其 svg 子節點",
+      "status": "pass"
+    },
+    {
+      "name": "2c 點刪除後紅卡 = {2,4}",
+      "ok": true,
+      "got": [
+        "2",
+        "4"
+      ],
+      "want": [
+        "2",
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "3a 存檔完成（按鈕回報已儲存 + yaml mtime 前進 + 無錯誤 toast）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "3b yaml 寫入時間版 cuts（磁碟軸，已減回 subtitle_offset 1.5s）",
+      "ok": true,
+      "got": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          7.35,
+          8.25
+        ]
+      ],
+      "want": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          7.35,
+          8.25
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "3c yaml 不再有 deletions（單一 source of truth）",
+      "ok": true,
+      "got": [
+        "card_fixes",
+        "cuts",
+        "date",
+        "fixes",
+        "force_break",
+        "force_join",
+        "layout_mode",
+        "main_srt",
+        "main_video",
+        "name",
+        "subtitle_offset_sec",
+        "watermark"
+      ],
+      "want": "無 deletions 鍵",
+      "status": "pass"
+    },
+    {
+      "name": "4a 重載後卡片渲染出來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "4b 重載後紅卡與存檔前相同",
+      "ok": true,
+      "got": [
+        "2",
+        "4"
+      ],
+      "want": [
+        "2",
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "4c 統計列顯示已刪 2",
+      "ok": true,
+      "got": "字幕卡 11 段 · 已刪 2 · 已修 0",
+      "want": "含「已刪 2」",
+      "status": "pass"
+    },
+    {
+      "name": "5a 帶 foreign cut 的集開得起來",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "5b 統計列露出換不回卡的剪段（看不見＝靜默生效）",
+      "ok": true,
+      "got": "字幕卡 11 段 · 已刪 2 · 已修 0 · 影片模式剪段 1 段（0.4s，本頁不可編輯）",
+      "want": "含「影片模式剪段 1 段（0.4s，本頁不可編輯）」",
+      "status": "pass"
+    },
+    {
+      "name": "5c foreign cut 沒有被擴寬成整張卡（紅卡仍是 {2,4}）",
+      "ok": true,
+      "got": [
+        "2",
+        "4"
+      ],
+      "want": [
+        "2",
+        "4"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "6a 卡 #6 的刪除鈕找得到",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "6b 紅卡變 {2,4,6}",
+      "ok": true,
+      "got": [
+        "2",
+        "4",
+        "6"
+      ],
+      "want": [
+        "2",
+        "4",
+        "6"
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "6c 第二次存檔完成（同上三訊號）",
+      "ok": true,
+      "got": true,
+      "want": true,
+      "status": "pass"
+    },
+    {
+      "name": "6d foreign cut 原樣保留，新刪的 #6 一併寫成時間段",
+      "ok": true,
+      "got": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          4.8,
+          5.2
+        ],
+        [
+          7.35,
+          8.25
+        ],
+        [
+          11.05,
+          13.05
+        ]
+      ],
+      "want": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          4.8,
+          5.2
+        ],
+        [
+          7.35,
+          8.25
+        ],
+        [
+          11.05,
+          13.05
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "6e 第二次存檔後仍無 deletions",
+      "ok": true,
+      "got": [
+        "card_fixes",
+        "cuts",
+        "date",
+        "fixes",
+        "force_break",
+        "force_join",
+        "layout_mode",
+        "main_srt",
+        "main_video",
+        "name",
+        "subtitle_offset_sec",
+        "watermark"
+      ],
+      "want": "無 deletions 鍵",
+      "status": "pass"
+    },
+    {
+      "name": "7 合成端 cut_intervals_from_cfg 算出的區間 = yaml 的 cuts",
+      "ok": true,
+      "got": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          4.8,
+          5.2
+        ],
+        [
+          7.35,
+          8.25
+        ],
+        [
+          11.05,
+          13.05
+        ]
+      ],
+      "want": [
+        [
+          2.7,
+          3.9
+        ],
+        [
+          4.8,
+          5.2
+        ],
+        [
+          7.35,
+          8.25
+        ],
+        [
+          11.05,
+          13.05
+        ]
+      ],
+      "status": "pass"
+    },
+    {
+      "name": "8 全程無 console 例外",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    }
+  ],
+  "failed": [],
+  "yaml_final": {
+    "date": 20260601,
+    "name": "時間軸基準集",
+    "main_video": "01_母帶/{name}.mp4",
+    "main_srt": "03_成品/{name}_final.srt",
+    "fixes": [],
+    "card_fixes": [],
+    "force_break": [],
+    "force_join": [],
+    "subtitle_offset_sec": 1.5,
+    "watermark": {
+      "enabled": true
+    },
+    "layout_mode": "podcast",
+    "cuts": [
+      [
+        2.7,
+        3.9
+      ],
+      [
+        4.8,
+        5.2
+      ],
+      [
+        7.35,
+        8.25
+      ],
+      [
+        11.05,
+        13.05
+      ]
+    ]
+  }
+}

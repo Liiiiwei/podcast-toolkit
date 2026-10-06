@@ -1,0 +1,724 @@
+{
+  "results": [
+    {
+      "name": "W1400.0 頁面就緒（#save-btn + showToast）",
+      "ok": true,
+      "got": "就緒",
+      "want": "就緒",
+      "status": "pass"
+    },
+    {
+      "name": "W1400.1 基線：無 toast 時 topbar 各鈕都命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.2短 warn toast（短訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.2中 warn toast（中訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.2長 warn toast（長訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.2c 邊角被壓的（若有）一律來自 ✕ 而非 toast 本體",
+      "ok": true,
+      "got": [],
+      "want": "全部 <toast-close>",
+      "status": "pass"
+    },
+    {
+      "name": "W1400.2d 邊角被壓的不含 topbar 操作列成員",
+      "ok": true,
+      "got": [],
+      "want": "不含 topbar 七顆",
+      "status": "pass"
+    },
+    {
+      "name": "W1400.3 ✕ 的 x 座標不隨訊息長短飄（容器固定寬）",
+      "ok": true,
+      "got": {
+        "三種長度量到的 ✕ x": [
+          1006
+        ]
+      },
+      "want": "單一值",
+      "status": "pass"
+    },
+    {
+      "name": "W1400.4 toast 顯示中，topbar 各鈕仍命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.5 容器貼右下角（右緣/下緣各留 16px）",
+      "ok": true,
+      "got": {
+        "rect": [
+          984,
+          1540,
+          1384,
+          1584
+        ],
+        "vw": 1400,
+        "vh": 1600
+      },
+      "want": {
+        "right": 1384,
+        "bottom": 1584
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.6 toast 本體（非 ✕ 處）的最上層不是 toast，點擊穿透到底下元素",
+      "ok": true,
+      "got": "drawer-header",
+      "want": "不是 toast",
+      "status": "pass"
+    },
+    {
+      "name": "W1400.7 error toast 顯示中也零個中心被擋",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.8 ✕ 關閉鈕存在、可及（elementFromPoint 命中自己）且有 aria-label",
+      "ok": true,
+      "got": {
+        "x": 1006,
+        "y": 1559,
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "want": {
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.9 按 ✕ 後 toast 真的消失",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "W1400.10 modal 開著時 toast 仍看得見（在視窗內、visible、不透明）",
+      "ok": true,
+      "got": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "want": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.11 modal 開著時零個可點元素的中心被 toast 擋住（含 modal 內按鈕）",
+      "ok": true,
+      "got": {
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W1400.12 無 console 錯誤",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "W900.0 頁面就緒（#save-btn + showToast）",
+      "ok": true,
+      "got": "就緒",
+      "want": "就緒",
+      "status": "pass"
+    },
+    {
+      "name": "W900.1 基線：無 toast 時 topbar 各鈕都命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.2短 warn toast（短訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": [
+          "trim-suggest-btn<toast-close>"
+        ]
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.2中 warn toast（中訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": [
+          "trim-suggest-btn<toast-close>"
+        ]
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.2長 warn toast（長訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.2c 邊角被壓的（若有）一律來自 ✕ 而非 toast 本體",
+      "ok": true,
+      "got": [
+        "trim-suggest-btn<toast-close>"
+      ],
+      "want": "全部 <toast-close>",
+      "status": "pass"
+    },
+    {
+      "name": "W900.2d 邊角被壓的不含 topbar 操作列成員",
+      "ok": true,
+      "got": [
+        "trim-suggest-btn<toast-close>"
+      ],
+      "want": "不含 topbar 七顆",
+      "status": "pass"
+    },
+    {
+      "name": "W900.3 ✕ 的 x 座標不隨訊息長短飄（容器固定寬）",
+      "ok": true,
+      "got": {
+        "三種長度量到的 ✕ x": [
+          506
+        ]
+      },
+      "want": "單一值",
+      "status": "pass"
+    },
+    {
+      "name": "W900.4 toast 顯示中，topbar 各鈕仍命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.5 容器貼右下角（右緣/下緣各留 16px）",
+      "ok": true,
+      "got": {
+        "rect": [
+          484,
+          740,
+          884,
+          784
+        ],
+        "vw": 900,
+        "vh": 800
+      },
+      "want": {
+        "right": 884,
+        "bottom": 784
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.6 toast 本體（非 ✕ 處）的最上層不是 toast，點擊穿透到底下元素",
+      "ok": true,
+      "got": "framing-summary",
+      "want": "不是 toast",
+      "status": "pass"
+    },
+    {
+      "name": "W900.7 error toast 顯示中也零個中心被擋",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": [
+          "trim-suggest-btn<toast-close>"
+        ]
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.8 ✕ 關閉鈕存在、可及（elementFromPoint 命中自己）且有 aria-label",
+      "ok": true,
+      "got": {
+        "x": 506,
+        "y": 759,
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "want": {
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.9 按 ✕ 後 toast 真的消失",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "W900.10 modal 開著時 toast 仍看得見（在視窗內、visible、不透明）",
+      "ok": true,
+      "got": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "want": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.11 modal 開著時零個可點元素的中心被 toast 擋住（含 modal 內按鈕）",
+      "ok": true,
+      "got": {
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W900.12 無 console 錯誤",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "W620.0 頁面就緒（#save-btn + showToast）",
+      "ok": true,
+      "got": "就緒",
+      "want": "就緒",
+      "status": "pass"
+    },
+    {
+      "name": "W620.1 基線：無 toast 時 topbar 各鈕都命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.2短 warn toast（短訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.2中 warn toast（中訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.2長 warn toast（長訊息）顯示中，零個可點元素的中心被擋住",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": [
+          "btn<toast-close>"
+        ]
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.2c 邊角被壓的（若有）一律來自 ✕ 而非 toast 本體",
+      "ok": true,
+      "got": [
+        "btn<toast-close>"
+      ],
+      "want": "全部 <toast-close>",
+      "status": "pass"
+    },
+    {
+      "name": "W620.2d 邊角被壓的不含 topbar 操作列成員",
+      "ok": true,
+      "got": [
+        "btn<toast-close>"
+      ],
+      "want": "不含 topbar 七顆",
+      "status": "pass"
+    },
+    {
+      "name": "W620.3 ✕ 的 x 座標不隨訊息長短飄（容器固定寬）",
+      "ok": true,
+      "got": {
+        "三種長度量到的 ✕ x": [
+          226
+        ]
+      },
+      "want": "單一值",
+      "status": "pass"
+    },
+    {
+      "name": "W620.4 toast 顯示中，topbar 各鈕仍命中自己",
+      "ok": true,
+      "got": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "want": {
+        "#back-to-dash-btn": "self",
+        "#glossary-btn": "self",
+        "#settings-btn": "self",
+        "#shortcuts-btn": "self",
+        "#cam-btn": "self",
+        "#output-menu-btn": "self",
+        "#save-btn": "self"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.5 容器貼右下角（右緣/下緣各留 16px）",
+      "ok": true,
+      "got": {
+        "rect": [
+          204,
+          740,
+          604,
+          784
+        ],
+        "vw": 620,
+        "vh": 800
+      },
+      "want": {
+        "right": 604,
+        "bottom": 784
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.6 toast 本體（非 ✕ 處）的最上層不是 toast，點擊穿透到底下元素",
+      "ok": true,
+      "got": "card",
+      "want": "不是 toast",
+      "status": "pass"
+    },
+    {
+      "name": "W620.7 error toast 顯示中也零個中心被擋",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.8 ✕ 關閉鈕存在、可及（elementFromPoint 命中自己）且有 aria-label",
+      "ok": true,
+      "got": {
+        "x": 226,
+        "y": 759,
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "want": {
+        "hitsSelf": true,
+        "label": "關閉通知"
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.9 按 ✕ 後 toast 真的消失",
+      "ok": true,
+      "got": 0,
+      "want": 0,
+      "status": "pass"
+    },
+    {
+      "name": "W620.10 modal 開著時 toast 仍看得見（在視窗內、visible、不透明）",
+      "ok": true,
+      "got": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "want": {
+        "onScreen": true,
+        "visibility": "visible",
+        "opacity": 1
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.11 modal 開著時零個可點元素的中心被 toast 擋住（含 modal 內按鈕）",
+      "ok": true,
+      "got": {
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "W620.12 無 console 錯誤",
+      "ok": true,
+      "got": [],
+      "want": [],
+      "status": "pass"
+    },
+    {
+      "name": "A1 warn toast 約 4 秒後自動消失",
+      "ok": true,
+      "got": {
+        "顯示時": 1,
+        "5 秒後": 0
+      },
+      "want": {
+        "顯示時": 1,
+        "5 秒後": 0
+      },
+      "status": "pass"
+    },
+    {
+      "name": "D1 dashboard toast 顯示中零個可點元素的中心被擋",
+      "ok": true,
+      "got": {
+        "toasts": 1,
+        "中心被擋": [],
+        "邊角被壓": []
+      },
+      "want": {
+        "toasts": 1,
+        "中心被擋": []
+      },
+      "status": "pass"
+    },
+    {
+      "name": "MUT 突變四段＋還原都如預期（A/B/C 各自可紅、ALL 重現原缺陷、GREEN 全綠）",
+      "ok": true,
+      "got": {
+        "A": [
+          "drawer-toggle<toast-close>"
+        ],
+        "B": [
+          "drawer-toggle<toast-body>"
+        ],
+        "C ✕壓topbar": true,
+        "ALL": [
+          "cam-btn<toast-body>",
+          "output-menu-btn<toast-body>",
+          "cancel-btn<toast-body>",
+          "save-btn<toast-body>"
+        ],
+        "GREEN": []
+      },
+      "want": {
+        "A": "含 drawer-toggle",
+        "B": "非空",
+        "C ✕壓topbar": true,
+        "ALL": "含 save-btn",
+        "GREEN": []
+      },
+      "status": "pass"
+    }
+  ],
+  "failed": []
+}

@@ -6,27 +6,38 @@
   /* 容器可能以 popover 開啟（進 top-layer 疊在 <dialog> 上）——
      先把 UA 的 popover 預設（inset:0 置中、border、canvas 底色）整組蓋掉 */
   position: fixed;
-  inset: auto 16px auto auto;
-  top: 16px;
+  /* 右下角：右上會蓋住 topbar 右側操作列（實測擋掉「完成並儲存」「取消」「輸出」
+     「鏡頭」，窄螢幕 topbar 換行後連左側七顆一起擋）。右下相對之下只壓到抽屜鈕／
+     卡片這類內容區，且 .toast 本體不吃點擊（見下），點擊不會被吞。 */
+  inset: auto 16px 16px auto;
   margin: 0;
   padding: 0;
   border: 0;
   background: transparent;
   overflow: visible;
-  width: auto;
   height: auto;
-  max-width: min(400px, calc(100vw - 32px));
+  /* 固定寬（不隨訊息長短縮放）：toast 寬度會變的話，靠右的 ✕ 關閉鈕 x 座標就跟著飄，
+     短訊息時會飄到右下角壓住 #drawer-toggle。固定寬＋✕ 靠左 ＝ ✕ 位置可預測地遠離右緣。 */
+  width: min(400px, calc(100vw - 32px));
   z-index: 10000; /* 非 popover fallback 時仍壓過頁面內容 */
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   gap: var(--space-sm, 8px);
-  pointer-events: none; /* 容器不擋點擊，個別 toast 自己開 */
+  pointer-events: none; /* 容器與 toast 本體都不擋點擊，只有 ✕ 關閉鈕自己開 */
 }
 
 #toast-container .toast {
-  pointer-events: auto;
-  cursor: pointer;
+  /* 本體刻意不吃點擊：toast 是覆蓋層，任何固定位置都會壓到某些可點元素
+     （實測右上／topbar 下緣／右下／底部置中四個位置都有受害者），
+     壓到就吞點擊＝「按了沒反應」的靜默失敗。改成只有 ✕ 關閉鈕吃點擊。 */
+  pointer-events: none;
+  display: flex;
+  /* row-reverse：✕ 排在左端（DOM 順序仍是訊息在前，螢幕閱讀器先讀訊息）。
+     ✕ 是整個 toast 唯一吃點擊的部位，擺左端才離右下角的固定控制項最遠。 */
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  gap: 10px;
   box-sizing: border-box;
   max-width: 100%;
   padding: 10px 14px;
@@ -37,11 +48,38 @@
   font-family: var(--font-sans, sans-serif);
   font-size: var(--text-md, 14px);
   line-height: 1.6;
-  white-space: pre-line; /* 部分訊息帶 \n（如「部分對齊失敗」逐條列出） */
-  overflow-wrap: anywhere;
   transition:
     opacity var(--duration-base, 180ms) var(--ease-out, ease),
     transform var(--duration-base, 180ms) var(--ease-out, ease);
+}
+#toast-container .toast-msg {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-line; /* 部分訊息帶 \n（如「部分對齊失敗」逐條列出） */
+  overflow-wrap: anywhere;
+}
+#toast-container .toast-close {
+  pointer-events: auto; /* 整個 toast 只有這裡可點 */
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin: -2px 0 0 -4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.2;
+  opacity: 0.75;
+}
+#toast-container .toast-close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+#toast-container .toast-close:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+  opacity: 1;
 }
 .toast-error {
   color: var(--danger, #ff6b6b);
@@ -64,12 +102,12 @@
     var(--surface-raised, #1f1f24);
 }
 
-/* 進場：右滑淡入；離場：淡出上飄（.toast-leave 由 toast.js 加，transitionend 後移除節點） */
+/* 進場：右滑淡入；離場：淡出下沉（配右下角位置；.toast-leave 由 toast.js 加，transitionend 後移除節點） */
 #toast-container .toast-enter {
   opacity: 0;
   transform: translateX(24px);
 }
 #toast-container .toast-leave {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(8px);
 }

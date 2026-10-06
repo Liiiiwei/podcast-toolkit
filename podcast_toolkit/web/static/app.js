@@ -5,13 +5,77 @@ import {
   TL_ZOOM_STEP,
   drawTlWaveform,
   renderCardTimeline,
+  renderPodcastCardTrack,
+  selectTitleCard,
+  setCardTrackVisible,
   setTlZoom,
   syncTimelineBlock,
   updateTimelinePlayhead,
 } from "./timeline.js";
 
+// 字幕樣式 ASS → CSS 的單一換算來源（與影片模式共用，見 timeline-core.js「字幕樣式」段）
+import {
+  alignShift,
+  buildSubtitleCss,
+  cutsToCardSelection,
+  padAndMergeCuts,
+  subtitleAlignmentBucket,
+} from "./timeline-core.js";
+
 // 後端傳輸層（同為循環 import，規則見 api.js 檔頭）
-import { apiGetEpisode, buildSavePayload, postSave } from "./api.js";
+import {
+  apiGetEpisode,
+  buildSavePayload,
+  cutFromDiskTime,
+  postSave,
+} from "./api.js";
+
+// 快捷鍵清單的單一資料來源：modal 總覽與 ⏱ 工具列提示列都從這裡渲染
+// （這兩處原本各抄一份，已經漂移過——詳見 shortcuts.js 檔頭）
+import { renderShortcutsModal, timeToolbarHintHtml } from "./shortcuts.js";
+
+// 渲染層（循環 import：render.js 也會匯入本檔的 state／$ 等共用符號，
+// TDZ 規則見該檔頭註解）
+import {
+  CAP_STYLE_FIELDS,
+  activeCardAt,
+  activeSubtitleStyle,
+  applyCaptionStyle,
+  buildEffectiveCameraMap,
+  camBtnTitle,
+  captionPreviewStyle,
+  cardNeedsReview,
+  computeEffectiveCamera,
+  computeEffectiveSpeaker,
+  placeCaptionOverlay,
+  renderCamRuler,
+  renderCaption,
+  renderCaptionSizeControl,
+  renderCaptionStyleControls,
+  renderCardSkeletons,
+  renderReviewToolbar,
+  renderSpeakerRuler,
+  renderSusToolbar,
+  renderTopbar,
+  renderTrimControls,
+  renderVersionLabel,
+  reviewReasonLabel,
+  setCaptionStyleError,
+  speakerLabel,
+} from "./render.js";
+
+// ⏱ 時間編輯工具列子系統（循環 import：本檔提供它 state／setCardTime 等，
+// 規則見 timeedit.js 檔頭）
+import {
+  _teLoopOn,
+  _timeEditCtl,
+  buildTimeToolbar,
+  cardTimeTarget,
+  newCardTimeTarget,
+  resetTimeEdit,
+  toggleTimeEdit,
+  toggleTimeLoop,
+} from "./timeedit.js";
 
 // 編輯狀態：全部存在這裡，存檔時一次 POST。
 export const state = {
@@ -35,6 +99,13 @@ export const state = {
   // 旋轉拉正：per cam 度數（綁源攝影機，YT/Reels 共用）；正值順時針，搭配 crop 把黑角裁掉
   rotate: { a: 0, b: 0 },
   deletions: new Set(),
+  // 換不回卡 key 的時間版刪段（影片模式在句中／跨停頓剪的段）。podcast UI 不編輯它，
+  // 但必須原樣 round-trip 回 episode.yaml，並在統計列露出來——否則它就是
+  // 「看不到、移不掉、卻會生效」的幽靈刪段（B1 要根治的正是這個）。
+  foreignCuts: [],
+  // episode.yaml 的 cut_pad（每側延伸秒數）。預覽跳段與批刪秒數都吃它，
+  // 才會跟 assemble 出的成品同一條界線；唯讀，前端不寫回。
+  cutPad: 0,
   susChecked: new Set(), // 紅卡批次刪除的 checkbox 勾選集合（card.idx）
   reviewFilter: false, // 「只看待複查卡」篩選開關（needs_review / suspicious_pause）
   reviewSeen: new Set(), // 已人工複查過的待複查卡（card.idx）；session 內、不寫檔、不進 undo、換集即清
@@ -60,6 +131,14 @@ export const state = {
   // 疊在 expandedCards 衍生時間最外層；存檔寫進 _v2.srt。切句會清掉該卡的覆寫。
   cardTimings: new Map(),
   tlZoom: 1, // 字幕時間軸縮放倍率（1 = 適合畫面寬；>1 = 放大攤開 + 橫向捲動）
+  // 標題卡軌（T4→B2，docs/plans/2026-09-23-unified-timeline-core.md）：
+  //   B2 起真存檔——buildSavePayload 送 title_cards（純文字卡只帶 id/start/end/text，
+  //   後端補 tpl 預設），loadEpisodeState 從 data.title_cards 讀回。
+  //   時間逐字往返、不走 toDiskTime；plan_io 定位卡的 scale/x/y/tpl 載入時原樣保留、存檔原樣透傳。
+  titleCards: [],
+  // 版面模式（B4）：後端 layout_mode（"podcast" | "video"）。控標題卡軌在 podcast 正常 UI 顯不顯。
+  // podcast → 隱藏標題卡軌；video → 顯示。透過既有 setCardTrackVisible 這唯一控制點切換，不另造機制。
+  layoutMode: "podcast",
   waveform: null, // 時間軸波形資料 {peaks, silences, duration,...}；後端 /api/waveform 算好，背景載入
   typoDict: [], // [{wrong, right, note}]
   files: [], // [{path, size, transcribable, previewable}]
@@ -125,7 +204,7 @@ function _baseCrop() {
 function _bCrop() {
   return state.activeVersion === "yt" ? state.cropYtB : state.cropReelsB;
 }
-function getActiveCrop() {
+export function getActiveCrop() {
   // 編 B 時：有 override 就用 override；沒就 fallback 用 base（顯示用，不會寫回）
   if (getActiveCropCam() === "b") return _bCrop() || _baseCrop();
   return _baseCrop();
@@ -218,6 +297,11 @@ function applyEditSnapshot(snap) {
 // 不抑制的話按住 3 秒（約 30 次連發）就把 UNDO_MAX=100 的堆疊洗掉三成，
 // 而且一次 ⌘Z 只退 0.1s —— 使用者得按幾十次才回得去。
 let _undoCoalesce = false;
+// ⏱ 工具列的長按連發要算一次編輯，但 ESM 的 import 是唯讀繫結 —— timeedit.js
+// 不能跨檔對這個 let 賦值，所以開這支 setter（語意與原本的直接賦值相同）。
+export function setUndoCoalesce(on) {
+  _undoCoalesce = on === true;
+}
 export function pushUndo() {
   if (_undoCoalesce) return;
   state.undoStack.push(snapshotEditState());
@@ -227,7 +311,7 @@ export function pushUndo() {
 
 // 切句 / 合併會重算該卡各段時間（allocate_split_times），舊的手動時間覆寫失效 →
 // 清掉這張原卡的 int key 與所有 "idx:part" composite key。
-function clearCardTimings(idx) {
+export function clearCardTimings(idx) {
   state.cardTimings.delete(idx);
   const prefix = `${idx}:`;
   for (const k of [...state.cardTimings.keys()]) {
@@ -362,11 +446,17 @@ document.addEventListener("keydown", (e) => {
     jumpToPrevReview();
   } else if (key === "?") {
     e.preventDefault();
-    showModal("shortcuts-modal");
+    openShortcuts();
   }
 });
 
 export const $ = (sel) => document.querySelector(sel);
+
+// 開快捷鍵總覽：先由 shortcuts.js 把清單渲染進 <dl>，再開 modal
+function openShortcuts() {
+  renderShortcutsModal();
+  showModal("shortcuts-modal");
+}
 
 // 秒 → "m:ss.d"（trim 拖把 tooltip 用，0.1s 精度跟 trim 值一致）
 function fmtTimeD(sec) {
@@ -385,17 +475,6 @@ export function fmtTimeCard(sec) {
   const m = Math.floor(a / 60);
   const s = a - m * 60;
   return `${neg ? "-" : ""}${m}:${s < 10 ? "0" : ""}${s.toFixed(2)}`;
-}
-
-// "12.34" / "1:23.45" / "01:23" → 秒；解析不出來回 null（呼叫端負責維持原值）
-function parseTimeCard(str) {
-  const raw = String(str == null ? "" : str).trim();
-  if (!raw) return null;
-  const m = raw.match(/^(-)?(?:(\d+):)?(\d+(?:\.\d+)?)$/);
-  if (!m) return null;
-  const sec = (m[2] ? parseInt(m[2], 10) * 60 : 0) + parseFloat(m[3]);
-  if (!isFinite(sec)) return null;
-  return m[1] ? -sec : sec;
 }
 
 // 秒 → "mm:ss"；ref（通常是總長）≥ 1 小時時改用 "h:mm:ss"。
@@ -428,7 +507,7 @@ function hasUnsavedChanges() {
   return unsavedCount() > 0;
 }
 
-function unsavedCount() {
+export function unsavedCount() {
   return (
     state.deletions.size +
     state.textOverrides.size +
@@ -448,142 +527,9 @@ function unsavedCount() {
   );
 }
 
-function renderTopbar() {
-  $("#title").textContent = state.name;
-  const badge = $("#unsaved-badge");
-  if (state.needsTranscribe) {
-    $("#status").textContent = "尚未轉字幕";
-    $("#save-btn").disabled = true;
-    if (badge) badge.classList.add("hidden");
-    return;
-  }
-  const total = state.cards.length;
-  const deleted = state.deletions.size;
-  const dirty = state.textOverrides.size;
-  const split = state.cardSplits.size;
-  const merged = state.cardMerges.size;
-  const head = state.headTrimSec || 0;
-  const tail = state.tailTrimSec || 0;
-  let line = `字幕卡 ${total} 段 · 已刪 ${deleted} · 已修 ${dirty}`;
-  if (split > 0) line += ` · 已切 ${split}`;
-  if (merged > 0) line += ` · 已併 ${merged}`;
-  if (head > 0 || tail > 0) {
-    line += ` · 頭 ${head.toFixed(1)}s / 尾 ${tail.toFixed(1)}s`;
-  }
-  $("#status").textContent = line;
-  const allDeleted = total > 0 && deleted === total;
-  $("#save-btn").disabled = allDeleted;
 
-  // 未儲存 chip：有變更才亮，數字顯示總變動筆數
-  if (badge) {
-    const n = unsavedCount();
-    if (n > 0) {
-      badge.classList.remove("hidden");
-      $("#unsaved-count").textContent = String(n);
-    } else {
-      badge.classList.add("hidden");
-    }
-  }
-}
 
-function renderTrimControls() {
-  const head = state.headTrimSec || 0;
-  const tail = state.tailTrimSec || 0;
-  $("#trim-head-val").textContent = `${head.toFixed(1)}s`;
-  $("#trim-tail-val").textContent = `${tail.toFixed(1)}s`;
-  $("#trim-head-btn").classList.toggle("active", head > 0);
-  $("#trim-tail-btn").classList.toggle("active", tail > 0);
 
-  const dur = $("#video").duration || 0;
-  const headBand = $("#trim-band-head");
-  const tailBand = $("#trim-band-tail");
-  if (dur > 0 && head > 0) {
-    headBand.style.width = `${Math.min(100, (head / dur) * 100).toFixed(2)}%`;
-    headBand.style.display = "block";
-  } else {
-    headBand.style.display = "none";
-  }
-  if (dur > 0 && tail > 0) {
-    tailBand.style.width = `${Math.min(100, (tail / dur) * 100).toFixed(2)}%`;
-    tailBand.style.display = "block";
-  } else {
-    tailBand.style.display = "none";
-  }
-
-  // 兩個拖把：影片載入後才能定位（沒 duration 時藏起來，避免拖到沒意義的位置）
-  const headHandle = $("#trim-handle-head");
-  const tailHandle = $("#trim-handle-tail");
-  if (dur > 0) {
-    const headPct = Math.min(100, Math.max(0, (head / dur) * 100));
-    const tailPct = Math.min(100, Math.max(0, ((dur - tail) / dur) * 100));
-    headHandle.style.left = `${headPct.toFixed(2)}%`;
-    tailHandle.style.left = `${tailPct.toFixed(2)}%`;
-    headHandle.style.display = "block";
-    tailHandle.style.display = "block";
-  } else {
-    headHandle.style.display = "none";
-    tailHandle.style.display = "none";
-  }
-
-  const hint = $("#trim-hint");
-  if (head > 0 || tail > 0) {
-    const remain = Math.max(0, dur - head - tail);
-    hint.textContent = `保留 ${remain.toFixed(1)}s / 總長 ${dur.toFixed(1)}s`;
-  } else {
-    hint.textContent = "把播放游標停在要切的位置再按設頭 / 設尾，或直接拖把";
-  }
-}
-
-// 算 caption preview 字體 px：對齊 ffmpeg ASS 輸出（font_size / output_height）
-// 預覽字幕應該 ∝ 影片框實際高度 × crop 高度比 × (字級 / 輸出高度)
-// 這樣不管瀏覽器 zoom 多少、視窗縮多大，字幕跟畫面的比例都跟最終輸出一致
-function computeCaptionFontPx() {
-  const wrap = document.querySelector(".video-wrap");
-  if (!wrap) return null;
-  const wrapHeight = wrap.clientHeight;
-  if (!wrapHeight) return null;
-  const isReels = state.activeVersion === "reels";
-  const style = isReels
-    ? state.subtitleStyleReels || state.subtitleStyleYt
-    : state.subtitleStyleYt;
-  const res = isReels ? state.outputResReels : state.outputResYt;
-  // 缺資料就維持原 clamp 預設（loadEpisodeState 完成前）
-  if (!style || !res) return null;
-  const fontSize = Number(style.font_size);
-  const outH = Number(res.h);
-  if (!fontSize || !outH) return null;
-  const c = getActiveCrop();
-  // 有 crop：用 crop 區的渲染高（= wrap高 × crop.height）
-  // 無 crop：用整個 wrap 高（= 整個源 frame，YT 直接代表 1080 輸出）
-  const baseHeight = c ? wrapHeight * c.height : wrapHeight;
-  return baseHeight * (fontSize / outH);
-}
-
-function applyCaptionFontSize() {
-  const overlay = document.querySelector("#caption-overlay");
-  if (!overlay) return;
-  const px = computeCaptionFontPx();
-  overlay.style.fontSize = px ? `${px.toFixed(2)}px` : "";
-}
-
-// === 字幕字級調整（crop 比例旁）：依目前分頁調 YT / Reels 各自的 subtitle_style.font_size ===
-// 直接改 state 裡的 style 物件 + 即時預覽；存檔時 buildSavePayload 帶上、save_state 寫進 yaml。
-function activeSubtitleStyle() {
-  return state.activeVersion === "reels"
-    ? state.subtitleStyleReels
-    : state.subtitleStyleYt;
-}
-function renderCaptionSizeControl() {
-  const valEl = $("#cap-size-val");
-  if (!valEl) return;
-  const style = activeSubtitleStyle();
-  const fs = style && Number(style.font_size);
-  valEl.textContent = fs ? String(Math.round(fs)) : "—";
-  const dec = $("#cap-size-dec");
-  const inc = $("#cap-size-inc");
-  if (dec) dec.disabled = !fs;
-  if (inc) inc.disabled = !fs;
-}
 function nudgeCaptionSize(delta) {
   const style = activeSubtitleStyle();
   const cur = style && Number(style.font_size);
@@ -592,13 +538,107 @@ function nudgeCaptionSize(delta) {
   if (next === cur) return;
   style.font_size = next;
   state.outputDirty = true; // 進「未儲存」計數，按「完成並儲存」才落地
-  applyCaptionFontSize();
+  applyCaptionStyle();
   renderCaptionSizeControl();
   renderTopbar();
 }
 function setupCaptionSize() {
   $("#cap-size-dec")?.addEventListener("click", () => nudgeCaptionSize(-2));
   $("#cap-size-inc")?.addEventListener("click", () => nudgeCaptionSize(2));
+}
+
+// === 字幕樣式面板（字級 ± 鈕旁）：接出後端 build_style_string 讀得到的其餘 8 個參數 ===
+// 改的是 activeSubtitleStyle() 回傳的那個物件 —— 與字級 ± 鈕同一份 state，不另開第二套；
+// 存檔時 buildSavePayload 整包帶上，save_state 跟 defaults 比對後只寫真正調過的鍵。
+
+function hexToAssColour(hex, prevAss) {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(String(hex ?? "").trim());
+  if (!m) return null;
+  const rgb = m[1].toUpperCase();
+  const prev = /^&[Hh]([0-9a-fA-F]{8})$/.exec(String(prevAss ?? "").trim());
+  const aa = prev ? prev[1].slice(0, 2).toUpperCase() : "00";
+  return `&H${aa}${rgb.slice(4, 6)}${rgb.slice(2, 4)}${rgb.slice(0, 2)}`;
+}
+
+
+// success 態：寫回 state → 即時預覽（renderCropInfo 內含 applyCaptionStyle）→ 進未儲存計數。
+// 非法輸入一律 return，絕不把 NaN / 空字串靜默寫成 0。
+function commitCaptionStyleField(f, el) {
+  const style = activeSubtitleStyle();
+  if (!style) return;
+  let next;
+  if (f.kind === "bool") {
+    next = el.checked ? 1 : 0;
+  } else if (f.kind === "colour") {
+    next = hexToAssColour(el.value, style[f.key]);
+    if (next == null) {
+      setCaptionStyleError(`${f.label}：顏色格式不對，這次改動沒有套用`, el);
+      return;
+    }
+  } else if (f.kind === "text") {
+    next = String(el.value || "").trim();
+    if (!next) {
+      setCaptionStyleError(`${f.label}不能留空，這次改動沒有套用`, el);
+      return;
+    }
+  } else {
+    // num / select：validity 一次擋掉 badInput（打了非數字）與超出 min/max
+    if (String(el.value).trim() === "" || !el.validity.valid) {
+      setCaptionStyleError(`${f.label}：數值不合法，這次改動沒有套用`, el);
+      return;
+    }
+    next = Number(el.value);
+  }
+  setCaptionStyleError("");
+  if (style[f.key] === next) return;
+  style[f.key] = next;
+  state.outputDirty = true; // 按「完成並儲存」才寫進 episode.yaml
+  renderCropInfo(); // alignment / margin_v 會動落點，順帶重套 applyCaptionStyle
+  renderCaptionSizeControl();
+  renderTopbar();
+}
+
+function toggleCaptionStylePanel(open) {
+  const panel = $("#cap-style-panel");
+  const btn = $("#cap-style-btn");
+  if (!panel || !btn) return;
+  const next = open ?? panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !next);
+  btn.setAttribute("aria-expanded", next ? "true" : "false");
+  if (next) renderCaptionStyleControls();
+}
+
+function setupCaptionStyle() {
+  const panel = $("#cap-style-panel");
+  const btn = $("#cap-style-btn");
+  if (!panel || !btn) return;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleCaptionStylePanel();
+  });
+  $("#cap-style-close")?.addEventListener("click", () =>
+    toggleCaptionStylePanel(false),
+  );
+  for (const f of CAP_STYLE_FIELDS) {
+    const el = document.getElementById(f.id);
+    if (!el) continue;
+    // colour 拖曳中連發 input（要即時預覽）；其餘等 change（失焦／Enter）才 commit，
+    // 免得字體名打到一半（空字串）就被判非法、或每個按鍵都算一次未儲存改動
+    const evt = f.kind === "colour" ? "input" : "change";
+    el.addEventListener(evt, () => commitCaptionStyleField(f, el));
+  }
+  // 面板內的按鍵不外流：document 層的工作流快捷鍵（Space / ↑↓ / [ ]）對 select
+  // 沒有讓位判斷，不攔的話在面板裡按方向鍵會順便動到字幕卡。
+  panel.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      toggleCaptionStylePanel(false);
+      btn.focus();
+    }
+    e.stopPropagation();
+  });
+  // 點面板外面就收起來（面板本身的點擊要擋住，否則一點就關）
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", () => toggleCaptionStylePanel(false));
 }
 
 // 旋轉預覽：對 cam A (#video) / cam B (#video-camb) 各自套 CSS rotate，對齊 ffmpeg
@@ -614,16 +654,23 @@ function applyRotationPreview() {
   if (vb) vb.style.transform = b ? `rotate(${b}deg)` : "";
 }
 
+
 function renderCropInfo() {
   applyRotationPreview();
   const c = getActiveCrop();
   const overlay = $("#caption-overlay");
-  // Reels 字幕走畫面正中央（對齊 subtitle_style_reels.alignment=10/SSA mid-center）
-  // margin_v 正值=從中心向下偏移（output px），預覽要同步換算成裁切框內比例
-  const isReels = state.activeVersion === "reels";
-  const reelsMarginV = Number(state.subtitleStyleReels?.margin_v ?? 0);
-  const reelsOutH = Number(state.outputResReels?.h ?? 1920) || 1920;
-  const reelsMarginFrac = reelsMarginV / reelsOutH;
+  // 字幕垂直落點一律看 subtitle_style.alignment（SSA v3：6=頂、10=正中、其餘=底），
+  // 與最終燒錄用的同一個欄位 —— 以前這裡寫死「Reels 置中、YT 置底」，
+  // 改了 yaml 也不會反映在預覽上。margin_v 同樣是 output px，換算成裁切框內比例。
+  const capStyle = captionPreviewStyle();
+  const capBucket = subtitleAlignmentBucket(capStyle?.alignment);
+  const capOutH =
+    Number(
+      (state.activeVersion === "reels"
+        ? state.outputResReels?.h
+        : state.outputResYt?.h) ?? 0,
+    ) || (state.activeVersion === "reels" ? 1920 : 1080);
+  const capMarginFrac = Number(capStyle?.margin_v ?? 0) / capOutH;
   // 只有雙機集才顯示鏡頭徽章；單機集 cam B 一直沒值就略過徽章
   const hasCamB = !!(state.cameras && state.cameras.b);
   let camBadge = "";
@@ -641,16 +688,8 @@ function renderCropInfo() {
     // 字幕回到整個影片區
     overlay.style.left = "";
     overlay.style.right = "";
-    if (isReels) {
-      overlay.style.bottom = "";
-      overlay.style.top = `${(50 + reelsMarginFrac * 100).toFixed(2)}%`;
-      overlay.style.transform = "translateY(-50%)";
-    } else {
-      overlay.style.top = "";
-      overlay.style.transform = "";
-      overlay.style.bottom = "";
-    }
-    applyCaptionFontSize();
+    placeCaptionOverlay(overlay, capBucket, 0, 1, capMarginFrac);
+    applyCaptionStyle();
     return;
   }
   const ratio = getActiveCropRatio() ? `${getActiveCropRatio()}` : "自訂";
@@ -667,67 +706,13 @@ function renderCropInfo() {
   const padX = 0.06;
   overlay.style.left = `${((c.x + c.width * padX) * 100).toFixed(2)}%`;
   overlay.style.right = `${((1 - c.x - c.width + c.width * padX) * 100).toFixed(2)}%`;
-  if (isReels) {
-    // Reels：放在裁切框垂直中央 + margin_v 換算成裁切框內比例向下偏移
-    // 注意：libass 燒在最終 output frame 上，margin_v 是 output px；
-    // 預覽裁切框 = output frame，故偏移量 = margin_v/output_h × c.height
-    const cy = (c.y + c.height * (0.5 + reelsMarginFrac)) * 100;
-    overlay.style.bottom = "";
-    overlay.style.top = `${cy.toFixed(2)}%`;
-    overlay.style.transform = "translateY(-50%)";
-  } else {
-    // YT：距框底 8% 裁切高度
-    const padBottom = 0.08;
-    overlay.style.top = "";
-    overlay.style.transform = "";
-    overlay.style.bottom = `${((1 - c.y - c.height + c.height * padBottom) * 100).toFixed(2)}%`;
-  }
+  placeCaptionOverlay(overlay, capBucket, c.y, c.height, capMarginFrac);
   // 字幕大小對齊 ffmpeg ASS 實際輸出（font_size / output_height × 渲染高）
-  applyCaptionFontSize();
+  applyCaptionStyle();
 }
 
-// 回傳 expandedCards() 中包住 t 的那筆 — 切過的卡會在這裡命中對應 sub-card，
-// 預覽/highlight/cam-B 切換都靠這個吃 composite key 與切後時間。
-// tight-pack 模式下 sub-cards 尾段沒分到字幕（trailing silence），
-// 若 t 落在原 cue 範圍內但沒命中 sub-card → 回傳該 cue 的最後一張 sub-card，
-// 避免 highlight 在原 cue 中段突然消失，看起來「對不上 / 亂跳」。
-function activeCardAt(t) {
-  const exp = expandedCards();
-  for (const r of exp) {
-    if (t >= r.start && t < r.end) return r;
-  }
-  // fallback：t 落在某個原 cue 的尾段空窗（partDur 之和 < 原 cue dur）→ 找最後一張 sub-card
-  for (let i = exp.length - 1; i >= 0; i--) {
-    const r = exp[i];
-    if (r.partIdx == null) continue;
-    if (t >= r.c.start && t < r.c.end) return r;
-  }
-  return null;
-}
 
-// 有講者標（分軌 mics 或 Breeze speakers.json）→ 預覽走雙行那條路（renderCaption 用）
-function showsTwoLineCaption() {
-  return (
-    (state.mics && Object.keys(state.mics).length > 0) || !!state.hasSpeakerTags
-  );
-}
 
-// 分軌版：拿出 t 當下所有 active 卡（可能不只一張：兩人同時講話 → 兩張不同 speaker 的卡同時在跑）。
-// 單軌集 / 沒重疊 → 回 [activeCardAt] 退化結果，給 renderCaption 統一邏輯用。
-// 只認「時間真的重疊」，不做延長上一句人為製造重疊的前處理——Breeze 相鄰卡 gap
-// 幾乎恆為 0，人為延長會讓每次換講者都疊（分開講≠同時講，使用者裁決）。
-function activeCardsAt(t) {
-  const exp = expandedCards();
-  const hits = exp.filter((r) => t >= r.start && t < r.end);
-  if (hits.length) return hits;
-  // fallback 同 activeCardAt：尾段空窗找最後一張 sub-card
-  for (let i = exp.length - 1; i >= 0; i--) {
-    const r = exp[i];
-    if (r.partIdx == null) continue;
-    if (t >= r.c.start && t < r.c.end) return [r];
-  }
-  return [];
-}
 
 // Enter 切完／Backspace 合併完之後 re-render，把 caret 移到指定 card / sub-card 的指定 offset
 // dataIdx：未切卡傳 int c.idx；sub-card 傳 "<idx>:<part>" 字串
@@ -958,13 +943,13 @@ export function expandedCards() {
 
 // 取一張卡實際生效的時間（含時間覆寫）。必須跟 expandedCards 的整卡封套讀同一個來源，
 // 否則時間軸拖過的卡在 ⏱ 工具列會讀到舊值、按了也像沒反應。
-function getEffectiveCardTime(c) {
+export function getEffectiveCardTime(c) {
   const ov = state.cardTimings.get(c.idx);
   return ov ? { start: ov.start, end: ov.end } : { start: c.start, end: c.end };
 }
 
 // 設一張卡的時間（夾範圍 + 四捨五入到 0.01s）；回到原值 → 移除覆寫
-function setCardTime(c, start, end) {
+export function setCardTime(c, start, end) {
   start = Math.max(0, Math.round(start * 100) / 100);
   end = Math.max(start + 0.1, Math.round(end * 100) / 100);
   const sameAsOrig =
@@ -1030,401 +1015,6 @@ function reorderCardTo(dragIdx, targetIdx, before) {
   renderTopbar();
 }
 
-// 時間微調的「目標」抽象：既有卡走 cardTimings（與時間軸拖拉同一份），新卡直接改自身 start/end。
-// target = { domKey, get()->{start,end}, set(s,e), reset|null, isDirty()->bool }
-function cardTimeTarget(c) {
-  return {
-    domKey: String(c.idx),
-    get: () => getEffectiveCardTime(c),
-    set: (s, e) => setCardTime(c, s, e),
-    reset: () => {
-      if (!state.cardTimings.has(c.idx)) return;
-      pushUndo();
-      // 整卡「還原」連子卡的釘死時間一起清（否則封套回原位、子卡還停在舊處）
-      clearCardTimings(c.idx);
-    },
-    isDirty: () => state.cardTimings.has(c.idx),
-  };
-}
-function newCardTimeTarget(nc) {
-  return {
-    domKey: `new:${nc.tempId}`,
-    get: () => ({ start: nc.start, end: nc.end }),
-    set: (s, e) => {
-      s = Math.max(0, Math.round(s * 100) / 100);
-      e = Math.max(s + 0.1, Math.round(e * 100) / 100);
-      if (Math.abs(nc.start - s) < 0.005 && Math.abs(nc.end - e) < 0.005)
-        return;
-      pushUndo();
-      nc.start = s;
-      nc.end = e;
-    },
-    reset: null,
-    isDirty: () => false,
-  };
-}
-
-// 目前展開的 ⏱ 工具列控制器 { target, repaint }。給鍵盤微調（onTimeNudgeKey）用；
-// 工具列關掉 / 整列重繪換卡時會被覆寫或清成 null。
-let _timeEditCtl = null;
-
-// === E1 循環試聽 ===
-// 工具列開啟期間把播放圈在「起點 −0.3s ～ 訖點 ＋0.3s」。邊界每圈從 _timeEditCtl.target
-// 重讀生效值（既有卡走 getEffectiveCardTime、新卡讀 nc 自身），所以打字／±鈕／方向鍵／
-// ⇤⇥／[ ]／時間軸拖同卡邊緣改值後，下一圈自然生效 —— 不另存循環邊界 state。
-// listener 只在工具列開啟期間掛在 #video 上；關工具列（Esc／再點 ⏱／換集）即拆，全域無殘留。
-const TIME_LOOP_PAD = 0.3;
-let _teLoopOn = false; // 循環開關（toggle 鈕／P 鍵可停續；工具列關閉時恆為 false）
-let _teLoopAttached = false; // timeupdate listener 是否掛著（開工具列期間恆掛）
-function onTimeLoopTick() {
-  // 工具列已關卻還在跑（某個關閉路徑漏拆時的自癒）→ 拆 listener 收尾
-  if (!_timeEditCtl || state.timeEditKey === null) {
-    stopTimeLoop(false);
-    return;
-  }
-  const v = $("#video");
-  // 暫停中不拉回：讓「暫停 → 拖到目標點 → ⇤⇥／[ ] 打點」的工作流可以自由移動游標
-  if (!_teLoopOn || v.paused) return;
-  const t = _timeEditCtl.target.get();
-  if (v.currentTime > t.end + TIME_LOOP_PAD) {
-    v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
-  }
-}
-function startTimeLoop() {
-  if (!_timeEditCtl) return;
-  if (!_teLoopAttached) {
-    $("#video").addEventListener("timeupdate", onTimeLoopTick);
-    _teLoopAttached = true;
-  }
-  _teLoopOn = true;
-  _auditionEnd = null; // 循環接管播放守門，取消單次試聽（P 鍵此時也不會再進 auditionCard）
-  const v = $("#video");
-  const t = _timeEditCtl.target.get();
-  v.currentTime = Math.max(0, t.start - TIME_LOOP_PAD);
-  v.play().catch(() => {});
-  syncTimeLoopBtn();
-}
-function stopTimeLoop(pauseVideo = true) {
-  if (_teLoopAttached) {
-    $("#video").removeEventListener("timeupdate", onTimeLoopTick);
-    _teLoopAttached = false;
-  }
-  // 循環驅動中的播放才順手暫停（「影片停在當下即可」）；使用者自己在放的不動
-  if (_teLoopOn && pauseVideo) $("#video").pause();
-  _teLoopOn = false;
-  syncTimeLoopBtn();
-}
-// toggle 鈕／P 鍵：停 = 只關循環判定並暫停（listener 留著，工具列還開）；續 = 從頭起圈
-function toggleTimeLoop() {
-  if (_teLoopOn) {
-    _teLoopOn = false;
-    $("#video").pause();
-    syncTimeLoopBtn();
-  } else {
-    startTimeLoop();
-  }
-}
-// 把工具列裡的「循環」鈕同步到 _teLoopOn（鈕可能不在 DOM，例如整列重繪的瞬間）
-function syncTimeLoopBtn() {
-  const b = document.querySelector(".card-time-edit .te-loop");
-  if (!b) return;
-  b.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
-  b.classList.toggle("active", _teLoopOn);
-}
-
-// E3：本卡（生效起訖 t）與前後相鄰既有卡的重疊警示文字。維持「刻意不夾制」——
-// 重疊照樣放行，只在工具列給可見訊號。相鄰以生效 start 排序（expandedCards 已排序），
-// 只看緊鄰前一張與後一張；已刪卡不進最終輸出、新卡沒有 #N 可指，都不比。
-// 顯示格式一位小數（X.Xs）：低於 0.05s 的重疊顯示會變 0.0s，視為貼齊不警示
-// （字幕卡半數首尾貼齊，0 距離是常態不是問題）。
-function timeOverlapWarnings(domKey, t) {
-  const rows = expandedCards().filter(
-    (r) => r.c && String(r.key) !== domKey && !state.deletions.has(r.key),
-  );
-  let prev = null;
-  let next = null;
-  for (const r of rows) {
-    if (r.start <= t.start) prev = r;
-    else {
-      next = r;
-      break;
-    }
-  }
-  const out = [];
-  if (prev) {
-    const ov = Math.min(prev.end, t.end) - Math.max(prev.start, t.start);
-    if (ov >= 0.05) out.push(`⚠ 與 #${prev.c.idx} 重疊 ${ov.toFixed(1)}s`);
-  }
-  if (next) {
-    const ov = Math.min(t.end, next.end) - Math.max(t.start, next.start);
-    if (ov >= 0.05) out.push(`⚠ 與 #${next.c.idx} 重疊 ${ov.toFixed(1)}s`);
-  }
-  return out;
-}
-
-// 時間微調工具列。按鈕只做 targeted DOM 更新，不整列 renderCards、不跳 scroll；
-// undo / 整列重繪時靠 renderCards 的注入點還原。
-function buildTimeToolbar(target) {
-  const bar = document.createElement("div");
-  bar.className = "card-time-edit";
-  bar.addEventListener("click", (e) => e.stopPropagation());
-  const val = document.createElement("span");
-  val.className = "te-val";
-  // E3：重疊警示（時長旁的紅字，repaint 時即時增減）
-  const warn = document.createElement("span");
-  warn.className = "te-overlap";
-  warn.hidden = true;
-  const inS = mkTimeInput("起點時間（可打 12.34 或 1:23.45）");
-  const inE = mkTimeInput("終點時間（可打 12.34 或 1:23.45）");
-  const repaint = () => {
-    const t = target.get();
-    inS.value = fmtTimeCard(t.start);
-    inE.value = fmtTimeCard(t.end);
-    val.textContent = `${(t.end - t.start).toFixed(2)}s`;
-    const msgs = timeOverlapWarnings(target.domKey, t);
-    warn.textContent = msgs.join("｜");
-    warn.hidden = msgs.length === 0;
-    const card = document.querySelector(
-      `#cards-list .card[data-idx="${target.domKey}"]`,
-    );
-    if (card) {
-      card.classList.toggle("time-dirty", target.isDirty());
-      const cv = card.querySelector(".card-time-val");
-      // 卡號那行是整列渲染時貼的，這裡只換時間兩行 —— 整段覆寫會把 #34 洗掉，
-      // 一開工具列卡號就消失、關掉才回來（既有缺陷，順手在同一行修掉）。
-      if (cv) {
-        const head = cv.textContent.split("\n")[0];
-        const keep = head.startsWith("#") ? `${head}\n` : "";
-        cv.textContent = `${keep}${fmtTimeCard(t.start)}\n${fmtTimeCard(t.end)}`;
-      }
-    }
-    // 時間軸也要跟上：卡面數字、時間軸區塊、播放器 seek 是同一份狀態的三個讀者，
-    // 少同步一個就會出現「卡片說 3:10.6、點時間軸卻跳到 3:10.1」這種對不起來的畫面。
-    syncTimelineBlock(target.domKey, t.start, t.end, target.isDirty());
-    renderCaption();
-    renderTopbar();
-  };
-  const act = (fn) => () => {
-    fn();
-    repaint();
-  };
-  const nudge = (ds, de) => {
-    const t = target.get();
-    target.set(t.start + ds, t.end + de);
-  };
-  // 打字送出：解析失敗（或空白）就退回目前值，不動資料
-  const commit = (inp, which) => () => {
-    const v = parseTimeCard(inp.value);
-    const t = target.get();
-    if (v === null) {
-      repaint();
-      return;
-    }
-    if (which === "start") target.set(v, t.end);
-    else target.set(t.start, v);
-    repaint();
-  };
-  for (const [inp, which] of [
-    [inS, "start"],
-    [inE, "end"],
-  ]) {
-    const done = commit(inp, which);
-    inp.addEventListener("blur", done);
-    inp.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        done();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        repaint();
-        inp.blur();
-      }
-    });
-  }
-  const mk = (label, title, fn) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "te-btn";
-    b.textContent = label;
-    b.title = title;
-    b.addEventListener("click", act(fn));
-    return b;
-  };
-  const lab = (t) => {
-    const s = document.createElement("span");
-    s.className = "te-lab";
-    s.textContent = t;
-    return s;
-  };
-  // E1：循環試聽 toggle。開工具列時 toggleTimeEdit 會自動 startTimeLoop，
-  // 這裡建鈕時帶當下狀態（整列重繪重建工具列時循環不中斷，鈕的亮暗要跟上）。
-  const loopBtn = mk("循環", "循環試聽這張卡（P 鍵同效）", () =>
-    toggleTimeLoop(),
-  );
-  loopBtn.classList.add("te-loop");
-  loopBtn.setAttribute("aria-pressed", _teLoopOn ? "true" : "false");
-  loopBtn.classList.toggle("active", _teLoopOn);
-  bar.append(
-    lab("起"),
-    inS,
-    mk("⇤游標", "把起點設到目前播放位置", () => {
-      const t = target.get();
-      target.set($("#video").currentTime, t.end);
-    }),
-    mk("−", "起點 −0.1s（←）", () => nudge(-0.1, 0)),
-    mk("＋", "起點 +0.1s（→）", () => nudge(0.1, 0)),
-    lab("訖"),
-    inE,
-    mk("游標⇥", "把終點設到目前播放位置", () => {
-      const t = target.get();
-      target.set(t.start, $("#video").currentTime);
-    }),
-    mk("−", "終點 −0.1s（⌥←）", () => nudge(0, -0.1)),
-    mk("＋", "終點 +0.1s（⌥→）", () => nudge(0, 0.1)),
-    loopBtn,
-    val,
-    warn,
-  );
-  if (target.reset) {
-    bar.append(mk("還原", "清除這張卡的時間微調", () => target.reset()));
-  }
-  // E2：快捷鍵提示列 —— 微調快捷鍵早就存在但介面零提示等於不存在，讓它們現形
-  const hints = document.createElement("div");
-  hints.className = "te-hints";
-  hints.innerHTML =
-    "<kbd>←→</kbd> 起點｜<kbd>⌥←→</kbd> 訖點｜<kbd>Shift</kbd> ×5｜<kbd>⌘</kbd> ×10｜" +
-    "<kbd>[</kbd> <kbd>]</kbd> 設為播放位置｜<kbd>P</kbd> 循環";
-  bar.append(hints);
-  repaint();
-  _timeEditCtl = { target, repaint };
-  return bar;
-}
-
-function mkTimeInput(title) {
-  const inp = document.createElement("input");
-  inp.type = "text";
-  inp.className = "te-input";
-  inp.title = title;
-  inp.inputMode = "decimal";
-  inp.spellcheck = false;
-  inp.autocomplete = "off";
-  return inp;
-}
-
-// 鍵盤微調：←/→ 0.1s、Shift 0.5s、⌘ 1.0s（沿用 trim 拖把既有慣例）；加 ⌥ 改調終點。
-// 獨立於「編輯工作流快捷鍵」那個 listener —— 那個開頭就 return 掉所有修飾鍵，
-// 而這裡的 ⌘/⌥ 組合正是主力用法。
-const TIME_NUDGE_STEPS = { plain: 0.1, shift: 0.5, meta: 1.0 };
-document.addEventListener("keydown", onTimeNudgeKey);
-function onTimeNudgeKey(e) {
-  if (!_timeEditCtl || state.timeEditKey === null) return;
-  const isArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
-  const isBracket = e.key === "[" || e.key === "]";
-  if (!isArrow && !isBracket && e.key !== "Escape") return;
-  if (e.ctrlKey) return;
-  // [ ] 打點與 Esc 關工具列都是無修飾鍵語意（⌘[ 這類瀏覽器組合不搶）
-  if (!isArrow && (e.metaKey || e.altKey || e.shiftKey)) return;
-  const t = e.target;
-  // 焦點在輸入框／字幕本文時讓出原生游標移動
-  if (
-    t &&
-    (t.tagName === "INPUT" ||
-      t.tagName === "TEXTAREA" ||
-      t.isContentEditable === true)
-  ) {
-    return;
-  }
-  // 焦點在自己就吃 ←/→ 的控制項（片頭/片尾裁切拖把 role=slider）時整個讓開。
-  // 這是 document 層的監聽，不讓開的話一次按鍵會同時改裁切點和字卡時間 —— 使用者
-  // 以為在微調片頭，字幕卡的時間也被偷偷改掉了。
-  if (t && t.closest && t.closest('[role="slider"]')) return;
-  if (document.querySelector("dialog[open]")) return;
-  // 工具列已不在畫面上（卡被刪 / 整列重繪沒重建）→ 別對看不見的東西改時間
-  if (
-    !document.querySelector(
-      `#cards-list .card[data-idx="${state.timeEditKey}"] .card-time-edit`,
-    )
-  ) {
-    return;
-  }
-  if (e.key === "Escape") {
-    // E1：Esc 關工具列（循環一併停止）。輸入框內的 Esc 到不了這裡（上面焦點守衛讓開，
-    // 由輸入框自己還原值＋blur）—— 所以是「第一下還原輸入、第二下關工具列」。
-    e.preventDefault();
-    closeTimeEdit();
-    return;
-  }
-  e.preventDefault();
-  if (isBracket) {
-    // E2：單鍵打點 —— [ 設起點、] 設訖點＝目前播放位置（與 ⇤/⇥ 鈕同路徑同效）
-    const cur = _timeEditCtl.target.get();
-    const now = $("#video").currentTime;
-    if (e.key === "[") _timeEditCtl.target.set(now, cur.end);
-    else _timeEditCtl.target.set(cur.start, now);
-    _timeEditCtl.repaint();
-    return;
-  }
-  const step = e.metaKey
-    ? TIME_NUDGE_STEPS.meta
-    : e.shiftKey
-      ? TIME_NUDGE_STEPS.shift
-      : TIME_NUDGE_STEPS.plain;
-  const d = e.key === "ArrowLeft" ? -step : step;
-  const cur = _timeEditCtl.target.get();
-  // 長按連發整串算一次編輯：⌘Z 一下就回到按下去之前
-  _undoCoalesce = e.repeat === true;
-  try {
-    if (e.altKey) _timeEditCtl.target.set(cur.start, cur.end + d);
-    else _timeEditCtl.target.set(cur.start + d, cur.end);
-  } finally {
-    _undoCoalesce = false;
-  }
-  _timeEditCtl.repaint();
-}
-
-// 開 / 關某卡的時間微調工具列（一次只開一張）
-function toggleTimeEdit(target, cardEl) {
-  if (state.timeEditKey !== null && state.timeEditKey !== target.domKey) {
-    const prev = document.querySelector(
-      `#cards-list .card[data-idx="${state.timeEditKey}"]`,
-    );
-    if (prev) {
-      const bar = prev.querySelector(".card-time-edit");
-      if (bar) bar.remove();
-      prev.classList.remove("editing-time");
-    }
-  }
-  const existing = cardEl.querySelector(".card-time-edit");
-  if (existing) {
-    existing.remove();
-    cardEl.classList.remove("editing-time");
-    state.timeEditKey = null;
-    _timeEditCtl = null;
-    stopTimeLoop(); // E1：再點 ⏱ 關工具列 → 停循環
-  } else {
-    cardEl.appendChild(buildTimeToolbar(target));
-    cardEl.classList.add("editing-time");
-    state.timeEditKey = target.domKey;
-    startTimeLoop(); // E1：開工具列（含切到別卡）即自動循環試聽該卡區間
-  }
-}
-
-// Esc（或任何程式路徑）直接關掉目前開著的時間工具列；循環一併停止
-function closeTimeEdit() {
-  if (state.timeEditKey === null) return;
-  const card = document.querySelector(
-    `#cards-list .card[data-idx="${state.timeEditKey}"]`,
-  );
-  if (card) {
-    const bar = card.querySelector(".card-time-edit");
-    if (bar) bar.remove();
-    card.classList.remove("editing-time");
-  }
-  state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop();
-}
-
 // 渲染一張「新增字卡」列（自包，不碰既有卡的 sus / split / cam 邏輯）
 function renderNewCardRow(r, list) {
   const nc = r.newCard;
@@ -1482,8 +1072,7 @@ function renderNewCardRow(r, list) {
     state.newCards = state.newCards.filter((x) => x.tempId !== nc.tempId);
     if (state.timeEditKey === `new:${nc.tempId}`) {
       state.timeEditKey = null;
-      _timeEditCtl = null;
-      stopTimeLoop(); // E1：刪掉正在編輯的新卡 → 停循環
+      resetTimeEdit(); // E1：刪掉正在編輯的新卡 → 停循環
     }
     renderCards();
     renderTopbar();
@@ -1502,236 +1091,20 @@ function renderNewCardRow(r, list) {
   list.appendChild(div);
 }
 
-// 算這張卡實際生效的 speaker：speakers sidecar 是每張卡都有明確值
-// （由 srt_merge 從 N 路 mic SRT merge 出來），不需要 carry-forward。
-// 沒值 = 單軌集或 sidecar 缺漏 → 回 null，UI 隱藏 speaker tag / ruler。
-// 切過的卡：sub-card 都繼承原卡的 speaker（切句不會切換講者）。
-function computeEffectiveSpeaker(key) {
-  if (!state.speakersMapping || state.speakersMapping.size === 0) return null;
-  // sub-card key 是 "<parentIdx>:<partIdx>"；speaker sidecar 用 parent int key
-  const parentIdx =
-    typeof key === "string" && key.includes(":")
-      ? Number(key.split(":", 1)[0])
-      : Number(key);
-  const v = state.speakersMapping.get(parentIdx);
-  return typeof v === "string" && v.length > 0 ? v : null;
-}
 
-// 講者顯示標籤：用數字 1/2/3，避免跟 A/B 鏡頭混淆。
-// 內部 key 仍是 a/b/c（speakers.json、CSS 顏色 class speaker-a/b/c 都不動），只改「看到的字」。
-// a→1 b→2 c→3 d→4…；非單字母 key 退回原樣大寫。
-function speakerLabel(sp) {
-  if (!sp) return "";
-  return /^[a-z]$/.test(sp) ? String(sp.charCodeAt(0) - 96) : sp.toUpperCase();
-}
 
-// 算這張卡實際生效的鏡頭：往前找最近一張 explicit 標過的卡，沒有就回 "a"
-// 注意：carry-forward 是依「展開後」的順序，不是 idx 大小（idx 不一定連續、
-// 而且切過的卡會 carry 到自己的後續 sub-card）。
-// 一次 O(n) carry-forward 把整列每張卡的「有效鏡頭」算進一張 Map，給整列共用。
-// 語意等同舊版 computeEffectiveCamera 的「往前找最近一筆 explicit a/b、找不到當 a」：
-// 順掃時維持 cur，遇 explicit 就更新，否則沿用 → 任一卡的 cur 即為其有效鏡頭。
-// 取代逐卡各自 O(n) 回掃（整列渲染原本是 O(n²)）。
-function buildEffectiveCameraMap(rendered) {
-  const map = new Map();
-  let cur = "a";
-  for (const r of rendered) {
-    const v = state.camerasMapping.get(r.key);
-    if (v === "a" || v === "b") cur = v;
-    map.set(r.key, cur);
-  }
-  return map;
-}
 
-// 單卡查詢（event-driven 的零星呼叫用，例如 timeupdate 疊 cam B overlay）。
-// 熱路徑（整列渲染／ruler）請改用 buildEffectiveCameraMap 一次算好再查，勿逐卡呼叫此函式。
-function computeEffectiveCamera(key) {
-  return buildEffectiveCameraMap(expandedCards()).get(key) ?? "a";
-}
 
-// 整集 A/B 分布 ruler：依 expandedCards + carry-forward 染色，按時長比例算寬度
-// 沒 cam B 時整條藏掉；hover 段落看時間範圍
-function renderCamRuler() {
-  const ruler = $("#cam-ruler");
-  if (!ruler) return;
-  const hasCamB = !!(state.cameras && state.cameras.b);
-  if (!hasCamB || !state.cards.length) {
-    ruler.hidden = true;
-    ruler.innerHTML = "";
-    return;
-  }
-  const all = expandedCards();
-  // 有效鏡頭沿用「含已刪卡」的全列 carry-forward（與舊版 computeEffectiveCamera 一致），
-  // 一次算好；ruler 本身只畫未刪段。
-  const camMap = buildEffectiveCameraMap(all);
-  const rendered = all.filter((r) => !state.deletions.has(r.key));
-  if (!rendered.length) {
-    ruler.hidden = true;
-    ruler.innerHTML = "";
-    return;
-  }
-  const t0 = rendered[0].start;
-  const t1 = rendered[rendered.length - 1].end;
-  const total = Math.max(t1 - t0, 0.001);
-  // 合併連續同色段：避免一張卡一塊 DOM，幾百張卡也只剩個位數段
-  const segs = [];
-  let curCam = null;
-  let curStart = t0;
-  let curEnd = t0;
-  for (const r of rendered) {
-    const cam = camMap.get(r.key) ?? "a";
-    if (cam === curCam) {
-      curEnd = r.end;
-    } else {
-      if (curCam) segs.push({ cam: curCam, start: curStart, end: curEnd });
-      curCam = cam;
-      curStart = r.start;
-      curEnd = r.end;
-    }
-  }
-  if (curCam) segs.push({ cam: curCam, start: curStart, end: curEnd });
-  ruler.innerHTML = "";
-  for (const s of segs) {
-    const seg = document.createElement("div");
-    seg.className = `cam-ruler-seg cam-ruler-${s.cam}`;
-    const w = ((s.end - s.start) / total) * 100;
-    seg.style.width = `${w}%`;
-    seg.title = `${s.cam.toUpperCase()} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
-    seg.addEventListener("click", () => {
-      $("#video").currentTime = s.start;
-    });
-    ruler.appendChild(seg);
-  }
-  ruler.hidden = false;
-}
 
 // === 字幕時間軸 ===
 // 整塊已抽到 ./timeline.js（Phase 3）。出口見該檔尾端的 export block。
 
-// 分軌集講者分布 ruler：同 cam-ruler，但用 speakers sidecar 染色（每 speaker 一色）
-// 跟 cam ruler 的差異：speaker 沒 carry-forward；沒掛 speaker 的段不畫（避免被誤解成「預設講者」）
-function renderSpeakerRuler() {
-  const ruler = $("#speaker-ruler");
-  if (!ruler) return;
-  const showSpeakers =
-    (state.mics && Object.keys(state.mics).length > 0) || state.hasSpeakerTags;
-  if (!showSpeakers || !state.cards.length) {
-    ruler.hidden = true;
-    ruler.innerHTML = "";
-    return;
-  }
-  const rendered = expandedCards().filter((r) => !state.deletions.has(r.key));
-  if (!rendered.length) {
-    ruler.hidden = true;
-    ruler.innerHTML = "";
-    return;
-  }
-  const t0 = rendered[0].start;
-  const t1 = rendered[rendered.length - 1].end;
-  const total = Math.max(t1 - t0, 0.001);
-  // 合併連續同 speaker 段；沒 speaker 的段（sidecar 缺漏）以 null 段保留位、用 .speaker-ruler-gap 染灰
-  const segs = [];
-  let curSp = "__init__";
-  let curStart = t0;
-  let curEnd = t0;
-  for (const r of rendered) {
-    const sp = computeEffectiveSpeaker(r.key);
-    if (sp === curSp) {
-      curEnd = r.end;
-    } else {
-      if (curSp !== "__init__") {
-        segs.push({ sp: curSp, start: curStart, end: curEnd });
-      }
-      curSp = sp;
-      curStart = r.start;
-      curEnd = r.end;
-    }
-  }
-  if (curSp !== "__init__")
-    segs.push({ sp: curSp, start: curStart, end: curEnd });
-  ruler.innerHTML = "";
-  for (const s of segs) {
-    const seg = document.createElement("div");
-    seg.className = s.sp
-      ? `speaker-ruler-seg speaker-${s.sp}`
-      : "speaker-ruler-seg speaker-ruler-gap";
-    const w = ((s.end - s.start) / total) * 100;
-    seg.style.width = `${w}%`;
-    const label = s.sp ? `講者 ${speakerLabel(s.sp)}` : "（無 speaker）";
-    seg.title = `${label} ｜ ${fmtTime(s.start)} – ${fmtTime(s.end)}（${(s.end - s.start).toFixed(1)}s）`;
-    seg.addEventListener("click", () => {
-      $("#video").currentTime = s.start;
-    });
-    ruler.appendChild(seg);
-  }
-  ruler.hidden = false;
-}
 
-function renderCaption() {
-  const overlay = $("#caption-overlay");
-  const t = $("#video").currentTime;
-  // 有講者標（分軌 mics 或 Breeze speakers.json）→ 找所有 active 卡分行
-  //   （兩人同時講話 → 上下兩行 + speaker 著色；分講者切卡的集多半每刻單卡 = 單行帶著色）
-  // 純單軌無講者 → 退回單張卡的純文字（舊行為）
-  const showTwoLine = showsTwoLineCaption();
-  if (!showTwoLine) {
-    const r = activeCardAt(t);
-    if (!r || state.deletions.has(r.key)) {
-      overlay.textContent = "";
-      overlay.classList.remove("multi-speaker");
-      return;
-    }
-    overlay.textContent = r.text;
-    overlay.classList.remove("multi-speaker");
-    return;
-  }
-  const rows = activeCardsAt(t).filter((r) => !state.deletions.has(r.key));
-  if (rows.length === 0) {
-    overlay.textContent = "";
-    overlay.classList.remove("multi-speaker");
-    return;
-  }
-  // 陣列順序 = 畫面由上到下：先開始的排上面（新來的從下排進場、舊的往上讓），
-  // 同時開始才比講者 key 當 tie-break。與後端 dual_line.layout 的排序鍵
-  // (start, speaker, i) 一致，否則預覽與成品的上下兩排會相反。
-  rows.sort((a, b) => {
-    if (a.start !== b.start) return a.start - b.start;
-    const sa = computeEffectiveSpeaker(a.key) || "";
-    const sb = computeEffectiveSpeaker(b.key) || "";
-    return sa.localeCompare(sb);
-  });
-  overlay.innerHTML = "";
-  for (const r of rows) {
-    const sp = computeEffectiveSpeaker(r.key);
-    const line = document.createElement("div");
-    line.className = "caption-line";
-    if (sp) line.classList.add(`speaker-${sp}`);
-    line.textContent = r.text;
-    overlay.appendChild(line);
-  }
-  overlay.classList.toggle("multi-speaker", rows.length > 1);
-}
 
-function renderCardSkeletons(n = 8) {
-  const list = $("#cards-list");
-  list.innerHTML = "";
-  for (let i = 0; i < n; i++) {
-    const sk = document.createElement("div");
-    sk.className = "card-skeleton";
-    sk.innerHTML = "<span></span><span></span><span></span>";
-    list.appendChild(sk);
-  }
-}
 
-// resegment 待複查旗標原因 → 中文標籤（半句結尾 / 疑似重複幻覺）
-function reviewReasonLabel(r) {
-  return { half_sentence: "半句結尾", repetition: "疑似重複幻覺" }[r] || r;
-}
 
-// 「待複查卡」= resegment 旗標（半句 / 幻覺）或空拍卡。導覽 / 篩選共用這個判斷。
-function cardNeedsReview(c) {
-  return !!(c.needs_review || c.suspicious_pause);
-}
+
+
 
 function renderCards() {
   // T60：量測 renderCards 用時（搭配 .card 的 content-visibility）。
@@ -2243,9 +1616,7 @@ function renderCards() {
       aBtn.type = "button";
       aBtn.className = "cam-btn cam-a-btn" + (eff === "a" ? " active" : "");
       aBtn.textContent = "A";
-      aBtn.title = state.camerasMapping.get(key)
-        ? "鏡頭 A：目前鏡頭（已 explicit 標記）"
-        : "鏡頭 A：目前鏡頭（沿用前一張）";
+      aBtn.title = camBtnTitle("a", eff, state.camerasMapping.get(key));
       aBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         // 已經 explicit 標 a → 不入 stack 也不重畫
@@ -2264,9 +1635,7 @@ function renderCards() {
       bBtn.type = "button";
       bBtn.className = "cam-btn cam-b-btn" + (eff === "b" ? " active" : "");
       bBtn.textContent = "B";
-      bBtn.title = state.camerasMapping.get(key)
-        ? "鏡頭 B：切到 B 鏡頭（已 explicit 標記）"
-        : "鏡頭 B：切到 B 鏡頭";
+      bBtn.title = camBtnTitle("b", eff, state.camerasMapping.get(key));
       bBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (state.camerasMapping.get(key) === "b") return;
@@ -2310,6 +1679,12 @@ function renderCards() {
   renderCamRuler();
   renderSpeakerRuler();
   renderCardTimeline();
+  // B4：依 layoutMode 切標題卡軌顯示——podcast 隱藏、video 顯示。透過既有唯一控制點
+  //   setCardTrackVisible，不另造第三套顯示機制（CLAUDE.md 硬禁）。放在 renderCardTimeline
+  //   之後：無卡路徑它已強制隱藏、此處略過；有卡路徑它建好 track DOM 但不強制顯隱，交這裡定調。
+  if (state.cards.length && !state.needsTranscribe) {
+    setCardTrackVisible(state.layoutMode === "video");
+  }
   // T60：把渲染數據塞到 dataset，方便 DevTools 直接看
   const _dur = performance.now() - _t0;
   list.dataset.lastRenderMs = _dur.toFixed(1);
@@ -2322,94 +1697,7 @@ function renderCards() {
   }
 }
 
-// 紅卡 toolbar：總可疑數 / 已勾數 / 全選 / 刪除已勾
-function renderSusToolbar() {
-  const bar = $("#sus-toolbar");
-  // 還沒刪除、也還沒切過的卡才算數（切過的卡 sus 旗標屬於原句長度，已不適用）
-  const susCards = state.cards.filter(
-    (c) =>
-      c.suspicious_pause &&
-      !state.deletions.has(c.idx) &&
-      !state.cardSplits.has(c.idx) &&
-      !state.cardMerges.has(c.idx),
-  );
-  if (susCards.length === 0) {
-    bar.classList.add("hidden");
-    return;
-  }
-  bar.classList.remove("hidden");
-  $("#sus-count").textContent = susCards.length;
 
-  // susChecked 內可能有已被刪除或不再可疑的 idx，清掉
-  const validIds = new Set(susCards.map((c) => c.idx));
-  for (const idx of [...state.susChecked]) {
-    if (!validIds.has(idx)) state.susChecked.delete(idx);
-  }
-  const checkedCount = state.susChecked.size;
-  // 已勾數 + 大約移除秒數預覽（實際因 cut_pad 略大，標「約」）
-  const checkedEl = $("#sus-checked-count");
-  if (checkedCount > 0) {
-    const secs = checkedDeletionSeconds();
-    checkedEl.textContent = `已勾 ${checkedCount}·約 ${secs.toFixed(1)} 秒`;
-    checkedEl.title = "實際輸出因每側 cut_pad（0.15 秒）會略長於此預估值";
-  } else {
-    checkedEl.textContent = "已勾 0";
-    checkedEl.title = "";
-  }
-  $("#sus-delete-checked").disabled = checkedCount === 0;
-
-  // 「刪純反應詞」：只算 suspicious_reasons 命中 reaction_only 的紅卡，
-  // 數量寫進鈕標、無此類卡時禁用
-  const reactionCards = susCards.filter((c) =>
-    (c.suspicious_reasons || []).includes("reaction_only"),
-  );
-  const reactBtn = $("#sus-delete-reactions");
-  if (reactBtn) {
-    reactBtn.disabled = reactionCards.length === 0;
-    const reactLabel = reactBtn.querySelector("span:last-child");
-    if (reactLabel)
-      reactLabel.textContent =
-        reactionCards.length > 0
-          ? `刪純反應詞（${reactionCards.length}）`
-          : "刪純反應詞";
-  }
-
-  // 全選按鈕：全勾就顯示「取消全選」反之顯示「全選紅卡」（用 icon 區分）
-  const allChecked = susCards.length > 0 && checkedCount === susCards.length;
-  const iconName = allChecked ? "check-square" : "square";
-  const label = allChecked ? "取消全選" : "全選紅卡";
-  $("#sus-select-all").innerHTML = window.Icons
-    ? `${window.Icons.get(iconName, { size: 14 })}<span>${label}</span>`
-    : label;
-}
-
-// 待複查卡導覽 toolbar：總數 / 只看待複查篩選 / 跳下一張
-function renderReviewToolbar() {
-  const bar = $("#review-toolbar");
-  if (!bar) return;
-  // 還沒刪除、也還沒標「看過」的原卡才算待辦（切過的卡旗標屬原句，仍保留導覽價值）
-  const unseen = state.cards.filter(
-    (c) =>
-      cardNeedsReview(c) &&
-      !state.deletions.has(c.idx) &&
-      !state.reviewSeen.has(c.idx) &&
-      !state.cardMerges.has(c.idx),
-  );
-  if (unseen.length === 0) {
-    bar.classList.add("hidden");
-    // 沒有待辦待複查卡時自動關掉篩選，避免畫面整片空
-    if (state.reviewFilter) {
-      state.reviewFilter = false;
-      $("#cards-list").classList.remove("filter-review");
-    }
-    return;
-  }
-  bar.classList.remove("hidden");
-  $("#review-count").textContent = unseen.length;
-  const filterBtn = $("#review-filter");
-  filterBtn.classList.toggle("active", state.reviewFilter);
-  filterBtn.setAttribute("aria-pressed", state.reviewFilter ? "true" : "false");
-}
 
 // 從目前播放時間往後找下一張待複查卡，seek + scroll 過去（到尾端則繞回第一張）
 function jumpToNextReview() {
@@ -2497,13 +1785,14 @@ async function loadEpisodeState() {
   state.cardSplits = new Map();
   state.cardMerges = new Set();
   state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop(); // E1：換集 → 停循環，避免舊集的循環邊界殘留
+  resetTimeEdit(); // E1：換集 → 停循環，避免舊集的循環邊界殘留
   state.newCards = [];
   state.newCardSeq = 0;
   state.cardTimings = new Map();
   state.needsTranscribe = !!data.needs_transcribe;
   state.hasMainVideo = data.has_main_video !== false;
+  // 刪段每側延伸秒數（唯讀）：預覽跳段與批刪秒數都要跟 assemble 用同一個值
+  state.cutPad = Number(data.cut_pad) || 0;
   state.headTrimSec = Number(data.head_trim_sec) || 0;
   state.tailTrimSec = Number(data.tail_trim_sec) || 0;
   // 記住載入值，供 unsavedCount() 偵測是否有未存的 trim 變更
@@ -2521,6 +1810,34 @@ async function loadEpisodeState() {
           end_card: Number(c.end_card),
         }))
     : [];
+  // 標題卡（B2）：來自 episode.yaml title_cards。時間逐字讀回（不加 totalShift）——與存檔端
+  //   對稱，保證 round-trip 精準。plan_io 定位卡的 scale/x/y/tpl 一併保留在 state，
+  //   下次存檔由 buildSavePayload 原樣透傳，避免純文字存檔鏈清掉後端既有定位卡。
+  //   id 缺漏時補一個（後端純 yaml 可能沒帶 id）；渲染/選取要靠它。
+  state.titleCards = Array.isArray(data.title_cards)
+    ? data.title_cards
+        .filter((c) => c && Number(c.end) > Number(c.start))
+        .map((c, i) => {
+          const out = {
+            id: c.id != null ? String(c.id) : `tc${i}`,
+            start: Number(c.start),
+            end: Number(c.end),
+            text: String(c.text || ""),
+          };
+          if (c.tpl != null) out.tpl = c.tpl;
+          for (const k of ["scale", "x", "y"]) {
+            if (c[k] != null) out[k] = Number(c[k]);
+          }
+          return out;
+        })
+    : [];
+  // 版面模式（B4）：後端 layout_mode 決定標題卡軌在 podcast 正常 UI 顯不顯。
+  //   實際的 setCardTrackVisible 呼叫在下方渲染完時間軸後，才有 track DOM 可切。
+  state.layoutMode = data.layout_mode === "video" ? "video" : "podcast";
+  // 開關初始態同步 state.layoutMode：syncOutputControls 在上方（layoutMode 設定前）已跑過，
+  //   這裡是 layoutMode 唯一的載入賦值點，故在此把 checkbox 勾選態對齊，換集才不會殘留舊集值。
+  const _ctrkEl = document.querySelector("#cardtrack-toggle");
+  if (_ctrkEl) _ctrkEl.checked = state.layoutMode === "video";
   // 雙鏡頭 mapping：API 回傳 key 是字串（JSON 不支援 int key），這裡轉回 Number
   state.cameras = data.cameras || {};
   state.camerasMapping = new Map(
@@ -2584,6 +1901,7 @@ async function loadEpisodeState() {
       ? { ...data.subtitle_style }
       : null;
   renderCaptionSizeControl();
+  renderCaptionStyleControls();
   const parseRes = (s) => {
     const [w, h] = String(s || "")
       .split("x")
@@ -2601,13 +1919,9 @@ async function loadEpisodeState() {
     h: 1920,
   };
   state.subtitleOffsetSec = Number(data.subtitle_offset_sec || 0);
-  // 字幕時間軸總位移（與合成端 prepare_assembly 同邏輯，預覽才會跟輸出一致）：
-  //   -audioSyncOffset：外接音檔比 cam A 慢 sync_offset 秒 → 字幕往前推對齊
-  //   +subtitleOffsetSec：使用者設的非破壞性偏移（正值=字幕往後延）
+  // 字幕時間軸總位移（算式與守衛在 timeline-core.js: alignShift，存檔端 api.js 共用同一份）。
   // 只動「顯示用」的 state.cards，不改磁碟 _v2.srt。
-  const audioShift =
-    state.audioPath && state.audioSyncOffset ? -state.audioSyncOffset : 0;
-  const totalShift = audioShift + (state.subtitleOffsetSec || 0);
+  const totalShift = alignShift(state);
   if (Math.abs(totalShift) > 1e-6) {
     state.cards = state.cards
       .map((c) => ({
@@ -2616,6 +1930,21 @@ async function loadEpisodeState() {
         end: (c.end || 0) + totalShift,
       }))
       .filter((c) => c.end > 0);
+  }
+  // ── 刪段（B1 單一 source of truth）──
+  // 磁碟正典是時間版 cuts，優先序跟後端 cut_intervals_from_cfg 一致（cuts → deletions）。
+  // 不跟著它，畫面上的紅卡就會跟「合成真的剪掉的段」不一致：影片模式存過 cuts 的集，
+  // 舊版 podcast 前端完全不讀 cuts，於是那些刪段看不到、移不掉，出片卻照剪。
+  // 放在 totalShift 之後：cuts 是磁碟軸，這裡要換算到 cam A 顯示軸才對得上卡片時間。
+  state.foreignCuts = [];
+  if (Array.isArray(data.cuts) && data.cuts.length) {
+    const display = data.cuts
+      .map((c) => (Array.isArray(c) ? [Number(c[0]), Number(c[1])] : [Number(c.start), Number(c.end)]))
+      .filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a)
+      .map(cutFromDiskTime);
+    const sel = cutsToCardSelection(display, expandedCards());
+    state.deletions = new Set(sel.keys);
+    state.foreignCuts = sel.foreign; // 換不回卡的原樣留著，存檔時原封送回
   }
   // 字幕偏移：有字幕才顯示「偏移」入口（控制項收進 popover）；input 顯示目前已存的絕對偏移值
   const srtShiftToggle = $("#srt-shift-toggle");
@@ -2731,16 +2060,40 @@ function setupSusToolbar() {
   $("#review-next").addEventListener("click", jumpToNextReview);
 }
 
+// 偏移秒數輸入框的唯一讀值器（字幕偏移 / cam B 同步 / 音檔同步共用）。
+//
+// type=number 在使用者打出非數字（例如 "1e"、"--"）時，el.value 回的是**空字串**，
+// 與「真的把欄位清空」完全無法分辨——於是 Number(value || 0) 會把既有偏移靜默清成 0，
+// 而 Number.isFinite 那道警示永遠等不到 NaN（死碼）。validity.badInput 才分得出來。
+// 回傳 {ok:false, reason} 時，呼叫端必須顯示錯誤並中止，不准 fallback 成 0。
+function readOffsetInput(el) {
+  if (!el) return { ok: false, reason: "找不到輸入框" };
+  if (el.validity && el.validity.badInput) {
+    return { ok: false, reason: "看起來不是數字（既有偏移沒有被改動）" };
+  }
+  const raw = String(el.value == null ? "" : el.value).trim();
+  if (raw === "") return { ok: true, value: 0, empty: true };
+  const n = Number(raw);
+  // 刻意只看 isFinite，不看 validity.valid：valid 會連 stepMismatch 一起算進去，
+  // 而 step 只是箭頭的跳動量——在 step=0.01 的欄位手打 0.425 本來就該收，擋掉是新的退步。
+  // 對 type=number 來說這一條實務上進不來（非數字都被上面的 badInput 攔掉了），
+  // 留著是為了這個讀值器日後被接到別種輸入框時仍然正確。
+  if (!Number.isFinite(n)) {
+    return { ok: false, reason: "數值不合法（既有偏移沒有被改動）" };
+  }
+  return { ok: true, value: n, empty: false };
+}
+
 function setupSrtShift() {
   $("#srt-shift-btn").addEventListener("click", async () => {
     const input = $("#srt-shift-input");
     // 絕對值語意：input 即「目前偏移」。空白 / 0 = 清除偏移（回原時間）。非破壞性：只存 yaml。
-    const raw = input.value.trim();
-    const offset = raw === "" ? 0 : Number(raw);
-    if (!Number.isFinite(offset)) {
-      showToast("偏移秒數必須是數字（可正可負，0 = 清除）", "warn");
+    const read = readOffsetInput(input);
+    if (!read.ok) {
+      showToast(`偏移秒數必須是數字（可正可負，0 = 清除）：${read.reason}`, "warn");
       return;
     }
+    const offset = read.value;
     if (offset === (state.subtitleOffsetSec || 0)) {
       return; // 沒變更，免存
     }
@@ -2819,6 +2172,57 @@ async function load() {
   setupExternalAudio();
   setupCamBOverlay();
   resumeTranscribeIfRunning();
+
+  // ── CDP 走查掛鉤（T4 標題卡軌，丟棄式測試用，不影響一般使用行為）──────────
+  // podcast 走查（drive_podcast.py）過去沒有任何 window.__ hook，全靠真實
+  // DOM/CSS/事件斷言；標題卡沒有真正的資料來源（不像字幕來自 /api/subtitles），
+  // 所以比照影片模式 __vt* 的既有慣例，開放這組最小掛鉤讓走查能程式化造卡驗證。
+  // D3：這裡只動 state.titleCards（記憶體），不觸碰存檔路徑。
+  // 閘門（#6）：這些 hook 只在 URL 帶 ?pthook=1 時掛載——正常發佈/使用的 app.js 不掛，
+  // window.__pt* 一律 undefined；走查頁以 ?pthook=1 載入才拿得到。避免產品碼長期外掛
+  // 測試專用全域符號。
+  if (new URLSearchParams(location.search).get("pthook") === "1") {
+    let _ptCardSeq = 0;
+    window.__ptCards = () => state.titleCards.map((c) => Object.assign({}, c));
+    window.__ptCardTrackHeight = () => {
+      const t = $("#tl-card-track");
+      return t ? t.offsetHeight : null;
+    };
+    // 走查以此開/關標題卡軌（取代先前 render 強制開啟；#1 已改為預設關）。
+    window.__ptSetCardTrackVisible = (show) => {
+      setCardTrackVisible(!!show);
+      const t = $("#tl-card-track");
+      return t ? !t.hidden : null;
+    };
+    window.__ptAddCard = (start, end, text) => {
+      const c = { id: "pt" + ++_ptCardSeq, start, end, text: text || "" };
+      state.titleCards.push(c);
+      renderPodcastCardTrack();
+      return Object.assign({}, c);
+    };
+    window.__ptSelectCard = (id) => {
+      selectTitleCard(id);
+      return id;
+    };
+    window.__ptSetCard = (id, patch) => {
+      const c = state.titleCards.find((x) => x.id === id);
+      if (!c) return null;
+      Object.assign(c, patch || {});
+      renderPodcastCardTrack();
+      return Object.assign({}, c);
+    };
+    // D2：字幕樣式面板走查用。讀回是為了驗「非法輸入沒有被寫進 state」，
+    // 寫入是為了驅動 empty 態（傳 null＝這集還沒有樣式）—— 這兩態靠真實操作造不出來。
+    window.__ptCaptionStyle = () =>
+      state.subtitleStyleYt ? Object.assign({}, state.subtitleStyleYt) : null;
+    window.__ptSetCaptionStyle = (style) => {
+      state.subtitleStyleYt = style ? Object.assign({}, style) : null;
+      renderCaptionStyleControls();
+      renderCaptionSizeControl();
+      renderCropInfo();
+      return window.__ptCaptionStyle();
+    };
+  }
 }
 
 // === 錯字表 ===
@@ -3019,75 +2423,47 @@ function autoPauseAtTailTrim() {
 }
 
 // 收集排序好的「刪除時間區間」— 用於預覽時跳過，讓畫面跟最終輸出一致。
-// 連續被刪的卡併成整段（中間沒保留卡就跨停頓一起併），跟後端輸出一致 → 預覽不會播出碎片。
-// 防 Whisper word-timestamp 把相鄰 cue end/start 排成重疊：刪除區間 end 不得吃進下一張未刪除卡，
-// 否則播放會跳過明明沒被刪的卡（issue: 00:38-00:48 卡無故被預覽跳過）。
+// 合併／延伸規則整包交給 timeline-core 的 padAndMergeCuts（＝後端 _pad_and_merge_cuts
+// 的移植版，差分測試逐位元比對）。前端不再自帶第二套規則：那套沒有 pad，預覽每段都比
+// 成品短 cut_pad 秒／側，使用者看到的跳段時機跟輸出對不上。
+// foreignCuts（影片模式在句中／跨停頓剪的段）一併算進來——合成照剪，預覽當然也要跳。
 function deletionIntervals() {
   const cards = expandedCards();
-  const raw = [];
-  const kept = [];
-  for (const r of cards) {
-    if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
-    else kept.push([r.start, r.end]);
-  }
-  return mergeDeletionIntervals(raw, kept);
+  const raw = [...state.foreignCuts];
+  for (const r of cards) if (state.deletions.has(r.key)) raw.push([r.start, r.end]);
+  return padAndMergeCuts(raw, cards, state.cutPad);
 }
 
-// 純函式：把 raw 刪除區間依「保留卡」邊界合併，回排序好、夾過界的整段。
-// 從 deletionIntervals 抽出來，讓批刪秒數預覽（checkedDeletionSeconds）共用同一套合併規則。
-// 連刪整段：重疊/貼著，或「中間間隙沒有保留卡」→ 併（跨停頓也併），跟後端輸出一致。
-// 之前只併 gap<0.05 → 連刪兩張中間有真停頓就不併，預覽會把那段空檔播出來（碎片）。
-function mergeDeletionIntervals(rawIntervals, keptIntervals) {
-  const raw = [...rawIntervals].sort((a, b) => a[0] - b[0]);
-  const kept = keptIntervals;
-  const merged = [];
-  for (const [s, e] of raw) {
-    const last = merged[merged.length - 1];
-    if (last) {
-      const pe = last[1];
-      const gapHasKept = kept.some(
-        ([cs, ce]) => cs < s - 1e-6 && ce > pe + 1e-6,
-      );
-      if (s <= pe + 0.05 || !gapHasKept) {
-        last[1] = Math.max(pe, e);
-        continue;
-      }
-    }
-    merged.push([s, e]);
-  }
-  // 夾到下一張保留卡起點（不吃進保留語音；處理 word_timestamp overlap）
-  const keepStarts = kept.map(([s]) => s).sort((a, b) => a - b);
-  for (const seg of merged) {
-    const nextKeep = keepStarts.find((s) => s > seg[0] + 1e-6);
-    if (nextKeep !== undefined && seg[1] > nextKeep) seg[1] = nextKeep;
-  }
-  return merged.filter((seg) => seg[1] > seg[0] + 0.01);
-}
-
-// 已勾紅卡批刪後「大約移除幾秒」— 給 toolbar 預覽 + 刪除前二次確認用。
-// 用 mergeDeletionIntervals 跟實際刪除同套合併規則：已刪卡不算 raw 也不擋合併，
-// 連續勾選跨停頓會併成整段。實際輸出因 cut_pad（每側 0.15s）會略大於此值，故標「約」。
-function checkedDeletionSeconds() {
+// 已勾紅卡批刪後「移除幾秒」— 給 toolbar 預覽 + 刪除前二次確認用。
+// 與實際刪除同一套規則（含 cut_pad 延伸）：已刪卡不算 raw、也不列入保留卡擋合併，
+// 連續勾選跨停頓會併成整段。仍標「約」的唯一原因：這算的是增量，勾的段若與既有刪段
+// 相鄰，成品合併後的總長會再少一點點。
+export function checkedDeletionSeconds() {
   const raw = [];
-  const kept = [];
+  const cards = [];
   for (const r of expandedCards()) {
     if (state.deletions.has(r.key)) continue; // 已刪：移出計算
+    cards.push(r);
     if (state.susChecked.has(r.key)) raw.push([r.start, r.end]);
-    else kept.push([r.start, r.end]);
   }
   let total = 0;
-  for (const [s, e] of mergeDeletionIntervals(raw, kept)) total += e - s;
+  for (const [s, e] of padAndMergeCuts(raw, cards, state.cutPad)) total += e - s;
   return total;
 }
 
 // 把 t 算到下一個 keep 區間的起點：在 deleted 區間內 → 跳到區間末端；
 // 不在則回 t 本身。用於 play / timeupdate 時把預覽對齊到最終輸出時間軸。
-// 守門：若 t 正落在某張保留卡的 [start, end) 內，一律不跳 — 處理 Whisper
-// word_timestamp 把保留卡起點推到刪除卡之前的 overlap 情境（issue: 00:38-00:48 卡被跳）。
+//
+// 這裡刻意**沒有**第二層守門。2026-09-25 之前有一段「t 落在未刪保留卡內就一律不跳」的
+// 守衛，用來擋 Whisper 逐字時間戳把保留卡起點推到被刪卡之前的 overlap 誤傷
+// （issue: 00:38-00:48 卡被跳）。同日 padAndMergeCuts（前後端同一套、差分測試逐位元比對）
+// 改成把「刪卡產生的」區間本身夾在保留卡語音之外，誤傷在源頭就不存在了 —— 突變「整個守衛
+// 拿掉」從此 0 紅，守衛只剩一種還摸得到的情境：保留卡**整個包住**被刪卡（夾制只讓位給
+// 落在區間內的卡界，包住的情況兩個條件都不成立）。而在那個情境裡守衛是**有害的**：
+// 合成端沒有對應守衛、照剪，守衛卻讓預覽照播，使用者看到的跟成品對不上
+// （實測見 verify_nextkeeptime_verdict.py：後端剪 7.35-8.25，守衛讓預覽播過去）。
+// 一個行為只留一個地方管 —— 夾制是正典，這裡只做區間查表。
 function nextKeepTime(t) {
-  for (const r of expandedCards()) {
-    if (!state.deletions.has(r.key) && t >= r.start && t < r.end) return t;
-  }
   for (const [s, e] of deletionIntervals()) {
     if (t >= s && t < e) return e;
   }
@@ -3096,6 +2472,10 @@ function nextKeepTime(t) {
 
 // 試聽該卡：P 鍵從某張卡 start 播到 end 就自動停。_auditionEnd 非 null = 試聽中。
 let _auditionEnd = null;
+// 循環試聽接管播放守門時要取消單次試聽。同上：跨檔不能對 let 賦值，收成這支。
+export function clearAudition() {
+  _auditionEnd = null;
+}
 function auditionCard(r) {
   const v = $("#video");
   _auditionEnd = r.end;
@@ -6109,10 +5489,10 @@ function openSettings() {
 
 $("#settings-btn").addEventListener("click", openSettings);
 
-// 鍵盤快捷鍵總覽：topbar 的 ? 按鈕與快捷鍵 ? 共用同一個 modal
-$("#shortcuts-btn").addEventListener("click", () =>
-  showModal("shortcuts-modal"),
-);
+// 鍵盤快捷鍵總覽：topbar 的 ? 按鈕與快捷鍵 ? 共用同一個 modal。
+// 每次開都重渲染一次——清單來自 shortcuts.js 的資料表，渲染失敗會當場看得到
+// （modal 內留可見錯誤文字），不會變成一個空白 modal。
+$("#shortcuts-btn").addEventListener("click", openShortcuts);
 $("#shortcuts-close").addEventListener("click", () =>
   hideModal("shortcuts-modal"),
 );
@@ -6651,16 +6031,19 @@ function _camModalSavePayload() {
   const camBPath = $("#cam-b-select").value || "";
   const audioPath = $("#audio-select").value || "";
   const srtPath = $("#srt-select").value || "";
-  const offset = Number($("#cam-sync-offset-b").value || 0);
-  const audioOffset = Number($("#audio-sync-offset").value || 0);
+  // 非法值丟例外而不是靜默回 0——兩個呼叫端（#cam-save / #align-all）都有 try/catch 顯示 toast
+  const camRead = readOffsetInput($("#cam-sync-offset-b"));
+  if (!camRead.ok) throw new Error(`Cam B 同步偏移${camRead.reason}`);
+  const audioRead = readOffsetInput($("#audio-sync-offset"));
+  if (!audioRead.ok) throw new Error(`音檔同步偏移${audioRead.reason}`);
   return {
     ...buildSavePayload(),
     cam_a_path: camAPath,
     cam_b_path: camBPath,
-    camera_sync_offset_b: Number.isFinite(offset) ? offset : 0,
+    camera_sync_offset_b: camRead.value,
     audio: {
       path: audioPath,
-      sync_offset: Number.isFinite(audioOffset) ? audioOffset : 0,
+      sync_offset: audioRead.value,
     },
     srt_path: srtPath,
   };
@@ -6888,26 +6271,26 @@ $("#manual-align-apply").addEventListener("click", () => {
 });
 
 $("#cam-save").addEventListener("click", async () => {
-  const offsetRaw = $("#cam-sync-offset-b").value;
-  const offset = offsetRaw === "" ? 0 : Number(offsetRaw);
-  if (!Number.isFinite(offset)) {
-    showToast("同步偏移要是數字", "warn");
+  const camRead = readOffsetInput($("#cam-sync-offset-b"));
+  if (!camRead.ok) {
+    showToast(`同步偏移要是數字：${camRead.reason}`, "warn");
     return;
   }
-  const audioOffsetRaw = $("#audio-sync-offset").value;
-  const audioOffset = audioOffsetRaw === "" ? 0 : Number(audioOffsetRaw);
-  if (!Number.isFinite(audioOffset)) {
-    showToast("音檔同步偏移要是數字", "warn");
+  const audioRead = readOffsetInput($("#audio-sync-offset"));
+  if (!audioRead.ok) {
+    showToast(`音檔同步偏移要是數字：${audioRead.reason}`, "warn");
     return;
   }
   const btn = $("#cam-save");
   btn.disabled = true;
   btn.textContent = "儲存中…";
   // 與 #align-all 共用同一個 payload builder（含 srt_path）：先前 cam-save 內聯自建 payload
-  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。offset/audioOffset
-  // 已於上方驗證為數字，builder 重讀同一組 DOM 值不會踩到它內部的靜默歸零。
-  const payload = _camModalSavePayload();
+  // 漏掉 srt_path → 在 cam-modal 切字幕檔按「儲存」存不進去、重開又跳回舊值。builder 重讀
+  // 同一組 DOM 值時走同一個 readOffsetInput，非法值會丟例外（不再有靜默歸零那條路）。
   try {
+    // builder 也會丟例外（非法偏移），所以放進 try——放外面會變成未捕捉例外，
+    // 按鈕永遠停在「儲存中…」而且沒有任何錯誤表現（靜默失敗）。
+    const payload = _camModalSavePayload();
     await postSave(payload);
     // 重抓 episode state 讓 A/B toggle 即刻反映新 cameras
     await loadEpisodeState();
@@ -7435,8 +6818,7 @@ $("#card-insert-btn").addEventListener("click", () => {
   const tempId = state.newCardSeq++;
   state.newCards.push({ tempId, start, end, text: "" });
   state.timeEditKey = null;
-  _timeEditCtl = null;
-  stopTimeLoop(); // E1：插卡會關掉原工具列 → 一併停循環
+  resetTimeEdit(); // E1：插卡會關掉原工具列 → 一併停循環
   renderCards();
   renderTopbar();
   renderCaption();
@@ -7671,6 +7053,18 @@ function syncOverlayControls() {
 }
 
 function setupOutputControls() {
+  // 標題卡軌顯隱開關（B4）：勾選→layout_mode=video 顯示標題卡軌，取消→podcast 隱藏。
+  //   透過唯一控制點 setCardTrackVisible 切軌，狀態進 outputDirty 未存計數、隨主存檔透傳。
+  //   不另造顯示機制（CLAUDE.md 硬禁），也不動後端。
+  const ctrk = document.querySelector("#cardtrack-toggle");
+  if (ctrk)
+    ctrk.addEventListener("change", () => {
+      state.layoutMode = ctrk.checked ? "video" : "podcast";
+      setCardTrackVisible(ctrk.checked);
+      state.outputDirty = true; // 進「未儲存」計數，按「完成並儲存」才落地
+      renderTopbar();
+    });
+
   // 節目封面開關（已移入合成設定 modal 的「輸出選項」）
   const cover = document.querySelector("#cover-toggle");
   if (cover)
@@ -7767,6 +7161,7 @@ function setupPopover(btnId, menuId) {
 }
 
 setupCaptionSize();
+setupCaptionStyle();
 $("#transcribe-breeze-btn")?.addEventListener("click", startBreezeTranscribe);
 setupAssembleButtons();
 setupOutputControls();
@@ -7790,50 +7185,7 @@ function showUpdateBanner() {
   if (el) el.hidden = false; // 一旦顯示就不再收回（correctness 橫幅，不可關閉）
 }
 
-// 純函式：解析 BUILD_ID → {version, sha, date, ts}，無法解析回 null。
-// BUILD_ID 格式：`${VER}+g${SHA}.${BUILD_TS}`，例 `0.2.0+g3f9a1c2.20260717T1802`。
-//   - version：以第一個 `+g` 切左段（version 可含 `.`，故用 indexOf 不用 split 全切）
-//   - 右段用「最後一個 `.`」(lastIndexOf) 切：右邊是 ts、左邊是 sha（sha 不含 `.`，可能帶 -dirty）
-//   - date：ts 命中 YYYYMMDDThhmm 才轉 YYYY-MM-DD，否則留空字串
-// 供顯示邏輯與單元測試共用；"dev"、空值、格式不符一律回 null（顯示層自行決定文案）。
-function parseBuildId(buildId) {
-  if (typeof buildId !== "string" || !buildId) return null;
-  if (buildId === "dev") return null;
-  const gi = buildId.indexOf("+g");
-  if (gi < 0) return null;
-  const version = buildId.slice(0, gi);
-  const rest = buildId.slice(gi + 2); // 去掉 "+g"
-  const di = rest.lastIndexOf(".");
-  const sha = di < 0 ? rest : rest.slice(0, di);
-  const ts = di < 0 ? "" : rest.slice(di + 1);
-  const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})$/);
-  const date = m ? `${m[1]}-${m[2]}-${m[3]}` : "";
-  return { version, sha, date, ts };
-}
 
-// 依「執行中版本」memId 更新版本標籤（四態文案 + title=完整 build_id）。
-// memId 傳 null／未知＝抓不到執行中版本 → 「版本 未知」。dev → 「開發版」。
-function renderVersionLabel(memId) {
-  const el = document.getElementById("version-label");
-  if (!el) return;
-  if (memId === "dev") {
-    el.textContent = "開發版";
-    el.title = "dev";
-    return;
-  }
-  const info = parseBuildId(memId);
-  if (!info) {
-    // error/empty 態：抓失敗、404、5xx、格式不符 → 未知
-    el.textContent = "版本 未知";
-    el.title = "/api/version 無回應";
-    return;
-  }
-  // success 態：有日期顯示「v版本 · 日期」，時間戳解析失敗只顯示「v版本」
-  el.textContent = info.date
-    ? `v${info.version} · ${info.date}`
-    : `v${info.version}`;
-  el.title = memId; // 滑鼠停留看完整 build_id（含 sha），供診斷
-}
 
 async function probeVersion() {
   // 1) 磁碟版本（永遠最新）。cache:no-store 確保拿到磁碟真值。
@@ -7898,6 +7250,6 @@ if (window.Icons) window.Icons.inject();
 (() => {
   const wrap = document.querySelector(".video-wrap");
   if (!wrap || typeof ResizeObserver === "undefined") return;
-  const ro = new ResizeObserver(() => applyCaptionFontSize());
+  const ro = new ResizeObserver(() => applyCaptionStyle());
   ro.observe(wrap);
 })();

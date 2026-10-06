@@ -1,12 +1,13 @@
 """把 Episode 物件 + _v2.srt 組成前端要的 JSON state，並負責寫回。"""
 from __future__ import annotations
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from podcast_toolkit import cameras_io, srt_io
+from podcast_toolkit import cameras_io, srt_io, title_cards
 from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.constants import AUDIO_EXTS
 from podcast_toolkit.episode import Episode
@@ -262,11 +263,18 @@ def load_state(ep: Episode) -> dict[str, Any]:
         # 時間版刪段（B1）：save_state 寫得進、這裡也要讀得回，否則前端看不到也砍不掉
         # 已存的 cuts（它們在合成時仍會生效 → 看不到又移不掉）。
         "cuts": list(ep.cfg.get("cuts") or []),
+        # 刪段每側延伸秒數：前端預覽跳段與批刪秒數要跟 assemble 同一個數值，
+        # 否則預覽每段都比成品短 cut_pad 秒／側（唯讀，前端不寫回）。
+        "cut_pad": float(ep.cfg.get("cut_pad") or 0),
         "head_trim_sec": float(ep.cfg.get("head_trim_sec") or 0),
         "tail_trim_sec": float(ep.cfg.get("tail_trim_sec") or 0),
         # 非破壞性字幕偏移（秒）：預覽 + 合成都套，原 _v2.srt 不動。正值=字幕往後延。
         "subtitle_offset_sec": float(ep.cfg.get("subtitle_offset_sec") or 0),
         "reels_clips": list(ep.cfg.get("reels_clips") or []),
+        # 版面模式（B4）：podcast|video，控前端標題卡軌顯不顯；壞值已在 config.merge 夾成 podcast。
+        "layout_mode": ep.cfg.get("layout_mode") or "podcast",
+        # 標題卡（B2）：save_state 寫得進、這裡也要讀得回，否則前端存了看不到、重載就消失。
+        "title_cards": list(ep.cfg.get("title_cards") or []),
         "cards": cards,
         "needs_transcribe": needs_transcribe,
         "has_main_video": has_main_video,
@@ -358,6 +366,14 @@ def save_mics_config(
         yaml_path,
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
     )
+
+
+def _style_value_eq(a: Any, b: Any) -> bool:
+    """樣式值等不等於預設：數字照數值比（60 == 60.0），字串去空白忽略大小寫
+    （ASS 色碼 &h00ffffff 與 &H00FFFFFF 同義）。"""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return float(a) == float(b)
+    return str(a).strip().upper() == str(b).strip().upper()
 
 
 def save_state(ep: Episode, payload: dict[str, Any]) -> None:
@@ -504,6 +520,52 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop("reels_clips", None)
 
+    # 版面模式（B4）：podcast|video。用 key-presence 區分「沒動 UI」vs「明確設定」。
+    # 只接受合法值；壞值不靜默 —— pop 掉整個 key 回退 defaults(podcast)，不把亂值寫進 yaml。
+    if "layout_mode" in payload:
+        lm = payload.get("layout_mode")
+        if lm in ("podcast", "video"):
+            data["layout_mode"] = lm
+        else:
+            data.pop("layout_mode", None)
+
+    # 標題卡（B2）：純文字卡最小欄位 {id, start, end, text}＋tpl 預設。
+    # 壞卡（缺時間/end<=start/無文字）直接丟，不靜默寫入殘卡；空 → 移除 key（比照 reels_clips）。
+    # scale/x/y 這次不做，但若 payload 帶了合法數值就一併保留，避免 plan_io 定位卡被本鏈清掉。
+    if "title_cards" in payload:
+        cards_out: list[dict[str, Any]] = []
+        for i, c in enumerate(payload.get("title_cards") or []):
+            if not isinstance(c, dict):
+                continue
+            try:
+                s, e = float(c.get("start")), float(c.get("end"))
+            except (TypeError, ValueError):
+                continue
+            if not (e > s >= 0):
+                continue
+            text = str(c.get("text") or "").strip()
+            if not text:
+                continue
+            tpl = str(c.get("tpl") or title_cards.DEFAULT_TPL)
+            entry: dict[str, Any] = {
+                "id": str(c.get("id") or f"tc{i + 1}"),
+                "start": round(s, 3),
+                "end": round(e, 3),
+                "text": text,
+                "tpl": tpl,
+            }
+            for pos_key in ("scale", "x", "y"):
+                if pos_key in c:
+                    try:
+                        entry[pos_key] = float(c.get(pos_key))
+                    except (TypeError, ValueError):
+                        pass
+            cards_out.append(entry)
+        if cards_out:
+            data["title_cards"] = cards_out
+        else:
+            data.pop("title_cards", None)
+
     # cam A 路徑：前端「最終合成總覽」可換 cam A。同步寫 cameras.a + main_video（保留舊欄位讓 fallback 路徑也對）。
     if "cam_a_path" in payload:
         cam_a_path = (payload.get("cam_a_path") or "").strip()
@@ -545,24 +607,34 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
         else:
             data.pop("srt_path", None)
 
-    # 字幕字級：只調 font_size override（不整段覆寫 subtitle_style）。等於 defaults →
-    # 移除 font_size，避免 yaml 殘留跟預設相同的冗餘值。YT 與 Reels 各自存。
+    # 字幕樣式：整組 subtitle_style（字體／字級／粗體／兩色／外框／陰影／對齊／下緣邊距）。
+    # 正規化只有 plan_io.normalize_style 一套（原型送 hex、這裡送 ASS 色碼，兩種都吃）；
+    # 不合法就丟 PlanError（ValueError 子類）→ 路由轉 400 中文訊息，不靜默吞掉。
+    # 值等於「這一層的有效預設」就把該鍵移除，避免 yaml 殘留冗餘值。Reels 的有效預設是
+    # defaults.subtitle_style → defaults.subtitle_style_reels → 本集 subtitle_style 疊出來的
+    # （與 config.merge 的四層疊加同一套），所以要先處理 YT 再處理 Reels。
     if "subtitle_style" in payload or "subtitle_style_reels" in payload:
         from podcast_toolkit import config as _config
+        from podcast_toolkit.web.plan_io import normalize_style as _normalize_style
         _defaults = _config.load_defaults()
         for _key in ("subtitle_style", "subtitle_style_reels"):
             if _key not in payload:
                 continue
-            _fs = (payload.get(_key) or {}).get("font_size")
-            if _fs in (None, ""):
-                continue
-            _fs = int(round(float(_fs)))
-            _default_fs = int(float((_defaults.get(_key) or {}).get("font_size") or 0))
-            _block = dict(data.get(_key) or {})
-            if _fs == _default_fs:
-                _block.pop("font_size", None)
+            _incoming = _normalize_style(payload.get(_key) or {})
+            if _key == "subtitle_style":
+                _baseline = dict(_defaults.get("subtitle_style") or {})
             else:
-                _block["font_size"] = _fs
+                _baseline = {
+                    **(_defaults.get("subtitle_style") or {}),
+                    **(_defaults.get("subtitle_style_reels") or {}),
+                    **(data.get("subtitle_style") or {}),
+                }
+            _block = dict(data.get(_key) or {})
+            for _k, _v in _incoming.items():
+                if _k in _baseline and _style_value_eq(_v, _baseline[_k]):
+                    _block.pop(_k, None)
+                else:
+                    _block[_k] = _v
             if _block:
                 data[_key] = _block
             else:
@@ -720,7 +792,22 @@ def save_state(ep: Episode, payload: dict[str, Any]) -> None:
             new_deletions.append(nid)
     if new_deletions:
         data["deletions"] = new_deletions
-    else:
+    elif "deletions" in payload:
+        # 只有「這次存檔真的帶了 deletions 且結果為空」才算使用者清空。
+        # 局部存檔（例如影片模式只送 cuts）不碰既有值——該不該遷移交給下面的 B1 關卡，
+        # 那條路徑會印訊息；這裡靜默 pop 等於把刪段抹掉還不吭聲。
+        data.pop("deletions", None)
+
+    # B1 單一 source of truth：時間版 cuts 是正典，同一份 yaml 不留兩套刪段格式。
+    # 有 cuts 就一律清掉舊 idx 版 deletions（存一次檔 = 完成遷移），避免「兩個編輯器
+    # 各存過一次」產生並存 —— 那種狀態下 assemble 只吃 cuts，deletions 整份靜默失效。
+    # 不靜默：真的丟掉東西時印一行，說清楚哪一半沒了。
+    if data.get("cuts") and data.get("deletions"):
+        print(
+            f"⚠ 本集同時有 cuts（時間版刪段）與 deletions（{len(data['deletions'])} 張卡）："
+            "cuts 是正典，已移除 deletions（它在合成時本來就不生效）。",
+            file=sys.stderr,
+        )
         data.pop("deletions", None)
 
     # yaml 在 SRT 寫完 + deletions 翻完後才落地，避免中途崩潰留下不一致狀態

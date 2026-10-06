@@ -1,0 +1,42 @@
+[
+  {
+    "代號": "N1",
+    "突變": "框選不再排除 new: 鍵（新增卡會被框進 deletions）",
+    "檔": "timeline.js",
+    "紅的測試": [
+      "test_marquee_filters_new_card_keys"
+    ]
+  },
+  {
+    "代號": "N2",
+    "突變": "renderCards 的新增卡分支不再 continue（往下走到刪除鈕）",
+    "檔": "app.js",
+    "紅的測試": [
+      "test_render_cards_skips_new_cards_before_delete_toggle"
+    ]
+  },
+  {
+    "代號": "N3",
+    "突變": "載入順序顛倒：先由 cuts 反推選取才清 newCards",
+    "檔": "app.js",
+    "紅的測試": [
+      "test_new_cards_cleared_before_cut_derived_selection"
+    ]
+  },
+  {
+    "代號": "N4",
+    "突變": "多一個沒審過的 deletions 寫入點",
+    "檔": "app.js",
+    "紅的測試": [
+      "test_all_deletion_write_sites_are_reviewed"
+    ]
+  },
+  {
+    "代號": "N5",
+    "突變": "拿掉存檔端最後一道防禦性 filter",
+    "檔": "api.js",
+    "紅的測試": [
+      "test_api_new_key_filter_is_still_the_last_line_of_defence"
+    ]
+  }
+]

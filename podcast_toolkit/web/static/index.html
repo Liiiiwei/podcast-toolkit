@@ -318,13 +318,34 @@
                   ＋
                 </button>
               </div>
+              <!-- 標題卡軌顯隱開關：勾選=顯示標題卡軌（對應 episode.yaml layout_mode=video）。
+                   單一控制點 setCardTrackVisible，狀態存回 layout_mode，勿另造顯示機制。 -->
+              <label
+                class="toggle-chip"
+                title="在時間軸上顯示 / 隱藏標題卡軌；設定會存進這一集"
+              >
+                <input type="checkbox" id="cardtrack-toggle" />
+                <span>顯示標題卡軌</span>
+              </label>
             </div>
             <div class="card-timeline-scroll" id="card-timeline-scroll">
-              <div
-                class="card-timeline"
-                id="card-timeline"
-                title="字幕時間軸：拖卡片左右邊緣調整字幕進 / 出時間"
-              ></div>
+              <!-- 多軌堆疊容器（T3，docs/plans/2026-09-23-unified-timeline-core.md）：
+                   沿用影片模式 #vt-tracks 的結構語彙，字幕軌本體（#card-timeline）原封不動地
+                   放進來當第一個成員；標題卡軌（#tl-card-track）先加一個空容器佔位，
+                   podcast 預設 hidden 關閉，T4 才搬 renderCardTrack 等渲染/事件進來。 -->
+              <div class="tl-tracks" id="tl-tracks">
+                <div
+                  class="tl-card-track"
+                  id="tl-card-track"
+                  title="標題卡軌（尚未啟用）"
+                  hidden
+                ></div>
+                <div
+                  class="card-timeline"
+                  id="card-timeline"
+                  title="字幕時間軸：拖卡片左右邊緣調整字幕進 / 出時間"
+                ></div>
+              </div>
             </div>
           </div>
           <details class="framing-panel">
@@ -445,6 +466,134 @@
                     >
                       ＋
                     </button>
+                  </div>
+                  <div class="caption-style" id="caption-style">
+                    <button
+                      type="button"
+                      id="cap-style-btn"
+                      class="btn btn-ghost"
+                      aria-expanded="false"
+                      aria-controls="cap-style-panel"
+                    >
+                      <span data-icon="settings" data-icon-size="13"></span>
+                      <span>字幕樣式</span>
+                    </button>
+                    <div
+                      class="cap-style-panel hidden"
+                      id="cap-style-panel"
+                      role="dialog"
+                      aria-label="字幕樣式"
+                    >
+                      <div class="cap-style-head">
+                        <span id="cap-style-scope">YT</span> 字幕樣式
+                        <button
+                          type="button"
+                          class="cap-style-close"
+                          id="cap-style-close"
+                          aria-label="關閉"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <p class="cap-style-empty hidden" id="cap-style-empty">
+                        尚未載入字幕樣式——先開一集再調。
+                      </p>
+                      <div class="cap-style-grid" id="cap-style-grid">
+                        <label class="cap-style-row cap-style-wide">
+                          <span>字體</span>
+                          <input
+                            type="text"
+                            id="cap-font-name"
+                            data-style-key="font_name"
+                            list="cap-font-list"
+                            spellcheck="false"
+                          />
+                        </label>
+                        <datalist id="cap-font-list">
+                          <option value="Hiragino Sans GB"></option>
+                          <option value="PingFang TC"></option>
+                          <option value="Noto Sans TC"></option>
+                          <option value="Heiti TC"></option>
+                        </datalist>
+                        <label class="cap-style-row">
+                          <span>文字色</span>
+                          <input
+                            type="color"
+                            id="cap-primary-colour"
+                            data-style-key="primary_colour"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>外框色</span>
+                          <input
+                            type="color"
+                            id="cap-outline-colour"
+                            data-style-key="outline_colour"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>粗體</span>
+                          <input
+                            type="checkbox"
+                            id="cap-bold"
+                            data-style-key="bold"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>邊框</span>
+                          <select id="cap-border-style" data-style-key="border_style">
+                            <option value="1">外框＋陰影</option>
+                            <option value="3">不透明底色塊</option>
+                          </select>
+                        </label>
+                        <label class="cap-style-row">
+                          <span>外框粗細</span>
+                          <input
+                            type="number"
+                            id="cap-outline"
+                            data-style-key="outline"
+                            min="0"
+                            max="20"
+                            step="1"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>陰影</span>
+                          <input
+                            type="number"
+                            id="cap-shadow"
+                            data-style-key="shadow"
+                            min="0"
+                            max="20"
+                            step="1"
+                          />
+                        </label>
+                        <label class="cap-style-row">
+                          <span>位置</span>
+                          <select id="cap-alignment" data-style-key="alignment">
+                            <option value="2">畫面底部</option>
+                            <option value="6">畫面頂部</option>
+                            <option value="10">畫面正中</option>
+                          </select>
+                        </label>
+                        <label class="cap-style-row">
+                          <span>邊距</span>
+                          <input
+                            type="number"
+                            id="cap-margin-v"
+                            data-style-key="margin_v"
+                            min="0"
+                            max="2000"
+                            step="1"
+                          />
+                        </label>
+                      </div>
+                      <p class="cap-style-err hidden" id="cap-style-err"></p>
+                      <p class="cap-style-note">
+                        改動即時反映在預覽，按「完成並儲存」才寫進 episode.yaml。
+                        標題卡的文字不吃這裡的樣式（卡片自己帶字型與顏色）。
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1362,33 +1511,11 @@
     <dialog class="modal" id="shortcuts-modal">
       <div class="modal-head">鍵盤快捷鍵</div>
       <div class="modal-body">
-        <dl class="shortcuts-list">
-          <dt><kbd>Space</kbd></dt>
-          <dd>播放 / 暫停</dd>
-          <dt><kbd>↑</kbd> / <kbd>↓</kbd></dt>
-          <dd>跳到上一張 / 下一張字幕卡</dd>
-          <dt><kbd>P</kbd></dt>
-          <dd>試聽目前所在字幕卡（播到卡尾自動停）</dd>
-          <dt><kbd>J</kbd> / <kbd>K</kbd></dt>
-          <dd>跳下一張 / 上一張待複查卡</dd>
-          <dt><kbd>Enter</kbd></dt>
-          <dd>在游標處把字幕卡切成兩句</dd>
-          <dt><kbd>Backspace</kbd></dt>
-          <dd>子卡開頭按 → 合併回上一段</dd>
-          <dt><kbd>←</kbd> / <kbd>→</kbd></dt>
-          <dd>
-            ⏱ 時間微調工具列開著時：起點 ±0.1s（<kbd>⇧</kbd> 0.5s、<kbd>⌘</kbd>
-            1.0s；加 <kbd>⌥</kbd> 改調終點）
-          </dd>
-          <dt><kbd>⌘Z</kbd> / <kbd>⌘⇧Z</kbd></dt>
-          <dd>復原 / 重做</dd>
-          <dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + 滾輪</dt>
-          <dd>時間軸縮放（放大 / 縮小）</dd>
-          <dt>點字幕時間</dt>
-          <dd>影片跳到該句開頭</dd>
-          <dt><kbd>?</kbd></dt>
-          <dd>開啟這份快捷鍵清單</dd>
-        </dl>
+        <!-- 內容由 static/shortcuts.js 的 SHORTCUTS 資料表渲染（openShortcuts() 每次開啟時重畫）。
+             這裡刻意留空：清單以前在這份 HTML 與 app.js 的提示列各抄一份，已經漂移過
+             （[ / ] 打點、工具列開著時 P＝切換循環只進了提示列）。渲染失敗會在這裡寫出
+             可見錯誤文字，不會留一個空白 modal。 -->
+        <dl class="shortcuts-list"></dl>
       </div>
       <div class="modal-actions">
         <button id="shortcuts-close" type="button" class="btn btn-primary">

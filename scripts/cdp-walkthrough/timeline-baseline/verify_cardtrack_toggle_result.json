@@ -1,0 +1,234 @@
+[
+  {
+    "name": "T0 時間軸已渲染 + #cardtrack-toggle 存在",
+    "ok": true,
+    "got": {
+      "ready": true,
+      "fp": true
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T1.0 初始：checkbox 未勾 + 軌隱藏（hidden 且 height==0）",
+    "ok": true,
+    "got": {
+      "toggle": {
+        "checked": false,
+        "cx": 836.5,
+        "cy": 687.875,
+        "w": 13
+      },
+      "track": {
+        "hidden": true,
+        "height": 0,
+        "offsetHeight": 0
+      }
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T1.1 checkbox 中心 elementFromPoint 命中它本身（未被疊層吃掉）",
+    "ok": true,
+    "got": {
+      "tag": "INPUT",
+      "id": "cardtrack-toggle",
+      "cls": null
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T1.2 勾選後：checkbox.checked===true",
+    "ok": true,
+    "got": {
+      "checked": true,
+      "cx": 836.5,
+      "cy": 691.265625,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T1.3 勾選後：#tl-card-track 顯示（hidden===false 且 height>0）",
+    "ok": true,
+    "got": {
+      "hidden": false,
+      "height": 44,
+      "offsetHeight": 44
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T2.1 取消後：checkbox.checked===false",
+    "ok": true,
+    "got": {
+      "checked": false,
+      "cx": 836.5,
+      "cy": 691.265625,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T2.2 取消後：軌隱藏不佔位（hidden===true 且 height==0）",
+    "ok": true,
+    "got": {
+      "hidden": true,
+      "height": 0,
+      "offsetHeight": 0
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T1/T2 全程無 console 例外",
+    "ok": true,
+    "got": [],
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.0 起點 checkbox 未勾",
+    "ok": true,
+    "got": {
+      "checked": false,
+      "cx": 836.5,
+      "cy": 687.875,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.1 勾選→存檔→重載：checkbox.checked===true（layout_mode 寫進 yaml 又讀回）",
+    "ok": true,
+    "got": {
+      "checked": true,
+      "cx": 836.5,
+      "cy": 687.875,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.2 勾選→存檔→重載：#tl-card-track height>0",
+    "ok": true,
+    "got": {
+      "hidden": false,
+      "height": 44,
+      "offsetHeight": 44
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.3 取消→存檔→重載：checkbox.checked===false",
+    "ok": true,
+    "got": {
+      "checked": false,
+      "cx": 836.5,
+      "cy": 687.875,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.4 取消→存檔→重載：#tl-card-track height==0",
+    "ok": true,
+    "got": {
+      "hidden": true,
+      "height": 0,
+      "offsetHeight": 0
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T3.5 yaml 落地：episode.yaml 含 layout_mode: video",
+    "ok": true,
+    "got": [
+      "layout_mode: video"
+    ],
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T4.0 起點徽章隱藏（無未存變更）",
+    "ok": true,
+    "got": {
+      "badgeHidden": true,
+      "count": "0"
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T4.1 toggle 後徽章亮（unsavedCount>0）",
+    "ok": true,
+    "got": {
+      "badgeHidden": false,
+      "count": "1"
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T4.2 存檔後徽章歸零（hidden）",
+    "ok": true,
+    "got": {
+      "badgeHidden": true,
+      "count": "1"
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T5.0 載入 video 集：checkbox 已勾 + 軌顯示（載入同步把預設未勾改為勾）",
+    "ok": true,
+    "got": {
+      "toggle": {
+        "checked": true,
+        "cx": 836.5,
+        "cy": 687.875,
+        "w": 13
+      },
+      "track": {
+        "hidden": false,
+        "height": 44,
+        "offsetHeight": 44
+      }
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T5.1 載入 podcast 集：checkbox 未勾（無殘留舊集 video 值）",
+    "ok": true,
+    "got": {
+      "checked": false,
+      "cx": 836.5,
+      "cy": 687.875,
+      "w": 13
+    },
+    "want": null,
+    "status": "pass"
+  },
+  {
+    "name": "T5.2 載入 podcast 集：軌隱藏（hidden 且 height==0）",
+    "ok": true,
+    "got": {
+      "hidden": true,
+      "height": 0,
+      "offsetHeight": 0
+    },
+    "want": null,
+    "status": "pass"
+  }
+]

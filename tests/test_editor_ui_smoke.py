@@ -250,3 +250,82 @@ def test_mic_srt_existing_reaches_frontend_state():
     assert APP_JS.count("new Set(state.micSrtExisting || [])") == 3, (
         "分軌 modal 該有三處讀 micSrtExisting（列表、覆寫警告、只選未轉）"
     )
+
+
+# --- D2：字幕樣式面板（接出後端 build_style_string 讀得到的參數） ---
+
+# 面板上每個欄位的 data-style-key，就是 episode.yaml subtitle_style 的鍵
+_STYLE_KEY_RE = re.compile(r'data-style-key="([a-z_]+)"')
+# api.js 裡送給後端的鍵白名單
+_PAYLOAD_KEYS_RE = re.compile(
+    r"const SUBTITLE_STYLE_KEYS = \[(.*?)\];", re.DOTALL
+)
+
+
+def _panel_style_keys() -> set:
+    return set(_STYLE_KEY_RE.findall(INDEX_HTML))
+
+
+def _payload_style_keys() -> set:
+    m = _PAYLOAD_KEYS_RE.search(APP_JS)
+    assert m, "api.js 找不到 SUBTITLE_STYLE_KEYS —— 存檔白名單被改名或刪掉了"
+    return set(re.findall(r'"([a-z_]+)"', m.group(1)))
+
+
+def test_caption_style_panel_exists():
+    """面板本體與觸發鈕在（誤刪就等於整組樣式參數又退回只能手改 yaml）。"""
+    for el_id in ("cap-style-btn", "cap-style-panel", "cap-style-scope"):
+        assert f'id="{el_id}"' in INDEX_HTML, f"字幕樣式面板缺 #{el_id}"
+    assert "setupCaptionStyle()" in APP_JS, "面板沒有被初始化"
+
+
+def test_caption_style_panel_covers_backend_style_keys():
+    """面板 + 字級 ± 鈕要蓋滿 build_style_string 讀得到的全部 9 個鍵。
+    少一個＝那個參數只能手改 yaml（D2 要解的就是這件事）。"""
+    src = (Path(__file__).parents[1] / "podcast_toolkit" / "assemble.py").read_text(
+        encoding="utf-8"
+    )
+    m = re.search(r"def build_style_string\(.*?\n    return", src, re.DOTALL)
+    assert m
+    backend_keys = set(re.findall(r"style\['([a-z_]+)'\]", m.group(0)))
+    # font_size 不在面板裡：它有專屬的 ± 控制項（刻意不做第二個入口）
+    ui_keys = _panel_style_keys() | {"font_size"}
+    assert backend_keys <= ui_keys, (
+        f"build_style_string 讀得到但 UI 沒開放的樣式鍵：{sorted(backend_keys - ui_keys)}"
+    )
+
+
+def test_caption_style_panel_keys_are_all_saved():
+    """面板上調得到的每個鍵都必須在 api.js 的送出白名單裡。
+    後端 normalize_style 對未知鍵是靜默過濾 —— 漏列就是「面板上改得動、存了卻沒進 yaml」。"""
+    panel = _panel_style_keys()
+    payload = _payload_style_keys()
+    assert panel <= payload, (
+        f"面板有欄位但沒送出去：{sorted(panel - payload)}"
+    )
+    assert payload <= panel | {"font_size"}, (
+        f"送出白名單有 UI 調不到的鍵：{sorted(payload - panel - {'font_size'})}"
+    )
+
+
+def test_caption_style_panel_has_empty_and_error_states():
+    """四態：empty（沒開集）與 error（非法輸入）要有可見的 DOM 表現，不能只吞在 console。"""
+    assert 'id="cap-style-empty"' in INDEX_HTML
+    assert 'id="cap-style-err"' in INDEX_HTML
+    assert "setCaptionStyleError(" in APP_JS
+    # error 分支必須 return（不把非法值寫進 state）
+    commit = re.search(
+        r"function commitCaptionStyleField\(.*?\n\}", APP_JS, re.DOTALL
+    )
+    assert commit, "commitCaptionStyleField 不見了"
+    assert commit.group(0).count("return;") >= 3, (
+        "非法輸入的分支沒有 return —— NaN / 空字串會被靜默寫進樣式"
+    )
+
+
+def test_caption_style_panel_disclaims_title_cards():
+    """force_style 蓋不到標題卡的文字（卡片文字走 override tag，見 assemble.py），
+    面板上要講清楚，不然使用者會以為調了沒效。"""
+    assert "標題卡" in INDEX_HTML.split('id="cap-style-panel"')[1].split("</div>")[0] or (
+        "標題卡的文字不吃這裡的樣式" in INDEX_HTML
+    )

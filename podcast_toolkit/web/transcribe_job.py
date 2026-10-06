@@ -612,11 +612,19 @@ def _run_breeze(ep: Episode, bdir: Path, guest: str, terms: str, job: int) -> No
         _set_job(job, **kwargs)
 
     # 1) Breeze ASR：make_subtitle.py（不帶 --quiet → whisper 把 tqdm 進度吐到
-    #    stderr，pump 執行緒即時解析成 breeze-asr 這一 phase 的真實 %；自己找 Track*-Mic*.wav）
+    #    stderr，pump 執行緒即時解析成 breeze-asr 這一 phase 的真實 %）。
+    #    主混音檔以 --audio 傳 ep.main_audio() 解析出的實際路徑 → 轉錄不再要求檔名符合
+    #    *Mix*.wav；解析不到（例：集內無音檔）才留空，退回 make_subtitle 自己 glob + 原錯誤。
+    #    分軌講者檔仍由 make_subtitle 自己找（Track*-Mic*.wav，或 fallback 同層 ≥2 支 .wav）。
     py_str, run_env = _breeze_python(bdir)
+    try:
+        audio_arg = ["--audio", str(ep.main_audio())]
+    except FileNotFoundError:
+        audio_arg = []
     cmd = [
         py_str, str(bdir / "make_subtitle.py"),
         "--dir", str(ep.dir),
+        *audio_arg,
         "--guest", guest, "--terms", terms,
     ]
     errf = ep.subdir("work") / "_breeze_stderr.log"

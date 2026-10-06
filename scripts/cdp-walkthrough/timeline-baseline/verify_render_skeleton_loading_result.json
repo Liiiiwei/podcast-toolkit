@@ -1,0 +1,16 @@
+[
+  {
+    "name": "LOAD-1 render.js 匯出 renderCardSkeletons 且模組圖解得開",
+    "ok": true,
+    "got": 3,
+    "want": 3,
+    "status": "pass"
+  },
+  {
+    "name": "LOAD-2 骨架卡內部三段佔位都畫出來（3 張 × 3 段）",
+    "ok": true,
+    "got": 9,
+    "want": 9,
+    "status": "pass"
+  }
+]

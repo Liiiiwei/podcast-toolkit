@@ -17,9 +17,8 @@ import os
 import re
 import sys
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text

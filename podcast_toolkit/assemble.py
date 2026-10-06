@@ -14,7 +14,6 @@ from podcast_toolkit import title_cards
 from podcast_toolkit.episode import Episode
 from podcast_toolkit.fsutil import atomic_write_text
 from podcast_toolkit.segment_plan import (
-    keep_intervals,
     merge_intervals,
     removed_with_trim,
 )
@@ -104,11 +103,39 @@ def build_style_string(style: dict) -> str:
     return ",".join(parts)
 
 
+def _clamp_cut_to_kept(
+    s: float, e: float, kept: list[tuple[float, float]]
+) -> tuple[float, float]:
+    """把「刪卡產生的」刪除區間本身夾在保留卡的語音之外（不是延伸後才夾）。
+
+    為什麼需要：相鄰字幕卡的時間戳會重疊（Whisper 逐字時間戳的常態）——被刪卡的尾巴
+    其實已經是下一張保留卡的開頭語音。原本只有 pad 延伸被夾在保留卡邊界內，區間本身
+    （卡自己的 start/end）沒夾，於是後端剪掉了保留卡的頭，而前端預覽守門看的是
+    「t 在不在保留卡語音裡」所以刻意不跳 —— 兩邊對不上（走查 B5 量到 0.75 秒）。
+
+    只夾「頭或尾落在區間內的保留卡」：整段被涵蓋的卡不算保留卡，所以
+    - 連刪相鄰兩卡 → 兩張都不是保留卡 → 互相不夾（連刪照樣併成整段）
+    - 影片模式在單張卡肚子裡切的任意區間 → 沒有保留卡的頭尾落在裡面 → 不動
+    呼叫端另外只對「邊界等於某張被刪卡」的區間套用本函式，跨卡的 foreign cut 一律原樣。
+
+    前端 timeline-core.js 的 padAndMergeCuts 有逐行對照的同一段，
+    tests/test_cut_merge_frontend_parity.py 逐位元比對兩邊。
+    """
+    ns, ne = s, e
+    for cs, ce in kept:
+        if s + 1e-6 < ce < e - 1e-6:  # 保留卡的尾巴落在區間內 → 左緣讓位到它的尾
+            ns = max(ns, ce)
+        if s + 1e-6 < cs < e - 1e-6:  # 保留卡的頭落在區間內 → 右緣讓位到它的頭
+            ne = min(ne, cs)
+    return ns, max(ne, ns)
+
+
 def _pad_and_merge_cuts(
     intervals: list[tuple[float, float]], v2_cards: list[dict], pad: float
 ) -> list[tuple[float, float]]:
     """把每個刪除區間往前後各「最多」吃掉 pad 秒的邊緣雜音（換氣/吸氣/底噪）；
-    但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。pad<=0 → 原樣返回。
+    但**夾在保留卡的語音邊界內**——絕不咬進要保留的語音（含部分被切的卡）。
+    pad<=0 → 不延伸也不合併（向後相容分支），但保留卡語音的夾制仍然生效。
 
     保留卡 = 未被任一刪段「整段涵蓋」的卡（部分被切的卡仍算保留）。連刪數張、中間沒有保留卡
     語音時間隙也一起砍；夾著保留卡（含 flush-adjacent：保留卡 start==前段尾）則不併。
@@ -118,8 +145,8 @@ def _pad_and_merge_cuts(
     某一側沒有鄰卡（片頭/片尾側）→ 該側不外吃（頭尾留給 head/tail trim 處理）。
     """
     intervals = sorted(intervals)
-    if pad <= 0 or not intervals:
-        return intervals  # 關閉 → 維持原本逐卡區間（向後相容、逐位元等同 baseline）
+    if not intervals:
+        return intervals
 
     # 正規化：修反置 (start>end)、丟零長度（手動 cuts 打錯時的防呆）
     norm = sorted((min(a, b), max(a, b)) for a, b in intervals if a != b)
@@ -132,11 +159,36 @@ def _pad_and_merge_cuts(
         (cs, ce) for cs, ce in cards
         if not any(s - 1e-6 <= cs and ce <= e + 1e-6 for s, e in norm)
     ]
+    # 被刪的卡 = 被整段涵蓋的卡。用「區間邊界是否等於某張被刪卡」判定這段 cut 是不是
+    # 「刪卡產生的」—— 只有它要夾保留卡語音；影片模式自己框的任意區間（foreign cut）
+    # 原樣保留，使用者畫的邊界不該被我們竄改。2ms 容差吃掉 yaml round-trip 的取整誤差。
+    deleted = [
+        (cs, ce) for cs, ce in cards
+        if any(s - 1e-6 <= cs and ce <= e + 1e-6 for s, e in norm)
+    ]
+    clamped: list[tuple[float, float]] = []
+    for s, e in norm:
+        if not any(abs(s - cs) <= 2e-3 and abs(e - ce) <= 2e-3 for cs, ce in deleted):
+            clamped.append((s, e))  # foreign cut：原樣，不夾
+            continue
+        ns, ne = _clamp_cut_to_kept(s, e, kept)
+        if ne - ns <= 1e-6:
+            # 失敗不靜默：整段都是別人的語音（相鄰卡時間戳重疊到這種程度）→ 這次不剪，但要講
+            print(
+                f"⚠ 刪段 {s:.3f}–{e:.3f}s 整段落在保留卡的語音範圍內（相鄰卡時間戳重疊），"
+                "本次不剪以免咬掉要保留的語音。",
+                file=sys.stderr,
+            )
+            continue
+        clamped.append((ns, ne))
+    clamped.sort()
+    if pad <= 0 or not clamped:
+        return clamped  # 不延伸也不合併，但保留卡語音已經夾過
 
     # 先併「相鄰刪段之間沒有保留卡語音」的區間（連刪 → 中間間隙一起砍）。判定「間隙有保留卡」
     # = 有保留卡與間隙 (pe, s) 重疊（cs < s 且 ce > pe）→ flush-adjacent（cs==pe、連續字幕常態）也擋得下。
-    pre = [list(norm[0])]
-    for s, e in norm[1:]:
+    pre = [list(clamped[0])]
+    for s, e in clamped[1:]:
         pe = pre[-1][1]
         gap_has_kept = any(cs < s - 1e-6 and ce > pe + 1e-6 for cs, ce in kept)
         if s <= pe + 1e-6 or not gap_has_kept:
@@ -271,6 +323,7 @@ def _write_ass_from_srt(
     speaker_spans: list[tuple[float, float, str]] | None = None,
     style: dict | None = None,
     cards_overlay: list[dict] | None = None,
+    include_subs: bool = True,
 ) -> None:
     """轉 SRT → ASS 並寫入明確的 PlayResX/PlayResY。
 
@@ -290,6 +343,9 @@ def _write_ass_from_srt(
 
     cards_overlay（標題卡）會以更高的 Layer 追加在字幕事件之後，整組用 inline
     override tag 畫（見 title_cards 模組），所以 force_style 蓋不到它。
+
+    include_subs=False → 只寫標題卡、不寫 Layer 0 字幕事件（sidecar 模式用：影片
+    不燒字幕，但使用者做的標題卡仍要出現在畫面上）。src 的內容此時完全不影響產出。
     """
     from podcast_toolkit import dual_line, srt_io
 
@@ -332,6 +388,8 @@ def _write_ass_from_srt(
         margins = [base + off if off else 0 for off in offsets]
     else:
         events, margins = cards, [0] * len(cards)
+    if not include_subs:
+        events, margins = [], []
 
     rows = [head]
     for e, margin_v in zip(events, margins):
@@ -1384,8 +1442,9 @@ def prepare_assembly(
         if cfg.get("subtitle_dual_line") and v2_canon_path.exists() else None
     )
 
-    # burn 模式才需要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免
-    # libass 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 不燒字幕 → srt_rel=None。
+    # 燒字幕要把 SRT 轉成有明確 PlayResX/Y 的 ASS（PlayResY=輸出 frame 高，避免 libass
+    # 對 SRT 預設 PlayResY=288 把 MarginV/FontSize 等比放大）。sidecar 模式不燒字幕，但若有
+    # 標題卡仍要寫一份「只有卡、沒有字幕」的 ASS（見下方 need_overlay_ass）。
     # 標題卡：原型時間軸上做的大字報／下標條／引言框，跟字幕燒在同一個 ASS，
     # 合成的濾鏡鏈完全不用動。時間軸跟字幕一致（兩者都在 select/setpts 之前燒，
     # 每塊的 t 仍是原始時間軸），所以只要套用跟 SRT 同一個 srt_total_shift。
@@ -1401,19 +1460,33 @@ def prepare_assembly(
             )
         overlay_cards = shifted_cards
 
+    # 標題卡不是字幕：sidecar（影片不燒字幕、字幕另存 .srt）模式下，使用者在時間軸上做的
+    # 大字報／下標條／引言框仍然該出現在畫面上。所以「要不要寫這份 ASS」的判準是
+    # 「burn_subs 或有標題卡」，include_subs=burn_subs 才決定要不要寫 Layer 0 字幕事件。
+    # 前科：這三處閘門原本只看 burn_subs → sidecar 模式的標題卡連 ASS 都不寫、整批靜默消失。
+    # 純音訊（audio_only）沒有畫面，標題卡無處可燒，不進這條。
+    need_overlay_ass = burn_subs or (bool(overlay_cards) and not audio_only)
+    # cards-only 的 ASS 與 burn 版分檔存，避免同一集切換模式時互相覆蓋／讀到上一輪殘檔
+    ass_kind = "" if burn_subs else "_cardsonly"
+    if need_overlay_ass and not burn_subs and not _has_subtitles_filter(ffmpeg_bin()):
+        raise AssembleError(
+            "ffmpeg 缺 subtitles 濾鏡（沒編 libass），無法燒標題卡。"
+            "請裝含 libass 的 ffmpeg（例如 evermeet 靜態版放 ~/.local/bin），"
+            "或把這集的標題卡清空。"
+        )
     srt_rel: str | None = None
-    if burn_subs:
+    if need_overlay_ass:
         if output_kind == "yt":
             ass_res_w, ass_res_h = (int(x) for x in enc["resolution"].split("x"))
             sub_style = cfg["subtitle_style"]
         else:
             ass_res_w, ass_res_h = 1080, 1920
             sub_style = cfg.get("subtitle_style_reels") or cfg["subtitle_style"]
-        ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}.ass"
+        ass_path = ep.subdir("work") / f"_v2_aligned_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
         _write_ass_from_srt(
             srt, ass_path, ass_res_w, ass_res_h,
             speaker_spans=dual_spans, style=sub_style,
-            cards_overlay=overlay_cards,
+            cards_overlay=overlay_cards, include_subs=burn_subs,
         )
         srt_rel = str(ass_path.relative_to(cwd)) if ass_path.is_relative_to(cwd) else str(ass_path)
 
@@ -1489,25 +1562,28 @@ def prepare_assembly(
         # 先在下面 legacy 區塊改寫 overlay_cards 之前留一份原始清單。
         overlay_cards_src = overlay_cards
 
-        if burn_subs and cut_intervals:
-            # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
-            clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
-            filter_srt_by_intervals(srt, clean_srt, cut_intervals)
-            srt = clean_srt
+        if need_overlay_ass and cut_intervals:
+            if burn_subs:
+                # 燒字幕：去掉落在刪除區間的字幕卡，避免 select 後字幕時間錯位閃爍
+                clean_srt = ep.subdir("work") / f"_v2_assembled_{output_kind}.srt"
+                filter_srt_by_intervals(srt, clean_srt, cut_intervals)
+                srt = clean_srt
             # 標題卡用跟字幕同一條判準（起點落在剪除區就丟），時間同樣不位移
             overlay_cards = title_cards.drop_by_intervals(overlay_cards, cut_intervals)
             # 過濾後仍要轉成標明 PlayResX/Y 的 ASS 再燒；直接燒 SRT 會讓 libass 用預設
             # PlayResY=288 把 FontSize/MarginV 等比放大 frame_h/288（1080→約 3.75×），字體暴大。
-            # 沿用上面 burn_subs 段算好的輸出解析度（ass_res_w/ass_res_h）。
-            clean_ass = ep.subdir("work") / f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+            # 沿用上面那段算好的輸出解析度（ass_res_w/ass_res_h）。
+            clean_ass = ep.subdir("work") / (
+                f"_v2_assembled_{output_kind}_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
+            )
             _write_ass_from_srt(
-                clean_srt, clean_ass, ass_res_w, ass_res_h,
+                srt, clean_ass, ass_res_w, ass_res_h,
                 speaker_spans=dual_spans, style=sub_style,
-                cards_overlay=overlay_cards,
+                cards_overlay=overlay_cards, include_subs=burn_subs,
             )
             srt_rel = str(clean_ass.relative_to(cwd)) if clean_ass.is_relative_to(cwd) else str(clean_ass)
 
-        if seek_segments and burn_subs:
+        if seek_segments and need_overlay_ass:
             # seek inputs 的 PTS 都從 0 開始，字幕也先收掉刪段映射到緊密正片時間軸。
             compact_srt = ep.subdir("work") / f"_v2_seeked_assembled_{output_kind}.srt"
             compact_srt.write_text(
@@ -1515,7 +1591,7 @@ def prepare_assembly(
                 encoding="utf-8",
             )
             compact_ass = ep.subdir("work") / (
-                f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}.ass"
+                f"_v2_seeked_assembled_{output_kind}_{ass_res_w}x{ass_res_h}{ass_kind}.ass"
             )
             # 雙行：講者 spans 與字幕卡同軸，套字幕卡完全一樣的 remap 收掉刪段搬到緊密軸，
             # 雙行上色才不會落在錯的時間。speed=1.0/offset=0 與 compact_srt 一致。
@@ -1543,7 +1619,7 @@ def prepare_assembly(
             _write_ass_from_srt(
                 compact_srt, compact_ass, ass_res_w, ass_res_h,
                 speaker_spans=compact_spans, style=sub_style,
-                cards_overlay=compact_cards,
+                cards_overlay=compact_cards, include_subs=burn_subs,
             )
             srt_rel = (
                 str(compact_ass.relative_to(cwd))

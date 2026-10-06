@@ -8,6 +8,7 @@ fixes: []
 card_fixes: []
 force_break: []
 force_join: []
+title_cards: []
 
 # 本集專屬詞庫（與 defaults.yaml common_glossary 合併後注入 Gemini prompt）
 # 來賓姓名、本集獨有的品牌 / 產品 / 術語放這。直接在下方加條目即可：

@@ -43,3 +43,45 @@ jobs:
         run: ruff check podcast_toolkit tests
       - name: Pytest
         run: pytest tests/ -q
+
+  # CDP 走查：scripts/cdp-walkthrough/ 的瀏覽器護欄（指紋／版面／互動）。以前只跑在本機，
+  # CI 一條都跑不到（TODO.md 2026-09-26 記的缺口）。run_walkthroughs.py 會自己建沙盒集、
+  # 用全新 profile 起 headless Chrome、依序跑完再收攤，紅了回非零 exit。
+  # 刻意獨立成一個 job（不進 test matrix）：它要真瀏覽器、跑得慢，且與 pytest 互不相干；
+  # 壞了要一眼看出是「瀏覽器護欄紅」還是「單元測試紅」。
+  cdp-walkthrough:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg (走查只需抽音軌，不需 libass)
+        run: |
+          # 走查的沙盒集只拿 ffmpeg 把 sample-video.mp4 抽成 wav 餵 /api/waveform，
+          # 用不到 subtitles 濾鏡 → 直接抓 evermeet 靜態版（比 brew install ffmpeg 快很多）。
+          mkdir -p ~/.local/bin
+          curl -fsSL https://evermeet.cx/ffmpeg/getrelease/zip -o /tmp/ffmpeg.zip
+          unzip -o /tmp/ffmpeg.zip -d ~/.local/bin
+          chmod +x ~/.local/bin/ffmpeg
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ~/.local/bin/ffmpeg -version | head -1
+      - name: 確認有 Chrome（macos runner 預裝；沒有就自己裝）
+        run: |
+          APP="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          if [ ! -x "$APP" ]; then
+            echo "runner 沒有預裝 Chrome，改用 brew 裝"
+            brew install --cask google-chrome
+          fi
+          "$APP" --version
+      - name: Install package
+        run: pip install -e ".[dev,cdp]"
+      - name: CDP 走查
+        run: python -u scripts/cdp-walkthrough/run_walkthroughs.py
+      - name: 收走查結果（紅了要看得到 got/want）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cdp-walkthrough-results
+          path: scripts/cdp-walkthrough/timeline-baseline/*_result.json
+          if-no-files-found: warn

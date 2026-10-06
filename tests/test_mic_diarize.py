@@ -6,12 +6,10 @@ from __future__ import annotations
 
 import json
 import math
-import struct
 import tempfile
 import wave
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -251,8 +249,7 @@ def test_overlap_higher_energy_wins():
 
 def test_short_backchannel_no_jitter():
     """A 長句中插入 1 字的 B 瞬間高 → min_turn_sec/min_turn_words 併回 A，不切出孤立 B 卡。"""
-    # 2 個字 A → 1 個字 B → 3 個字 A
-    assignments_raw = ["a", "a", "b", "a", "a", "a"]
+    # 2 個字 A → 1 個字 B → 3 個字 A（序列由下方 a_lvl envelopes 驅動）
     words = [_make_word("字", 0.5 * i, 0.5 * i + 0.4) for i in range(6)]
 
     # 直接測 assign_speakers_per_word 後的短附和後處理：
@@ -1005,7 +1002,7 @@ def test_subject_shift_disabled():
     params_off = DiarizeParams(maxlen=30, hardlen=40, gapmax=0.5,
                                min_turn_sec=0.0, min_turn_words=0,
                                subject_shift=False)
-    result = _shift_trailing_subjects(cards, words, params_off)
+    _shift_trailing_subjects(cards, words, params_off)
     # 不搬（開關關閉由 cards_from_assignments 攔截，這裡直呼叫函式本身）
     # _shift_trailing_subjects 本身不看 subject_shift；開關在呼叫端
     # 改驗透過 cards_from_assignments 呼叫：
@@ -1332,8 +1329,6 @@ def test_rap_no_attach_different_speaker():
 def test_rap_no_attach_word_span_not_adjacent():
     """word_span 不相鄰（a1 != b0）不回黏。"""
     from podcast_toolkit.mic_diarize import _make_card
-    chars_all = "說了以後"
-    words = _make_rap_words(chars_all, "")
     # 手動建兩張卡，word_span 故意不連續：A=(0,1), B=(2,4)
     # 需要 4 個 word，但 chars_all 只有 4 字，B 段為空；
     # 直接用完整 words list 手動指定 span
