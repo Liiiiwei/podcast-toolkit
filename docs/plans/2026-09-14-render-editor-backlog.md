@@ -194,6 +194,7 @@ encode 設定加 `archival` profile 選項；出片時可另存一份高位元�
 
 ## 附錄 B：驗收時量到的新問題（留給下一梯）
 
+- ✔ 已修 2026-10-06：下列紅燈其實是產品碼缺陷非環境性（3.14 的 `Path.is_file()` 吞掉 PermissionError），見 `podcast_toolkit/web/dashboard.py` 的 `_has_episode_yaml()`。
 - **py3.14 環境性紅（2 條，非本梯造成，pristine HEAD 同樣紅）**：
   `tests/test_dashboard_fault_tolerance.py` 的兩條權限容錯測試在本機 3.14 下 warnings 為空
   （chmod 000 在 bash 實測會擋，但 pytest 進程內 `list_episodes` 對 000 的 `recent` 資料夾

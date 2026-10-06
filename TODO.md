@@ -4,7 +4,9 @@
 
 ## 2026-09-06 離線版後續
 
-- [ ] 建立固定的 `~/.podcast-toolkit/breeze-stage`，避免未指定 `BREEZE_STAGE` 時無法重新打包。
+- [x] 建立固定的 `~/.podcast-toolkit/breeze-stage`，避免未指定 `BREEZE_STAGE` 時無法重新打包。
+  ✅ 2026-10-06 核實（本機）：目錄已存在；`build_app.sh:100-103` 未設環境變數時會落到它；
+  `scripts/check_breeze_stage.py` 對它實跑回「資產齊備」、exit 0。別台電腦需各自建立。
 - [ ] 準備至少 10 GiB 可用空間後，以一支長片再做完整合成驗收。
 - [ ] 對外發布前，從乾淨工作樹重打包 App／DMG，讓 build ID 與遠端提交一致。
 - [ ] 凱特王專案補入 `03_成品/凱特王_final.mp4` 後，驗收正式影片合成。
@@ -235,10 +237,13 @@
 - [x] **分支併回 main** ✅ 2026-08-08：`whisper-vs-breeze-accuracy-test`（4 個 commit：
   `afadeb0` locale 編碼、`3ddfd77` 字幕編輯 UX 第一梯、`90b8337` 計畫附錄、`a79e861` 本段）
   併回 `origin/main`。只有 `TODO.md` 衝突（兩邊都動過），`app.js`／`app.css` 自動合併。
-- [ ] **清掉舊 DMG**（使用者 2026-08-08 說「之後再說」；晚間收工前再提過一次，尚未點頭）：
+- [x] **清掉舊 DMG**（使用者 2026-08-08 說「之後再說」；晚間收工前再提過一次，尚未點頭）：
   `dist/` 現有四包各 2.5G，最新可用的是 `...-20260808-56ab015.dmg`；
   前三包（`20260807-284a51d`、`20260807-afadeb0`、`20260808-54c57d4`，共約 7.5G）可清，
   用 `trash` 不要用遞迴強制刪除。
+  ✅ 2026-10-06 核實：點名的四包（含 `56ab015`）在主樹 `dist/` 與本工作樹 `dist/` 都已不在
+  （`ls` 實查；主樹只剩 `...-20260821-061a3e9.dmg`）。另：本工作樹 `dist/` 現有兩包
+  `20260917-*-dirty.dmg`（各約 4.8G），不屬本條點名範圍，是否清理另議。
 - [x] **重打包 .app / DMG** ✅ 2026-08-08 11:43（合併後的 `54c57d4`）：
   `dist/Podcast-Toolkit-0.2.0-20260808-54c57d4.dmg`（2.5G）。舊的 `/Applications/Podcast.app`
   （`0.2.0+g5eea9b9.20260805T1504`）用 `trash` 移走後 `ditto` 裝新版。
@@ -284,8 +289,8 @@
   平行後取消會漏行程；前端只認 `"yt"`/`"reels"`。且**沒有任何真跑 ffmpeg 的測試**
   （`tests/conftest.py:90` 把 `shutil.which` mock 成 True，只驗指令字串），改壞了測試不會紅。
   加上上方 `:102` 的量測：rotate 本身難平行（4 並行聚合僅 1.12×，全核榨頂約 1.9×），收益封頂。
-- [ ] **確認：Phase 2（單軌集手動配對 UI，詳見上方「2026-07-28 後續」段）狀態**：原項仍在，
-  維持「等使用者授權才開工」，未授權前不動。
+- [x] **確認：Phase 2（單軌集手動配對 UI，詳見上方「2026-07-28 後續」段）狀態** ✅ 2026-10-06
+  使用者裁決：**不做**（與 :166 的 2026-08-05 調查結論一致，矛盾解除）。
 
 ## 2026-09-05｜字幕潤飾與跨電腦開發
 
@@ -329,7 +334,25 @@
 - [x] pre-commit hook（`scripts/hooks/pre-commit`）改為自己挑解譯器：`PODCAST_PY` > 啟用中的 venv >
   `/usr/bin/python3`（3.9.6）> PATH 的 `python3`；挑到的沒有 pytest 會印警告再退回（不靜默降級）。
   三態實測：3.9.6 綠（exit 0）／`PODCAST_PY=python3`(3.14.6) 紅（突變測試，證明關卡真的在跑）／
-  指定無 pytest 的解譯器會吵出來。`test_dashboard_fault_tolerance` 兩測在 3.14 仍紅（環境相依，未改）。
-- [ ] B 梯剩餘項（見 `docs/plans/2026-09-23-unified-timeline-core.md`）：B3a scrub 播放頭下放
-  （核心已有 `timeline-core.js:428 bindPlayheadScrubCore`，podcast 端尚未接）、B3b 字幕塊整段平移下放；
-  Phase 2 的「`cuts`／`deletions` 全面併軌」與標題卡後端持久化仍待接真功能時一起做。
+  指定無 pytest 的解譯器會吵出來。`test_dashboard_fault_tolerance` 兩測在 3.14 的紅燈已於 2026-10-06 修掉（根因是產品碼：3.14 的 `Path.is_file()` 對無權限資料夾回 False 不拋錯，`dashboard.py` 改用 `_has_episode_yaml()` 自行 `os.stat`）。
+- [x] B 梯三項已完成（2026-10-06 核實，原列為「B 梯剩餘項」）：
+  B3a scrub 播放頭下放（`timeline.js:152`、`:233 bindPodcastScrub`）；
+  B3b 字幕塊整段平移下放（`timeline.js:112-117`、`:476 startTimelineDrag` 的 `move`）；
+  標題卡後端持久化（`web/episode_io.py:277` 讀、`:535-567` 寫，`api.js:219` 送，
+  `tests/test_config_roundtrip.py:89` 守門）。三項皆有突變測試：
+  `scripts/cdp-walkthrough/timeline-baseline/verify_b_RESULT.md:19-21`。
+- [ ] 剩餘：`cuts`／`deletions` 全面併軌。儲存層已併軌（`cuts` 為正典，B1-1～B1-6 見
+  `docs/plans/2026-09-23-unified-timeline-core.md:164-173`），尚未收的是讀取端：
+  `proofread.py:344` 仍只認 `deletions`（集一旦遷移成 `cuts`，「跳過已刪卡」就不再生效）、
+  `assemble.py:265` 保留舊 idx 讀取路徑；前端 `state.deletions` 當操作介面是計畫的既定決策，不算殘留。
+
+## 2026-10-06｜分支併回 main ＋ 影片原型第一梯 UX ＋ 轉錄檔名限制解除
+
+- [x] PR #13 併回 main（`db13153`，26 個 commit）：共用時間軸核心、剪除語意併軌、
+  編輯器拆檔與影片模式 UX 修復。
+- [x] PR #14 併回 main（`9659066`）：CDP 走查 MUT-F3A 不再釘死像素值，改斷言參差回來。
+- [x] 影片剪輯原型第一梯 UX（`e44aedd`，隨 PR #13 併入）：字幕面板跑版修復、對齊面板搬到頂端列、
+  一包 UX 修正。延後到下一梯的 5 條（#6／#9／#12／#13／#14）見
+  `docs/plans/2026-10-06-video-edit-prototype-ux.md`。
+- [x] 轉錄檔名限制解除（`8a2c6f0`，隨 PR #13 併入）：主混音檔改用 `ep.main_audio()` 以 `--audio`
+  傳實際路徑，不再要求檔名符合 `*Mix*.wav`（`web/transcribe_job.py:616-621`）。

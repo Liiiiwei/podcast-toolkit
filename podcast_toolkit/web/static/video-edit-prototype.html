@@ -144,6 +144,19 @@
       .vt-spacer {
         margin-left: auto;
       }
+      /* 圖示（#13）：定義一律來自 icons.js（與主編輯器同一份），這裡只管版面。
+         圖示純裝飾、不吃點擊 → 命中的永遠是外層按鈕本身。
+         逐句工具鈕的 svg 直接塞在按鈕裡（沒有 [data-icon] 外層），見 .vt-line-tool svg。 */
+      [data-icon] {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        pointer-events: none;
+      }
+      [data-icon] svg {
+        display: block;
+      }
       .vt-zoom {
         display: inline-flex;
         gap: 2px;
@@ -169,6 +182,75 @@
       .vt-tl-hint {
         font-size: var(--text-xs);
         color: var(--text-faint);
+      }
+      /* 操作說明（#12）：ⓘ 是真的按鈕，點了開 popover，鍵盤與觸控都開得了。
+         時間軸在頁面底部，往下開會掉出視窗 → 往上展開、靠左對齊。 */
+      .vt-keys-mount {
+        position: relative;
+        display: inline-flex;
+      }
+      .vt-keys-toggle {
+        display: inline-flex;
+        align-items: center;
+        align-self: center;
+        min-height: 20px;
+        padding: 0 var(--space-xs);
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        font: inherit;
+        font-size: var(--text-sm);
+        line-height: 1.4;
+        color: var(--text-dim);
+        cursor: pointer;
+      }
+      .vt-keys-toggle:hover,
+      .vt-keys-toggle[aria-expanded="true"] {
+        color: var(--accent);
+        background: var(--accent-soft);
+      }
+      .vt-keys-toggle:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 1px;
+      }
+      .vt-keys-pop {
+        position: absolute;
+        bottom: calc(100% + var(--space-xs));
+        left: 0;
+        z-index: 50;
+        width: 300px;
+        padding: var(--space-md);
+        background: var(--surface-raised);
+        border: 1px solid var(--border-strong);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        font-size: var(--text-xs);
+        color: var(--text-dim);
+      }
+      .vt-keys-pop[hidden] {
+        display: none;
+      }
+      .vt-keys-pop h3 {
+        margin: 0 0 var(--space-xs);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text);
+      }
+      .vt-keys-pop h3:not(:first-child) {
+        margin-top: var(--space-sm);
+      }
+      .vt-keys-pop dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 2px var(--space-sm);
+        margin: 0;
+      }
+      .vt-keys-pop dt {
+        white-space: nowrap;
+        color: var(--text);
+      }
+      .vt-keys-pop dd {
+        margin: 0;
       }
       .vt-tl-scroll {
         overflow-x: auto;
@@ -292,6 +374,21 @@
         cursor: ew-resize;
         background: transparent;
         touch-action: none;
+      }
+      /* 常駐可見的抓柄（#6）：命中區本身是透明的，不 hover 就看不出播放頭哪一段
+         可以拖。在波形軌頂端畫一個實心小圓角塊，告訴人「抓這裡」。
+         pointer-events:none → 命中的仍是 grip 本身，拖曳行為只有 grip 一處在管。 */
+      .vt-playhead-grip::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 2px;
+        width: 9px;
+        height: 14px;
+        border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+        background: var(--accent);
+        box-shadow: var(--shadow-sm);
+        pointer-events: none;
       }
       .vt-playhead-grip:hover,
       .vt-playhead-grip.is-scrubbing {
@@ -429,6 +526,10 @@
       .vt-side-head:hover .vt-side-caret {
         color: var(--text);
       }
+      /* 收合＝同一個圖示轉 90 度，不換字符 */
+      .vt-side-sec.is-collapsed .vt-side-caret {
+        transform: rotate(-90deg);
+      }
       .vt-side-title {
         font-size: var(--text-md);
         font-weight: 600;
@@ -552,6 +653,7 @@
         display: block;
         width: 13px;
         height: 13px;
+        pointer-events: none;
       }
       .vt-line-tool:hover:not(:disabled) {
         border-color: var(--accent);
@@ -1062,6 +1164,9 @@
         padding-top: var(--space-sm);
       }
       .vt-adv > summary {
+        display: flex;
+        align-items: center;
+        gap: var(--space-xs);
         cursor: pointer;
         font-size: var(--text-sm);
         color: var(--text-dim);
@@ -1070,12 +1175,11 @@
       .vt-adv > summary::-webkit-details-marker {
         display: none;
       }
-      .vt-adv > summary::before {
-        content: "▸ ";
+      .vt-adv-caret {
         color: var(--text-faint);
       }
-      .vt-adv[open] > summary::before {
-        content: "▾ ";
+      .vt-adv[open] .vt-adv-caret {
+        transform: rotate(90deg);
       }
       .vt-adv-body {
         display: flex;
@@ -1170,6 +1274,19 @@
         /* 錯誤／空狀態是要讓人讀的訊息，不是裝飾：text-faint 在 bg 上約 3.7:1
            未過 AA 小字 4.5:1，改用 text-dim（約 7:1）。 */
         color: var(--text-dim);
+      }
+      .vt-empty-note[hidden] {
+        display: none;
+      }
+      .vt-empty-lead {
+        margin: var(--space-sm) 0 var(--space-xs);
+      }
+      .vt-empty-list {
+        margin: 0;
+        padding-left: 1.4em;
+      }
+      .vt-empty-list li {
+        margin: 2px 0;
       }
       /* 頂列出片區：主要動作是「輸出影片」，JSON 面板降級成除錯入口 */
       /* 合成進度：按下「輸出影片」之後，人要看得到進度、知道何時好、能喊停。
@@ -1418,8 +1535,9 @@
           type="button"
           hidden
           aria-label="收起進度"
+          title="收起進度"
         >
-          ✕
+          <span data-icon="x" data-icon-size="14" data-icon-fallback="收起"></span>
         </button>
       </div>
       <!-- 出片目標：後端支援 yt(16:9) / reels(9:16) / mp3，之前前端寫死只出 yt -->
@@ -1485,7 +1603,7 @@
             <span class="vt-side-note" id="vt-align-note"></span>
           </div>
           <p class="vt-tpl-hint" id="vt-align-hint">
-            影片／聲音／字幕時間對齊，與這集 episode.yaml 共用。
+            對齊設定還在載入，載入完成前不能編輯與儲存。
           </p>
           <div class="vt-field">
             <span
@@ -1493,7 +1611,14 @@
               title="外接音檔相對影片的同步偏移（秒）。此集無外接音檔時停用。"
               >音檔同步偏移</span
             >
-            <input class="vt-num" type="number" id="vt-al-audio" step="0.01" />
+            <input
+              class="vt-num"
+              type="number"
+              id="vt-al-audio"
+              step="0.01"
+              placeholder="—"
+              disabled
+            />
             <span class="vt-field-val">秒</span>
           </div>
           <div class="vt-field">
@@ -1502,7 +1627,14 @@
               title="Cam B 相對 Cam A 的同步偏移（秒）"
               >Cam B 同步偏移</span
             >
-            <input class="vt-num" type="number" id="vt-al-camb" step="0.01" />
+            <input
+              class="vt-num"
+              type="number"
+              id="vt-al-camb"
+              step="0.01"
+              placeholder="—"
+              disabled
+            />
             <span class="vt-field-val">秒</span>
           </div>
           <div class="vt-field">
@@ -1515,6 +1647,8 @@
               id="vt-al-head"
               step="0.01"
               min="0"
+              placeholder="—"
+              disabled
             />
             <span class="vt-field-val">秒</span>
           </div>
@@ -1528,6 +1662,8 @@
               id="vt-al-tail"
               step="0.01"
               min="0"
+              placeholder="—"
+              disabled
             />
             <span class="vt-field-val">秒</span>
           </div>
@@ -1537,11 +1673,23 @@
               title="非破壞性字幕偏移（秒），正值＝字幕往後延；預覽字幕跟著移"
               >字幕偏移</span
             >
-            <input class="vt-num" type="number" id="vt-al-sub" step="0.1" />
+            <input
+              class="vt-num"
+              type="number"
+              id="vt-al-sub"
+              step="0.1"
+              placeholder="—"
+              disabled
+            />
             <span class="vt-field-val">秒</span>
           </div>
           <div class="vt-field">
-            <button class="vt-btn is-primary" type="button" id="vt-al-save">
+            <button
+              class="vt-btn is-primary"
+              type="button"
+              id="vt-al-save"
+              disabled
+            >
               儲存對齊
             </button>
             <span
@@ -1583,9 +1731,13 @@
               aria-expanded="true"
               aria-controls="vt-sec-card"
             >
-              <span class="vt-side-caret">▾</span>
+              <span
+                class="vt-side-caret"
+                data-icon="chevron-down"
+                data-icon-size="12"
+              ></span>
               <span class="vt-side-title">標題卡</span>
-              <span class="vt-side-note">拖到藍軌，或在字幕列點「卡」</span>
+              <span class="vt-side-note">在字幕列點「卡」也能新增</span>
             </button>
             <div class="vt-side-body" id="vt-sec-card">
               <div class="vt-tpl-grid" id="vt-tpl-grid">
@@ -1693,7 +1845,11 @@
               aria-expanded="true"
               aria-controls="vt-sec-subs"
             >
-              <span class="vt-side-caret">▾</span>
+              <span
+                class="vt-side-caret"
+                data-icon="chevron-down"
+                data-icon-size="12"
+              ></span>
               <span class="vt-side-title">字幕</span>
               <span class="vt-side-note" id="vt-line-count"></span>
             </button>
@@ -1706,7 +1862,14 @@
           </div>
 
           <details class="vt-adv" id="vt-adv">
-            <summary>進階：字幕樣式</summary>
+            <summary>
+              <span
+                class="vt-adv-caret"
+                data-icon="chevron-right"
+                data-icon-size="12"
+              ></span
+              >進階：字幕樣式
+            </summary>
             <div class="vt-adv-body">
               <div class="vt-field">
                 <span class="vt-field-label">字型</span>
@@ -1832,7 +1995,10 @@
       </div>
 
       <div class="vt-controls">
-        <button id="vt-play" class="vt-btn" type="button">▶ 播放</button>
+        <button id="vt-play" class="vt-btn" type="button">
+          <span data-icon="play" data-icon-size="14"></span
+          ><span class="vt-play-label">播放</span>
+        </button>
         <span class="vt-time" id="vt-time">00:00.0 / 00:00.0</span>
         <label class="vt-toggle">
           <input type="checkbox" id="vt-skip" checked />
@@ -1845,12 +2011,27 @@
             id="vt-zoom-out"
             class="vt-btn"
             type="button"
+            aria-label="縮小"
             title="縮小（縮到底＝適合寬度）"
           >
-            -
+            <span
+              data-icon="minus"
+              data-icon-size="14"
+              data-icon-fallback="縮小"
+            ></span>
           </button>
-          <button id="vt-zoom-in" class="vt-btn" type="button" title="放大">
-            +
+          <button
+            id="vt-zoom-in"
+            class="vt-btn"
+            type="button"
+            aria-label="放大"
+            title="放大"
+          >
+            <span
+              data-icon="plus"
+              data-icon-size="14"
+              data-icon-fallback="放大"
+            ></span>
           </button>
         </div>
       </div>
@@ -1858,13 +2039,63 @@
       <div>
         <div class="vt-tl-head">
           <span class="vt-tl-title">時間軸</span>
-          <!-- 長 hint 已收成淡色 ⓘ（原生 tooltip）-->
-          <span
-            class="vt-tl-hint"
-            title="拖曳＝標記剪除；點剪除段＝取消；⌘Z 復原&#10;點字幕塊＝跳到右欄那一句&#10;鍵盤：← → 移動播放頭（⇧ 跨大步）、I 進點、O 出點、⌫ 剪除、Esc 取消"
-            aria-label="操作說明"
-            >ⓘ</span
-          >
+          <!-- 操作說明（#12）：原本是只有 title 的 span，滑鼠要停一秒才知道、
+               鍵盤與觸控完全打不開。改成按鈕＋popover；快捷鍵清單只寫在這個
+               popover 裡（鈕的 title 不再重複一份）。開關邏輯與「對齊」共用 bindPopover。 -->
+          <span class="vt-keys-mount">
+            <button
+              id="vt-keys-toggle"
+              class="vt-keys-toggle"
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="vt-keys-pop"
+              aria-label="操作說明"
+              title="操作說明"
+            >
+              <span
+                data-icon="circle-help"
+                data-icon-size="14"
+                data-icon-fallback="說明"
+              ></span>
+            </button>
+            <div
+              class="vt-keys-pop"
+              id="vt-keys-pop"
+              role="dialog"
+              aria-label="操作說明"
+              hidden
+            >
+              <h3>滑鼠</h3>
+              <dl>
+                <dt>在波形上拖曳</dt>
+                <dd>標記要剪除的一段</dd>
+                <dt>點剪除段</dt>
+                <dd>取消那一段剪除</dd>
+                <dt>點時間軸</dt>
+                <dd>播放頭跳到那裡</dd>
+                <dt>拖播放頭抓柄</dt>
+                <dd>前後刮動時間</dd>
+                <dt>點字幕塊</dt>
+                <dd>跳到右欄那一句</dd>
+              </dl>
+              <h3>鍵盤</h3>
+              <dl>
+                <dt>空白鍵</dt>
+                <dd>播放／暫停</dd>
+                <dt>← →</dt>
+                <dd>移動播放頭（按住 ⇧ 跨大步）</dd>
+                <dt>I ／ O</dt>
+                <dd>標進點／出點</dd>
+                <dt>⌫</dt>
+                <dd>剪除標記的一段（選了標題卡時＝刪卡）</dd>
+                <dt>Esc</dt>
+                <dd>取消標記</dd>
+                <dt>⌘Z</dt>
+                <dd>復原</dd>
+              </dl>
+            </div>
+          </span>
         </div>
         <div class="vt-tl-body">
           <div class="vt-tl-gutter" aria-hidden="true">
@@ -1899,7 +2130,8 @@
             </div>
           </div>
         </div>
-        <p class="vt-empty-note" id="vt-empty-note" hidden></p>
+        <!-- 載入失敗清單（#9）：內容由 renderLoadErrors() 依固定順序產生 -->
+        <div class="vt-empty-note" id="vt-empty-note" role="status" hidden></div>
       </div>
     </main>
 
@@ -1947,6 +2179,8 @@
       </div>
     </div>
 
+    <!-- 圖示定義與主編輯器共用同一份 icons.js（獨立檔；要排在 module 之前） -->
+    <script src="icons.js"></script>
     <script type="module" src="video-edit-prototype.js"></script>
   </body>
 </html>

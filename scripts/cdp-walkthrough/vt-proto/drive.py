@@ -103,9 +103,9 @@ async def main():
     skip_txt = await js("document.querySelector('.vt-toggle') && document.querySelector('.vt-toggle').textContent.replace(/\\s+/g,'')")
     check("checkbox 文案已精簡（無括號補述）", skip_txt is not None and "預覽剪後效果" not in skip_txt and "跳過剪除段" in skip_txt, got=skip_txt, want="含 跳過剪除段、無 預覽剪後效果")
 
-    # 長 hint 已收成 ⓘ tooltip（時間軸標頭沒有整行長字，改成 title 屬性）
-    hint_inline = await js("(()=>{const h=document.querySelector('.vt-tl-hint'); if(!h) return '__none__'; return {text:h.textContent.trim(), hasTitle:!!h.getAttribute('title')};})()")
-    check("時間軸長 hint 收成 ⓘ（文字進 title，不佔版面）", isinstance(hint_inline,dict) and hint_inline.get("text")=="ⓘ" and hint_inline.get("hasTitle"), got=hint_inline, want="text=ⓘ 且 hasTitle")
+    # 長 hint 已收成說明鈕＋popover（第二梯 #12：原 .vt-tl-hint 的 title 提示改成可點的按鈕）
+    hint_inline = await js("(()=>{const b=document.getElementById('vt-keys-toggle'); if(!b) return '__none__'; const pop=document.getElementById(b.getAttribute('aria-controls')||''); return {old:document.querySelectorAll('.vt-tl-hint').length, svg:b.querySelectorAll('svg').length, name:(b.getAttribute('aria-label')||b.title||'').trim(), popText:pop?pop.textContent.trim().length:0};})()")
+    check("時間軸長 hint 收成說明鈕（文字進 popover，不佔版面）", isinstance(hint_inline,dict) and hint_inline.get("old")==0 and hint_inline.get("svg")==1 and bool(hint_inline.get("name")) and hint_inline.get("popText",0)>0, got=hint_inline, want="舊 hint 0 個、鈕內 1 個圖示、有名稱、popover 有內文")
 
     # demo 字幕載入：字幕軌有塊、右欄有逐句列
     sub_blocks = await js("document.querySelectorAll('#vt-sub-track > *').length")

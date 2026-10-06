@@ -1,0 +1,734 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+影片剪輯原型第二梯 UX（#9／#6／#12／#14／#13／N1）CDP 走查＋回歸。
+
+紀律（lessons-learned 2026-08-25）：
+- 每個 ✓ 都綁布林斷言（ok = 實得 == 期待），只印值不算測。
+- 可點元素一律用 document.elementFromPoint(中心) 斷言最上層真的是它，
+  互動用 Input.dispatchMouseEvent 打真座標。
+- 不釘死由文字寬度決定的像素值，只用「>0」「相等／不等」關係式。
+- 每次全新 Chrome profile、伺服器支援 Range、開場驗版本指紋與 seekable。
+
+用法：
+  python3 -u drive.py                 # 自己起 serve.py（服務 live static）
+  python3 -u drive.py --base http://127.0.0.1:PORT   # 用已經在跑的 serve.py
+  python3 -u drive.py --json out.json # 另存 {斷言id: 布林}（突變測試用）
+結束碼：全綠 0，有紅 1，環境問題（指紋／seekable）2。
+"""
+import argparse
+import base64
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import urllib.request
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import cdp_driver as D  # noqa: E402
+
+RESULTS = {}
+ORDER = []
+
+
+def check(cid, desc, got, want):
+    ok = got == want
+    RESULTS[cid] = ok
+    ORDER.append(cid)
+    print("%s %-10s %s｜實得=%s 期待=%s" % (
+        "✓" if ok else "✗", cid, desc,
+        json.dumps(got, ensure_ascii=False), json.dumps(want, ensure_ascii=False)))
+    sys.stdout.flush()
+    return ok
+
+
+class Page:
+    def __init__(self, cdp, base):
+        self.cdp = cdp
+        self.base = base
+
+    def js(self, expr, timeout=30):
+        return self.cdp.evaluate(expr, await_promise=True, timeout=timeout)
+
+    def ctl(self, fail="", delay=""):
+        urllib.request.urlopen(
+            "%s/__ctl?fail=%s&delay=%s" % (self.base, fail, delay), timeout=5).read()
+
+    def stat(self):
+        """假伺服器收到幾次寫入、假集目前的值。"""
+        return json.loads(urllib.request.urlopen(
+            "%s/__stat" % self.base, timeout=5).read().decode("utf-8"))
+
+    def reset(self):
+        urllib.request.urlopen("%s/__reset" % self.base, timeout=5).read()
+
+    def shot(self, path, sel, pad=6):
+        """把某個元素（外擴 pad）截成 PNG。"""
+        r = self.js("""(() => { const r = document.querySelector(%s).getBoundingClientRect();
+          return {x: r.left, y: r.top, w: r.width, h: r.height}; })()""" % json.dumps(sel))
+        res = self.cdp.call("Page.captureScreenshot", {"format": "png", "clip": {
+            "x": max(0, r["x"] - pad), "y": max(0, r["y"] - pad),
+            "width": r["w"] + pad * 2, "height": r["h"] + pad * 2, "scale": 2}})
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(res["data"]))
+
+    def goto(self, query, width=1280, height=900):
+        self.cdp.call("Emulation.setDeviceMetricsOverride", {
+            "width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
+        self.cdp.call("Page.navigate", {"url": "about:blank"})
+        time.sleep(0.15)
+        self.cdp.call("Page.navigate",
+                      {"url": "%s/video-edit-prototype.html%s" % (self.base, query)})
+        # init() 跑到底才會掛上走查 hook → 用它當「載入流程結束」的訊號
+        if not self.wait("typeof window.__vtStats === 'function'", 20):
+            print("✗ 環境：頁面 init 沒跑完（__vtStats 不存在）")
+            sys.exit(2)
+        # 版本指紋：只有這一梯才有的節點；沒有＝服務到舊副本，中止不要繼續跑
+        # （用標記不用 svg：icons.js 載不到是要測的失敗情境，不是舊副本）
+        if not self.js("!!document.querySelector('#vt-keys-toggle [data-icon]')"):
+            print("✗ 環境：版本指紋未命中（服務到的不是第二梯的檔）")
+            sys.exit(2)
+
+    def wait(self, cond, secs=8):
+        end = time.time() + secs
+        while time.time() < end:
+            try:
+                if self.cdp.evaluate("!!(%s)" % cond, await_promise=False, timeout=5):
+                    return True
+            except Exception:
+                pass
+            time.sleep(0.1)
+        return False
+
+    def mouse(self, kind, x, y, buttons=0):
+        self.cdp.call("Input.dispatchMouseEvent", {
+            "type": kind, "x": float(x), "y": float(y), "button": "left" if kind != "mouseMoved" or buttons else "none",
+            "buttons": buttons, "clickCount": 1 if kind != "mouseMoved" else 0})
+
+    def click(self, x, y):
+        self.mouse("mouseMoved", x, y)
+        self.mouse("mousePressed", x, y, 1)
+        self.mouse("mouseReleased", x, y, 0)
+        time.sleep(0.15)
+
+    def drag(self, x1, y1, x2, y2, steps=8):
+        self.mouse("mouseMoved", x1, y1)
+        self.mouse("mousePressed", x1, y1, 1)
+        for i in range(1, steps + 1):
+            self.mouse("mouseMoved", x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps, 1)
+            time.sleep(0.03)
+        self.mouse("mouseReleased", x2, y2, 0)
+        time.sleep(0.25)
+
+    def key(self, key, code, vk):
+        for t in ("keyDown", "keyUp"):
+            self.cdp.call("Input.dispatchKeyEvent", {
+                "type": t, "key": key, "code": code,
+                "windowsVirtualKeyCode": vk, "nativeVirtualKeyCode": vk})
+        time.sleep(0.15)
+
+    def center(self, sel):
+        """元素中心座標＋該點最上層是不是它（或它的子孫）。"""
+        return self.js("""(() => {
+          const el = document.querySelector(%s);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          const x = r.left + r.width / 2, y = r.top + r.height / 2;
+          const top = document.elementFromPoint(x, y);
+          return {x, y, w: r.width, h: r.height, left: r.left, top: r.top,
+                  right: r.right, bottom: r.bottom,
+                  hit: !!top && (top === el || el.contains(top)),
+                  hitExact: top === el};
+        })()""" % json.dumps(sel))
+
+
+# ───────────────────────── #9 載入失敗訊息 ─────────────────────────
+FIXED = ["video", "wave", "subs", "align"]
+# 使用者看得到的字裡不該出現的東西：端點、狀態碼、檔名、後端術語
+TERMS = r"/\/api\/|HTTP|\.json|\.mp4|\.srt|_final|app server|sample-|\b[45]\d\d\b|undefined|null/i"
+
+READ_NOTE = """(() => {
+  const note = document.getElementById('vt-empty-note');
+  const lis = Array.from(note.querySelectorAll('li'));
+  const tops = lis.map((li) => Math.round(li.getBoundingClientRect().top));
+  return {
+    hidden: note.hidden,
+    height: note.getBoundingClientRect().height,
+    keys: lis.map((li) => li.dataset.src),
+    texts: lis.map((li) => li.textContent),
+    // 分行：每一項的 top 都比上一項大（嚴格遞增）＝一項一行，沒有接成一坨
+    separateLines: tops.every((t, i) => i === 0 || t > tops[i - 1]),
+    blocks: lis.every((li) => getComputedStyle(li).display !== 'inline'),
+    hasTerm: %s.test(note.innerText),
+    allTitled: lis.every((li) => li.title.length > 0),
+    emptyText: lis.some((li) => li.textContent.replace(/^[^：]*：/, '').trim() === ''),
+  };
+})()""" % TERMS
+
+
+def run_9(p):
+    combos = [
+        ("v", ["video"], ""), ("w", ["wave"], ""), ("s", ["subs"], ""), ("a", ["align"], ""),
+        ("vw", ["video", "wave"], ""), ("sa", ["subs", "align"], ""),
+        ("all", FIXED, ""),
+        # 讓到達順序跟固定順序對不上：波形最慢、影片次慢
+        ("alld", FIXED, "wave:500,video:300"),
+    ]
+    for tag, fails, delay in combos:
+        p.ctl(",".join(fails), delay)
+        p.goto("")
+        p.wait("document.querySelectorAll('#vt-empty-note li').length >= %d" % len(fails), 8)
+        time.sleep(0.4)  # 再等一下：多出來的項目（不該有的）也要有機會出現
+        n = p.js(READ_NOTE)
+        want = [k for k in FIXED if k in fails]
+        check("9.%s.keys" % tag, "失敗 %s → 清單項目與固定順序" % "+".join(fails), n["keys"], want)
+        check("9.%s.show" % tag, "清單可見（未隱藏且高度>0）",
+              (not n["hidden"]) and n["height"] > 0, True)
+        check("9.%s.line" % tag, "一項一行（top 嚴格遞增、非 inline）",
+              n["separateLines"] and n["blocks"], True)
+        check("9.%s.term" % tag, "可見文字不含端點／狀態碼／檔名／術語", n["hasTerm"], False)
+        check("9.%s.text" % tag, "每項都有說明文字、技術細節收在 title",
+              (not n["emptyText"]) and n["allTitled"], True)
+        if "align" in fails:
+            # 對齊 popover 的提示與清單同一份文案（單一來源）
+            t = p.center("#vt-al-toggle")
+            p.click(t["x"], t["y"])
+            h = p.js("""(() => { const h = document.getElementById('vt-align-hint');
+              const li = document.querySelector('#vt-empty-note li[data-src=align]');
+              return {text: h.textContent.trim(), vis: h.getBoundingClientRect().height > 0,
+                      same: !!li && h.textContent.trim().length > 0 && li.textContent.endsWith(h.textContent.trim()),
+                      term: %s.test(h.textContent)}; })()""" % TERMS)
+            check("9.%s.pop" % tag, "對齊 popover 提示可見、與清單同文案、不含術語",
+                  [h["vis"], h["same"], h["term"]], [True, True, False])
+
+    # 全部成功 → 清單要藏起來（success 態）
+    p.ctl()
+    p.goto("")
+    time.sleep(0.6)
+    n = p.js(READ_NOTE)
+    check("9.ok.hide", "四個來源都成功 → 清單隱藏且無項目", [n["hidden"], n["keys"]], [True, []])
+
+    # 存對齊後重載字幕失敗 → 不靜默，進清單；之後再存一次成功 → 那一項要消失
+    p.ctl("subs")
+    p.js("window.__vtSaveAlign()")
+    n = p.js(READ_NOTE)
+    check("9.save.fail", "存對齊後重載字幕失敗 → 清單出現字幕一項", n["keys"], ["subs"])
+    p.ctl()
+    p.js("window.__vtSaveAlign()")
+    n = p.js(READ_NOTE)
+    check("9.save.ok", "再存一次重載成功 → 清單清空並隱藏", [n["hidden"], n["keys"]], [True, []])
+
+    # demo 模式也走同一張表
+    p.ctl("subs,wave")
+    p.goto("?demo")
+    p.wait("document.querySelectorAll('#vt-empty-note li').length >= 2", 8)
+    time.sleep(0.3)
+    n = p.js(READ_NOTE)
+    check("9.demo.keys", "demo：波形＋字幕失敗 → 固定順序", n["keys"], ["wave", "subs"])
+    check("9.demo.term", "demo：可見文字不含檔名／術語", n["hasTerm"], False)
+    p.ctl()
+
+
+# ───────────────────────── #6 播放頭抓柄＋回歸 ─────────────────────────
+def run_6(p):
+    p.ctl()
+    p.goto("?demo")
+    ready = p.wait("(() => { const v = document.getElementById('vt-video');"
+                   " return v.readyState >= 1 && v.seekable.length > 0; })()", 15)
+    if not check("6.pre", "媒體可 seek（readyState>=1 且 seekable.length>0）", ready, True):
+        print("✗ 環境：影片不可 seek，後面的 seek 斷言沒有意義，中止")
+        sys.exit(2)
+
+    p.js("window.__vtSeek(8)")
+    p.wait("!document.getElementById('vt-video').seeking", 5)
+    time.sleep(0.2)
+
+    h = p.js("""(() => {
+      const g = document.getElementById('vt-playhead-grip');
+      const cs = getComputedStyle(g, '::after');
+      const m = /rgba?\\(([^)]+)\\)/.exec(cs.backgroundColor);
+      const parts = m ? m[1].split(',').map((s) => parseFloat(s)) : [];
+      const alpha = parts.length === 4 ? parts[3] : (parts.length === 3 ? 1 : 0);
+      const gr = g.getBoundingClientRect();
+      const tl = document.getElementById('vt-timeline').getBoundingClientRect();
+      const w = parseFloat(cs.width) || 0, hh = parseFloat(cs.height) || 0;
+      // 抓柄中心（::after 相對 grip 的位置）
+      const hx = gr.left + (parseFloat(cs.left) || 0) + w / 2;
+      const hy = gr.top + (parseFloat(cs.top) || 0) + hh / 2;
+      const top = document.elementFromPoint(hx, hy);
+      return {content: cs.content, w, hh, alpha, hx, hy,
+              hitGrip: top === g,
+              insideWave: hy > tl.top && hy < tl.bottom && hx > tl.left && hx < tl.right};
+    })()""")
+    check("6.vis", "抓柄常駐可見（有內容、寬高>0、底色不透明）",
+          [h["content"] not in ("none", "normal", ""), h["w"] > 0, h["hh"] > 0, h["alpha"] > 0],
+          [True, True, True, True])
+    check("6.hit", "抓柄中心最上層是 grip，且落在波形軌內", [h["hitGrip"], h["insideWave"]], [True, True])
+
+    g = p.center("#vt-playhead-grip")
+    check("6.hitc", "grip 命中區中心最上層是 grip（elementFromPoint）", g["hitExact"], True)
+
+    # 抓柄不蓋到上面兩軌：同一個 x，在標題卡軌／字幕軌命中的不能是 grip
+    over = p.js("""(() => {
+      const g = document.getElementById('vt-playhead-grip');
+      const x = g.getBoundingClientRect().left + g.getBoundingClientRect().width / 2;
+      const f = (id) => { const r = document.getElementById(id).getBoundingClientRect();
+        return document.elementFromPoint(x, r.top + r.height / 2) === g; };
+      return [f('vt-card-track'), f('vt-sub-track')];
+    })()""")
+    check("6.lane", "同 x 在標題卡軌／字幕軌命中的不是 grip（沒蓋住上兩軌）", over, [False, False])
+
+    t0 = p.js("document.getElementById('vt-video').currentTime")
+    p.drag(h["hx"], h["hy"], h["hx"] + 160, h["hy"])
+    p.wait("!document.getElementById('vt-video').seeking", 5)
+    a = p.js("""(() => { const g = document.getElementById('vt-playhead-grip');
+      const ph = document.getElementById('vt-playhead').getBoundingClientRect();
+      const gr = g.getBoundingClientRect();
+      return {t: document.getElementById('vt-video').currentTime,
+              cuts: window.__vtStats().cutCount,
+              scrubbing: g.classList.contains('is-scrubbing'),
+              aligned: Math.abs((ph.left + ph.width / 2) - (gr.left + gr.width / 2)) <= 1.5}; })()""")
+    check("6.drag", "從抓柄往右拖 → currentTime 變大", [a["t"] != t0, a["t"] > t0], [True, True])
+    check("6.side", "拖完沒誤建剪除段、is-scrubbing 已清、播放頭線跟著抓柄",
+          [a["cuts"], a["scrubbing"], a["aligned"]], [0, False, True])
+
+    # ── 回歸：點時間軸跳轉 ──
+    r = p.js("""(() => { const r = document.getElementById('vt-timeline').getBoundingClientRect();
+      return {x: r.left + r.width * 0.2, y: r.top + r.height * 0.75, frac: 0.2,
+              dur: window.__vt.duration}; })()""")
+    before = p.js("document.getElementById('vt-video').currentTime")
+    p.click(r["x"], r["y"])
+    p.wait("!document.getElementById('vt-video').seeking", 5)
+    after = p.js("document.getElementById('vt-video').currentTime")
+    check("R.seek", "點時間軸 20% 處 → 播放頭跳到約 20%（±0.3 秒）且不建剪除段",
+          [after != before, abs(after - r["frac"] * r["dur"]) <= 0.3, p.js("window.__vtStats().cutCount")],
+          [True, True, 0])
+
+    # ── 回歸：標題卡拖曳／刪除 ──
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    c = p.center("#vt-card-track .vt-card")
+    s0 = p.js("window.__vtCards()[0].start")
+    check("R.cardhit", "標題卡塊中心最上層是卡本身", c["hit"], True)
+    p.drag(c["x"], c["y"], c["x"] + 90, c["y"])
+    s1 = p.js("window.__vtCards()[0].start")
+    check("R.carddrag", "往右拖標題卡 → 進點變大", [s1 != s0, s1 > s0], [True, True])
+    c = p.center("#vt-card-track .vt-card")
+    p.click(c["x"], c["y"])
+    sel = p.js("window.__vt.selectedCard === window.__vtCards()[0].id")
+    p.key("Backspace", "Backspace", 8)
+    check("R.carddel", "點卡選取後按 ⌫ → 卡被刪（0 張）且沒誤建剪除段",
+          [sel, p.js("window.__vtCards().length"), p.js("window.__vtStats().cutCount")], [True, 0, 0])
+
+    # ── 回歸：字幕列刪除鈕 ──
+    n0 = p.js("window.__vt.subs.length")
+    row = p.center("#vt-line-list .vt-line")
+    if row:
+        p.mouse("mouseMoved", row["x"], row["y"])
+        time.sleep(0.2)
+    b = p.center("#vt-line-list .vt-line-tool[data-act=delete]")
+    check("R.delhit", "字幕列「刪」鈕中心最上層是它", bool(b) and b["hit"], True)
+    if b:
+        p.click(b["x"], b["y"])
+    check("R.del", "點「刪」→ 字幕少一句", p.js("window.__vt.subs.length"), n0 - 1)
+
+
+# ───────────────────────── #12 操作說明 popover ─────────────────────────
+POP_STATE = """(() => { const t = document.getElementById('vt-keys-toggle');
+  const pop = document.getElementById('vt-keys-pop'); const r = pop.getBoundingClientRect();
+  return {open: !pop.hidden && r.height > 0, aria: t.getAttribute('aria-expanded'),
+          inView: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+          focusOnToggle: document.activeElement === t}; })()"""
+
+
+def run_12(p, height, tag):
+    p.ctl()
+    p.goto("?demo", height=height)
+    t = p.center("#vt-keys-toggle")
+    meta = p.js("""(() => { const t = document.getElementById('vt-keys-toggle');
+      const pop = document.getElementById('vt-keys-pop');
+      const keys = ['空白鍵', '←', '→', '⇧', 'I', 'O', '⌫', 'Esc', '⌘Z'];
+      return {tag: t.tagName, missing: keys.filter((k) => !pop.textContent.includes(k)),
+              // 清單只有一份：頁面上其他地方的 title 不該再藏一份快捷鍵清單
+              dupTitles: Array.from(document.querySelectorAll('[title]'))
+                .filter((e) => /進點/.test(e.title) && /出點/.test(e.title) && /Esc/.test(e.title)).length}; })()""")
+    check("12.%s.btn" % tag, "ⓘ 是真的 button，中心最上層是它", [meta["tag"], t["hitExact"]], ["BUTTON", True])
+    check("12.%s.keys" % tag, "popover 內快捷鍵齊全、title 不再藏第二份", [meta["missing"], meta["dupTitles"]], [[], 0])
+    s = p.js(POP_STATE)
+    check("12.%s.init" % tag, "初始：關閉、aria-expanded=false", [s["open"], s["aria"]], [False, "false"])
+    p.click(t["x"], t["y"])
+    s = p.js(POP_STATE)
+    check("12.%s.open" % tag, "滑鼠點 ⓘ → 開啟、aria-expanded=true、整塊在視窗內（高 %d）" % height,
+          [s["open"], s["aria"], s["inView"]], [True, "true", True])
+    p.click(t["x"], t["y"])
+    s = p.js(POP_STATE)
+    check("12.%s.close" % tag, "再點一次 → 關閉", [s["open"], s["aria"]], [False, "false"])
+    # 鍵盤：focus 後按 Enter 開、Esc 關且焦點回到鈕
+    p.js("document.getElementById('vt-keys-toggle').focus()")
+    p.cdp.call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter",
+                                          "windowsVirtualKeyCode": 13, "text": "\r"})
+    p.cdp.call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter",
+                                          "windowsVirtualKeyCode": 13})
+    time.sleep(0.15)
+    s1 = p.js(POP_STATE)
+    p.key("Escape", "Escape", 27)
+    s2 = p.js(POP_STATE)
+    check("12.%s.kbd" % tag, "鍵盤 Enter 開、Esc 關且焦點回到 ⓘ",
+          [s1["open"], s2["open"], s2["focusOnToggle"]], [True, False, True])
+    # 點外面關
+    p.click(t["x"], t["y"])
+    o = p.js(POP_STATE)["open"]
+    v = p.center("#vt-video")
+    p.click(v["x"], v["y"])
+    check("12.%s.out" % tag, "開著時點 popover 外面 → 關閉", [o, p.js(POP_STATE)["open"]], [True, False])
+
+
+# ───────────────────────── #14 標題卡提示不重複 ─────────────────────────
+def run_14(p):
+    r = p.js("""(() => {
+      const body = document.getElementById('vt-sec-card');
+      const head = document.querySelector('[aria-controls=vt-sec-card]');
+      const own = (e) => Array.from(e.childNodes).filter((n) => n.nodeType === 3)
+        .map((n) => n.textContent).join('');
+      const all = [head, ...head.querySelectorAll('*'), body, ...body.querySelectorAll('*')];
+      const hits = all.filter((e) => own(e).includes('藍軌') && e.getBoundingClientRect().height > 0);
+      const note = head.querySelector('.vt-side-note');
+      return {count: hits.length, ids: hits.map((e) => e.id),
+              note: note.textContent.trim(), noteVisible: note.getBoundingClientRect().height > 0}; })()""")
+    check("14.once", "標題卡區提到「藍軌」的可見提示只有一處（版型格下方）",
+          [r["count"], r["ids"]], [1, ["vt-tpl-hint"]])
+    check("14.note", "標頭註記仍在、非空、不重複「藍軌」",
+          [r["noteVisible"], len(r["note"]) > 0, "藍軌" in r["note"]], [True, True, False])
+
+
+# ───────────────────────── 回歸：對齊 popover、單一捲軸 ─────────────────────────
+def run_align(p):
+    p.ctl()
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    check("R.al.hit", "真集：頂列「對齊」鈕可見且中心最上層是它", bool(t) and t["hit"] and t["w"] > 0, True)
+    p.click(t["x"], t["y"])
+    a = p.js("""(() => { const pop = document.getElementById('vt-align-pop');
+      const f = (id) => parseFloat(document.getElementById(id).value);
+      return {open: !pop.hidden && pop.getBoundingClientRect().height > 0,
+              vals: [f('vt-al-camb'), f('vt-al-head'), f('vt-al-tail'), f('vt-al-sub')]}; })()""")
+    check("R.al.open", "點「對齊」→ popover 開、欄位＝該集的值", [a["open"], a["vals"]], [True, [0.25, 1.5, 0.75, 0]])
+    # 同時只開一個：開著對齊再點 ⓘ
+    k = p.center("#vt-keys-toggle")
+    p.click(k["x"], k["y"])
+    both = p.js("[document.getElementById('vt-align-pop').hidden, document.getElementById('vt-keys-pop').hidden]")
+    check("R.al.excl", "開著對齊再點 ⓘ → 對齊收起、操作說明打開", both, [True, False])
+    p.click(t["x"], t["y"])
+    p.click(t["x"], t["y"])
+    both = p.js("[document.getElementById('vt-align-pop').hidden, document.getElementById('vt-keys-pop').hidden]")
+    check("R.al.close", "點「對齊」開（操作說明收起）再點一次關 → 兩個都關", both, [True, True])
+
+
+def run_scroll(p, query, height, tag):
+    p.ctl()
+    p.goto(query, height=height)
+    time.sleep(0.4)
+    r = p.js("""(() => {
+      const side = document.querySelector('.vt-side');
+      const list = document.querySelector('.vt-line-list');
+      // 從字幕清單往上到右欄，實際在捲（內容高 > 可視高、overflow-y 為 auto/scroll）的容器數
+      let n = 0;
+      for (let el = list; el; el = el.parentElement) {
+        const oy = getComputedStyle(el).overflowY;
+        if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 1) n++;
+        if (el === side) break;
+      }
+      return {lines: list.querySelectorAll('.vt-line').length, scrollers: n,
+              sideScrolls: side.scrollHeight > side.clientHeight + 2,
+              pageScrolls: document.documentElement.scrollHeight > innerHeight + 1}; })()""")
+    check("R.sc.%s" % tag, "視窗高 %d：字幕面板至多一條捲軸、右欄整欄不捲" % height,
+          [r["lines"] > 0, r["scrollers"] <= 1, r["sideScrolls"]], [True, True, False])
+
+
+# ───────────────────────── N1 對齊未載入不可存 ─────────────────────────
+AL_FIELDS = ["vt-al-camb", "vt-al-head", "vt-al-tail", "vt-al-sub"]
+AL_DOM = """(() => {
+  const ids = %s;
+  const g = (id) => document.getElementById(id);
+  const hint = g('vt-align-hint'), st = g('vt-al-status'), note = g('vt-align-note');
+  return {
+    disabled: ids.map((id) => g(id).disabled),
+    values: ids.map((id) => g(id).value),
+    audioDisabled: g('vt-al-audio').disabled, audioValue: g('vt-al-audio').value,
+    saveDisabled: g('vt-al-save').disabled,
+    hintText: hint.textContent.trim(), hintVisible: hint.getBoundingClientRect().height > 0,
+    note: note ? note.textContent.trim() : '',
+    statusText: st.textContent.trim(), statusErr: st.classList.contains('is-err'),
+    statusVisible: st.getBoundingClientRect().height > 0,
+  };
+})()""" % json.dumps(AL_FIELDS)
+
+
+def run_n1(p):
+    # ── 失敗態：只有 /api/episode 失敗 ──
+    p.reset()
+    p.ctl("align")
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    d = p.js(AL_DOM)
+    check("N1.f.lock", "對齊載入失敗 → 四欄位與儲存鈕都 disabled",
+          [d["disabled"], d["saveDisabled"], d["audioDisabled"]], [[True] * 4, True, True])
+    check("N1.f.blank", "欄位留空（不是看似真值的 0）",
+          [d["values"], d["audioValue"]], [[""] * 4, ""])
+    check("N1.f.hint", "popover 內有可見說明文字、標頭註記＝載入失敗",
+          [d["hintVisible"], len(d["hintText"]) > 0, "不能儲存" in d["hintText"], d["note"]],
+          [True, True, True, "載入失敗"])
+    # 資料層：繞過 disabled 直接呼叫存檔
+    s0 = p.stat()["saves"]
+    p.js("window.__vtSaveAlign()")
+    time.sleep(0.4)
+    d = p.js(AL_DOM)
+    check("N1.f.data", "程式強制儲存 → 沒有發出寫入請求（增量 0）、有可見錯誤訊息",
+          [p.stat()["saves"] - s0, d["statusErr"], d["statusVisible"], len(d["statusText"]) > 0],
+          [0, True, True, True])
+    # 資料層：把 disabled 拿掉後用真滑鼠點儲存鈕
+    p.js("document.getElementById('vt-al-save').disabled = false")
+    b = p.center("#vt-al-save")
+    p.click(b["x"], b["y"])
+    time.sleep(0.4)
+    check("N1.f.click", "拿掉 disabled 後真滑鼠點儲存鈕（命中）→ 寫入增量仍是 0",
+          [b["hit"], p.stat()["saves"] - s0], [True, 0])
+    check("N1.f.keep", "假集的值原封不動（沒被 0 蓋掉）",
+          [p.stat()["episode"]["head_trim_sec"], p.stat()["episode"]["camera_sync_offset"]["b"]],
+          [1.5, 0.25])
+    p.reset()  # 突變時這裡可能真的寫進 0；還原，後面的回歸才不會連帶轉紅
+
+    # ── 載入中：/api/episode 慢 1.5 秒；init 還沒跑完，只能直接讀 DOM ──
+    p.ctl("", "align:1500")
+    p.cdp.call("Page.navigate", {"url": "about:blank"})
+    time.sleep(0.15)
+    p.cdp.call("Page.navigate", {"url": "%s/video-edit-prototype.html" % p.base})
+    p.wait("document.getElementById('vt-al-save') && document.readyState !== 'loading'", 8)
+    time.sleep(0.5)
+    pending = p.js("typeof window.__vtStats !== 'function'")
+    d = p.js(AL_DOM)
+    s0 = p.stat()["saves"]
+    p.js("(() => { const b = document.getElementById('vt-al-save'); b.disabled = false; b.click(); })()")
+    time.sleep(0.2)
+    check("N1.l.lock", "載入中（init 未完成）→ 欄位與儲存鈕 disabled、欄位留空、強制點存增量 0",
+          [pending, d["disabled"], d["saveDisabled"], d["values"], p.stat()["saves"] - s0],
+          [True, [True] * 4, True, [""] * 4, 0])
+    p.wait("typeof window.__vtStats === 'function'", 15)
+    time.sleep(0.2)
+    d = p.js(AL_DOM)
+    check("N1.l.after", "載入完成 → 自動解鎖並填入真值",
+          [d["disabled"], d["saveDisabled"], [float(v) for v in d["values"] if v != ""]],
+          [[False] * 4, False, [0.25, 1.5, 0.75, 0.0]])
+
+    # ── 成功態：真值、可存、存後重載讀回 ──
+    p.ctl()
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    d = p.js(AL_DOM)
+    check("N1.ok.open", "載入成功 → 四欄位與儲存鈕可用、欄位＝該集的值、無佔位留空",
+          [d["disabled"], d["saveDisabled"], [float(v) for v in d["values"] if v != ""]],
+          [[False] * 4, False, [0.25, 1.5, 0.75, 0.0]])
+    p.js("""(() => { const el = document.getElementById('vt-al-head'); el.value = '2.25';
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new Event('change', {bubbles: true})); })()""")
+    s0 = p.stat()["saves"]
+    b = p.center("#vt-al-save")
+    p.click(b["x"], b["y"])
+    p.wait("document.getElementById('vt-al-status').classList.contains('is-ok')", 8)
+    st = p.stat()
+    check("N1.ok.save", "真滑鼠點儲存（命中）→ 恰發出 1 次寫入、伺服器端 head=2.25、其餘鍵不變",
+          [b["hit"], st["saves"] - s0, st["episode"]["head_trim_sec"],
+           st["episode"]["camera_sync_offset"]["b"], st["episode"]["tail_trim_sec"]],
+          [True, 1, 2.25, 0.25, 0.75])
+    p.goto("")  # 重載整頁 → 讀回
+    d = p.js(AL_DOM)
+    check("N1.ok.rt", "重載頁面 → 讀回剛存的值（round-trip）",
+          [float(v) for v in d["values"] if v != ""], [0.25, 2.25, 0.75, 0.0])
+    p.reset()
+
+
+# ───────────────────────── #13 圖示統一 ─────────────────────────
+# 原本散在按鈕文字裡的圖示字符（鍵帽說明裡的 ← → ⇧ ⌫ ⌘ 是「鍵名」不是圖示，不在此列）
+GLYPHS = "▶⏸✕✖×▾▸▴▼▲ⓘ"
+ICON_BTNS = ["#vt-play", "#vt-zoom-out", "#vt-zoom-in", "#vt-keys-toggle",
+             "[aria-controls=vt-sec-card]", "[aria-controls=vt-sec-subs]",
+             "#vt-line-list .vt-line:nth-child(2) .vt-line-tool[data-act=split]",
+             "#vt-line-list .vt-line:nth-child(2) .vt-line-tool[data-act=merge]",
+             "#vt-line-list .vt-line:nth-child(2) .vt-line-tool[data-act=card]",
+             "#vt-line-list .vt-line:nth-child(2) .vt-line-tool[data-act=delete]"]
+ICON_SCAN = """(() => {
+  const sels = %s, glyphs = %s;
+  const btns = sels.map((s) => {
+    const el = document.querySelector(s);
+    if (!el) return {sel: s, missing: true};
+    const svgs = Array.from(el.querySelectorAll('svg'));
+    const r = el.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const sr = svgs[0] ? svgs[0].getBoundingClientRect() : {width: 0, height: 0, left: 0, right: 0, top: 0, bottom: 0};
+    return {sel: s, n: svgs.length, w: sr.width, h: sr.height,
+            // 圖示整個落在按鈕框內＝沒被裁、沒跑出去
+            inside: sr.left >= r.left - 0.5 && sr.right <= r.right + 0.5 &&
+                    sr.top >= r.top - 0.5 && sr.bottom <= r.bottom + 0.5,
+            // 命中圖示（svg 或其外層）＝圖示吃掉點擊，不算命中按鈕
+            hit: !!top && (top === el || (el.contains(top) && !top.closest('svg, [data-icon]'))),
+            name: (el.getAttribute('aria-label') || el.title || el.textContent || '').trim(),
+            stroke: svgs[0] ? svgs[0].getAttribute('stroke-width') : null,
+            color: svgs[0] ? getComputedStyle(svgs[0]).stroke : null};
+  });
+  // 全頁按鈕／summary 的文字裡不該再有圖示字符，也不該有單獨一個 + 或 -
+  const bad = Array.from(document.querySelectorAll('button, summary, [role=button]'))
+    .filter((e) => { const t = e.textContent; return Array.from(glyphs).some((g) => t.includes(g)) ||
+      /^[-+]$/.test(t.trim()); })
+    .map((e) => e.id || e.className || e.tagName);
+  const iconEls = Array.from(document.querySelectorAll('[data-icon]'));
+  return {btns, bad,
+          emptyIcons: iconEls.filter((e) => !e.querySelector('svg')).map((e) => e.dataset.icon),
+          rest: ['.vt-adv-caret', '#vt-render-close'].map((s) => {
+            const e = document.querySelector(s); return e ? e.querySelectorAll('svg').length : -1; })};
+})()""" % (json.dumps(ICON_BTNS), json.dumps(GLYPHS))
+
+
+def run_13(p, shots=True):
+    p.ctl()
+    p.goto("?demo")
+    row = p.center("#vt-line-list .vt-line:nth-child(2)")
+    p.mouse("mouseMoved", row["x"], row["y"])
+    time.sleep(0.25)
+    r = p.js(ICON_SCAN)
+    b = r["btns"]
+    check("13.glyph", "按鈕／summary 文字裡已無圖示字符與單獨的 +／-", r["bad"], [])
+    check("13.one", "每顆圖示鈕內恰一個圖示元素（svg）",
+          [x["sel"] for x in b if x.get("missing") or x["n"] != 1], [])
+    check("13.size", "圖示寬高 > 0 且整個落在按鈕框內（沒被裁）",
+          [x["sel"] for x in b if x.get("missing") or not (x["w"] > 0 and x["h"] > 0 and x["inside"])], [])
+    check("13.hit", "按鈕中心最上層是按鈕本身、不是圖示（圖示不吃點擊）",
+          [x["sel"] for x in b if x.get("missing") or not x["hit"]], [])
+    check("13.name", "每顆圖示鈕的可及性名稱非空",
+          [x["sel"] for x in b if x.get("missing") or not x["name"]], [])
+    check("13.same", "線條粗細只有一種（同一套圖示）、沒有空的 [data-icon]、其餘圖示位各有 1 個 svg",
+          [len(set(x.get("stroke") for x in b)), None in set(x.get("stroke") for x in b),
+           r["emptyIcons"], r["rest"]],
+          [1, False, [], [1, 1]])
+    if shots:
+        p.shot("/private/tmp/vt-ux2-13-toolbar.png", ".vt-controls")
+        p.shot("/private/tmp/vt-ux2-13-timeline-head.png", ".vt-tl-head")
+        p.shot("/private/tmp/vt-ux2-13-line-tools.png", "#vt-line-list .vt-line:nth-child(2)")
+
+    # 播放鈕：圖示與可及性名稱跟著狀態換，始終恰一個圖示
+    PLAY = """(() => { const b = document.getElementById('vt-play');
+      return [b.querySelector('[data-icon]').dataset.icon, b.querySelectorAll('svg').length,
+              b.textContent.trim()]; })()"""
+    s0 = p.js(PLAY)
+    pb = p.center("#vt-play")
+    p.click(pb["x"], pb["y"])
+    p.wait("!document.getElementById('vt-video').paused", 5)
+    time.sleep(0.2)
+    s1 = p.js(PLAY)
+    p.click(pb["x"], pb["y"])
+    p.wait("document.getElementById('vt-video').paused", 5)
+    time.sleep(0.2)
+    s2 = p.js(PLAY)
+    check("13.play", "點播放鈕 → 圖示／文字換成暫停，再點換回；全程恰一個圖示",
+          [s0, s1, s2], [["play", 1, "播放"], ["pause", 1, "暫停"], ["play", 1, "播放"]])
+
+    # 收合／展開：同一個圖示轉向（不換字符），行為不變
+    SEC = """(() => { const h = document.querySelector('[aria-controls=vt-sec-card]');
+      const c = h.querySelector('.vt-side-caret');
+      return [h.getAttribute('aria-expanded'), getComputedStyle(c).transform !== 'none',
+              c.querySelectorAll('svg').length]; })()"""
+    a0 = p.js(SEC)
+    hb = p.center("[aria-controls=vt-sec-card]")
+    p.click(hb["x"], hb["y"])
+    time.sleep(0.3)
+    a1 = p.js(SEC)
+    hb = p.center("[aria-controls=vt-sec-card]")
+    p.click(hb["x"], hb["y"])
+    time.sleep(0.3)
+    a2 = p.js(SEC)
+    check("13.caret", "點區塊標頭 → 收合且箭頭轉向；再點展開轉回；圖示始終 1 個",
+          [a0, a1, a2], [["true", False, 1], ["false", True, 1], ["true", False, 1]])
+
+    # 失敗路徑：icons.js 載不到 → 不留空白鈕（改顯示文字）且進載入失敗清單
+    p.ctl("icons")
+    p.goto("?demo")
+    time.sleep(0.3)
+    f = p.js("""(() => { const note = document.getElementById('vt-empty-note');
+      const txt = (s) => document.querySelector(s).textContent.trim();
+      const row = document.querySelector('#vt-line-list .vt-line');
+      return {svgs: document.querySelectorAll('button svg').length,
+              keys: Array.from(note.querySelectorAll('li')).map((li) => li.dataset.src),
+              shown: !note.hidden && note.getBoundingClientRect().height > 0,
+              texts: [txt('#vt-zoom-out'), txt('#vt-zoom-in'), txt('#vt-keys-toggle'), txt('#vt-play')],
+              tools: Array.from(row.querySelectorAll('.vt-line-tool')).every((b) => b.textContent.trim().length > 0)}; })()""")
+    check("13.fail", "icons.js 載入失敗 → 按鈕改顯示文字、清單出現「圖示」一項（不靜默）",
+          [f["svgs"], f["keys"], f["shown"], f["texts"], f["tools"]],
+          [0, ["icons"], True, ["縮小", "放大", "說明", "播放"], True])
+    p.ctl()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base")
+    ap.add_argument("--json")
+    a = ap.parse_args()
+
+    srv = None
+    base = a.base
+    if not base:
+        srv = subprocess.Popen([sys.executable, "-u", os.path.join(HERE, "serve.py")],
+                               stdout=subprocess.PIPE)
+        base = "http://127.0.0.1:%s" % srv.stdout.readline().decode().strip().split("=")[1]
+    profile = tempfile.mkdtemp(prefix="vt-ux2-profile-", dir="/private/tmp")
+    proc = cdp = None
+    try:
+        port = D.free_port()
+        proc = D.launch_chrome(D.DEFAULT_CHROME, "about:blank", 1280, 900, port, profile)
+        D.wait_devtools(port)
+        cdp = D.CDP(D.get_page_ws(port), timeout=30)
+        cdp.call("Page.enable")
+        cdp.call("Runtime.enable")
+        cdp.call("Network.enable")
+        cdp.call("Network.setCacheDisabled", {"cacheDisabled": True})
+        p = Page(cdp, base)
+        p.reset()  # 假集還原成預設值（上一輪突變可能寫過）
+        run_9(p)
+        run_6(p)
+        run_14(p)
+        run_12(p, 900, "h900")
+        run_12(p, 760, "h760")
+        run_align(p)
+        run_scroll(p, "?demo", 760, "d760")
+        run_scroll(p, "?demo", 900, "d900")
+        run_scroll(p, "", 760, "r760")
+        run_scroll(p, "", 900, "r900")
+        run_n1(p)
+        run_13(p)
+    finally:
+        if cdp:
+            cdp.close()
+        if proc:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                proc.kill()
+        if srv:
+            srv.terminate()
+        subprocess.run(["trash", profile], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    red = [c for c in ORDER if not RESULTS[c]]
+    if a.json:
+        with open(a.json, "w", encoding="utf-8") as f:
+            json.dump(RESULTS, f, ensure_ascii=False)
+    print("\n===== 斷言 %d／%d 通過%s =====" % (
+        len(ORDER) - len(red), len(ORDER), ("；紅：" + ", ".join(red)) if red else ""))
+    sys.exit(1 if red else 0)
+
+
+if __name__ == "__main__":
+    main()

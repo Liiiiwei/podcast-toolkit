@@ -68,6 +68,7 @@
 
 - 先抽 `timeline.js`（`app.js:1610-2045`，只碰 `#card-timeline` + `state.cardTimings/waveform`，邊界最乾淨）＋ `api.js`（fetch 集中處：`loadEpisodeState 2877`、`load 3249`、`postSave/buildSavePayload 4349-4457`）。
 - **動刀前先補 Playwright 煙霧測試**（CLAUDE.md 硬約定，`app.js` ×108 次改動是返工放大器）。
+  - ✔ 2026-09 已裁決改用 CDP 走查，見 TODO.md（2026-09-26 段 D7：Playwright 維持不引入）。
 - 驗收：抽出後既有編輯器行為不變（回歸＋突變測試）。
 
 ## Phase 4：接真功能
@@ -99,6 +100,8 @@ Phase 1（原型）──[使用者確認需求]──> Phase 2（併軌）─�
 | 沒做 Phase 2 就接真功能 → 踩單機/雙機分歧 | Phase 2 當 gate，Phase 4 不得先行 |
 | 不拆就在 8405 行 app.js 上加 → 返工放大 | Phase 3 gate + Playwright 煙霧測試 |
 | 「影片模式」與輸出格式「YT」撞名 | 模式命名用 podcast / 影片(video)，不要叫「YT 模式」 |
+
+> ✔ 2026-09 已裁決改用 CDP 走查，見 TODO.md（上表「Playwright 煙霧測試」一格指的即此）。
 
 ## 附錄：本梯不做，但已納入路線
 

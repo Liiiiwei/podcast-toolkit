@@ -75,7 +75,6 @@ import {
     tailTrimSec: 0, // tail_trim_sec：片尾裁切（cam A 軸，秒，RAW）
     subtitleOffsetSec: 0, // subtitle_offset_sec：非破壞性字幕偏移（秒）
     episodeDir: "", // 目前集路徑；存檔帶回讓後端確認目標集（多分頁防呆）
-    align: { state: "idle", err: "" }, // 對齊面板四態：idle/loading/error/success（demo→demo）
   };
   window.__vt = state; // 供 CDP 走查讀取（丟棄式原型，不影響行為）
 
@@ -994,20 +993,39 @@ import {
     });
   }
 
-  // 字幕列四顆小鈕的圖示（14×14 viewBox，線稿、吃 currentColor）
-  const TOOL_ICONS = {
-    // 切：一條被剪刀從中切斷的線
-    split:
-      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"><path d="M7 1v4M7 9v4"/><circle cx="3.2" cy="7" r="1.7"/><circle cx="10.8" cy="7" r="1.7"/><path d="M4.9 7h4.2"/></svg>',
-    // 併：兩條線收攏成一條，箭頭往上併入前一句
-    merge:
-      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 11h10"/><path d="M7 8V2"/><path d="M4.4 4.6L7 2l2.6 2.6"/></svg>',
-    // 卡：畫面框裡一條實心橫條（標題卡的樣子）
-    card: '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><rect x="1.4" y="2.6" width="11.2" height="8.8" rx="1.4"/><rect x="3.6" y="6.4" width="6.8" height="2.2" rx="0.6" fill="currentColor" stroke="none"/></svg>',
-    // 刪：垃圾桶
-    delete:
-      '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.6h10"/><path d="M5.4 3.6V2.2h3.2v1.4"/><path d="M3.4 3.6l.6 8h6l.6-8"/><path d="M6 6v3.6M8 6v3.6"/></svg>',
+  // ── 圖示（#13）────────────────────────────────────────────────────
+  // 單一來源＝主編輯器的 icons.js（window.Icons；獨立檔，不依賴 app.js／app.css）。
+  // 原型不自帶任何圖示定義，這裡只有「動作 → 圖示名」的對應。
+  const icon = (name, size) =>
+    window.Icons ? window.Icons.get(name, { size: size || 14 }) : "";
+  const LINE_TOOL_ICON = {
+    split: "scissors",
+    merge: "chevron-up", // icons.js 沒有專用的「合併」圖示，取「往上併入前一句」的方向
+    card: "type",
+    delete: "trash-2",
   };
+  // 靜態 HTML 裡的 [data-icon] 一次換成 SVG。icons.js 沒載到時不可留空白鈕：
+  // 改顯示文字（data-icon-fallback）並進載入失敗清單，失敗看得見。
+  function injectIcons() {
+    if (window.Icons) {
+      window.Icons.inject(document);
+      return;
+    }
+    console.error("[video-edit-prototype] icons.js 未載入，圖示改以文字顯示");
+    document.querySelectorAll("[data-icon]").forEach((el) => {
+      el.textContent = el.dataset.iconFallback || "";
+    });
+    setLoadFail("icons", "icons.js 未載入（window.Icons 不存在）");
+  }
+  // 播放鈕：圖示與文字跟著播放狀態換
+  function setPlayUi(playing) {
+    const b = $("vt-play");
+    const ic = b.querySelector("[data-icon]");
+    const name = playing ? "pause" : "play";
+    ic.dataset.icon = name;
+    ic.innerHTML = icon(name);
+    b.querySelector(".vt-play-label").textContent = playing ? "暫停" : "播放";
+  }
 
   let draggingCardId = null;
 
@@ -1414,7 +1432,9 @@ import {
         b.className = "vt-line-tool" + (cls ? " " + cls : "");
         b.dataset.act = act;
         b.setAttribute("aria-label", label);
-        b.innerHTML = TOOL_ICONS[act];
+        const svg = icon(LINE_TOOL_ICON[act]);
+        if (svg) b.innerHTML = svg;
+        else b.textContent = label; // icons.js 沒載到 → 顯示字，不留空白鈕
         b.title = title;
         b.disabled = !!disabled;
         // mousedown 先於 blur，preventDefault 才不會讓輸入框先收掉
@@ -2477,11 +2497,11 @@ import {
       else v.pause();
     });
     v.addEventListener("play", () => {
-      $("vt-play").textContent = "⏸ 暫停";
+      setPlayUi(true);
       startLoop();
     });
     v.addEventListener("pause", () => {
-      $("vt-play").textContent = "▶ 播放";
+      setPlayUi(false);
     });
     v.addEventListener("seeked", () => {
       updatePlayhead();
@@ -2506,7 +2526,7 @@ import {
         const sec = h.parentElement;
         const open = sec.classList.toggle("is-collapsed") === false;
         h.setAttribute("aria-expanded", open ? "true" : "false");
-        h.querySelector(".vt-side-caret").textContent = open ? "▾" : "▸";
+        // 箭頭方向由 CSS 依 .is-collapsed 旋轉同一個圖示，這裡不換字
       });
     });
 
@@ -2604,12 +2624,97 @@ import {
     }
   }
 
-  // 載入失敗提示：多個資源同時失敗時累加，不要後者蓋掉前者（蓋掉會漏診斷線索）
-  function showEmptyNote(msg) {
-    const note = $("vt-empty-note");
-    note.textContent = note.hidden ? msg : `${note.textContent} ${msg}`;
-    note.hidden = false;
+  // ── 載入失敗彙整（#9）──────────────────────────────────────────
+  // 四個來源（影片／波形／字幕／對齊）的失敗文案只在這張表管；頁面底部的清單與
+  // 「對齊」popover 的提示都從這裡取字，不各自組字串。
+  // 表的鍵序＝畫面上的固定順序：各來源誰先失敗取決於網路與 async 時序，
+  // 照到達順序排的話，同一種壞法每次重整看到的排列都不一樣。
+  // text 是寫給使用者看的一句話，不放端點與狀態碼；那些技術細節收在每一項的
+  // title（滑過才看得到），查問題的人還是拿得到。
+  const LOAD_SOURCES = {
+    video: {
+      label: "影片",
+      real: "載入不到這一集的主影片。請先回主畫面開啟一集，並確認這一集有主影片。",
+      demo: "找不到示範影片。",
+    },
+    wave: {
+      label: "波形",
+      real: "載入不到這一集的聲音波形。請先回主畫面開啟一集。",
+      demo: "找不到示範波形。",
+    },
+    subs: {
+      label: "字幕",
+      real: "載入不到這一集的字幕。請確認這一集已經轉好字幕。",
+      demo: "找不到示範字幕。",
+    },
+    align: {
+      label: "對齊設定",
+      real: "載入不到這一集的對齊設定。「對齊」面板已鎖住、暫時不能儲存，以免把空值蓋掉這一集原本的設定；請重新整理頁面再試。",
+      demo: "",
+    },
+    icons: {
+      label: "圖示",
+      real: "圖示沒有載入成功，圖示按鈕暫時改用文字顯示，功能不受影響。",
+      demo: "圖示沒有載入成功，圖示按鈕暫時改用文字顯示，功能不受影響。",
+    },
+  };
+  // 各來源「載入狀態」的單一來源（N1 併軌：原本對齊另有一份 state.align 四態，
+  // 與這張表各管各的；現在對齊是否已載入只看這裡）。
+  // { 來源鍵: { ok: null 載入中｜true 成功｜false 失敗, detail: 技術細節 } }；無鍵＝還沒開始載
+  const loadState = {};
+  const loadFailed = (k) => !!loadState[k] && loadState[k].ok === false;
+  const loadOk = (k) => !!loadState[k] && loadState[k].ok === true;
+  const loadFailText = (key) => LOAD_SOURCES[key][DEMO ? "demo" : "real"];
+
+  // 標記／解除某個來源的載入失敗，並重畫清單。detail=null 表示這次載入成功
+  // （例如存對齊後重載成功），該項要從清單拿掉，不能讓舊的錯誤一直掛著。
+  function setLoadFail(key, detail) {
+    loadState[key] =
+      detail == null
+        ? { ok: true, detail: "" }
+        : { ok: false, detail: String(detail) };
+    renderLoadErrors();
   }
+  // 開始（重新）載入：舊的成功／失敗都不算數，載完才知道
+  function setLoadPending(key) {
+    loadState[key] = { ok: null, detail: "" };
+    renderLoadErrors();
+  }
+  // 對齊面板的狀態由 loadState 導出，不另存一份
+  function alignStatus() {
+    if (DEMO) return "demo";
+    const s = loadState.align;
+    if (!s) return "idle";
+    return s.ok === null ? "loading" : s.ok ? "success" : "error";
+  }
+  // 真集的對齊值「已成功載入」才可編輯、可儲存（N1）
+  const alignLoaded = () => !DEMO && loadOk("align");
+
+  function renderLoadErrors() {
+    const note = $("vt-empty-note");
+    if (!note) return;
+    const keys = Object.keys(LOAD_SOURCES).filter(loadFailed);
+    note.textContent = "";
+    note.hidden = keys.length === 0;
+    if (!keys.length) return;
+    const lead = document.createElement("p");
+    lead.className = "vt-empty-lead";
+    lead.textContent = "以下資料沒有載入成功：";
+    const ul = document.createElement("ul");
+    ul.className = "vt-empty-list";
+    keys.forEach((k) => {
+      const li = document.createElement("li");
+      li.dataset.src = k;
+      li.textContent = `${LOAD_SOURCES[k].label}：${loadFailText(k)}`;
+      li.title = loadState[k].detail; // 技術細節（檔名／端點／狀態碼）只放這裡
+      ul.appendChild(li);
+    });
+    note.append(lead, ul);
+  }
+
+  const SUBS_FAIL_DETAIL = DEMO
+    ? "sample-subtitles.json"
+    : "/api/subtitles 未回 200：真模式需要該集已轉好字幕（來源是 _final_v2.srt）";
 
   function setDuration(d) {
     if (d > 0 && Math.abs(d - state.duration) > 0.01) {
@@ -2640,11 +2745,8 @@ import {
   // 對齊載入：真模式向 /api/episode 取這集對齊欄位（與 app.js loadEpisodeState 同源，
   // 但只取五個對齊純量 + audio.path + episode_dir）。四態：loading→success/error；demo 跳過。
   async function loadEpisodeAlignment() {
-    if (DEMO) {
-      state.align = { state: "demo", err: "" };
-      return;
-    }
-    state.align = { state: "loading", err: "" };
+    if (DEMO) return;
+    setLoadPending("align");
     try {
       const r = await fetch("/api/episode", { cache: "no-store" });
       if (!r.ok) throw new Error(`/api/episode HTTP ${r.status}`);
@@ -2665,10 +2767,9 @@ import {
       state.tailTrimSec = numOr(d.tail_trim_sec, 0);
       state.subtitleOffsetSec = numOr(d.subtitle_offset_sec, 0);
       state.episodeDir = d.episode_dir ? String(d.episode_dir) : "";
-      state.align = { state: "success", err: "" };
+      setLoadFail("align", null);
     } catch (err) {
-      state.align = { state: "error", err: err.message || String(err) };
-      showEmptyNote(`對齊設定載入失敗：${state.align.err}`);
+      setLoadFail("align", err.message || String(err));
     }
   }
 
@@ -2699,6 +2800,16 @@ import {
     if (DEMO) return;
     const btn = $("vt-al-save");
     const status = $("vt-al-status");
+    // 資料層防線（N1）：對齊值沒成功載入時，記憶體裡的五個值是預設的 0，不是這一集
+    // 存的值；這時送出等於把 0 蓋回 episode.yaml。不管按鈕層有沒有擋住，一律不送。
+    if (!alignLoaded()) {
+      if (status) {
+        status.className = "vt-align-status is-err";
+        status.textContent =
+          "對齊設定還沒載入成功，這次沒有儲存（避免把空值蓋掉原本的設定）。請重新整理頁面再試。";
+      }
+      return;
+    }
     // 存檔期間鎖住全部五個欄位（不只按鈕）：in-flight 時打進的值會在下方
     // syncAlignInputs() 被剛讀回磁碟的值靜默覆蓋 → 資料遺失（#3）。
     const fieldIds = [
@@ -2728,6 +2839,8 @@ import {
       await loadEpisodeAlignment();
       const subs = await loadSubs();
       state.subs = Array.isArray(subs) ? subs : [];
+      // 存檔後重載字幕失敗 → 清單變空不能靜默，照樣進載入失敗清單
+      setLoadFail("subs", subs ? null : SUBS_FAIL_DETAIL);
       applyLoadShiftToSubs();
       syncAlignInputs();
       renderLines();
@@ -2750,11 +2863,18 @@ import {
     }
   }
 
-  // 把 state 的五個對齊欄位灌回輸入框，並依四態設定停用狀態 / 提示文字。
+  // 把 state 的五個對齊欄位灌回輸入框，並依載入狀態設定停用狀態 / 提示文字。
   function syncAlignInputs() {
+    const loaded = alignLoaded();
+    // 按鈕層（N1）：真集的值沒成功載入（載入中或失敗）就不給編、不給存
+    const locked = DEMO || !loaded;
+    // 沒載到值時欄位留空＋佔位字：顯示 0 會被當成「這一集存的就是 0」
+    const blank = !DEMO && !loaded;
     const set = (id, v) => {
       const el = $(id);
-      if (el) el.value = v;
+      if (!el) return;
+      el.value = blank ? "" : v;
+      el.placeholder = blank ? "—" : "";
     };
     set("vt-al-audio", state.audioSyncOffset);
     set("vt-al-camb", state.camSyncOffsetB);
@@ -2762,34 +2882,38 @@ import {
     set("vt-al-tail", state.tailTrimSec);
     set("vt-al-sub", state.subtitleOffsetSec);
     const hasAudio = !!state.audioPath;
-    // 沒外接音檔 → 聲音偏移無處可存，停用該欄（避免存了卻靜默無效）；demo 全欄停用
+    // 沒外接音檔 → 聲音偏移無處可存，停用該欄（避免存了卻靜默無效）
     const audioInput = $("vt-al-audio");
-    if (audioInput) audioInput.disabled = DEMO || !hasAudio;
+    if (audioInput) audioInput.disabled = locked || !hasAudio;
     ["vt-al-camb", "vt-al-head", "vt-al-tail", "vt-al-sub"].forEach((id) => {
       const el = $(id);
-      if (el) el.disabled = DEMO;
+      if (el) el.disabled = locked;
     });
     const saveBtn = $("vt-al-save");
-    if (saveBtn) saveBtn.disabled = DEMO;
+    if (saveBtn) saveBtn.disabled = locked;
+    const status = alignStatus();
     const note = $("vt-align-note");
     if (note) {
       const map = {
-        // 註：loadEpisodeAlignment 的 loading 態只存在於它自己 await 期間，
-        // 而 syncAlignInputs 的所有呼叫點都在 await 之後才跑（state 必為
-        // success／error／demo／idle），故不列 loading，免留永不觸發的死分支。
+        loading: "載入中",
         error: "載入失敗",
         success: hasAudio ? "有外接音檔" : "無外接音檔",
         demo: "demo（唯讀）",
         idle: "",
       };
-      note.textContent = map[state.align.state] || "";
+      note.textContent = map[status] || "";
     }
     const hint = $("vt-align-hint");
     if (hint) {
+      hint.title = "";
       if (DEMO)
         hint.textContent = "demo 模式沒有真集：對齊欄位唯讀，不會寫任何檔。";
-      else if (state.align.state === "error")
-        hint.textContent = `對齊設定載入失敗：${state.align.err}`;
+      else if (status === "error") {
+        // 與頁面底部的載入失敗清單同一份文案；技術細節一樣收在 title
+        hint.textContent = loadFailText("align");
+        hint.title = loadState.align.detail;
+      } else if (!loaded)
+        hint.textContent = "對齊設定還在載入，載入完成前不能編輯與儲存。";
       else if (!hasAudio)
         hint.textContent =
           "影片／字幕時間對齊，與這集 episode.yaml 共用。此集無外接音檔，聲音偏移停用。";
@@ -2823,20 +2947,24 @@ import {
     if (btn) btn.addEventListener("click", saveAlignment);
   }
 
-  // 方案 A：對齊面板從右欄移到頂列，改成「對齊」鈕 + popover。純 DOM 位置搬移，
-  // 五個欄位 id 與 bindAlignPanel 的繫結完全不動 → id-bound 的位移數學不受影響。
-  function bindAlignPopover() {
-    const toggle = $("vt-al-toggle");
-    const pop = $("vt-align-pop");
+  // ── popover 開關（單一實作）──────────────────────────────────────
+  // 頂列「對齊」與時間軸「操作說明」兩顆鈕共用：點鈕開／關、點外面關、Esc 關並
+  // 把焦點還給鈕；同時只開一個（開這個就收掉別的）。onOpen 在每次打開時呼叫。
+  const popovers = [];
+  function bindPopover(toggleId, popId, onOpen) {
+    const toggle = $(toggleId);
+    const pop = $(popId);
     if (!toggle || !pop) return;
     const isOpen = () => !pop.hidden;
     const setOpen = (open) => {
       pop.hidden = !open;
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
-      // 打開時用最新 state 重灌欄位：對齊值可能被他處（如 head_trim）經非輸入
-      // 路徑改動，若不同步會顯示舊值（搬成 popover 後新增的開啟時機）。
-      if (open) syncAlignInputs();
+      if (open) {
+        popovers.forEach((p) => p.pop !== pop && p.setOpen(false));
+        if (onOpen) onOpen();
+      }
     };
+    popovers.push({ pop, setOpen });
     toggle.addEventListener("click", (e) => {
       // 自己 stopPropagation，才不會被下面的「點外面關閉」立刻收回
       e.stopPropagation();
@@ -2863,6 +2991,7 @@ import {
     const badge = $("vt-mode-badge");
     badge.textContent = DEMO ? "原型 · demo" : "原型 · 真集";
     if (!DEMO) badge.classList.add("mode-real");
+    injectIcons(); // 靜態圖示先換上，不等後面的載入
 
     const v = $("vt-video");
     v.src = DEMO ? "sample-video.mp4" : "/api/video";
@@ -2876,10 +3005,11 @@ import {
     });
     v.addEventListener("error", () => {
       // 影片載入失敗（真模式沒開集/沒影片）→ 用波形時長撐住時間軸，不靜默假裝成功
-      showEmptyNote(
+      setLoadFail(
+        "video",
         DEMO
-          ? "找不到 sample-video.mp4（請從 static 目錄提供）。"
-          : "影片載入失敗：真模式需要 app server 已開啟一集且該集有主影片（/api/video 回 200）。",
+          ? "sample-video.mp4（請從 static 目錄提供）"
+          : "/api/video 未回 200：真模式需要 app server 已開啟一集且該集有主影片",
       );
     });
 
@@ -2888,10 +3018,11 @@ import {
       state.waveform = wf;
       setDuration(wf.duration || 0);
     } else {
-      showEmptyNote(
+      setLoadFail(
+        "wave",
         DEMO
-          ? "找不到 sample-waveform.json。"
-          : "波形載入失敗：真模式需要 app server 已開啟一集（/api/waveform 回 200）。",
+          ? "sample-waveform.json"
+          : "/api/waveform 未回 200：真模式需要 app server 已開啟一集",
       );
     }
 
@@ -2903,16 +3034,16 @@ import {
       state.subs = subs;
     } else {
       state.subs = [];
-      showEmptyNote(
-        DEMO
-          ? "找不到 sample-subtitles.json。"
-          : "字幕載入失敗：真模式需要該集已轉好字幕（/api/subtitles 回 200，來源是 _final_v2.srt）。",
-      );
+      setLoadFail("subs", SUBS_FAIL_DETAIL);
     }
     // 原始（磁碟／外接音檔軸）字幕 +totalShift → cam A 顯示軸，highlight 才對得上影片
     applyLoadShiftToSubs();
     bindAlignPanel(); // 綁定對齊面板五欄 + 儲存鈕
-    bindAlignPopover(); // 綁定頂列「對齊」鈕 + popover 開關（方案 A）
+    // 頂列「對齊」鈕 + popover（方案 A：對齊面板從右欄搬到頂列，五個欄位 id 與
+    // bindAlignPanel 的繫結完全不動）。打開時用最新 state 重灌欄位：對齊值可能被
+    // 他處（如 head_trim）經非輸入路徑改動，不同步會顯示舊值。
+    bindPopover("vt-al-toggle", "vt-align-pop", syncAlignInputs);
+    bindPopover("vt-keys-toggle", "vt-keys-pop"); // 時間軸「操作說明」（#12）
     // 對齊只對真集有意義（demo 無真集）→ 真模式才露出頂列「對齊」入口
     if (!DEMO) {
       const alignMount = $("vt-align-mount");
@@ -3187,8 +3318,8 @@ import {
       subtitleOffsetSec: state.subtitleOffsetSec,
       episodeDir: state.episodeDir,
       totalShift: alignShift(),
-      state: state.align.state,
-      err: state.align.err,
+      state: alignStatus(),
+      err: loadState.align ? loadState.align.detail : "",
       dirty: alignDirty, // 改了值但還沒存（#7／#8 走查用）
       inputs: {
         audio: $("vt-al-audio").value,
