@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from pathlib import Path
 
 from podcast_toolkit.episode import Episode
@@ -105,6 +106,22 @@ def _episode_meta(ep_dir: Path) -> dict | None:
     }
 
 
+def _has_episode_yaml(ep_dir: Path) -> bool:
+    """資料夾內有沒有 episode.yaml（一般檔）。
+
+    刻意不用 Path.is_file()：Python 3.14 起 pathlib 的 is_file()/exists() 會把
+    **所有** OSError（含 EACCES）吞成 False，於是「資料夾在、但沒權限進去」會被
+    當成「不是集數」無聲跳過——3.13 以前是拋 PermissionError、由上層寫進 warnings。
+    這裡自己 stat：只有「確定不存在」才回 False，權限錯等其餘 OSError 照樣上拋，
+    讓 list_episodes 的 except 把它記進 warnings（失敗不靜默）。
+    """
+    try:
+        st = os.stat(ep_dir / "episode.yaml")
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    return stat.S_ISREG(st.st_mode)
+
+
 def list_episodes(roots: list[str], recent: list[str]) -> dict:
     """掃 roots + recent，回 {episodes: [...], warnings: [...]}。
     episodes 依 mtime 倒序；同一 path 去重。"""
@@ -136,7 +153,7 @@ def list_episodes(roots: list[str], recent: list[str]) -> dict:
                 # macOS 套件（.app 等）不是集數資料夾，且探測其內部會 EACCES；直接跳過。
                 if child.suffix.lower() in _BUNDLE_SUFFIXES:
                     continue
-                if not (child / "episode.yaml").is_file():
+                if not _has_episode_yaml(child):
                     continue
                 meta = _episode_meta(child)
             except Exception as e:
@@ -152,7 +169,7 @@ def list_episodes(roots: list[str], recent: list[str]) -> dict:
         try:
             if not ep_dir.is_dir():
                 continue
-            if not (ep_dir / "episode.yaml").is_file():
+            if not _has_episode_yaml(ep_dir):
                 continue
             meta = _episode_meta(ep_dir)
         except Exception as e:

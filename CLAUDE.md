@@ -17,5 +17,5 @@
   留給下一梯，不逐集零星修。範本：`docs/plans/2026-08-08-subtitle-editing-ux.md`。
 
 ## 架構觸發條件
-- 下次要動編輯器大功能：先拆 app.js（先抽 api.js → render.js；動刀前先補 Playwright 煙霧測試），
+- 下次要動編輯器大功能：先拆 app.js（先抽 api.js → render.js；動刀前先補 CDP 走查（`scripts/cdp-walkthrough/`，不引入 Playwright）），
   再做功能。回顧顯示 app.js ×108 次改動是返工放大器。

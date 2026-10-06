@@ -27,6 +27,8 @@
 
 ## #6：播放頭「看得到的拖不動、拖得動的看不見」
 
+> **狀態：✅ 已完成（第二梯，2026-10-06）** —— 抓柄常駐可見，仍只在波形軌段可拖（不跨三軌）。
+
 ### 現況
 
 - 可見的播放頭 `.vt-playhead`（`video-edit-prototype.html:268-278`）：跨三軌（`top:0; bottom:0`）、
@@ -60,6 +62,8 @@
 ---
 
 ## #9：多來源載入失敗訊息黏成一段、含術語、順序不定
+
+> **狀態：✅ 已完成（第二梯，2026-10-06）** —— 單一來源表 `LOAD_SOURCES`，固定順序、一項一行、技術細節收進 `title`。
 
 ### 現況
 
@@ -99,6 +103,8 @@ function showEmptyNote(msg) {
 
 ## #12：快捷鍵只藏在 ⓘ 的 tooltip，無常駐提示
 
+> **狀態：✅ 已完成（第二梯，2026-10-06）** —— ⓘ 改成按鈕＋popover，與「對齊」共用 `bindPopover`。
+
 ### 現況
 
 時間軸標頭只有一顆淡色 ⓘ（`video-edit-prototype.html:1862-1867`），所有操作與快捷鍵塞在它的
@@ -131,6 +137,14 @@ invisible-features-dont-exist）。
 
 ## #13：圖示未沿用主編輯器 data-icon，混用手繪 SVG ＋ Unicode
 
+> **狀態：✅ 已完成（2026-10-06，第三梯）— 選「接主系統」**。
+> 判斷依據：`podcast_toolkit/web/static/icons.js` 是獨立 IIFE，只匯出 `window.Icons = {get, inject}`（`:116`），
+> 不依賴 `app.js`／`app.css`、也不會自動 inject，所以原型只要多一行 `<script src="icons.js">`
+> 就能用同一份圖示定義，不必引入主編輯器整包資產、也不必複製定義成第二份。
+> 原型端只自寫數行 `[data-icon]` 的版面 CSS（對齊與 `pointer-events:none`，不是圖示定義）。
+> `TOOL_ICONS` 與功能性 Unicode 字符已全數移除；`icons.js` 載入失敗時按鈕改顯示文字並進失敗清單，不靜默。
+> 下文「現況／根因／改法」為動工前的紀錄，行號已過時。
+
 ### 現況
 
 - 逐句小工具（切／併／卡／刪）用原型自繪的一組 inline SVG：`TOOL_ICONS`（`video-edit-prototype.js:998-1010`），
@@ -155,6 +169,8 @@ invisible-features-dont-exist）。
 ---
 
 ## #14：標題卡面板兩句提示語意重疊
+
+> **狀態：✅ 已完成（第二梯，2026-10-06）** —— 標頭註記改講另一條路（字幕列的「卡」鈕），「拖到藍軌」只留版型格下方一處。
 
 ### 現況
 
@@ -200,3 +216,53 @@ invisible-features-dont-exist）。
   #5 縮放鈕 Unicode 特殊字符改 ASCII `-`／`+`；#7／#8 dirty 追蹤（改值標「尚未儲存」warning 色、
   存成功清除）；#10 移除 `syncAlignInputs` 永不觸發的 `loading` 死分支；#11 對齊欄位標籤正名
   （「音檔同步偏移」「Cam B 同步偏移」）。
+
+## 附錄：第二梯做了什麼（2026-10-06，#6／#9／#12／#14）
+
+- **#9** 四個呼叫點各自組字串的 `showEmptyNote()` 併成單一來源表 `LOAD_SOURCES`（影片→波形→字幕→對齊）
+  ＋ `setLoadFail()`／`renderLoadErrors()`；對齊 popover 的錯誤提示改讀同一份文案。
+  與上文「init 收尾時一次渲染」不同：改成**每次變動就重繪**，因為影片的 error 事件是非同步的，
+  init 收尾時還沒到；順序由來源表的鍵序決定，與到達順序無關。
+  順帶補一個靜默分支：存對齊後重載字幕失敗，原本不回報，現在會進清單，重載成功就拿掉。
+- **#6** `.vt-playhead-grip::after` 畫一塊常駐可見的抓柄（`pointer-events:none`，命中區仍是 grip 本身）。
+  上文「頂端（波形軌內）」與實際軌道順序（波形在最下）說法不一致，實作以「掛在波形軌內」為準。
+- **#12** ⓘ 由 `<span title>` 改為 `<button>`＋`#vt-keys-pop`；`bindAlignPopover` 泛化成 `bindPopover`，
+  兩個 popover 同一套開關（同時只開一個、點外面關、Esc 關並把焦點還給按鈕）。快捷鍵清單只存在 popover 一處。
+- **#14** 只改標頭註記文案。
+- 驗收：`scripts/cdp-walkthrough/vt-ux2/drive.py` 86 條布林斷言全綠；`run_mutations.py` 7 個突變
+  （#9 四個部件逐一關、#6／#12／#14 各一）全部「紅→還原後綠」成立；pytest 1057 passed、1 xfailed。
+
+## 附錄：第三梯做了什麼（2026-10-06，N1／#13）
+
+- **N1（已修）** 開工前盤點「對齊是否已載入」有 2 處在管（`state.align` 的四態、`loadFails.align`），
+  先併成單一來源 `loadState`（每個來源 `{ok: null|true|false, detail}`），`alignStatus()`／`alignLoaded()`
+  與失敗清單都從它導出。兩道防線：按鈕層（`syncAlignInputs` 在未載入時鎖四個欄位＋儲存鈕、欄位留空顯示
+  佔位字「—」、提示列寫明原因）；資料層（`saveAlignment` 未載入直接拒絕、顯示可見訊息、不發寫入請求）。
+  載入成功後的行為不變（真值、可存、重載讀回）。
+- **#13（已完成）** 接主編輯器 `icons.js`，理由見上文 #13 段。逐句工具四顆、播放／暫停、縮放、說明、
+  摺疊箭頭、關閉鈕全部改 `data-icon`；每顆保留 `aria-label` 或 `title`。
+- 驗收：`drive.py` 106 條布林斷言全綠（新增 N1 11 條、#13 9 條）；`run_mutations.py` 14 個突變
+  （原 7 個＋N1 按鈕層／資料層／留空／載入中各一＋#13 圖示來源一個、命中兩個）；pytest 1057 passed、1 xfailed；
+  截圖 `/private/tmp/vt-ux2-13-toolbar.png`、`vt-ux2-13-line-tools.png`、`vt-ux2-13-timeline-head.png`。
+
+## 附錄：第二梯驗收時量到的新問題（留給下一梯）
+
+| # | 量到的現象 | 證據 | 嚴重度 |
+|---|---|---|---|
+| N1（✅ 已修，第三梯） | 對齊設定載入失敗時，popover 四個可編輯欄位顯示 0 且「儲存對齊」鈕**沒有停用**；使用者按下去會把 0 寫回這一集的設定，蓋掉原本的值 | CDP 實測（只讓 `/api/episode` 失敗）：`vt-al-save.disabled == false`，`vt-al-camb／head／tail／sub` 皆 `value="0"` 且 `disabled == false` | 中（有資料正確性風險；涉及 `saveAlignment` 行為，超出第二梯範圍未動） |
+| N2 | 載入期間沒有任何「載入中」表現：波形延遲 1.5 秒時，畫面無 `aria-busy`、無「載入中」字樣，失敗清單也是等到失敗才出現 | CDP 實測（波形延遲 1500ms，0.7 秒時取樣）：`aria-busy` 元素 0 個、頁面文字不含「載入中／讀取中」 | 低（本機載入快，慢網路才看得到） |
+| N3 | `.vt-tl-hint` CSS 規則（`video-edit-prototype.html:169`）在 ⓘ 改成按鈕後已無元素使用，成為死規則 | `grep vt-tl-hint` 只剩 CSS 那一處 | 低（清理） |
+| N4 | 可見的播放頭線在標題卡軌／字幕軌那兩段仍然拖不動（只有波形軌段可拖）；抓柄解決了「拖得動的看不見」，沒有解決「看得到的那條線上兩段拖不動」 | CDP 斷言 `6.lane`：同一 x 在上兩軌命中的不是 grip（刻意保留，避免蓋住卡片把手，2026-08-25 前科） | 低（設計取捨，需使用者決定要不要跨三軌） |
+| N5 | 影片原型的標題卡軌沒有刪除鈕（`.vt-card-del` 不存在），刪卡只能選卡後按 ⌫；這條路現在只寫在 ⓘ popover 裡 | 走查 `R.carddel` 以選卡＋⌫ 驗；DOM 查無刪除鈕 | 低（可發現性） |
+
+## 附錄：第三梯驗收時量到的新問題（留給下一梯）
+
+| # | 量到的現象 | 證據 | 嚴重度 |
+|---|---|---|---|
+| N6 | `icons.js` 沒有「合併」語意的圖示，逐句工具的「併」暫用 `chevron-up`（往上併的方向提示），語意不夠直覺 | `video-edit-prototype.js` 的 `LINE_TOOL_ICON`；正解是在 `icons.js` 補一顆，但那是第三個檔，需使用者點頭 | 低（一致性） |
+| N7 | 時間軸上剪除段的時長標籤仍是 `✕ 3.0s`（Unicode ✕），沒有換成 `data-icon` | 它是 `<span>` 標籤不是按鈕，且範圍外的 `scripts/cdp-walkthrough/timeline-baseline/verify_video_baseline.py:256` 斷言該字串；要換得連那支走查一起改 | 低（一致性） |
+| N8 | 時間軸標頭的說明圖示比旁邊「時間軸」文字略高約 1–2px | 截圖 `/private/tmp/vt-ux2-13-timeline-head.png` 目視（未量數字） | 低（視覺） |
+| N9 | 存對齊成功後重載 `/api/episode` 若失敗，狀態列同時顯示「已儲存」與「載入失敗」、欄位鎖住留空（獨立驗收讀碼＋實測指出；資料已寫入、無損失，只是訊息互相矛盾） | `video-edit-prototype.js` `saveAlignment` 成功分支後的重載 | 低～中（訊息矛盾） |
+| N10 | JS 註解仍有多處沿用「四態」舊稱（`:2746`、`:3052`、`:3311`），併成 `loadState` 後已不精確 | `grep 四態 video-edit-prototype.js` | 低（清理） |
+| N11 | 假集沒有外接音檔，popover 的「聲音偏移」欄整條路徑走查沒蓋到 | `scripts/cdp-walkthrough/vt-ux2/serve.py:50` 假集定義無外接音檔 | 低（覆蓋缺口） |
+| N12 | 空白鍵在說明鈕／對齊鈕取得焦點時仍會觸發播放（先前已知，未在本梯範圍） | 先前驗收紀錄 | 低 |
