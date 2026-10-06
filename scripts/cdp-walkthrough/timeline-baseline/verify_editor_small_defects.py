@@ -21,7 +21,7 @@
       MUT-F1  把資料表的一條 hint/desc 改字 → 提示列與 modal 兩個消費端都要跟著變
               （證明兩處真的都從同一份表渲染，不是只有一邊接線）
       MUT-F2  把 camBtnTitle 的兩個呼叫端還原成舊三元 → 四態驗證變紅
-      MUT-F3A 把 .card 的 --card-actions-w 換回 auto → 單機集右緣參差回到 18px
+      MUT-F3A 把 .card 的 --card-actions-w 換回 auto → 單機集右緣參差回來
       MUT-F3B 把 .card.card-has-cam 末欄換回 auto → 雙機集右緣參差回來
               （這條規則會整條蓋掉 .card 的 grid-template-columns，是獨立的一半）
 
@@ -552,9 +552,13 @@ async def main():
             patch_file(APP_CSS, "  --card-actions-w: 58px;", "  --card-actions-w: auto;")
             pg, _ = await open_pod(browser, ws, sessions)
             gm = await C.js(pg, JS_CARD_GEOM)
-            redA_spread, _ = raw_eq("MUT-F3A-RED 右緣參差回到 18px", geom_spread(gm), 18.0)
-            redA_widths, _ = raw_eq("MUT-F3A-RED 操作欄寬度回到兩種（28／46）",
-                                    gm.get("actWs"), [28.0, 46.0])
+            # auto 欄寬由按鈕內文字的字寬決定，像素值隨 runner 字體而異
+            #（本機 18／46，CI 18.45／46.45）；突變要證明的是「參差回來」，
+            # 所以比照 MUT-F3B 斷言 >0 與「寬度不只一種」，不釘死像素。
+            redA_spread, _ = raw_eq("MUT-F3A-RED 右緣參差回來（>0）",
+                                    geom_spread(gm) > 0, True)
+            redA_widths, _ = raw_eq("MUT-F3A-RED 操作欄寬度回到多種",
+                                    len(gm.get("actWs", [])) > 1, True)
             mutF3A["red"] = {"spread": redA_spread, "widths": redA_widths, "actWs": gm.get("actWs")}
             await close_page(pg)
         finally:
@@ -563,10 +567,11 @@ async def main():
         gg = await C.js(pg, JS_CARD_GEOM)
         greenA, _ = raw_eq("MUT-F3A-GREEN 還原後參差回到 0", geom_spread(gg), 0)
         await close_page(pg)
-        C.check("MUT-F3A 真突變成立：末欄 auto → 參差 18px（RED），固定寬 → 0（GREEN）",
+        C.check("MUT-F3A 真突變成立：末欄 auto → 參差回來（RED），固定寬 → 0（GREEN）",
                 redA_spread and redA_widths and greenA,
-                {"red": mutF3A.get("red"), "green": geom_spread(gg)},
-                {"red": {"spread": True, "widths": True, "actWs": [28.0, 46.0]}, "green": 0})
+                {"red": {k: mutF3A.get("red", {}).get(k) for k in ("spread", "widths")},
+                 "green": geom_spread(gg)},
+                {"red": {"spread": True, "widths": True}, "green": 0})
 
         # ══════════ F1-c：資料表清空 → 兩個消費端都要看得到錯誤 ══════════
         logp("\n--- F1-c 失敗路徑不靜默（資料表為空）---")
