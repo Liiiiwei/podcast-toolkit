@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-第二梯 UX 走查的突變測試：證明 drive.py 的斷言真的在測東西。
+第二～四梯 UX 走查的突變測試：證明 drive.py 的斷言真的在測東西。
 
 做法：把 static 複製到 /private/tmp 的沙盒（不動版控內的檔），對副本做一處字串替換
 （還原成舊行為／關掉一個部件），跑 drive.py，確認「該突變指定的斷言」轉紅；
 再把副本還原、重跑，確認轉綠。部件逐一關，不做「全開 vs 全關」。
 
-用法：python3 -u run_mutations.py
+用法：python3 -u run_mutations.py            # 全部
+      python3 -u run_mutations.py MN9 MN12   # 只跑名稱含這些字的
 結束碼：每個突變都「紅→綠」成立才是 0。
 """
 import io
@@ -22,6 +23,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 STATIC = os.path.join(REPO, "podcast_toolkit", "web", "static")
 JS, HTML = "video-edit-prototype.js", "video-edit-prototype.html"
+ICONS = "icons.js"
 
 # (名稱, 檔, 原字串, 突變後, 必須轉紅的斷言 id)
 MUTATIONS = [
@@ -82,6 +84,67 @@ MUTATIONS = [
      "        height: 13px;\n        pointer-events: none;",
      "        height: 13px;\n        pointer-events: auto;",
      ["13.hit"]),
+    # ── 第四梯 ──
+    ("MN2-區塊（載入中不標 aria-busy）", JS,
+     'el.setAttribute("aria-busy", "true")',
+     'void 0',
+     ["N2.busy"]),
+    ("MN2-字樣（載入中不顯示字樣）", JS,
+     "note.hidden = busy.length === 0;",
+     "note.hidden = true;",
+     ["N2.text"]),
+    ("MN2-收起（來源有結果後不記錄 → 載入中永遠不收）", JS,
+     "everSettled.add(key);",
+     "",
+     ["N2.done", "N2.fail"]),
+    ("MN2-波形成功（波形載入成功不回報）", JS,
+     'setLoadFail("wave", null);',
+     "",
+     ["N2.done"]),
+    ("MN5-讓位（刪除鈕貼右緣、蓋住右把手）", HTML,
+     "        right: 12px;\n        top: 50%;",
+     "        right: 0;\n        top: 50%;",
+     ["N5.handle", "N5.narrow"]),
+    ("MN5-按下（刪除鈕的 pointerdown 冒泡到卡本體）", JS,
+     'b.addEventListener("pointerdown", (e) => e.stopPropagation());',
+     "",
+     ["N5.click", "N5.narrow"]),
+    ("MN5-門檻（放不下也硬畫刪除鈕）", JS,
+     "if (!c || el.offsetWidth < CARD_DEL_MIN_W) return;",
+     "if (!c) return;",
+     ["N5.tiny"]),
+    ("MN6-工具鈕（「併」改回借 chevron-up）", JS,
+     'merge: "merge", // 往上併入前一句',
+     'merge: "chevron-up",',
+     ["N6.icon"]),
+    ("MN6-圖示庫（icons.js 沒有 merge）", ICONS,
+     "    merge:\n",
+     "    merge_off:\n",
+     ["N6.icon"]),
+    ("MN7-標籤（剪除段標籤改回 ✕ 字符）", JS,
+     'label.append(iconSpan("x", 11, "✕"), t);',
+     'label.append("✕ ", t);',
+     ["N7.label"]),
+    ("MN8-對齊（時間軸標頭改回 baseline）", HTML,
+     "文字高 2.5px */\n        align-items: center;",
+     "文字高 2.5px */\n        align-items: baseline;",
+     ["N8.mid"]),
+    ("MN9-訊息（重讀失敗照樣說已儲存）", JS,
+     "const reloaded = alignLoaded();",
+     "const reloaded = true;",
+     ["N9.msg"]),
+    ("MN11-顯示（不讀外接音檔的偏移）", JS,
+     "state.audioSyncOffset = audio ? numOr(audio.sync_offset, 0) : 0;",
+     "state.audioSyncOffset = 0;",
+     ["N11.show", "N11.rt"]),
+    ("MN11-寫入（有外接音檔也不送 audio）", JS,
+     "if (state.audioPath) {",
+     "if (false) {",
+     ["N11.save", "N11.rt"]),
+    ("MN12-空白鍵（焦點在按鈕上也照樣播放／暫停）", JS,
+     "if (isSpaceActivated(e.target)) return;",
+     "",
+     ["N12.btn"]),
 ]
 
 

@@ -245,24 +245,70 @@ invisible-features-dont-exist）。
   （原 7 個＋N1 按鈕層／資料層／留空／載入中各一＋#13 圖示來源一個、命中兩個）；pytest 1057 passed、1 xfailed；
   截圖 `/private/tmp/vt-ux2-13-toolbar.png`、`vt-ux2-13-line-tools.png`、`vt-ux2-13-timeline-head.png`。
 
+## 附錄：第四梯做了什麼（2026-10-06，N2／N3／N5–N12）
+
+- **N2（已修）** 初次載入期間，還沒有結果的來源所屬區塊（影片→預覽區、波形→時間軸、字幕→逐句清單）標
+  `aria-busy="true"`，時間軸標頭顯示「載入中：波形、字幕…」（`role="status"`）。只有一處在管：
+  `setLoadFail` 把「有過結果」記進 `everSettled`，`renderLoadBusy` 從它導出；成功或失敗都會收掉，不擋操作。
+- **N3（已修）** 刪掉沒有元素使用的 `.vt-tl-hint` 規則。
+- **N5（已修）** 標題卡右側加刪除鈕（`data-icon="x"`、`aria-label="刪除這張標題卡"`），沿用 `removeCard`。
+  鈕讓位給右把手（`right: 12px`），`pointerdown` 不冒泡到卡本體（否則會變成拖動）。卡寬不足 44px 時不畫鈕，
+  那種卡仍走選卡＋⌫。實測：標準卡 148.75px 上刪除鈕 680.6–696.6、右把手 698.6–708.6 互不重疊；
+  50px 窄卡上左把手止於 571.8、鈕 581.8–597.8、右把手 599.8–609.8，三者各自是 `elementFromPoint` 的最上層。
+- **N6（已修）** `icons.js` 新增 `merge` 圖示（只新增），逐句工具「併」改用它；主編輯器不動。
+- **N7（已修）** 剪除段時長標籤的「✕」改成 `data-icon="x"`；`timeline-baseline/verify_video_baseline.py`
+  的 V4.4 同步改成斷言「x 圖示恰 1 個＋時長文字 3.0s」（等價強度，不是恆真）。
+- **N8（已修）** 時間軸標頭改 `align-items: center`：說明圖示與「時間軸」文字的垂直中心差 2.5px → 0
+  （斷言門檻 ≤1px，不釘像素）。
+- **N9（已修）** 存對齊成功但重讀 `/api/episode` 失敗時，狀態列只留一則錯誤樣式的訊息
+  「設定已寫入這一集，但重新讀取失敗，畫面上無法顯示目前的值。請重新整理頁面。」，不再出現「已儲存」；失敗不靜默。
+- **N10（已修）** 對齊相關註解的「四態」改成 `loadState.align` 的現況描述，只動註解。
+  （送出剪輯計畫與合成進度區的「四態」指的是另外兩個狀態機，仍然正確，沒動。）
+- **N11（已修）** `serve.py` 加 `/__reset?audio=1`，假集變成有外接音檔（`sync_offset 0.4`）；走查蓋到
+  「聲音偏移」欄的顯示、編輯、存檔與重載讀回。
+- **N12（已修）** 焦點在按鈕／連結／輸入類控制上時，空白鍵只交給該控制，不再同時播放／暫停；
+  判斷只留一處（`isSpaceActivated`）。
+- 驗收：`drive.py` 126 條布林斷言全綠（新增 20 條：N2 四條、N5 五條、N6／N7／N8 各一條、N9 三條、
+  N11 三條、N12 兩條；既有 106 條一條沒改）；`run_mutations.py` 29 個突變（原 14 個＋本梯 15 個，
+  29 個全部紅→還原全綠成立；其中既有的「M13-圖示來源」第一次跑時走查中斷——新加的 N6 探針在
+  圖示庫沒載入時拋例外，改成回空陣列後重跑成立，斷言與期待值未動）；
+  `verify_video_baseline.py` 39／39 通過（V4.4 因 N7 改為比對「x 圖示＋時長」）；pytest 1057 passed、1 xfailed；
+  ruff 通過；`jsc -m` 無 SyntaxError。
+- 走查環境上的發現：`run_12` 之後 headless 分頁會變成 `visibilityState=hidden`，Chrome 對隱藏分頁
+  無限期延後影片載入（`readyState 0／networkState 2`）。N2 的斷言需要影片真的載到，所以該段開頭先
+  `Page.bringToFront`；既有走查不依賴影片載入，沒動。
+
 ## 附錄：第二梯驗收時量到的新問題（留給下一梯）
 
 | # | 量到的現象 | 證據 | 嚴重度 |
 |---|---|---|---|
 | N1（✅ 已修，第三梯） | 對齊設定載入失敗時，popover 四個可編輯欄位顯示 0 且「儲存對齊」鈕**沒有停用**；使用者按下去會把 0 寫回這一集的設定，蓋掉原本的值 | CDP 實測（只讓 `/api/episode` 失敗）：`vt-al-save.disabled == false`，`vt-al-camb／head／tail／sub` 皆 `value="0"` 且 `disabled == false` | 中（有資料正確性風險；涉及 `saveAlignment` 行為，超出第二梯範圍未動） |
-| N2 | 載入期間沒有任何「載入中」表現：波形延遲 1.5 秒時，畫面無 `aria-busy`、無「載入中」字樣，失敗清單也是等到失敗才出現 | CDP 實測（波形延遲 1500ms，0.7 秒時取樣）：`aria-busy` 元素 0 個、頁面文字不含「載入中／讀取中」 | 低（本機載入快，慢網路才看得到） |
-| N3 | `.vt-tl-hint` CSS 規則（`video-edit-prototype.html:169`）在 ⓘ 改成按鈕後已無元素使用，成為死規則 | `grep vt-tl-hint` 只剩 CSS 那一處 | 低（清理） |
+| N2（✅ 已修，第四梯） | 載入期間沒有任何「載入中」表現：波形延遲 1.5 秒時，畫面無 `aria-busy`、無「載入中」字樣，失敗清單也是等到失敗才出現 | CDP 實測（波形延遲 1500ms，0.7 秒時取樣）：`aria-busy` 元素 0 個、頁面文字不含「載入中／讀取中」 | 低（本機載入快，慢網路才看得到） |
+| N3（✅ 已修，第四梯） | `.vt-tl-hint` CSS 規則（`video-edit-prototype.html:169`）在 ⓘ 改成按鈕後已無元素使用，成為死規則 | `grep vt-tl-hint` 只剩 CSS 那一處 | 低（清理） |
 | N4 | 可見的播放頭線在標題卡軌／字幕軌那兩段仍然拖不動（只有波形軌段可拖）；抓柄解決了「拖得動的看不見」，沒有解決「看得到的那條線上兩段拖不動」 | CDP 斷言 `6.lane`：同一 x 在上兩軌命中的不是 grip（刻意保留，避免蓋住卡片把手，2026-08-25 前科） | 低（設計取捨，需使用者決定要不要跨三軌） |
-| N5 | 影片原型的標題卡軌沒有刪除鈕（`.vt-card-del` 不存在），刪卡只能選卡後按 ⌫；這條路現在只寫在 ⓘ popover 裡 | 走查 `R.carddel` 以選卡＋⌫ 驗；DOM 查無刪除鈕 | 低（可發現性） |
+| N5（✅ 已修，第四梯） | 影片原型的標題卡軌沒有刪除鈕（`.vt-card-del` 不存在），刪卡只能選卡後按 ⌫；這條路現在只寫在 ⓘ popover 裡 | 走查 `R.carddel` 以選卡＋⌫ 驗；DOM 查無刪除鈕 | 低（可發現性） |
 
 ## 附錄：第三梯驗收時量到的新問題（留給下一梯）
 
 | # | 量到的現象 | 證據 | 嚴重度 |
 |---|---|---|---|
-| N6 | `icons.js` 沒有「合併」語意的圖示，逐句工具的「併」暫用 `chevron-up`（往上併的方向提示），語意不夠直覺 | `video-edit-prototype.js` 的 `LINE_TOOL_ICON`；正解是在 `icons.js` 補一顆，但那是第三個檔，需使用者點頭 | 低（一致性） |
-| N7 | 時間軸上剪除段的時長標籤仍是 `✕ 3.0s`（Unicode ✕），沒有換成 `data-icon` | 它是 `<span>` 標籤不是按鈕，且範圍外的 `scripts/cdp-walkthrough/timeline-baseline/verify_video_baseline.py:256` 斷言該字串；要換得連那支走查一起改 | 低（一致性） |
-| N8 | 時間軸標頭的說明圖示比旁邊「時間軸」文字略高約 1–2px | 截圖 `/private/tmp/vt-ux2-13-timeline-head.png` 目視（未量數字） | 低（視覺） |
-| N9 | 存對齊成功後重載 `/api/episode` 若失敗，狀態列同時顯示「已儲存」與「載入失敗」、欄位鎖住留空（獨立驗收讀碼＋實測指出；資料已寫入、無損失，只是訊息互相矛盾） | `video-edit-prototype.js` `saveAlignment` 成功分支後的重載 | 低～中（訊息矛盾） |
-| N10 | JS 註解仍有多處沿用「四態」舊稱（`:2746`、`:3052`、`:3311`），併成 `loadState` 後已不精確 | `grep 四態 video-edit-prototype.js` | 低（清理） |
-| N11 | 假集沒有外接音檔，popover 的「聲音偏移」欄整條路徑走查沒蓋到 | `scripts/cdp-walkthrough/vt-ux2/serve.py:50` 假集定義無外接音檔 | 低（覆蓋缺口） |
-| N12 | 空白鍵在說明鈕／對齊鈕取得焦點時仍會觸發播放（先前已知，未在本梯範圍） | 先前驗收紀錄 | 低 |
+| N6（✅ 已修，第四梯） | `icons.js` 沒有「合併」語意的圖示，逐句工具的「併」暫用 `chevron-up`（往上併的方向提示），語意不夠直覺 | `video-edit-prototype.js` 的 `LINE_TOOL_ICON`；正解是在 `icons.js` 補一顆，但那是第三個檔，需使用者點頭 | 低（一致性） |
+| N7（✅ 已修，第四梯） | 時間軸上剪除段的時長標籤仍是 `✕ 3.0s`（Unicode ✕），沒有換成 `data-icon` | 它是 `<span>` 標籤不是按鈕，且範圍外的 `scripts/cdp-walkthrough/timeline-baseline/verify_video_baseline.py:256` 斷言該字串；要換得連那支走查一起改 | 低（一致性） |
+| N8（✅ 已修，第四梯） | 時間軸標頭的說明圖示比旁邊「時間軸」文字略高約 1–2px | 截圖 `/private/tmp/vt-ux2-13-timeline-head.png` 目視（未量數字） | 低（視覺） |
+| N9（✅ 已修，第四梯） | 存對齊成功後重載 `/api/episode` 若失敗，狀態列同時顯示「已儲存」與「載入失敗」、欄位鎖住留空（獨立驗收讀碼＋實測指出；資料已寫入、無損失，只是訊息互相矛盾） | `video-edit-prototype.js` `saveAlignment` 成功分支後的重載 | 低～中（訊息矛盾） |
+| N10（✅ 已修，第四梯） | JS 註解仍有多處沿用「四態」舊稱（`:2746`、`:3052`、`:3311`），併成 `loadState` 後已不精確 | `grep 四態 video-edit-prototype.js` | 低（清理） |
+| N11（✅ 已修，第四梯） | 假集沒有外接音檔，popover 的「聲音偏移」欄整條路徑走查沒蓋到 | `scripts/cdp-walkthrough/vt-ux2/serve.py:50` 假集定義無外接音檔 | 低（覆蓋缺口） |
+| N12（✅ 已修，第四梯） | 空白鍵在說明鈕／對齊鈕取得焦點時仍會觸發播放（先前已知，未在本梯範圍） | 先前驗收紀錄 | 低 |
+
+## 附錄：第四梯驗收時量到的新問題（留給下一梯）
+
+| # | 量到的現象 | 證據 | 嚴重度 |
+|---|---|---|---|
+| N13 | 標題卡寬度不足 44px 時沒有刪除鈕（放不下：兩支把手各 10px＋鈕 16px＋間距），這種卡只能選卡＋⌫ | 走查 `N5.tiny`：約 34px 的卡上 `.vt-card-del` 0 個、選卡＋⌫ 仍可刪 | 低（可發現性；要解得重排把手或改成選取後才顯示） |
+| N14 | 存對齊成功後，字幕重載失敗時狀態列仍顯示「已儲存」，同時失敗清單列出字幕一項（N9 只處理了 `/api/episode` 重讀失敗） | 讀碼：`saveAlignment` 的字幕重載分支只呼叫 `setLoadFail("subs", …)`；走查 `9.save.fail` 只驗清單有列 | 低（資料已寫入，訊息不算矛盾但不夠完整） |
+| N15 | N12 的副作用：用滑鼠點過播放鈕以外的按鈕後焦點留在該鈕上，此時按空白鍵會再觸發那顆鈕而不是播放／暫停（這是瀏覽器原生行為，但剪輯時容易誤觸） | 走查 `N12.btn` 即此行為；未量使用者實際誤觸頻率 | 低（需使用者決定：點擊後要不要把焦點還給頁面） |
+| N16 | `verify_video_baseline.py` 不在 `run_walkthroughs.py` 的清單內，只能手動起 range_server＋Chrome 跑；容易漏跑 | `run_walkthroughs.py --only verify_video_baseline` 回「指到不存在的走查」 | 低（覆蓋缺口） |
+| N17 | `drive.py` 的 `run_12` 之後分頁變成 `visibilityState=hidden`，後面任何依賴影片載入的斷言都會測到「環境不給載」 | 探針：`run_12` 後 `readyState 0／networkState 2／hidden`，`Page.bringToFront` 後回到 `4／1／visible` | 低（走查環境；可在 `Page.goto` 統一叫回前景） |
+| N18 | N12 的走查只測說明鈕一顆：把空白鍵豁免條件縮成只認 `#vt-keys-toggle`，`N12.btn` 仍綠 | 獨立驗收自設突變 X3 未轉紅（`drive.py:795`）；其他按鈕、`summary`、輸入框的行為只有手動探針確認過 | 中（行為目前正確，但日後退化抓不到） |
+| N19 | `N2.busy` 只斷言時間軸區塊，字幕清單的 `aria-busy` 沒有斷言 | 獨立驗收讀碼＋手動探針 | 低 |
+| N20 | `select`／color／number 輸入上按空白鍵未實測 | 讀 `video-edit-prototype.js:152` 判定會先 return，未實跑 | 低 |

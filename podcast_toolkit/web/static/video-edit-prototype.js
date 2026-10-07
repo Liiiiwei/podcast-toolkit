@@ -143,6 +143,11 @@ import {
   const NUDGE_SMALL = 0.1; // ← →
   const NUDGE_BIG = 1; // ⇧ + ← →
 
+  // 空白鍵＝「按下它」的控制（N12）：焦點在這些元素上時，空白鍵是該控制自己的
+  // 啟動鍵，全域快捷鍵不搶 —— 不然按一下會同時觸發按鈕與播放／暫停
+  const isSpaceActivated = (t) =>
+    !!(t && t.closest && t.closest("button, summary, a[href], [role='button']"));
+
   // 打字中的欄位：這些地方的單鍵都是輸入，不是快捷鍵
   function isTypingTarget(t) {
     if (!t || !t.tagName) return false;
@@ -308,8 +313,7 @@ import {
         const box = el.closest(".vt-cut");
         box.style.left = `${pct(cut[0])}%`;
         box.style.width = `${pct(cut[1] - cut[0])}%`;
-        box.querySelector(".vt-cut-label").textContent =
-          `✕ ${(cut[1] - cut[0]).toFixed(1)}s`;
+        setCutLabel(box.querySelector(".vt-cut-label"), cut[1] - cut[0]);
         renderStats(); // 剪後總長要跟著手走，不然拖到一半不知道剪掉多少
       };
       const up = () => {
@@ -324,6 +328,16 @@ import {
     });
   }
 
+  // 剪除段的時長標籤：圖示＋秒數（N7）。靜態渲染與拖把手時的即時更新共用這一支，
+  // 兩邊的長相才不會各寫各的。
+  function setCutLabel(label, sec) {
+    const t = document.createElement("span");
+    t.className = "vt-cut-sec";
+    t.textContent = `${sec.toFixed(1)}s`;
+    label.textContent = "";
+    label.append(iconSpan("x", 11, "✕"), t);
+  }
+
   function renderCuts() {
     const tl = $("vt-timeline");
     // 清掉舊的剪除段（保留 canvas / 播放頭 / 選區）
@@ -336,7 +350,7 @@ import {
       el.title = `剪除 ${fmt(s)}–${fmt(e)}（長 ${(e - s).toFixed(1)} 秒）\n點=取消這段、拖兩端=改剪除範圍`;
       const label = document.createElement("span");
       label.className = "vt-cut-label";
-      label.textContent = `✕ ${(e - s).toFixed(1)}s`;
+      setCutLabel(label, e - s);
       el.appendChild(label);
       // 點剪除段 = 取消該段；但拖把手放開時 click 會冒泡到這裡，要擋掉
       el.addEventListener("click", (ev) => {
@@ -752,6 +766,36 @@ import {
     return state.titleCards.find((c) => c.id === id) || null;
   }
 
+  // 卡上的刪除鈕（N5）。卡片 DOM 由共用的 timeline-core 產生，這裡在渲染完之後補上；
+  // 真正的刪除沿用 removeCard，與「選卡＋⌫」是同一支。
+  // 卡寬要放得下：左右把手各 10px＋刪除鈕 16px＋至少留 8px 可抓著拖 → 不足就不畫，
+  // 免得整張卡被鈕佔滿、拖不動也點不到卡本身（窄卡仍可選取後按 ⌫，或放大時間軸）。
+  const CARD_DEL_MIN_W = 44;
+  function addCardDeleteButtons(track) {
+    // .vt-card 的順序＝state.titleCards 扣掉編輯中的那張（那張畫成輸入框）
+    const shown = state.titleCards.filter((c) => c.id !== state.editingCard);
+    track.querySelectorAll(".vt-card").forEach((el, i) => {
+      const c = shown[i];
+      if (!c || el.offsetWidth < CARD_DEL_MIN_W) return;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "vt-card-del";
+      b.setAttribute("aria-label", "刪除這張標題卡");
+      b.title = "刪除這張標題卡";
+      b.appendChild(iconSpan("x", 12, "刪"));
+      // 卡本體的 pointerdown 會選卡並重畫整軌、click／dblclick 是選取／改字；
+      // 按在刪除鈕上都不該觸發，否則鈕在放開滑鼠前就被重畫掉，click 落空
+      b.addEventListener("pointerdown", (e) => e.stopPropagation());
+      b.addEventListener("dblclick", (e) => e.stopPropagation());
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        removeCard(c.id);
+      });
+      el.classList.add("has-del");
+      el.appendChild(b);
+    });
+  }
+
   function removeCard(id) {
     const i = state.titleCards.findIndex((c) => c.id === id);
     if (i < 0) return;
@@ -857,6 +901,7 @@ import {
       bindDrag: bindCardTimeDrag,
       renderEditingCard: renderCardInput,
       onAfterRender: () => {
+        addCardDeleteButtons(track);
         // 卡一變動，右欄的「已升格」標記與底部字幕預覽都要跟著重算
         syncLineCardMarks();
         updateSubPreview();
@@ -998,9 +1043,21 @@ import {
   // 原型不自帶任何圖示定義，這裡只有「動作 → 圖示名」的對應。
   const icon = (name, size) =>
     window.Icons ? window.Icons.get(name, { size: size || 14 }) : "";
+  // 動態產生的圖示外層：與靜態 HTML 同樣是 <span data-icon>，版面與「不吃點擊」
+  // 直接沿用 [data-icon] 的 CSS。icons.js 沒載到時顯示 fallback 文字，不留空白。
+  function iconSpan(name, size, fallback) {
+    const s = document.createElement("span");
+    s.dataset.icon = name;
+    s.dataset.iconSize = String(size);
+    s.setAttribute("aria-hidden", "true");
+    const svg = icon(name, size);
+    if (svg) s.innerHTML = svg;
+    else s.textContent = fallback || "";
+    return s;
+  }
   const LINE_TOOL_ICON = {
     split: "scissors",
-    merge: "chevron-up", // icons.js 沒有專用的「合併」圖示，取「往上併入前一句」的方向
+    merge: "merge", // 往上併入前一句
     card: "type",
     delete: "trash-2",
   };
@@ -2555,6 +2612,8 @@ import {
 
       const key = e.key;
       if (key === " ") {
+        // 空白鍵只有這一處在管；焦點在按鈕類控制上就整個讓給它（N12）
+        if (isSpaceActivated(e.target)) return;
         e.preventDefault();
         if (v.paused) v.play();
         else v.pause();
@@ -2573,7 +2632,7 @@ import {
         setMark("out");
       } else if (key === "Backspace" || key === "Delete") {
         e.preventDefault();
-        // 選取了標題卡就刪這張卡（取代原本卡右上角的 × 鈕）；
+        // 選取了標題卡就刪這張卡（與卡上的刪除鈕同一支 removeCard）；
         // 沒選卡才退回「剪除進出點圈起的範圍」的原意
         if (state.selectedCard != null) {
           removeCard(state.selectedCard);
@@ -2673,7 +2732,9 @@ import {
       detail == null
         ? { ok: true, detail: "" }
         : { ok: false, detail: String(detail) };
+    everSettled.add(key);
     renderLoadErrors();
+    renderLoadBusy();
   }
   // 開始（重新）載入：舊的成功／失敗都不算數，載完才知道
   function setLoadPending(key) {
@@ -2689,6 +2750,34 @@ import {
   }
   // 真集的對齊值「已成功載入」才可編輯、可儲存（N1）
   const alignLoaded = () => !DEMO && loadOk("align");
+
+  // ── 初次載入中的可見表現（N2）─────────────────────────────────────
+  // 來源 → 它的資料會出現在哪一塊。還沒載完過（成功或失敗都算載完）的來源，
+  // 對應區塊標 aria-busy，時間軸標頭列出「載入中：…」；載完就拿掉。
+  // 只管初次載入：存對齊後的重載不再顯示（那時畫面上已有資料）。純標示，不擋操作。
+  const LOAD_BUSY_BLOCKS = {
+    video: ".vt-stage",
+    wave: "#vt-timeline",
+    subs: "#vt-line-list",
+  };
+  const everSettled = new Set(); // 載完過一次的來源鍵（只由 setLoadFail 寫入）
+  function renderLoadBusy() {
+    const busy = Object.keys(LOAD_BUSY_BLOCKS).filter(
+      (k) => !everSettled.has(k),
+    );
+    Object.keys(LOAD_BUSY_BLOCKS).forEach((k) => {
+      const el = document.querySelector(LOAD_BUSY_BLOCKS[k]);
+      if (!el) return;
+      if (busy.includes(k)) el.setAttribute("aria-busy", "true");
+      else el.removeAttribute("aria-busy");
+    });
+    const note = $("vt-load-busy");
+    if (!note) return;
+    note.hidden = busy.length === 0;
+    note.textContent = busy.length
+      ? `載入中：${busy.map((k) => LOAD_SOURCES[k].label).join("、")}…`
+      : "";
+  }
 
   function renderLoadErrors() {
     const note = $("vt-empty-note");
@@ -2743,7 +2832,7 @@ import {
   }
 
   // 對齊載入：真模式向 /api/episode 取這集對齊欄位（與 app.js loadEpisodeState 同源，
-  // 但只取五個對齊純量 + audio.path + episode_dir）。四態：loading→success/error；demo 跳過。
+  // 但只取五個對齊純量 + audio.path + episode_dir）。載入狀態記在 loadState.align（載入中→成功／失敗）；demo 跳過。
   async function loadEpisodeAlignment() {
     if (DEMO) return;
     setLoadPending("align");
@@ -2837,6 +2926,8 @@ import {
       if (!r.ok) throw new Error(`/api/save HTTP ${r.status}`);
       // 重載對齊 + 字幕，重套 totalShift → 畫面反映實際寫入磁碟的值
       await loadEpisodeAlignment();
+      // 寫入已成功；但若這次重新讀取 /api/episode 失敗，畫面上的值無從確認（N9）
+      const reloaded = alignLoaded();
       const subs = await loadSubs();
       state.subs = Array.isArray(subs) ? subs : [];
       // 存檔後重載字幕失敗 → 清單變空不能靜默，照樣進載入失敗清單
@@ -2848,8 +2939,15 @@ import {
       renderCardTrack();
       clearAlignDirty(); // 存成功 → 不再是 dirty（#7／#8）
       if (status) {
-        status.className = "vt-align-status is-ok";
-        status.textContent = "已儲存";
+        if (reloaded) {
+          status.className = "vt-align-status is-ok";
+          status.textContent = "已儲存";
+        } else {
+          // 不能同時說「已儲存」又顯示「載入失敗」：講清楚哪一步成、哪一步沒成
+          status.className = "vt-align-status is-err";
+          status.textContent =
+            "設定已寫入這一集，但重新讀取失敗，畫面上無法顯示目前的值。請重新整理頁面。";
+        }
       }
     } catch (err) {
       if (status) {
@@ -2992,12 +3090,14 @@ import {
     badge.textContent = DEMO ? "原型 · demo" : "原型 · 真集";
     if (!DEMO) badge.classList.add("mode-real");
     injectIcons(); // 靜態圖示先換上，不等後面的載入
+    renderLoadBusy(); // 初次載入：資料到齊前先標「載入中」（N2）
 
     const v = $("vt-video");
     v.src = DEMO ? "sample-video.mp4" : "/api/video";
 
     // 影片 metadata 提供權威時長；波形也有 duration，取兩者最大避免任一缺失
     v.addEventListener("loadedmetadata", () => {
+      setLoadFail("video", null); // 影片載到了 → 收掉「載入中」
       setDuration(v.duration);
       drawWaveform();
       render();
@@ -3017,6 +3117,7 @@ import {
     if (wf) {
       state.waveform = wf;
       setDuration(wf.duration || 0);
+      setLoadFail("wave", null);
     } else {
       setLoadFail(
         "wave",
@@ -3032,6 +3133,7 @@ import {
     const subs = await loadSubs();
     if (subs) {
       state.subs = subs;
+      setLoadFail("subs", null);
     } else {
       state.subs = [];
       setLoadFail("subs", SUBS_FAIL_DETAIL);
@@ -3049,7 +3151,7 @@ import {
       const alignMount = $("vt-align-mount");
       if (alignMount) alignMount.hidden = false;
     }
-    syncAlignInputs(); // 把載入到的對齊值灌進輸入框、依四態設定停用/提示
+    syncAlignInputs(); // 把載入到的對齊值灌進輸入框、依 loadState.align 的載入狀態設定停用/提示
     bindStylePanel(); // 綁定字幕樣式面板（收在進階摺疊區）
     bindPlanDialog(); // 綁定「輸出剪輯指令」面板
     if (!DEMO) attachRenderWatch(); // 重整前若已在合成，接回去繼續顯示進度
@@ -3308,7 +3410,7 @@ import {
     window.__vtCardTrackHeight = () => $("vt-card-track").offsetHeight;
 
     // ── 對齊面板走查掛鉤 ──────────────────────────────────────────────
-    // 五個對齊欄位的 state 值 + 目前 totalShift + 四態 + DOM 輸入實況；round-trip 走查靠這些斷言
+    // 五個對齊欄位的 state 值 + 目前 totalShift + 載入狀態（alignStatus()）+ DOM 輸入實況；round-trip 走查靠這些斷言
     window.__vtAlign = () => ({
       audioPath: state.audioPath,
       audioSyncOffset: state.audioSyncOffset,

@@ -170,7 +170,8 @@
       /* 時間軸 */
       .vt-tl-head {
         display: flex;
-        align-items: baseline;
+        /* 置中對齊（N8）：baseline 會讓說明圖示比「時間軸」文字高 2.5px */
+        align-items: center;
         gap: var(--space-sm);
         margin-bottom: var(--space-xs);
       }
@@ -179,9 +180,11 @@
         color: var(--text-dim);
         font-weight: 500;
       }
-      .vt-tl-hint {
+      /* 初次載入中的字樣（N2）：哪幾樣資料還沒到，載完或失敗就收掉 */
+      .vt-load-busy {
+        order: 1; /* 排在說明鈕後面，出現／消失都不推動說明鈕 */
         font-size: var(--text-xs);
-        color: var(--text-faint);
+        color: var(--text-dim);
       }
       /* 操作說明（#12）：ⓘ 是真的按鈕，點了開 popover，鍵盤與觸控都開得了。
          時間軸在頁面底部，往下開會掉出視窗 → 往上展開、靠左對齊。 */
@@ -321,6 +324,10 @@
         border-radius: var(--radius-sm);
         padding: 0 var(--space-xs);
         pointer-events: none;
+        /* 圖示＋秒數並排置中（N7：原本的「✕」字符改成 icons.js 的圖示） */
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
       }
       /* 拖曳選區：虛線 accent 框 + accent 底 */
       .vt-selection {
@@ -1042,9 +1049,39 @@
         border-radius: var(--radius-sm) 0 0 var(--radius-sm);
       }
       .vt-card-h.is-r {
-        /* × 鈕已移除，把手回到真正的右緣 —— 拖右邊就是改結尾 */
+        /* 把手在真正的右緣 —— 拖右邊就是改結尾；刪除鈕排在它左邊，不與它重疊 */
         right: 0;
         border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      }
+      /* 卡上的刪除鈕（N5）：絕對定位在右把手（寬 10px）的左邊，兩者不搶同一塊。
+         疊在把手上的話，不是鈕被把手蓋住點不到，就是把手被鈕蓋住拖不動。
+         卡寬不足以同時放下兩個把手＋抓取區＋這顆鈕時不畫（見 JS 的 CARD_DEL_MIN_W）。 */
+      .vt-card.has-del {
+        padding-right: 30px;
+      }
+      .vt-card-del {
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 4;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        padding: 0;
+        color: var(--text);
+        background: transparent;
+        border: 0;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        opacity: 0.7;
+      }
+      .vt-card-del:hover,
+      .vt-card-del:focus-visible {
+        opacity: 1;
+        background: var(--danger);
       }
       .vt-card:hover .vt-card-h,
       .vt-card.is-selected .vt-card-h,
@@ -2042,6 +2079,7 @@
           <!-- 操作說明（#12）：原本是只有 title 的 span，滑鼠要停一秒才知道、
                鍵盤與觸控完全打不開。改成按鈕＋popover；快捷鍵清單只寫在這個
                popover 裡（鈕的 title 不再重複一份）。開關邏輯與「對齊」共用 bindPopover。 -->
+          <span class="vt-load-busy" id="vt-load-busy" role="status" hidden></span>
           <span class="vt-keys-mount">
             <button
               id="vt-keys-toggle"

@@ -18,7 +18,7 @@
     {
       "name": "V1.3 進階面板標題",
       "ok": true,
-      "got": "進階：字幕樣式",
+      "got": "\n              進階：字幕樣式\n            ",
       "want": "進階：字幕樣式",
       "status": "pass"
     },
@@ -58,7 +58,7 @@
     {
       "name": "V2.1 波形 canvas 有畫出非透明像素",
       "ok": true,
-      "got": 44551,
+      "got": 43718,
       "want": ">0",
       "status": "pass"
     },
@@ -194,10 +194,10 @@
       "status": "pass"
     },
     {
-      "name": "V4.4 剪除段標籤文字正確",
+      "name": "V4.4 剪除段標籤＝x 圖示＋時長文字",
       "ok": true,
-      "got": "✕ 3.0s",
-      "want": "✕ 3.0s",
+      "got": "x×1|3.0s",
+      "want": "x×1|3.0s",
       "status": "pass"
     },
     {
@@ -407,8 +407,8 @@
     {
       "name": "V5.9 拖字級滑桿後預覽字級 px 值有變化（非死碼）",
       "ok": true,
-      "got": "108.2px",
-      "want": "!= 44.2px",
+      "got": "83.1px",
+      "want": "!= 31.3px",
       "status": "pass"
     },
     {
