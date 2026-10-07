@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -460,6 +461,55 @@ def _wm_enabled(cfg: dict, wm_input_idx: int | None) -> bool:
     return bool(wm.get("enabled"))
 
 
+# 正片接在片頭後的淡入長度。只留防爆音的長度：主持人常在正片起點後 0.1～0.2 秒就開口，
+# 舊值 0.5 秒會把第一個字壓小（聽起來像聲音慢慢放大）。六個 builder 共用這一個值。
+MAIN_FADE_IN = 0.03
+# seek 路徑每個保留段各開一個 video input（外接音檔再加一個 audio input）。
+# macOS GUI app 的開檔上限是 256，去空拍切出上百段就會 Too many open files；
+# 超過這個段數改走 select 路徑（母帶只開一次）。
+SEEK_MAX_SEGMENTS = 40
+
+# 純音檔的片頭音尾：片頭影片的畫面常比音樂長（音樂收掉後還有幾秒動畫），
+# 影片有畫面撐著沒感覺，mp3 就變成一段空白。低於這個音量就視為音樂已結束。
+INTRO_TAIL_DB = -30.0
+INTRO_TAIL_PAD = 0.15     # 音樂最後一個有聲窗之後多留的長度
+INTRO_TAIL_FADE = 0.3     # 裁切點前的淡出，避免硬切
+
+
+def intro_audio_end(intro: Path, intro_dur: float) -> float:
+    """片頭音樂實際結束的時間（秒）：最後一個 RMS ≥ INTRO_TAIL_DB 的 0.1 秒窗的結尾 + PAD。
+
+    量不到（ffmpeg 失敗／整段都低於門檻）時拋 AssembleError，不靜默退回整段片頭。
+    """
+    proc = subprocess.run(
+        [ffmpeg_bin(), "-hide_banner", "-nostats", "-t", str(intro_dur), "-i", str(intro),
+         "-vn", "-af",
+         "aresample=44100,asetnsamples=n=4410,astats=metadata=1:reset=1,"
+         "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+         "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    last_loud_end = None
+    t = None
+    for line in proc.stdout.splitlines():
+        m = re.search(r"pts_time:([0-9.]+)", line)
+        if m:
+            t = float(m.group(1))
+            continue
+        m = re.search(r"RMS_level=(-?[0-9.]+|-inf)", line)
+        if m and t is not None:
+            level = float("-inf") if m.group(1) == "-inf" else float(m.group(1))
+            if level >= INTRO_TAIL_DB:
+                last_loud_end = t + 0.1
+    if proc.returncode != 0 or last_loud_end is None:
+        raise AssembleError(
+            f"量不到片頭音樂的結束點（{intro.name}）：ffmpeg exit={proc.returncode}。"
+            "請確認片頭檔有聲音軌。",
+            exit_code=3,
+        )
+    return min(float(intro_dur), last_loud_end + INTRO_TAIL_PAD)
+
+
 def _build_audio_align_filter(sync_offset: float) -> str:
     """組外接音檔的對齊 filter prefix（接在 aformat 後、aselect 前）。
 
@@ -700,7 +750,7 @@ def build_filter_complex_yt(
         f"[0:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
+        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d={MAIN_FADE_IN},afade=t=out:st={main_dur - 0.5}:d=0.5[a1];"
         f"[3:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         f"[v0][a0][v1][a1][v2][a2]concat=n=3:v=1:a=1[v][a]"
@@ -760,7 +810,7 @@ def build_filter_complex_yt_seeked(
         parts.append(f"{v_main}[v1]")
 
     parts.extend([
-        f"[main_a_raw]{speed_a}afade=t=in:st=0:d=0.5,"
+        f"[main_a_raw]{speed_a}afade=t=in:st=0:d={MAIN_FADE_IN},"
         f"afade=t=out:st={main_dur - 0.5}:d=0.5[a1]",
         f"[{intro_idx}:v]scale={res_w}:{res_h},setsar=1,fps={enc['framerate']},"
         f"format={enc['pix_fmt']},fade=t=out:st={intro_dur - intro_fade_out}:"
@@ -836,7 +886,7 @@ def build_filter_complex_reels(
     return (
         f"{v_chain};"
         f"[{a_idx}:a]aformat=sample_rates={enc['audio_sample_rate']}:channel_layouts=stereo,"
-        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+        f"{align_a}{select_a}{speed_a}afade=t=in:st=0:d={MAIN_FADE_IN},afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
 
 
@@ -863,6 +913,7 @@ def build_audio_only(
     main_dur: float,
     removed_intervals: list[tuple[float, float]] | None = None,
     audio_sync_offset: float = 0.0,
+    intro_audio_dur: float | None = None,
 ) -> str:
     """純音訊（原速 MP3）：intro 音 + 正片音（去除 removed_intervals、不加速）+ outro 音 concat。
 
@@ -871,6 +922,9 @@ def build_audio_only(
     時間軸的剪除區間（刪段 + 頭尾 trim + 去空拍）；外接音檔先 align 對到 cam A 軸再剪。
     main_dur = 剪完的正片長度（原速）；保留參數以維持 builder 介面一致。
 
+    intro_audio_dur：片頭音樂實際結束點（見 intro_audio_end）。給了就把片頭裁到這裡，
+    不帶片頭動畫的無聲尾巴；None = 沿用整段片頭（intro_duration）。
+
     正片尾端不套 fade-out：最後一句可能一路講到剪輯邊界，強制淡出會吞掉尾音。
     concat 會在正片完整結束後才接片尾；片尾自己的 fade-in 仍負責柔化轉場。
     """
@@ -878,14 +932,22 @@ def build_audio_only(
     sr = enc["audio_sample_rate"]
     intro_dur = cfg["assets"]["intro_duration"]
     intro_fade_out = cfg["assets"]["intro_fade_out"]
+    if intro_audio_dur is None:
+        intro_chain = f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}"
+    else:
+        fade = min(INTRO_TAIL_FADE, intro_audio_dur)
+        intro_chain = (
+            f"atrim=0:{intro_audio_dur:.3f},asetpts=PTS-STARTPTS,"
+            f"afade=t=out:st={intro_audio_dur - fade:.3f}:d={fade:.3f}"
+        )
     align_a = _build_audio_align_filter(audio_sync_offset)
     # 切塊串接，避免單一 not(...) 運算式過長讓 ffmpeg 解析失敗（見 _chunked_select）
     select_a = _chunked_select(removed_intervals, audio=True)
     return (
         f"[0:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
-        f"afade=t=out:st={intro_dur - intro_fade_out}:d={intro_fade_out}[a0];"
+        f"{intro_chain}[a0];"
         f"[1:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
-        f"{align_a}{select_a}afade=t=in:st=0:d=0.5[a1];"
+        f"{align_a}{select_a}afade=t=in:st=0:d={MAIN_FADE_IN}[a1];"
         f"[2:a]aformat=sample_rates={sr}:channel_layouts=stereo,"
         f"afade=t=in:st=0:d=0.5[a2];"
         # concat 後再 aresample 重新切幀：aselect/concat 產生的不規則幀會讓 libmp3lame 噴
@@ -1106,7 +1168,7 @@ def build_filter_complex_yt_multicam(
             f"[{main_v_in}]{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[main_v]"
         )
     parts.append(
-        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
+        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d={MAIN_FADE_IN},afade=t=out:st={main_dur - 0.5}:d=0.5[main_a]"
     )
 
     # Intro / outro
@@ -1209,7 +1271,7 @@ def build_filter_complex_reels_multicam(
             f"[{main_v_in}]{speed_v}fade=t=in:st=0:d=0.5,fade=t=out:st={main_dur - 0.5}:d=0.5[v]"
         )
     parts.append(
-        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d=0.5,afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
+        f"[{main_a_in}]{speed_a}afade=t=in:st=0:d={MAIN_FADE_IN},afade=t=out:st={main_dur - 0.5}:d=0.5[a]"
     )
 
     return ";".join(parts)
@@ -1557,6 +1619,8 @@ def prepare_assembly(
             and seek_cut_inputs and audio_sync_offset >= 0
         ):
             seek_segments = _kept_intervals(deletion_intervals, main_dur_src)
+            if len(seek_segments) > SEEK_MAX_SEGMENTS:
+                seek_segments = []
 
         # seek 路徑的標題卡要從「未被 cut-drop 的完整卡」重映射（與字幕 all_cards 同源），
         # 先在下面 legacy 區塊改寫 overlay_cards 之前留一份原始清單。
@@ -1708,9 +1772,11 @@ def prepare_assembly(
         audio_removed = list(removed_intervals or []) + [
             (main_dur_src, main_dur_src + 24 * 3600)
         ]
+        # 片頭只取到音樂結束：片頭動畫的無聲尾巴在 mp3 裡是一段空白。
+        intro_audio_dur = intro_audio_end(intro, intro_dur)
         fc = build_audio_only(
             cfg, main_dur=main_dur, removed_intervals=audio_removed,
-            audio_sync_offset=audio_sync_offset,
+            audio_sync_offset=audio_sync_offset, intro_audio_dur=intro_audio_dur,
         )
         cmd = [
             ffmpeg_bin(), "-y",
@@ -1723,7 +1789,7 @@ def prepare_assembly(
             "-ar", str(enc["audio_sample_rate"]),
             tmp_out_rel,
         ]
-        total_dur = intro_dur + main_dur + outro_dur
+        total_dur = intro_audio_dur + main_dur + outro_dur
     elif output_kind == "yt":
         intro_dur = cfg["assets"]["intro_duration"]
         outro_dur = cfg["assets"]["outro_duration"]
@@ -1923,7 +1989,10 @@ def prepare_assembly(
     # YT 正片接在片頭後 → intro_offset=intro_duration；Reels 無片頭 = 0。呼叫端跑完 ffmpeg 成功才落檔。
     sidecar_srt: dict | None = None
     if subtitle_mode == "sidecar":
-        intro_offset = float(cfg["assets"]["intro_duration"]) if output_kind == "yt" else 0.0
+        if audio_only:
+            intro_offset = intro_audio_dur  # mp3 的片頭已裁到音樂結束點，字幕偏移要跟同一個值
+        else:
+            intro_offset = float(cfg["assets"]["intro_duration"]) if output_kind == "yt" else 0.0
         content = build_sidecar_srt(all_cards, removed_intervals, speed_factor, intro_offset)
         sidecar_srt = {"path": out.with_suffix(".srt"), "content": content}
 
