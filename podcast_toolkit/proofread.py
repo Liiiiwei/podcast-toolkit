@@ -17,6 +17,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -112,12 +113,19 @@ def _merge_corrections(dst: dict, raw: dict) -> None:
 def _claude_one_chunk(chunk, glossary, *, model, timeout, context) -> dict:
     """跑單塊 ``claude -p ... --output-format json``,回 {idx: 修正} dict。失敗丟 ProofreadError。"""
     prompt = build_prompt(chunk, glossary, context=context)
-    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    # 隔離模式:不載入使用者的 CLAUDE.md / hooks / skills / MCP / 工具,並在暫存目錄執行。
+    # 不隔離時 claude 會把整套個人設定當成任務的一部分(實測 3 張卡跑 6 輪、約 1 美元、
+    # 回的不是 JSON);隔離後同樣 3 張卡 1 輪、約 0.02 美元。
+    cmd = ["claude", "-p", prompt, "--output-format", "json",
+           "--system-prompt", "你是繁體中文字幕校對引擎,只輸出 JSON。",
+           "--tools", "", "--setting-sources", "",
+           "--strict-mcp-config", "--disable-slash-commands"]
     if model:
         cmd += ["--model", str(model)]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                              encoding="utf-8", errors="replace")
+                              encoding="utf-8", errors="replace",
+                              cwd=tempfile.gettempdir())
     except subprocess.TimeoutExpired as e:
         raise ProofreadError(f"claude -p 逾時({timeout}s)") from e
     if proc.returncode != 0:
@@ -262,11 +270,12 @@ def resolve_provider(cfg: dict) -> str | None:
         return None
     if p in PROVIDERS:
         return p
-    # auto：先用 App 內建模型；開發環境缺資產時才保留 Claude Code 相容路徑。
-    if local_llm.is_available():
-        return "local_llm"
+    # auto：有 Claude Code 就先用它（同音成語／語意錯字抓得比內建模型準）；
+    # 沒裝 claude 的電腦退回 App 內建的離線模型。
     if shutil.which("claude"):
         return "claude_code"
+    if local_llm.is_available():
+        return "local_llm"
     return None
 
 
@@ -308,7 +317,16 @@ def proofread_cards(cards, glossary, cfg, *, provider=None, progress=None):
         return None, {}, []
     if prov not in PROVIDERS:
         raise ProofreadError(f"未知的校對 provider:{prov}")
-    raw = PROVIDERS[prov](cards, glossary, cfg=cfg, progress=progress)
+    try:
+        raw = PROVIDERS[prov](cards, glossary, cfg=cfg, progress=progress)
+    except ProofreadError as e:
+        # auto 選到 Claude 但整批失敗（未登入／離線）→ 退回內建模型，並留可見訊息。
+        auto = ((cfg.get("proofread") or {}).get("provider") or "auto").lower() == "auto"
+        if not (auto and not provider and prov == "claude_code" and local_llm.is_available()):
+            raise
+        print(f"⚠ Claude 校對失敗，改用內建本機模型：{str(e)[:150]}", file=sys.stderr)
+        prov = "local_llm"
+        raw = PROVIDERS[prov](cards, glossary, cfg=cfg, progress=progress)
     # 正規化 key 為 int(對齊 cards 的 idx;provider 應已是 int,防禦性再轉一次)
     corrections: dict[int, str] = {}
     for k, v in (raw or {}).items():
