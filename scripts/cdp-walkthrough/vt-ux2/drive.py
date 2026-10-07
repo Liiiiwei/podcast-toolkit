@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-影片剪輯原型第二～四梯 UX（#9／#6／#12／#14／#13／N1／N2／N5–N9／N11／N12）CDP 走查＋回歸。
+影片剪輯原型第二～五梯 UX（#9／#6／#12／#14／#13／N1／N2／N5–N9／N11–N14／N17–N20）CDP 走查＋回歸。
 
 紀律（lessons-learned 2026-08-25）：
 - 每個 ✓ 都綁布林斷言（ok = 實得 == 期待），只印值不算測。
@@ -32,6 +32,10 @@ import cdp_driver as D  # noqa: E402
 
 RESULTS = {}
 ORDER = []
+# 每次導頁後取樣到的 (哪一次導頁, document.visibilityState)；結尾的 N17.vis 斷言用
+VIS = []
+# 只給突變測試用的旋鈕：設了就不把分頁叫回前景，用來證明 N17.vis 真的會紅
+NO_FRONT = os.environ.get("VT_DRIVE_NO_FRONT") == "1"
 
 
 def check(cid, desc, got, want):
@@ -77,7 +81,19 @@ class Page:
         with open(path, "wb") as f:
             f.write(base64.b64decode(res["data"]))
 
+    def front(self):
+        """把分頁叫回前景（N17）。headless 分頁被前面的步驟（例如按 Esc）弄成
+        visibilityState=hidden 之後，Chrome 會無限期延後影片載入；每次導頁前都叫一次，
+        後面的步驟才不會量到「環境不給載影片」。"""
+        if not NO_FRONT:
+            self.cdp.call("Page.bringToFront")
+
+    def note_vis(self, where):
+        """記下這次導頁後分頁是不是 visible；不在這裡中止，統一由結尾的 N17.vis 斷言。"""
+        VIS.append((where, self.js("document.visibilityState")))
+
     def goto(self, query, width=1280, height=900):
+        self.front()
         self.cdp.call("Emulation.setDeviceMetricsOverride", {
             "width": width, "height": height, "deviceScaleFactor": 1, "mobile": False})
         self.cdp.call("Page.navigate", {"url": "about:blank"})
@@ -93,6 +109,7 @@ class Page:
         if not self.js("!!document.querySelector('#vt-keys-toggle [data-icon]')"):
             print("✗ 環境：版本指紋未命中（服務到的不是第二梯的檔）")
             sys.exit(2)
+        self.note_vis("goto %s" % (query or "（真集）"))
 
     def wait(self, cond, secs=8):
         end = time.time() + secs
@@ -506,11 +523,13 @@ def run_n1(p):
 
     # ── 載入中：/api/episode 慢 1.5 秒；init 還沒跑完，只能直接讀 DOM ──
     p.ctl("", "align:1500")
+    p.front()
     p.cdp.call("Page.navigate", {"url": "about:blank"})
     time.sleep(0.15)
     p.cdp.call("Page.navigate", {"url": "%s/video-edit-prototype.html" % p.base})
     p.wait("document.getElementById('vt-al-save') && document.readyState !== 'loading'", 8)
     time.sleep(0.5)
+    p.note_vis("N1 載入中")
     pending = p.js("typeof window.__vtStats !== 'function'")
     d = p.js(AL_DOM)
     s0 = p.stat()["saves"]
@@ -696,6 +715,24 @@ CARD_PARTS = """(() => {
 })()"""
 
 
+OUT_DEL = """(() => {
+  const track = document.getElementById('vt-card-track');
+  const card = track.querySelector('.vt-card');
+  const outs = track.querySelectorAll('.vt-card-del.is-out');
+  const b = outs[0];
+  if (!b || !card) return {outs: outs.length, inCard: card ? card.querySelectorAll('.vt-card-del').length : -1,
+                           hit: false, outside: false, inTrack: false, side: null, name: '', icon: null};
+  const r = b.getBoundingClientRect(), k = card.getBoundingClientRect(), t = track.getBoundingClientRect();
+  return {outs: outs.length, inCard: card.querySelectorAll('.vt-card-del').length,
+          hit: document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === b,
+          outside: r.left >= k.right || r.right <= k.left,
+          inTrack: r.width > 0 && r.left >= t.left && r.right <= t.right && r.top >= t.top && r.bottom <= t.bottom,
+          side: r.left >= k.right ? 'right' : r.right <= k.left ? 'left' : 'over',
+          name: b.getAttribute('aria-label') || '',
+          icon: [b.querySelectorAll('[data-icon="x"] svg').length, b.textContent.trim()]};
+})()"""
+
+
 def space_key(p):
     """帶 text 的空白鍵：按鈕的鍵盤啟動（keyup 觸發 click）要有 text 才會發生。"""
     for t in ("keyDown", "keyUp"):
@@ -703,6 +740,38 @@ def space_key(p):
             "type": t, "key": " ", "code": "Space", "text": " ",
             "windowsVirtualKeyCode": 32, "nativeVirtualKeyCode": 32})
     time.sleep(0.3)
+
+
+# 照像素擺卡（由左到右，維持 titleCards 的時間順序＝DOM 順序），選取第 sel 張
+ADJ_SETUP = """((cards, sel) => { const s = window.__vt; const dur = window.__vtStats().duration;
+  const pps = document.getElementById('vt-card-track').getBoundingClientRect().width / dur;
+  if (s.titleCards.length !== cards.length) return null;
+  cards.forEach((k, i) => { s.titleCards[i].start = k[0] / pps; s.titleCards[i].end = (k[0] + k[1]) / pps; });
+  window.__vtSelectCard(null); window.__vtSelectCard(s.titleCards[sel].id);
+  return s.titleCards.map((c) => c.id); })(%s, %d)"""
+
+# 第 idx 張卡（窄卡）的外側鈕與全軌各卡把手的實測
+ADJ_PROBE = """((idx) => {
+  const track = document.getElementById('vt-card-track');
+  const cards = Array.from(track.querySelectorAll('.vt-card'));
+  const me = cards[idx];
+  if (!me) return {w: 0, gapR: -1, outs: -1, dels: -1, side: null, overlap: -1, inTrack: false, sel: [], cards: []};
+  const H = (el) => { if (!el) return null; const r = el.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    return {x, y, hit: document.elementFromPoint(x, y) === el}; };
+  const k = me.getBoundingClientRect(), t = track.getBoundingClientRect();
+  const outs = track.querySelectorAll('.vt-card-del.is-out');
+  const b = outs[0], r = b ? b.getBoundingClientRect() : null;
+  const next = cards[idx + 1];
+  return {w: k.width, gapR: next ? next.getBoundingClientRect().left - k.right : -1,
+    outs: outs.length, dels: track.querySelectorAll('.vt-card-del').length,
+    side: !r ? null : r.left >= k.right ? 'right' : r.right <= k.left ? 'left' : 'over',
+    overlap: !r ? -1 : cards.filter((c) => { const q = c.getBoundingClientRect();
+      return r.left < q.right && r.right > q.left; }).length,
+    inTrack: !!r && r.width > 0 && r.left >= t.left && r.right <= t.right && r.top >= t.top && r.bottom <= t.bottom,
+    sel: cards.map((c) => c.classList.contains('is-selected')),
+    cards: cards.map((c) => ({l: H(c.querySelector('.vt-card-h.is-l')), r: H(c.querySelector('.vt-card-h.is-r'))}))};
+})(%d)"""
 
 
 def narrow_card(p, px):
@@ -720,7 +789,7 @@ def run_b4(p):
     # 前面的走查（run_12 按過 Esc）會讓 headless 分頁變成 visibilityState=hidden，Chrome 對
     # 隱藏分頁會無限期延後影片載入（readyState 0／networkState 2）→ 先把分頁叫回前景，
     # 否則量到的是「環境不給載影片」而不是載入中字樣該不該收
-    p.cdp.call("Page.bringToFront")
+    p.front()
     p.reset()
     p.ctl("", "wave:1500")
     p.cdp.call("Page.navigate", {"url": "about:blank"})
@@ -728,6 +797,7 @@ def run_b4(p):
     p.cdp.call("Page.navigate", {"url": "%s/video-edit-prototype.html" % p.base})
     p.wait("document.getElementById('vt-load-busy') && document.readyState !== 'loading'", 8)
     time.sleep(0.5)
+    p.note_vis("N2 載入中")
     b = p.js(LOAD_BUSY)
     check("N2.busy", "載入中（波形慢 1.5 秒、init 未完成）→ 時間軸區塊 aria-busy=true",
           [b["pending"], b["tl"]], [True, "true"])
@@ -748,6 +818,26 @@ def run_b4(p):
     note = p.js(READ_NOTE)
     check("N2.fail", "波形載入失敗 → 不留 aria-busy／「載入中」，改由載入失敗清單說明",
           [b["tl"], b["shown"], "wave" in json.dumps(note)], [None, False, True])
+
+    # ── N19：字幕清單的 aria-busy（載入中為 true、載完解除；兩個時點都取樣）──
+    p.ctl("", "subs:1500")
+    p.front()
+    p.cdp.call("Page.navigate", {"url": "about:blank"})
+    time.sleep(0.15)
+    p.cdp.call("Page.navigate", {"url": "%s/video-edit-prototype.html" % p.base})
+    p.wait("document.getElementById('vt-load-busy') && document.readyState !== 'loading'", 8)
+    time.sleep(0.5)
+    p.note_vis("N19 載入中")
+    b = p.js(LOAD_BUSY)
+    check("N19.busy", "載入中（字幕慢 1.5 秒、init 未完成）→ 字幕清單 aria-busy=true，字樣點名字幕",
+          [b["pending"], b["list"], "字幕" in b["text"]], [True, "true", True])
+    p.wait("typeof window.__vtStats === 'function'", 15)
+    p.wait(VIDEO_READY, 15)
+    time.sleep(0.2)
+    b = p.js(LOAD_BUSY)
+    check("N19.done", "字幕載完 → 字幕清單沒有 aria-busy，且清單真的有字幕列",
+          [b["pending"], b["list"], p.js("document.querySelectorAll('#vt-line-list .vt-line').length > 0")],
+          [False, None, True])
 
     # ── N8：時間軸標頭的說明圖示與「時間軸」文字垂直置中（中心差門檻，不釘像素）──
     p.ctl()
@@ -800,6 +890,66 @@ def run_b4(p):
     check("N12.body", "焦點不在控制項上按空白 → 照舊播放（快捷鍵沒被關掉）", played, True)
     p.js("document.getElementById('vt-video').pause()")
 
+    # ── N18／N20：其他按鈕、summary、文字框、number／select／color 上按空白鍵 ──
+    # 真集模式才有對齊面板的 number 欄。每一項都取：焦點還在不在、值、影片是否暫停、
+    # 以及空白鍵的 keydown 有沒有被 preventDefault（被擋＝原生行為被吃掉）。
+    p.goto("")
+    p.wait(VIDEO_READY, 15)
+    p.js("""(() => { window.__sp = []; window.addEventListener('keydown', (e) => {
+      if (e.key === ' ') window.__sp.push(e.defaultPrevented); }); })()""")
+
+    def space_on(sel):
+        p.js("document.getElementById('vt-video').pause(); window.__sp = [];")
+        probe = """(() => { const e = document.querySelector(%s);
+          if (%%s) e.focus();
+          return {focus: document.activeElement === e, value: e.value === undefined ? null : e.value,
+                  paused: document.getElementById('vt-video').paused, prevented: window.__sp.slice()}; })()""" % json.dumps(sel)
+        before = p.js(probe % "true")
+        space_key(p)
+        return before, p.js(probe % "false")
+
+    b0, a = space_on("#vt-play")
+    check("N18.play", "焦點在播放鈕按空白 → 只觸發這顆鈕一次（開始播放），不會被快捷鍵再切回暫停",
+          [b0["focus"], a["focus"], a["paused"], a["prevented"]], [True, True, False, [False]])
+    z0 = p.js("document.getElementById('vt-tracks').style.width")
+    b0, a = space_on("#vt-zoom-in")
+    z1 = p.js("document.getElementById('vt-tracks').style.width")
+    check("N18.zoom", "焦點在放大鈕按空白 → 時間軸放大，影片沒有跟著播放",
+          [b0["focus"], z1 != z0, a["paused"], a["prevented"]], [True, True, True, [False]])
+    o0 = p.js("document.getElementById('vt-adv').open")
+    b0, a = space_on("#vt-adv summary")
+    check("N18.summary", "焦點在「進階」summary 按空白 → 展開，影片沒有跟著播放",
+          [b0["focus"], o0, p.js("document.getElementById('vt-adv').open"), a["paused"], a["prevented"]],
+          [True, False, True, True, [False]])
+    # 字幕文字框自己會攔住 keydown 不往上冒（window 收不到），所以這一項不看 prevented，
+    # 改用「真的多打進一個空白」當原生行為沒被吃掉的證據
+    b0, a = space_on("#vt-line-list input[type=text]")
+    check("N18.text", "焦點在字幕文字框按空白 → 打進一個空白字元，影片沒有跟著播放",
+          [b0["focus"], a["focus"], len(a["value"]) - len(b0["value"]),
+           a["value"].replace(" ", "") == b0["value"].replace(" ", ""), a["paused"]],
+          [True, True, 1, True, True])
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    b0, a = space_on("#vt-al-head")
+    check("N20.num", "焦點在 number 欄按空白 → 值不變、焦點還在、不播放、按鍵沒被擋",
+          [b0["focus"], a["focus"], b0["value"] != "", a["value"] == b0["value"], a["paused"], a["prevented"]],
+          [True, True, True, True, True, [False]])
+    # select／color 的原生行為是彈出選單／選色器（彈出後會吃掉後續按鍵），所以排在最後，
+    # 各自測完用滑鼠點一下標題列把它關掉
+    for cid, sel, what in (("N20.select", "#st-font", "下拉選單"), ("N20.color", "#st-primary", "選色欄")):
+        b0, a = space_on(sel)
+        check(cid, "焦點在%s按空白 → 值不變、焦點還在、不播放、按鍵沒被擋" % what,
+              [b0["focus"], a["focus"], b0["value"] != "", a["value"] == b0["value"], a["paused"], a["prevented"]],
+              [True, True, True, True, True, [False]])
+        tt = p.center(".vt-tl-title")
+        p.click(tt["x"], tt["y"])
+        p.js("document.activeElement && document.activeElement.blur()")
+    p.js("document.getElementById('vt-video').pause(); window.__sp = [];")
+    space_key(p)
+    check("N20.after", "關掉選單／選色器後、焦點不在控制項上按空白 → 快捷鍵照常播放（鍵盤沒被卡住）",
+          p.wait("!document.getElementById('vt-video').paused", 3), True)
+    p.js("document.getElementById('vt-video').pause()")
+
     # ── N5：標題卡上的刪除鈕 ──
     p.goto("?demo")
     p.js("window.__vtDropTpl('big', 10)")
@@ -839,6 +989,197 @@ def run_b4(p):
     p.key("Backspace", "Backspace", 8)
     check("N5.tiny", "放不下鈕的卡（約 34px）→ 不畫刪除鈕、把手仍在最上層；選卡＋⌫ 仍可刪",
           [w < 44, d["dels"], d["rHit"], p.js("window.__vtCards().length")], [True, 0, True, 0])
+
+    # ── N13：放不下鈕的窄卡，選取時在卡的外側畫刪除鈕 ──
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    w = narrow_card(p, 34)
+    c = p.center("#vt-card-track .vt-card")
+    p.click(c["x"], c["y"])
+    d = p.js(CARD_PARTS)
+    o = p.js(OUT_DEL)
+    check("N13.show", "窄卡（約 34px）選取後 → 卡外側恰 1 顆刪除鈕（卡內 0 顆）、有可及性名稱與 x 圖示",
+          [w < 44, o["outs"], o["inCard"], len(o["name"]) > 0, o["icon"]], [True, 1, 0, True, [1, ""]])
+    check("N13.hit", "外側鈕中心最上層就是它、整顆在卡的外面且沒被軌道裁掉；兩支把手仍各自在最上層",
+          [o["hit"], o["outside"], o["inTrack"], d["lHit"], d["rHit"]], [True, True, True, True, True])
+    # 卡若在這一段被誤刪（例如鈕疊在把手上、拖把手變成點到鈕），後面就取不到把手／卡：
+    # 取不到一律當成該條斷言失敗繼續跑，不能讓走查崩潰、連結果檔都寫不出來
+    c0 = p.js("window.__vtCards()[0] || null")
+    h = p.center("#vt-card-track .vt-card-h.is-r")
+    if h:
+        p.drag(h["x"], h["y"], h["x"] + 5, h["y"])
+    h = p.center("#vt-card-track .vt-card-h.is-l")
+    if h:
+        p.drag(h["x"], h["y"], h["x"] - 4, h["y"])
+    c1 = p.js("window.__vtCards()[0] || null")
+    o = p.js(OUT_DEL)
+    both = bool(c0) and bool(c1)
+    check("N13.handle", "有外側鈕時兩支把手都拖得動（出點變大、進點變小）、卡沒被刪、鈕跟著卡重畫仍命中",
+          [both and c1["end"] > c0["end"], both and c1["start"] < c0["start"],
+           p.js("window.__vtCards().length"),
+           o["outs"], o["hit"], o["outside"]],
+          [True, True, 1, 1, True, True])
+    p.js("window.__vtSelectCard(null)")
+    time.sleep(0.2)
+    n0 = p.js("document.querySelectorAll('#vt-card-track .vt-card-del').length")
+    c = p.center("#vt-card-track .vt-card")
+    if c:
+        p.click(c["x"], c["y"])
+    bt = p.center("#vt-card-track .vt-card-del.is-out")
+    if bt:
+        p.click(bt["x"], bt["y"])
+    check("N13.click", "取消選取 → 外側鈕收掉（0 顆）；再選取後真滑鼠點外側鈕（命中）→ 卡被刪、沒誤建剪除段",
+          [n0, bool(bt) and bt["hitExact"], p.js("window.__vtCards().length"), p.js("window.__vtStats().cutCount")],
+          [0, True, 0, 0])
+    # 卡貼著軌道尾端：右邊放不下，鈕改放左緣外側（不然會被軌道裁掉點不到）
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    narrow_card(p, 34)
+    p.js("""(() => { const c = window.__vt.titleCards[0]; const d = c.end - c.start;
+      c.start = window.__vtStats().duration - d; c.end = c.start + d;
+      window.__vtSelectCard(c.id); })()""")
+    time.sleep(0.2)
+    o = p.js(OUT_DEL)
+    bt = p.center("#vt-card-track .vt-card-del.is-out")
+    if bt:
+        p.click(bt["x"], bt["y"])
+    check("N13.flip", "窄卡貼著軌道尾端 → 外側鈕改在卡的左邊、沒被裁掉且命中，真滑鼠點了可刪",
+          [o["outs"], o["side"], o["inTrack"], o["hit"], p.js("window.__vtCards().length")],
+          [1, "left", True, True, 0])
+
+    # ── N22：外側鈕不得疊在鄰卡上（疊上去會蓋住鄰卡把手 → 想拖鄰卡卻把窄卡刪掉）──
+    def adj(cards, sel):
+        """重開 demo、照 [[左緣px, 寬px], …] 擺卡（由左到右），選取第 sel 張；回各卡 id。"""
+        p.goto("?demo")
+        for i in range(len(cards)):
+            p.js("window.__vtDropTpl('big', %d)" % (2 + 6 * i))
+        time.sleep(0.2)
+        ids = p.js(ADJ_SETUP % (json.dumps(cards), sel))
+        time.sleep(0.25)
+        return ids
+
+    def ids_now():
+        return p.js("window.__vtCards().map((c) => c.id)")
+
+    for gap in (0, 6):
+        ids = adj([[300, 34], [334 + gap, 120]], 0)
+        m = p.js(ADJ_PROBE % 0)
+        h = m["cards"][1]["l"] if len(m["cards"]) > 1 else None
+        s0 = p.js("window.__vtCards()[1] ? window.__vtCards()[1].start : null")
+        if h:
+            p.drag(h["x"], h["y"], h["x"] + 6, h["y"])
+        s1 = p.js("window.__vtCards()[1] ? window.__vtCards()[1].start : null")
+        check("N13.adj%d" % gap,
+              "窄卡右邊緊鄰別張卡（間距 %dpx）→ 鄰卡左把手中心最上層是把手本身；按著拖 → 卡數不變、鄰卡進點變大" % gap,
+              [m["w"] < 44, round(m["gapR"]), bool(h) and h["hit"], ids_now() == ids,
+               s0 is not None and s1 is not None and s1 > s0],
+              [True, gap, True, True, True])
+
+    ids = adj([[300, 34], [334, 120]], 0)
+    m = p.js(ADJ_PROBE % 0)
+    bt = p.center("#vt-card-track .vt-card-del.is-out")
+    if bt:
+        p.click(bt["x"], bt["y"])
+    check("N13.adjflip", "右邊被鄰卡擋住、左邊有空 → 外側鈕翻到左邊、不疊任何卡、沒被裁掉且命中；真滑鼠點了刪的是窄卡",
+          [m["outs"], m["side"], m["overlap"], m["inTrack"], bool(bt) and bt["hitExact"], ids_now() == ids[1:]],
+          [1, "left", 0, True, True, True])
+
+    got = []
+    for cards, sel in (([[174, 120], [300, 34], [340, 120]], 1), ([[0, 34], [34, 120]], 0)):
+        ids = adj(cards, sel)
+        m = p.js(ADJ_PROBE % sel)
+        me = m["cards"][sel] if len(m["cards"]) > sel else None
+        c = p.js("""(() => { const el = document.querySelectorAll('#vt-card-track .vt-card')[%d];
+          if (!el) return null; const r = el.getBoundingClientRect();
+          return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()""" % sel)
+        if c:
+            p.click(c["x"], c["y"])
+        p.key("Backspace", "Backspace", 8)
+        # 把手取不到（卡被誤刪／沒畫出來）一律記成 False，不能讓走查在這裡崩潰
+        got.append([m["outs"], bool(me and me["l"]) and me["l"]["hit"], bool(me and me["r"]) and me["r"]["hit"],
+                    ids_now() == [x for i, x in enumerate(ids) if i != sel]])
+    check("N13.adjnone", "兩邊都放不下（左右各有鄰卡／貼軌道起點且右邊緊鄰）→ 外側鈕 0 顆、把手仍在最上層；選卡＋⌫ 刪的是窄卡",
+          got, [[0, True, True, True], [0, True, True, True]])
+
+    # 窄卡貼著軌道尾端（右邊出軌）、左邊又緊鄰別張卡 → 翻左會疊上左鄰卡，所以不畫
+    tw = p.js("document.getElementById('vt-card-track').getBoundingClientRect().width")
+    ids = adj([[tw - 154, 120], [tw - 34, 34]], 1)
+    m = p.js(ADJ_PROBE % 1)
+    nb = m["cards"][0] if m["cards"] else None
+    c = p.js("""(() => { const el = document.querySelectorAll('#vt-card-track .vt-card')[1];
+      if (!el) return null; const r = el.getBoundingClientRect();
+      return {x: r.left + r.width / 2, y: r.top + r.height / 2}; })()""")
+    if c:
+        p.click(c["x"], c["y"])
+    p.key("Backspace", "Backspace", 8)
+    check("N13.adjend", "窄卡貼軌道尾端且左邊緊鄰別張卡 → 外側鈕 0 顆、左鄰卡右把手仍在最上層；選卡＋⌫ 刪的是窄卡",
+          [m["w"] < 44, m["outs"], bool(nb and nb["r"]) and nb["r"]["hit"], ids_now() == (ids or [None])[:1]],
+          [True, 0, True, True])
+
+    # 外側鈕另一邊要與鄰卡留 2px：右鄰卡間距 19px（鈕 16＋兩側各 2＝20 放不下）→ 翻左；22px → 放右
+    got = []
+    for gap in (19, 22):
+        adj([[300, 34], [334 + gap, 120]], 0)
+        m = p.js(ADJ_PROBE % 0)
+        got.append([round(m["gapR"]), m["outs"], m["side"], m["overlap"]])
+    check("N13.gap", "右鄰卡間距 19px → 外側鈕翻到左邊；22px → 放右邊；兩種都不疊任何卡",
+          got, [[19, 1, "left", 0], [22, 1, "right", 0]])
+
+    # 選取的是別張卡時，窄卡不該冒出外側鈕（左右都有空位也一樣）
+    ids = adj([[300, 34], [400, 120]], 1)
+    m = p.js(ADJ_PROBE % 0)
+    p.js("window.__vtSelectCard(%s)" % json.dumps(ids[0] if ids else None))
+    time.sleep(0.2)
+    m2 = p.js(ADJ_PROBE % 0)
+    check("N13.other", "選取的是寬卡 → 窄卡沒有外側鈕（全軌只有寬卡卡內那 1 顆）；改選窄卡 → 外側鈕才出現",
+          [m["w"] < 44, m["sel"], m["outs"], m["dels"], m2["sel"], m2["outs"]],
+          [True, [False, True], 0, 1, [True, False], 1])
+
+    # ── N14：存對齊成功、對齊也讀回來了，但字幕重載失敗 → 狀態列不能只說「已儲存」──
+    p.reset()
+    p.ctl()
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    al_wait = """(() => { const c = document.getElementById('vt-al-status').classList;
+      return c.contains('is-ok') || c.contains('is-err'); })()"""
+
+    def save_head(val):
+        p.js("""(() => { const el = document.getElementById('vt-al-head'); el.value = '%s';
+          el.dispatchEvent(new Event('input', {bubbles: true}));
+          el.dispatchEvent(new Event('change', {bubbles: true})); })()""" % val)
+        sb = p.center("#vt-al-save")
+        p.click(sb["x"], sb["y"])
+        p.wait(al_wait, 8)
+        time.sleep(0.2)
+        return sb["hit"]
+
+    p.ctl("subs")
+    s0 = p.stat()["saves"]
+    hit = save_head("2.5")
+    d = p.js(AL_DOM)
+    n = p.js(READ_NOTE)
+    check("N14.msg", "寫入成功但字幕重載失敗 → 狀態列是錯誤樣式的完整訊息（點名字幕），不是「已儲存」",
+          [hit, p.stat()["saves"] - s0, d["statusText"] == "已儲存", "已寫入" in d["statusText"],
+           "字幕" in d["statusText"], d["statusErr"], d["statusVisible"]],
+          [True, 1, False, True, True, True, True])
+    check("N14.list", "同一時間載入失敗清單照舊列出字幕一項、對齊標頭不說載入失敗（對齊有讀回來）",
+          [n["keys"], d["note"] == "載入失敗"], [["subs"], False])
+    p.ctl()
+    save_head("2.75")
+    d = p.js(AL_DOM)
+    n = p.js(READ_NOTE)
+    check("N14.ok", "排除故障後再存一次 → 狀態列回到「已儲存」（非錯誤樣式）、清單清空",
+          [d["statusText"], d["statusErr"], n["keys"]], ["已儲存", False, []])
+    # 重讀這一集也失敗時，要講的是「重新讀取失敗」（N9），不是只點名字幕 —— 畫面上的值也不可信
+    p.ctl("align,subs")
+    s0 = p.stat()["saves"]
+    save_head("3")
+    d = p.js(AL_DOM)
+    check("N14.both", "寫入成功、但重讀這一集與字幕都失敗 → 狀態列說的是重新讀取失敗（不是只說字幕），錯誤樣式",
+          [p.stat()["saves"] - s0, "已寫入" in d["statusText"], "重新讀取失敗" in d["statusText"],
+           "字幕重新載入失敗" in d["statusText"], d["statusErr"], d["note"]],
+          [1, True, True, False, True, "載入失敗"])
 
     # ── N9：存對齊成功、但重讀這一集失敗 → 單一明確訊息 ──
     p.reset()
@@ -948,6 +1289,9 @@ def main():
             srv.terminate()
         subprocess.run(["trash", profile], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # N17：整支走查每一次導頁後，分頁都要是 visible（不是的那幾次列出來）
+    check("N17.vis", "每次導頁後分頁都是 visible（共取樣 %d 次）" % len(VIS),
+          [len(VIS) > 0, [w for w, v in VIS if v != "visible"]], [True, []])
     red = [c for c in ORDER if not RESULTS[c]]
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:

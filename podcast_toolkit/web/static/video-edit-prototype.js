@@ -771,12 +771,19 @@ import {
   // 卡寬要放得下：左右把手各 10px＋刪除鈕 16px＋至少留 8px 可抓著拖 → 不足就不畫，
   // 免得整張卡被鈕佔滿、拖不動也點不到卡本身（窄卡仍可選取後按 ⌫，或放大時間軸）。
   const CARD_DEL_MIN_W = 44;
+  const CARD_DEL_OUT_W = 18; // 卡外側那顆鈕佔的寬度：鈕 16px＋與卡的間距 2px
+  const CARD_DEL_OUT_GAP = 2; // 外側鈕另一邊與鄰卡之間至少留的空隙
   function addCardDeleteButtons(track) {
     // .vt-card 的順序＝state.titleCards 扣掉編輯中的那張（那張畫成輸入框）
     const shown = state.titleCards.filter((c) => c.id !== state.editingCard);
+    // 卡外側的鈕（N13）掛在軌道上、不是卡的子元素，共用渲染不會幫忙清 → 自己清
+    track.querySelectorAll(".vt-card-del.is-out").forEach((n) => n.remove());
     track.querySelectorAll(".vt-card").forEach((el, i) => {
       const c = shown[i];
-      if (!c || el.offsetWidth < CARD_DEL_MIN_W) return;
+      // 窄卡（N13）：卡內放不下，改成「選取時」才在卡的外側畫一顆，不佔卡內空間，
+      // 兩支把手照樣整支露出來；沒選取的窄卡維持不畫，軌上才不會多出一排鈕。
+      const narrow = el.offsetWidth < CARD_DEL_MIN_W;
+      if (!c || (narrow && c.id !== state.selectedCard)) return;
       const b = document.createElement("button");
       b.type = "button";
       b.className = "vt-card-del";
@@ -791,6 +798,34 @@ import {
         e.stopPropagation();
         removeCard(c.id);
       });
+      if (narrow) {
+        // 卡有 overflow:hidden、軌道上下也會裁切，所以鈕掛在軌道上、貼著卡的右緣外側；
+        // 右邊放不下就改放左緣外側。位置用卡的百分比算，縮放時跟著走。
+        // 「放得下」＝鈕（含兩側間距）整段落在軌道內、且不碰到任何別張卡（N22）：
+        // 鈕一旦疊在鄰卡上會蓋住鄰卡的把手，想拖鄰卡卻把這張卡刪掉。
+        // 兩邊都放不下就不畫，這張卡照舊用「選取後按 ⌫」刪。
+        b.classList.add("is-out");
+        const tr = track.getBoundingClientRect();
+        const me = el.getBoundingClientRect();
+        const others = Array.from(track.querySelectorAll(".vt-card"))
+          .filter((o) => o !== el)
+          .map((o) => o.getBoundingClientRect());
+        const need = CARD_DEL_OUT_W + CARD_DEL_OUT_GAP;
+        const fits = (l, r) =>
+          l >= tr.left &&
+          r <= tr.right &&
+          !others.some((o) => l < o.right && r > o.left);
+        if (fits(me.right, me.right + need)) {
+          b.style.left = `calc(${el.style.left} + ${el.style.width} + 2px)`;
+        } else if (fits(me.left - need, me.left)) {
+          b.style.left = `calc(${el.style.left} - ${CARD_DEL_OUT_W}px)`;
+        } else {
+          return;
+        }
+        b.style.top = `${el.offsetTop + (el.offsetHeight - 16) / 2}px`;
+        track.appendChild(b);
+        return;
+      }
       el.classList.add("has-del");
       el.appendChild(b);
     });
@@ -2939,7 +2974,13 @@ import {
       renderCardTrack();
       clearAlignDirty(); // 存成功 → 不再是 dirty（#7／#8）
       if (status) {
-        if (reloaded) {
+        if (reloaded && !subs) {
+          // 寫入成功、對齊也讀回來了，但字幕沒載回來（N14）：清單已列出失敗，
+          // 狀態列不能只說「已儲存」讓人以為整件事都好了
+          status.className = "vt-align-status is-err";
+          status.textContent =
+            "設定已寫入這一集，但字幕重新載入失敗，字幕清單暫時是空的。請重新整理頁面。";
+        } else if (reloaded) {
           status.className = "vt-align-status is-ok";
           status.textContent = "已儲存";
         } else {

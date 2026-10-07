@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-第二～四梯 UX 走查的突變測試：證明 drive.py 的斷言真的在測東西。
+第二～五梯 UX 走查的突變測試：證明 drive.py 的斷言真的在測東西。
 
 做法：把 static 複製到 /private/tmp 的沙盒（不動版控內的檔），對副本做一處字串替換
 （還原成舊行為／關掉一個部件），跑 drive.py，確認「該突變指定的斷言」轉紅；
@@ -10,6 +10,9 @@
 用法：python3 -u run_mutations.py            # 全部
       python3 -u run_mutations.py MN9 MN12   # 只跑名稱含這些字的
 結束碼：每個突變都「紅→綠」成立才是 0。
+
+「檔」那一欄是 DRIVE 的突變不改產品碼，而是改走查自己的行為（原字串欄放環境變數名、
+突變後欄放值），用來證明「檢查走查環境」的斷言（N17）不是恆綠。
 """
 import io
 import json
@@ -24,6 +27,7 @@ REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 STATIC = os.path.join(REPO, "podcast_toolkit", "web", "static")
 JS, HTML = "video-edit-prototype.js", "video-edit-prototype.html"
 ICONS = "icons.js"
+DRIVE = "（走查自身）"
 
 # (名稱, 檔, 原字串, 突變後, 必須轉紅的斷言 id)
 MUTATIONS = [
@@ -110,9 +114,9 @@ MUTATIONS = [
      "",
      ["N5.click", "N5.narrow"]),
     ("MN5-門檻（放不下也硬畫刪除鈕）", JS,
-     "if (!c || el.offsetWidth < CARD_DEL_MIN_W) return;",
+     "if (!c || (narrow && c.id !== state.selectedCard)) return;",
      "if (!c) return;",
-     ["N5.tiny"]),
+     ["N5.tiny", "N13.click"]),
     ("MN6-工具鈕（「併」改回借 chevron-up）", JS,
      'merge: "merge", // 往上併入前一句',
      'merge: "chevron-up",',
@@ -145,14 +149,92 @@ MUTATIONS = [
      "if (isSpaceActivated(e.target)) return;",
      "",
      ["N12.btn"]),
+    # ── 第五梯 ──
+    ("MN13-外側（窄卡的鈕照舊塞在卡裡）", JS,
+     "      if (narrow) {\n",
+     "      if (false) {\n",
+     ["N13.show", "N13.hit", "N13.handle", "N13.click", "N13.flip"]),
+    ("MN13-選取才畫（選取了窄卡也不畫鈕）", JS,
+     "if (!c || (narrow && c.id !== state.selectedCard)) return;",
+     "if (!c || narrow) return;",
+     ["N13.show", "N13.hit", "N13.handle", "N13.click", "N13.flip"]),
+    # 第五梯第二輪：放置判斷改成實際幾何（軌道邊界＋不疊別張卡），原本那行已不存在 →
+    # 改成拿掉「不得超出軌道右緣」這一項，突變的意思不變
+    ("MN13-翻面（貼尾端也一律放右邊 → 被軌道裁掉）", JS,
+     "          r <= tr.right &&\n",
+     "",
+     ["N13.flip"]),
+    ("MN13-避鄰卡（外側鈕不管會不會疊到別張卡）", JS,
+     "          !others.some((o) => l < o.right && r > o.left);",
+     "          true;",
+     ["N13.adj0", "N13.adj6", "N13.adjflip", "N13.adjnone"]),
+    ("MN13-貼尾端（右邊出軌時翻左不看左鄰卡）", JS,
+     "} else if (fits(me.left - need, me.left)) {",
+     "} else if (me.right + need > tr.right || fits(me.left - need, me.left)) {",
+     ["N13.adjend"]),
+    ("MN13-間距（外側鈕與鄰卡之間不留空隙）", JS,
+     "const need = CARD_DEL_OUT_W + CARD_DEL_OUT_GAP;",
+     "const need = CARD_DEL_OUT_W;",
+     ["N13.gap"]),
+    ("MN13-把手不見（窄卡不畫把手 → 走查要記紅並跑完，不能崩潰）", JS,
+     '        b.classList.add("is-out");\n',
+     '        b.classList.add("is-out");\n        el.querySelectorAll(".vt-card-h").forEach((n) => n.remove());\n',
+     ["N13.hit", "N13.handle", "N13.adjnone"]),
+    ("MN13-別張卡（選了別張卡，窄卡也出外側鈕）", JS,
+     "if (!c || (narrow && c.id !== state.selectedCard)) return;",
+     "if (!c || (narrow && state.selectedCard == null)) return;",
+     ["N13.other"]),
+    # 鈕疊回卡的右把手上：拖把手變成點到鈕、卡被刪 → 後面取不到把手；走查要照樣跑完並記紅
+    ("MN13-貼卡（外側鈕往回疊在卡的右把手上）", JS,
+     "`calc(${el.style.left} + ${el.style.width} + 2px)`",
+     "`calc(${el.style.left} + ${el.style.width} - 10px)`",
+     ["N13.hit", "N13.handle"]),
+    ("MN13-清掉（重畫時不清舊的外側鈕）", JS,
+     'track.querySelectorAll(".vt-card-del.is-out").forEach((n) => n.remove());',
+     "",
+     ["N13.handle", "N13.click"]),
+    ("MN14-訊息（字幕重載失敗照樣只說已儲存）", JS,
+     "if (reloaded && !subs) {",
+     "if (false) {",
+     ["N14.msg"]),
+    ("MN14-重讀（重讀這一集失敗時也只點名字幕）", JS,
+     "if (reloaded && !subs) {",
+     "if (!subs) {",
+     ["N14.both"]),
+    ("MN17-前景（導頁前不把分頁叫回前景）", DRIVE,
+     "VT_DRIVE_NO_FRONT", "1",
+     ["N17.vis"]),
+    ("MN18-豁免縮小（空白鍵豁免只認 #vt-keys-toggle）", JS,
+     """t.closest("button, summary, a[href], [role='button']")""",
+     't.closest("#vt-keys-toggle")',
+     ["N18.play", "N18.zoom", "N18.summary"]),
+    ("MN19-字幕清單（字幕不列入載入中區塊）", JS,
+     '    subs: "#vt-line-list",\n',
+     "",
+     ["N19.busy"]),
+    ("MN19-解除（來源有結果後不記錄 → aria-busy 不解除）", JS,
+     "everSettled.add(key);",
+     "",
+     ["N19.done"]),
+    ("MN20-select（下拉選單不算輸入目標）", JS,
+     '      tag === "SELECT" ||\n',
+     "",
+     ["N20.select"]),
+    ("MN20-input（輸入欄不算輸入目標）", JS,
+     '      tag === "INPUT" ||\n',
+     "",
+     # N18.text 不列：字幕文字框自己的 keydown 先 stopPropagation，這一層拿掉它仍然綠
+     # （兩層防線，單點突變打不紅；已記入計畫附錄 N21）
+     ["N20.num", "N20.color"]),
 ]
 
 
-def run_drive(base, out):
+def run_drive(base, out, env=None):
     if os.path.exists(out):
         os.remove(out)
     subprocess.run([sys.executable, "-u", os.path.join(HERE, "drive.py"),
                     "--base", base, "--json", out],
+                   env=dict(os.environ, **(env or {})),
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if not os.path.exists(out):
         return None  # 走查沒跑完（環境中止）≠ 斷言轉紅，不能當成「紅」
@@ -181,15 +263,18 @@ def main():
         for name, fn, old, new, targets in MUTATIONS:
             if only and not any(o in name for o in only):
                 continue
-            fp = os.path.join(sbx, fn)
-            src = io.open(fp, encoding="utf-8").read()
-            if src.count(old) != 1:
-                print("✗ %s：原字串出現 %d 次（要剛好 1 次），突變沒套上" % (name, src.count(old)))
-                all_ok = False
-                continue
-            io.open(fp, "w", encoding="utf-8").write(src.replace(old, new))
-            red = run_drive(base, out)
-            io.open(fp, "w", encoding="utf-8").write(src)  # 還原
+            if fn == DRIVE:
+                red = run_drive(base, out, {old: new})
+            else:
+                fp = os.path.join(sbx, fn)
+                src = io.open(fp, encoding="utf-8").read()
+                if src.count(old) != 1:
+                    print("✗ %s：原字串出現 %d 次（要剛好 1 次），突變沒套上" % (name, src.count(old)))
+                    all_ok = False
+                    continue
+                io.open(fp, "w", encoding="utf-8").write(src.replace(old, new))
+                red = run_drive(base, out)
+                io.open(fp, "w", encoding="utf-8").write(src)  # 還原
             green = run_drive(base, out)
             if red is None or green is None:
                 print("✗ %s：走查沒跑完（紅=%s 綠=%s）" % (name, red is not None, green is not None))

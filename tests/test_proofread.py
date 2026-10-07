@@ -61,18 +61,18 @@ def test_qa_filter_skips_noop_and_empty():
 def test_resolve_provider_explicit_and_auto(monkeypatch):
     assert proofread.resolve_provider({"proofread": {"provider": "off"}}) is None
 
-    # auto + 內建模型可用 → 永遠先走完全離線的 local_llm
+    # auto + 有 claude CLI → 先走 Claude（即使內建模型也在）
     monkeypatch.setattr(proofread.local_llm, "is_available", lambda: True)
     monkeypatch.setattr(proofread.shutil, "which", lambda n: "/x/claude")
-    assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "local_llm"
-    assert proofread.resolve_provider({"proofread": {"provider": "local_llm"}}) == "local_llm"
-
-    # 沒有內建模型但有 claude CLI → 保留舊版相容路徑
-    monkeypatch.setattr(proofread.local_llm, "is_available", lambda: False)
-    monkeypatch.setattr(proofread.shutil, "which",
-                        lambda n: "/x/claude" if n == "claude" else None)
     assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "claude_code"
     assert proofread.resolve_provider({"proofread": {"provider": "claude_code"}}) == "claude_code"
+    assert proofread.resolve_provider({"proofread": {"provider": "local_llm"}}) == "local_llm"
+
+    # 沒裝 claude 的電腦 → 退回內建離線模型
+    monkeypatch.setattr(proofread.shutil, "which", lambda n: None)
+    assert proofread.resolve_provider({"proofread": {"provider": "auto"}}) == "local_llm"
+
+    monkeypatch.setattr(proofread.local_llm, "is_available", lambda: False)
 
     # 零雲端金鑰：auto + 無 claude → None（不再回退 Gemini，即使有 key 也跳過）
     monkeypatch.setattr(proofread.shutil, "which", lambda n: None)
@@ -225,3 +225,24 @@ def test_run_claude_code_all_fail_raises(monkeypatch):
     with pytest.raises(proofread.ProofreadError):
         proofread._run_claude_code(
             [{"idx": 1, "text": "a"}], [], cfg={"proofread": {"chunk_size": 1}})
+
+
+def test_auto_falls_back_to_local_when_claude_fails(monkeypatch, capsys):
+    """auto 選到 Claude 但整批失敗 → 退回內建模型且留可見訊息；指定 claude_code 則照樣報錯。"""
+    cards = [{"idx": 1, "start": 0.0, "end": 1.0, "text": "蓬壁生輝"}]
+
+    def boom(cards, glossary, *, cfg, progress=None):
+        raise proofread.ProofreadError("未登入")
+
+    monkeypatch.setattr(proofread.shutil, "which", lambda n: "/x/claude")
+    monkeypatch.setattr(proofread.local_llm, "is_available", lambda: True)
+    monkeypatch.setitem(proofread.PROVIDERS, "claude_code", boom)
+    monkeypatch.setitem(proofread.PROVIDERS, "local_llm",
+                        lambda cards, glossary, *, cfg, progress=None: {1: "蓬蓽生輝"})
+
+    prov, applied, _ = proofread.proofread_cards(cards, [], {"proofread": {"provider": "auto"}})
+    assert prov == "local_llm" and applied == {1: "蓬蓽生輝"}
+    assert "改用內建本機模型" in capsys.readouterr().err
+
+    with pytest.raises(proofread.ProofreadError):
+        proofread.proofread_cards(cards, [], {"proofread": {"provider": "claude_code"}})
