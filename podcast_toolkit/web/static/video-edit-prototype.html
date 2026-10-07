@@ -1078,6 +1078,16 @@
         cursor: pointer;
         opacity: 0.7;
       }
+      /* 窄卡的刪除鈕（N13）：卡內放不下，選取時改畫在卡的外側（掛在軌道上，
+         left／top 由 JS 依卡的位置給）。放得下才畫、不會疊到別張卡；底色與邊框是為了在軌道底上看得清楚。 */
+      .vt-card-del.is-out {
+        right: auto;
+        transform: none;
+        z-index: 5;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        opacity: 1;
+      }
       .vt-card-del:hover,
       .vt-card-del:focus-visible {
         opacity: 1;

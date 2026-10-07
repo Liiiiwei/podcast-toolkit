@@ -11,6 +11,7 @@
   ... run_walkthroughs.py --list                                             # 只列清單
   ... run_walkthroughs.py --only verify_toast_no_block                       # 只跑一支（可重複給）
   ... run_walkthroughs.py --include-fingerprint                              # 額外跑指紋護欄（見下）
+  ... run_walkthroughs.py --only verify_video_baseline                       # 影片模式基準（選用，見下）
 需要：Python 3.9+、websockets（pip install -e ".[cdp]"）、ffmpeg、Google Chrome／Chromium。
 
 「綠」的判準（三條同時成立才算過，只看 exit code 不夠）：
@@ -54,6 +55,15 @@ DEFAULT_SET = [
 # 它的價值在「同一台機器上動刀前後零變更」，不適合當 CI 的預設關卡，所以要 --include-fingerprint
 # 才跑。CI 想用它得先確認 baseline 在 runner 上重現得出來（目前未確認，不要假設）。
 FINGERPRINT = ("verify_render_fingerprint.py", "渲染指紋護欄（baseline 綁機器，預設不跑）")
+
+# 影片模式（原型）基準走查：它不起 serve_podcast，要的是一個支援 Range、服務 live static 的
+# 靜態伺服器（由本檔代起、跑完收掉）。刻意只列「選用」、不進 DEFAULT_SET，原因兩個：
+#   1. 它的兩個突變會暫時改寫版控內的產品檔（finally 還原）；
+#   2. 還沒在 CI runner 上跑過，不確定 runner 的 Chrome 版本／字體下會不會全綠。
+# 所以 CI（不帶參數跑預設清單）不受影響；本機用 --only verify_video_baseline 指名跑。
+VIDEO_BASELINE = ("verify_video_baseline.py", "影片模式原型時間軸基準（選用，會暫改產品檔做突變）")
+OPTIONAL = [FINGERPRINT, VIDEO_BASELINE]
+STATIC = REPO / "podcast_toolkit" / "web" / "static"
 
 CDP_PORT = int(os.environ.get("CDP_PORT", "9522"))
 POD_PORT = 8795
@@ -167,6 +177,40 @@ def stop_chrome(p, profile: Path) -> None:
     retire(profile)
 
 
+def start_range_server():
+    """起一個服務 live static 的 Range 靜態伺服器（挑空閒埠），回傳 (程序, 埠)。
+
+    起不來就直接中止 —— 不可以讓走查對著沒人聽的埠跑出一堆看似產品壞掉的紅。
+    """
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    p = subprocess.Popen(
+        [sys.executable, "-u", str(BASE / "range_server.py")],
+        env=dict(os.environ, ROOT=str(STATIC), PORT=str(port)),
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    for _ in range(40):
+        if p.poll() is not None:
+            sys.exit(f"range_server 啟動即退出（exit={p.returncode}）")
+        if port_open(port):
+            print(f"range_server 就緒：:{port}  ROOT={STATIC}", flush=True)
+            return p, port
+        time.sleep(0.25)
+    p.kill()
+    sys.exit(f"range_server 10 秒內沒開 :{port}")
+
+
+def stop_proc(p) -> None:
+    if p is not None and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait(timeout=5)
+
+
 def extract_rows(payload):
     """從結果檔挖出斷言列。
 
@@ -222,14 +266,14 @@ def main() -> int:
     plan = list(DEFAULT_SET) + ([FINGERPRINT] if args.include_fingerprint else [])
     if args.only:
         want = {o[:-3] if o.endswith(".py") else o for o in args.only}
-        pool = dict((s, n) for s, n in list(DEFAULT_SET) + [FINGERPRINT])
+        pool = dict((s, n) for s, n in list(DEFAULT_SET) + OPTIONAL)
         plan = [(s, n) for s, n in pool.items() if Path(s).stem in want]
         missing = want - {Path(s).stem for s, _ in plan}
         if missing:
             sys.exit(f"--only 指到不存在的走查：{'、'.join(sorted(missing))}")
 
     if args.list:
-        for s, n in list(DEFAULT_SET) + [FINGERPRINT]:
+        for s, n in list(DEFAULT_SET) + OPTIONAL:
             mark = "預設" if (s, n) in DEFAULT_SET else "選用"
             print(f"[{mark}] {s:42s} {n}")
         return 0
@@ -250,6 +294,10 @@ def main() -> int:
             print(f"▶ {script}　{note}", flush=True)
             print("=" * 70, flush=True)
             env = dict(os.environ, CDP_PORT=str(args.cdp_port), PYTHONUNBUFFERED="1")
+            rs = None
+            if script == VIDEO_BASELINE[0]:
+                rs, demo_port = start_range_server()
+                env["DEMO_PORT"] = str(demo_port)
             s0 = time.time()
             timed_out = False
             try:
@@ -260,6 +308,8 @@ def main() -> int:
                 code = r.returncode
             except subprocess.TimeoutExpired:
                 timed_out, code = True, -1
+            finally:
+                stop_proc(rs)
             dt = time.time() - s0
             free_port(POD_PORT)  # 走查自己收攤失敗時，別把 8795 留給下一支
             ok, why = verdict(path, code, timed_out)
