@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-影片剪輯原型第二梯 UX（#9／#6／#12／#14／#13／N1）CDP 走查＋回歸。
+影片剪輯原型第二～四梯 UX（#9／#6／#12／#14／#13／N1／N2／N5–N9／N11／N12）CDP 走查＋回歸。
 
 紀律（lessons-learned 2026-08-25）：
 - 每個 ✓ 都綁布林斷言（ok = 實得 == 期待），只印值不算測。
@@ -62,8 +62,10 @@ class Page:
         return json.loads(urllib.request.urlopen(
             "%s/__stat" % self.base, timeout=5).read().decode("utf-8"))
 
-    def reset(self):
-        urllib.request.urlopen("%s/__reset" % self.base, timeout=5).read()
+    def reset(self, audio=False):
+        """假集還原成預設值；audio=True＝還原後改成「有外接音檔」的集。"""
+        urllib.request.urlopen(
+            "%s/__reset%s" % (self.base, "?audio=1" if audio else ""), timeout=5).read()
 
     def shot(self, path, sel, pad=6):
         """把某個元素（外擴 pad）截成 PNG。"""
@@ -671,6 +673,230 @@ def run_13(p, shots=True):
     p.ctl()
 
 
+# ───────────────────────── 第四梯（N2／N5–N9／N11／N12） ─────────────────────────
+LOAD_BUSY = """(() => {
+  const a = (s) => document.querySelector(s).getAttribute('aria-busy');
+  const n = document.getElementById('vt-load-busy');
+  return {pending: typeof window.__vtStats !== 'function',
+          stage: a('.vt-stage'), tl: a('#vt-timeline'), list: a('#vt-line-list'),
+          shown: !n.hidden && n.getBoundingClientRect().height > 0, text: n.textContent.trim()};
+})()"""
+VIDEO_READY = "document.getElementById('vt-video').readyState >= 1"
+CARD_PARTS = """(() => {
+  const hit = (el) => { if (!el) return null; const r = el.getBoundingClientRect();
+    return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === el; };
+  const card = document.querySelector('#vt-card-track .vt-card');
+  const del = card && card.querySelector('.vt-card-del');
+  return {w: card ? card.getBoundingClientRect().width : 0,
+          dels: document.querySelectorAll('#vt-card-track .vt-card-del').length,
+          delHit: hit(del), lHit: hit(card && card.querySelector('.vt-card-h.is-l')),
+          rHit: hit(card && card.querySelector('.vt-card-h.is-r')),
+          name: del ? (del.getAttribute('aria-label') || '') : '',
+          icon: del ? [del.querySelectorAll('[data-icon="x"] svg').length, del.textContent.trim()] : null};
+})()"""
+
+
+def space_key(p):
+    """帶 text 的空白鍵：按鈕的鍵盤啟動（keyup 觸發 click）要有 text 才會發生。"""
+    for t in ("keyDown", "keyUp"):
+        p.cdp.call("Input.dispatchKeyEvent", {
+            "type": t, "key": " ", "code": "Space", "text": " ",
+            "windowsVirtualKeyCode": 32, "nativeVirtualKeyCode": 32})
+    time.sleep(0.3)
+
+
+def narrow_card(p, px):
+    """把第一張標題卡縮成約 px 寬（改出點後重畫），回實際寬度。"""
+    p.js("""(() => { const c = window.__vt.titleCards[0];
+      const r = document.querySelector('#vt-card-track .vt-card').getBoundingClientRect();
+      c.end = c.start + %d / (r.width / (c.end - c.start));
+      window.__vtSelectCard(null); })()""" % px)
+    time.sleep(0.2)
+    return p.js("document.querySelector('#vt-card-track .vt-card').getBoundingClientRect().width")
+
+
+def run_b4(p):
+    # ── N2：初次載入期間有可見的「載入中」；完成或失敗後移除 ──
+    # 前面的走查（run_12 按過 Esc）會讓 headless 分頁變成 visibilityState=hidden，Chrome 對
+    # 隱藏分頁會無限期延後影片載入（readyState 0／networkState 2）→ 先把分頁叫回前景，
+    # 否則量到的是「環境不給載影片」而不是載入中字樣該不該收
+    p.cdp.call("Page.bringToFront")
+    p.reset()
+    p.ctl("", "wave:1500")
+    p.cdp.call("Page.navigate", {"url": "about:blank"})
+    time.sleep(0.15)
+    p.cdp.call("Page.navigate", {"url": "%s/video-edit-prototype.html" % p.base})
+    p.wait("document.getElementById('vt-load-busy') && document.readyState !== 'loading'", 8)
+    time.sleep(0.5)
+    b = p.js(LOAD_BUSY)
+    check("N2.busy", "載入中（波形慢 1.5 秒、init 未完成）→ 時間軸區塊 aria-busy=true",
+          [b["pending"], b["tl"]], [True, "true"])
+    check("N2.text", "載入中 → 標頭有可見的「載入中」字樣，且點名還沒到的波形",
+          [b["pending"], b["shown"], "載入中" in b["text"], "波形" in b["text"]], [True, True, True, True])
+    p.wait("typeof window.__vtStats === 'function'", 15)
+    # 影片 metadata 可能比 init 晚到；等的是「影片本身就緒」這個環境條件，不是等受測的字樣收起
+    p.wait(VIDEO_READY, 15)
+    time.sleep(0.2)
+    b = p.js(LOAD_BUSY)
+    check("N2.done", "載入完成 → 三個區塊都沒有 aria-busy、「載入中」字樣收起",
+          [b["stage"], b["tl"], b["list"], b["shown"], b["text"]], [None, None, None, False, ""])
+    p.ctl("wave")
+    p.goto("")
+    p.wait(VIDEO_READY, 15)
+    time.sleep(0.2)
+    b = p.js(LOAD_BUSY)
+    note = p.js(READ_NOTE)
+    check("N2.fail", "波形載入失敗 → 不留 aria-busy／「載入中」，改由載入失敗清單說明",
+          [b["tl"], b["shown"], "wave" in json.dumps(note)], [None, False, True])
+
+    # ── N8：時間軸標頭的說明圖示與「時間軸」文字垂直置中（中心差門檻，不釘像素）──
+    p.ctl()
+    p.goto("?demo")
+    m = p.js("""(() => { const t = document.querySelector('.vt-tl-title');
+      const rg = document.createRange(); rg.selectNodeContents(t);
+      const a = rg.getBoundingClientRect(), k = document.getElementById('vt-keys-toggle').getBoundingClientRect();
+      return {d: Math.abs((a.top + a.height / 2) - (k.top + k.height / 2)), th: a.height, kh: k.height}; })()""")
+    check("N8.mid", "「時間軸」文字與說明圖示鈕的垂直中心差 ≤ 1px（兩者都有高度）",
+          [m["d"] <= 1, m["th"] > 0, m["kh"] > 0], [True, True, True])
+
+    # ── N6：逐句工具「併」用合併圖示，不再借 chevron-up ──
+    row = p.center("#vt-line-list .vt-line:nth-child(2)")
+    p.mouse("mouseMoved", row["x"], row["y"])
+    time.sleep(0.25)
+    g = p.js("""(() => {
+      const ds = (root) => Array.from(root.querySelectorAll('path')).map((x) => x.getAttribute('d'));
+      // 圖示庫沒載到時回空陣列（斷言照紅），不讓探針拋例外把整支走查中斷
+      const of = (name) => { const d = document.createElement('div');
+        d.innerHTML = window.Icons ? window.Icons.get(name, {size: 14}) : ''; return ds(d); };
+      const b = document.querySelector('#vt-line-list .vt-line:nth-child(2) .vt-line-tool[data-act=merge]');
+      const got = ds(b), mg = of('merge'), up = of('chevron-up');
+      return {n: got.length, isMerge: mg.length > 0 && JSON.stringify(got) === JSON.stringify(mg),
+              isUp: JSON.stringify(got) === JSON.stringify(up),
+              vb: (b.querySelector('svg') || {getAttribute: () => null}).getAttribute('viewBox')}; })()""")
+    check("N6.icon", "「併」鈕的圖示＝icons.js 的 merge（3 段線、24 格 viewBox），不是 chevron-up",
+          [g["n"], g["isMerge"], g["isUp"], g["vb"]], [3, True, False, "0 0 24 24"])
+
+    # ── N7：剪除段時長標籤的 ✕ 改成圖示 ──
+    p.js("window.__vtAddCut(2, 5)")
+    time.sleep(0.2)
+    c = p.js("""(() => { const l = document.querySelector('.vt-cut .vt-cut-label');
+      return [l.querySelectorAll('[data-icon="x"] svg').length, l.textContent.trim(),
+              /[✕✖×]/.test(l.textContent)]; })()""")
+    check("N7.label", "剪除段標籤＝1 個 x 圖示＋「3.0s」，文字裡沒有 ✕ 字符", c, [1, "3.0s", False])
+    p.js("window.__vt.cuts.length = 0")
+
+    # ── N12：焦點在按鈕上按空白鍵，只觸發該按鈕 ──
+    p.goto("?demo")
+    p.wait("document.getElementById('vt-video').readyState >= 1", 15)
+    p.js("document.getElementById('vt-keys-toggle').focus()")
+    space_key(p)
+    s = p.js("""[document.activeElement.id, document.getElementById('vt-keys-pop').hidden,
+                 document.getElementById('vt-video').paused]""")
+    check("N12.btn", "焦點在說明鈕按空白 → 說明打開，影片沒有跟著播放",
+          s, ["vt-keys-toggle", False, True])
+    p.js("document.activeElement.blur()")
+    space_key(p)
+    played = p.wait("!document.getElementById('vt-video').paused", 3)
+    check("N12.body", "焦點不在控制項上按空白 → 照舊播放（快捷鍵沒被關掉）", played, True)
+    p.js("document.getElementById('vt-video').pause()")
+
+    # ── N5：標題卡上的刪除鈕 ──
+    p.goto("?demo")
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    d = p.js(CARD_PARTS)
+    check("N5.hit", "卡上有刪除鈕：中心最上層是它、有可及性名稱、內含 1 個 x 圖示且無字",
+          [d["dels"], d["delHit"], len(d["name"]) > 0, d["icon"]], [1, True, True, [1, ""]])
+    h = p.center("#vt-card-track .vt-card-h.is-r")
+    e0 = p.js("window.__vtCards()[0].end")
+    p.drag(h["x"], h["y"], h["x"] + 60, h["y"])
+    e1 = p.js("window.__vtCards()[0].end")
+    check("N5.handle", "有刪除鈕後右把手仍在最上層、往右拖出點變大、卡沒被刪",
+          [d["rHit"], d["lHit"], e1 > e0, p.js("window.__vtCards().length")], [True, True, True, 1])
+    bt = p.center("#vt-card-track .vt-card-del")
+    p.click(bt["x"], bt["y"])
+    check("N5.click", "真滑鼠點刪除鈕（命中）→ 卡被刪（0 張）、沒誤建剪除段",
+          [bt["hitExact"], p.js("window.__vtCards().length"), p.js("window.__vtStats().cutCount")],
+          [True, 0, 0])
+    # 窄卡：鈕、兩個把手互不遮擋
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    w = narrow_card(p, 50)
+    d = p.js(CARD_PARTS)
+    bt = p.center("#vt-card-track .vt-card-del")
+    if bt:
+        p.click(bt["x"], bt["y"])
+    check("N5.narrow", "窄卡（約 50px）→ 刪除鈕與兩個把手各自在最上層，真滑鼠點鈕可刪",
+          [44 <= w <= 56, d["delHit"], d["lHit"], d["rHit"], p.js("window.__vtCards().length")],
+          [True, True, True, True, 0])
+    # 更窄的卡放不下鈕：不畫（不讓鈕蓋住把手），刪除走選卡＋⌫
+    p.js("window.__vtDropTpl('big', 10)")
+    time.sleep(0.2)
+    w = narrow_card(p, 34)
+    d = p.js(CARD_PARTS)
+    c = p.center("#vt-card-track .vt-card")
+    p.click(c["x"], c["y"])
+    p.key("Backspace", "Backspace", 8)
+    check("N5.tiny", "放不下鈕的卡（約 34px）→ 不畫刪除鈕、把手仍在最上層；選卡＋⌫ 仍可刪",
+          [w < 44, d["dels"], d["rHit"], p.js("window.__vtCards().length")], [True, 0, True, 0])
+
+    # ── N9：存對齊成功、但重讀這一集失敗 → 單一明確訊息 ──
+    p.reset()
+    p.ctl()
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    p.js("""(() => { const el = document.getElementById('vt-al-head'); el.value = '2.25';
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new Event('change', {bubbles: true})); })()""")
+    p.ctl("align")
+    s0 = p.stat()["saves"]
+    sb = p.center("#vt-al-save")
+    p.click(sb["x"], sb["y"])
+    p.wait("""(() => { const c = document.getElementById('vt-al-status').classList;
+      return c.contains('is-ok') || c.contains('is-err'); })()""", 8)
+    time.sleep(0.2)
+    d = p.js(AL_DOM)
+    st = p.stat()
+    check("N9.msg", "寫入成功但重讀失敗 → 狀態列不說「已儲存」，改成一則錯誤樣式的明確訊息",
+          [st["saves"] - s0, "已儲存" in d["statusText"], "已寫入" in d["statusText"],
+           "重新整理" in d["statusText"], d["statusErr"], d["statusVisible"]],
+          [1, False, True, True, True, True])
+    check("N9.note", "同一時間標頭註記＝載入失敗（兩處說法一致，不互相矛盾）", d["note"], "載入失敗")
+    p.ctl()
+    p.goto("")
+    d = p.js(AL_DOM)
+    check("N9.rt", "排除故障後重載頁面 → 讀回剛才寫入的值（訊息沒騙人：確實已寫入）",
+          [st["episode"]["head_trim_sec"], [float(v) for v in d["values"] if v != ""]],
+          [2.25, [0.25, 2.25, 0.75, 0.0]])
+
+    # ── N11：有外接音檔的集 → 「聲音偏移」欄顯示、可編輯、存檔 round-trip ──
+    p.reset(audio=True)
+    p.goto("")
+    t = p.center("#vt-al-toggle")
+    p.click(t["x"], t["y"])
+    d = p.js(AL_DOM)
+    check("N11.show", "有外接音檔 → 聲音偏移欄可用、值＝該集的 0.4、標頭註記＝有外接音檔",
+          [d["audioDisabled"], d["audioValue"] != "" and float(d["audioValue"]), d["note"]],
+          [False, 0.4, "有外接音檔"])
+    p.js("""(() => { const el = document.getElementById('vt-al-audio'); el.value = '0.65';
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+      el.dispatchEvent(new Event('change', {bubbles: true})); })()""")
+    s0 = p.stat()["saves"]
+    sb = p.center("#vt-al-save")
+    p.click(sb["x"], sb["y"])
+    p.wait("document.getElementById('vt-al-status').classList.contains('is-ok')", 8)
+    st = p.stat()
+    check("N11.save", "改成 0.65 後真滑鼠點儲存 → 恰 1 次寫入、伺服器端 audio＝原路徑＋0.65、其餘鍵不變",
+          [sb["hit"], st["saves"] - s0, st["episode"]["audio"], st["episode"]["head_trim_sec"]],
+          [True, 1, {"path": "ext-audio.wav", "sync_offset": 0.65}, 1.5])
+    p.goto("")
+    d = p.js(AL_DOM)
+    check("N11.rt", "重載頁面 → 聲音偏移讀回 0.65（round-trip）",
+          [d["audioDisabled"], d["audioValue"] != "" and float(d["audioValue"])], [False, 0.65])
+    p.reset()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base")
@@ -707,6 +933,7 @@ def main():
         run_scroll(p, "", 760, "r760")
         run_scroll(p, "", 900, "r900")
         run_n1(p)
+        run_b4(p)
         run_13(p)
     finally:
         if cdp:

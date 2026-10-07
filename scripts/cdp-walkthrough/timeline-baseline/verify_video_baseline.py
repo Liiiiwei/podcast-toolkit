@@ -247,13 +247,20 @@ async def main():
     ok_add1 = await C.js(page, "window.__vtAddCut(2,5)")
     stats1 = await C.js(page, "window.__vtStats()")
     dom_cut_count1 = await C.js(page, "document.querySelectorAll('.vt-cut').length")
+    # 標籤＝「x 圖示＋時長」（第四梯 N7：✕ 字符改成 icons.js 的圖示）。
+    # 取「圖示名×svg 數|文字」，圖示沒畫出來、換成別的圖示、或時長錯都會紅。
     label1 = await C.js(
-        page, "(document.querySelector('.vt-cut .vt-cut-label')||{}).textContent"
+        page,
+        "(() => { const l = document.querySelector('.vt-cut .vt-cut-label');"
+        " if (!l) return null;"
+        " const ic = Array.from(l.querySelectorAll('[data-icon]'));"
+        " return ic.map((e) => e.dataset.icon + '×' + e.querySelectorAll('svg').length).join(',')"
+        " + '|' + l.textContent; })()",
     )
     C.check("V4.2 __vtAddCut(2,5) 成功且 cutCount==1", ok_add1 is True and stats1["cutCount"] == 1,
             {"ok": ok_add1, "cutCount": stats1["cutCount"]}, {"ok": True, "cutCount": 1})
     C.check("V4.3 DOM .vt-cut 節點數 == 1", dom_cut_count1 == 1, dom_cut_count1, 1)
-    C.check("V4.4 剪除段標籤文字正確", label1 == "✕ 3.0s", label1, "✕ 3.0s")
+    C.check("V4.4 剪除段標籤＝x 圖示＋時長文字", label1 == "x×1|3.0s", label1, "x×1|3.0s")
 
     ok_add2 = await C.js(page, "window.__vtAddCut(4,8)")
     stats2 = await C.js(page, "window.__vtStats()")

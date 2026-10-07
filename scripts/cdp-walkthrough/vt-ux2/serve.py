@@ -14,6 +14,8 @@ vt-ux2 走查用伺服器：支援 Range 的靜態伺服器＋假的 /api/*（�
   「有沒有發出寫入」與「存了讀不讀得回」
     /__stat ：回 {saves: 寫入次數, episode: 目前的假集}
     /__reset：假集還原成預設值、寫入次數歸零
+    /__reset?audio=1：還原後改成「有外接音檔」的集（audio.path 有值、sync_offset 0.4），
+                      讓對齊 popover 的「聲音偏移」欄有走查覆蓋；不帶參數＝預設的無外接音檔
 """
 import argparse
 import copy
@@ -54,6 +56,8 @@ EPISODE = {
     "subtitle_offset_sec": 0,
 }
 EPISODE_DEFAULT = copy.deepcopy(EPISODE)
+# 「有外接音檔」情境：偏移刻意不是 0，才分得出「有讀到」與「預設值」
+EPISODE_EXT_AUDIO = {"path": "ext-audio.wav", "sync_offset": 0.4}
 STAT = {"saves": 0}
 CTL = {"fail": set(), "delay": {}}
 ROOT = DEFAULT_STATIC
@@ -96,6 +100,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/__reset":
             EPISODE.clear()
             EPISODE.update(copy.deepcopy(EPISODE_DEFAULT))
+            if urllib.parse.parse_qs(u.query).get("audio", [""])[0] == "1":
+                EPISODE["audio"] = copy.deepcopy(EPISODE_EXT_AUDIO)
             STAT["saves"] = 0
             return self._json(200, {"ok": True})
 
