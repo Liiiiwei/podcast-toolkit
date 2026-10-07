@@ -61,7 +61,64 @@ def test_build_audio_only_preserves_main_audio_through_outro_transition():
 
     main_chain = fc.split("[1:a]", 1)[1].split("[a1]", 1)[0]
     assert "afade=t=out" not in main_chain
-    assert "afade=t=in:st=0:d=0.5" in main_chain
+    assert f"afade=t=in:st=0:d={assemble.MAIN_FADE_IN}" in main_chain
+
+
+def test_main_fade_in_is_click_guard_only():
+    """正片淡入只留防爆音長度：主持人常在起點後 0.1～0.2 秒開口，0.5 秒淡入會吃掉第一個字。
+    builder 都要用同一個常數，不准有人留著寫死的 0.5。"""
+    assert assemble.MAIN_FADE_IN <= 0.05
+    chains = {
+        "yt": assemble.build_filter_complex_yt(BASE_CFG, main_dur=100.0, srt_rel="x.srt"),
+        "reels": assemble.build_filter_complex_reels(BASE_CFG, main_dur=100.0, srt_rel="x.srt"),
+        "mp3": assemble.build_audio_only(BASE_CFG, main_dur=100.0, removed_intervals=[]),
+    }
+    for name, fc in chains.items():
+        # 寫死的 0.5 秒淡入只准出現在片尾音樂（yt/mp3 各一處；reels 無片尾）
+        assert fc.count("afade=t=in:st=0:d=0.5") == (0 if name == "reels" else 1), name
+        assert f"afade=t=in:st=0:d={assemble.MAIN_FADE_IN}" in fc, name
+
+
+def test_build_audio_only_trims_intro_to_music_end():
+    """給了片頭音樂結束點 → 片頭裁到那裡並在裁切點前淡出；沒給 → 沿用整段片頭。"""
+    fc = assemble.build_audio_only(
+        BASE_CFG, main_dur=80.0, removed_intervals=[], intro_audio_dur=4.2,
+    )
+    intro_chain = fc.split("[0:a]", 1)[1].split("[a0]", 1)[0]
+    assert "atrim=0:4.200" in intro_chain
+    assert "afade=t=out:st=3.900:d=0.300" in intro_chain
+
+    legacy = assemble.build_audio_only(BASE_CFG, main_dur=80.0, removed_intervals=[])
+    legacy_intro = legacy.split("[0:a]", 1)[1].split("[a0]", 1)[0]
+    assert "atrim" not in legacy_intro
+    assert "afade=t=out:st=4:d=1" in legacy_intro
+
+
+def test_intro_audio_end_finds_where_music_stops(tmp_path):
+    """2 秒有聲 + 3 秒無聲的片頭 → 結束點落在 2 秒後不遠處，不是整段 5 秒。"""
+    import subprocess
+    src = tmp_path / "intro.wav"
+    subprocess.run(
+        [assemble.ffmpeg_bin(), "-y", "-v", "error",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+         "-af", "apad=pad_dur=3", "-ar", "44100", str(src)],
+        check=True,
+    )
+    end = assemble.intro_audio_end(src, 5.0)
+    assert 2.0 <= end <= 2.4
+
+
+def test_intro_audio_end_raises_when_silent(tmp_path):
+    """整段都沒聲音 → 明確報錯，不靜默退回整段片頭。"""
+    import subprocess
+    src = tmp_path / "silent.wav"
+    subprocess.run(
+        [assemble.ffmpeg_bin(), "-y", "-v", "error",
+         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "2", str(src)],
+        check=True,
+    )
+    with pytest.raises(assemble.AssembleError):
+        assemble.intro_audio_end(src, 2.0)
 
 
 def test_build_audio_only_no_cuts_no_aselect():
@@ -928,6 +985,26 @@ def test_prepare_assembly_audio_only_ignores_title_cards(tmp_episode_full):
     assert not (tmp_episode_full / "04_工作檔" / "_v2_aligned_1920x1080_cardsonly.ass").exists()
 
 
+def test_prepare_assembly_audio_only_sidecar_follows_trimmed_intro(tmp_episode_full, monkeypatch):
+    """MP3 的片頭裁到音樂結束點 → 片頭濾鏡與外掛字幕偏移要用同一個值。"""
+    from podcast_toolkit import srt_io
+    monkeypatch.setattr(assemble, "intro_audio_end", lambda _p, _d: 3.3)
+    (tmp_episode_full / "01_母帶" / "測試集_mix.wav").write_bytes(b"")
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    data["audio"] = {"path": "01_母帶/測試集_mix.wav"}
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(
+        tmp_episode_full, output_kind="yt", force=True,
+        subtitle_mode="sidecar", audio_only=True,
+    )
+    fc = plan["cmd"][plan["cmd"].index("-filter_complex") + 1]
+    assert "atrim=0:3.300" in fc
+    cards = srt_io.parse(plan["sidecar_srt"]["content"])
+    assert cards[0]["start"] == pytest.approx(3.3, abs=0.05)
+
+
 def test_prepare_assembly_sidecar_yt_applies_intro_offset(tmp_episode_full):
     """YT sidecar：正片接在片頭後 → 第一卡時間軸平移 intro_duration。"""
     from podcast_toolkit import srt_io
@@ -1094,3 +1171,23 @@ def test_original_to_mp4_time_overlap_counts_union_once():
     merged = assemble._merge_intervals(raw)
     # t=10 在所有刪段之後：mp4 時間 = 10 - 3 = 7（不是 10 - 4.5 = 5.5）
     assert assemble._original_to_mp4_time(10.0, merged) == pytest.approx(7.0)
+
+
+def test_prepare_assembly_many_cuts_falls_back_from_seek_inputs(tmp_episode_full):
+    """去空拍會切出上百個保留段；每段各開一個 input 會撞到 macOS app 的 256 開檔上限
+    （ffmpeg: Too many open files）。段數超過上限必須退回 select 路徑，母帶只開一次。"""
+    ep_yaml = tmp_episode_full / "episode.yaml"
+    data = yaml.safe_load(ep_yaml.read_text(encoding="utf-8"))
+    n = assemble.SEEK_MAX_SEGMENTS + 5
+    data["cuts"] = [[1.0 + i * 0.5, 1.2 + i * 0.5] for i in range(n)]
+    data.setdefault("encode", {})["seek_cut_inputs"] = True
+    ep_yaml.write_text(yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
+
+    plan = prepare_assembly(tmp_episode_full, output_kind="yt", force=True)
+    cmd = plan["cmd"]
+    fc = cmd[cmd.index("-filter_complex") + 1]
+
+    assert cmd.count("-i") <= 6
+    assert sum(str(x).endswith("測試集.mp4") for x in cmd) == 1
+    assert "select='not(" in fc
+    assert "main_v_raw" not in fc
